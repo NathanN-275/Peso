@@ -10,6 +10,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useAuth } from '../../context/AuthContext';
 import Button from '../components/Button';
 import Input from '../components/Input';
 import tokens from '../theme/tokens';
@@ -22,8 +23,29 @@ type LoginScreenProps = {
 };
 
 export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenProps) {
-  const [identifier, setIdentifier] = useState('');
+  const { signInWithEmail } = useAuth();
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleSignIn = async () => {
+    if (!email.trim() || !password) {
+      setError('Enter both email and password.');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      await signInWithEmail(email.trim(), password);
+    } catch (authError) {
+      setError(authError instanceof Error ? authError.message : 'Unable to sign in.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <SafeAreaView className="flex-1 bg-bg">
@@ -64,19 +86,40 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
               accessibilityLabel="Login"
             />
 
+            {error ? (
+              <View
+                style={{
+                  marginBottom: 20,
+                  borderWidth: 1,
+                  borderColor: '#5A1E24',
+                  backgroundColor: '#2C0E12',
+                  borderRadius: 12,
+                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                }}
+              >
+                <Text className="text-text-primary" style={{ color: '#FFC8CF' }}>
+                  {error}
+                </Text>
+              </View>
+            ) : null}
+
             <View style={{ gap: 18 }}>
               <Input
-                label="Mobile number or email"
-                placeholder="Value"
-                value={identifier}
-                onChangeText={setIdentifier}
+                label="Email"
+                placeholder="name@example.com"
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                textContentType="emailAddress"
               />
               <Input
                 label="Password"
-                placeholder="Value"
+                placeholder="Enter your password"
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry
+                textContentType="password"
               />
             </View>
 
@@ -94,8 +137,18 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
             </Pressable>
 
             <View style={{ marginTop: 20, gap: 26 }}>
-              <Button label="Sign In" style={{ width: '100%', height: 32 }} />
-              <Button label="Back" onPress={onBack} style={{ width: '100%', height: 32 }} />
+              <Button
+                label={loading ? 'Signing In' : 'Sign In'}
+                onPress={handleSignIn}
+                disabled={loading}
+                style={{ width: '100%', height: 32 }}
+              />
+              <Button
+                label="Back"
+                onPress={onBack}
+                disabled={loading}
+                style={{ width: '100%', height: 32 }}
+              />
             </View>
           </View>
         </ScrollView>

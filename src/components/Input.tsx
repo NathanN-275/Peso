@@ -1,4 +1,4 @@
-import { Text, TextInput, View } from 'react-native';
+import { Text, TextInput, TextInputProps, View } from 'react-native';
 import tokens from '../theme/tokens';
 
 type InputProps = {
@@ -7,6 +7,11 @@ type InputProps = {
   value?: string;
   onChangeText?: (text: string) => void;
   secureTextEntry?: boolean;
+  keyboardType?: TextInputProps['keyboardType'];
+  autoCapitalize?: TextInputProps['autoCapitalize'];
+  autoCorrect?: boolean;
+  textContentType?: TextInputProps['textContentType'];
+  editable?: boolean;
 };
 
 export default function Input({
@@ -15,6 +20,11 @@ export default function Input({
   value,
   onChangeText,
   secureTextEntry,
+  keyboardType,
+  autoCapitalize = 'none',
+  autoCorrect = false,
+  textContentType,
+  editable = true,
 }: InputProps) {
   return (
     <View>
@@ -29,6 +39,11 @@ export default function Input({
         placeholder={placeholder}
         placeholderTextColor={tokens.colors.textMuted}
         secureTextEntry={secureTextEntry}
+        keyboardType={keyboardType}
+        autoCapitalize={autoCapitalize}
+        autoCorrect={autoCorrect}
+        textContentType={textContentType}
+        editable={editable}
         className="rounded-input border border-input-border bg-input-bg px-4 text-text-primary"
         style={{ height: tokens.sizes.inputHeight }}
       />

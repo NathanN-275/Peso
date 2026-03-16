@@ -6,8 +6,8 @@ import tokens from '../theme/tokens';
 const logo = require('../../AppLogo.png');
 
 type WelcomeScreenProps = {
-  onLogin?: () => void;
-  onCreateAccount?: () => void;
+  onLogin: () => void;
+  onCreateAccount: () => void;
 };
 
 export default function WelcomeScreen({ onLogin, onCreateAccount }: WelcomeScreenProps) {
@@ -42,11 +42,18 @@ export default function WelcomeScreen({ onLogin, onCreateAccount }: WelcomeScree
             className="items-center"
             style={{
               marginTop: tokens.spacing.logoBottom,
-              gap: tokens.spacing.buttonGap,
+              width: '100%',
             }}
           >
-            <Button label="Log in" onPress={onLogin} />
-            <Button label="Create an Account" onPress={onCreateAccount} />
+            <View className="items-center">
+              <Button label="Log in" onPress={onLogin} />
+            </View>
+            <View
+              className="items-center"
+              style={{ marginTop: tokens.spacing.buttonGap }}
+            >
+              <Button label="Create an Account" onPress={onCreateAccount} />
+            </View>
           </View>
         </View>
       </KeyboardAvoidingView>
