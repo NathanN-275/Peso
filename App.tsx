@@ -1,7 +1,7 @@
 import './global.css';
 
 import { useEffect, useRef, useState } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Button from './src/components/Button';
 import CreateAccountScreen from './src/screens/CreateAccountScreen';
@@ -31,15 +31,13 @@ const WEB_ROUTE_HASHES: Record<AuthRoute, string> = {
 const styles = StyleSheet.create({
   webWrapper: {
     flex: 1,
+    width: '100%',
     backgroundColor: '#3a3a3a',
-    alignItems: 'center',
-    justifyContent: Platform.OS === 'web' ? 'flex-start' : 'center',
-    paddingTop: Platform.OS === 'web' ? 24 : 0,
-    paddingBottom: Platform.OS === 'web' ? 24 : 0,
   },
   phoneFrame: {
     width: 390,
     minHeight: 844,
+    flexGrow: 1,
     backgroundColor: '#000',
   },
 });
@@ -232,25 +230,20 @@ function AppContent() {
   }
 
   return (
-    <View
-      style={{
-        flex: 1,
-        width: '100%',
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: '#3E3E3E',
-      }}
-    >
-      <View
-        style={{
-          flex: 1,
-          width: '100%',
-          maxWidth: 430,
-          alignSelf: 'center',
+    <View style={styles.webWrapper}>
+      <ScrollView
+        style={{ flex: 1, width: '100%' }}
+        contentContainerStyle={{
+          flexGrow: 1,
+          alignItems: 'center',
+          paddingTop: 24,
+          paddingBottom: 24,
         }}
       >
-        {screenContent}
-      </View>
+        <View style={styles.phoneFrame}>
+          {screenContent}
+        </View>
+      </ScrollView>
     </View>
   );
 }
