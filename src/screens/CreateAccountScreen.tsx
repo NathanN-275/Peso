@@ -6,7 +6,6 @@ import {
   Platform,
   SafeAreaView,
   ScrollView,
-  Text,
   View,
 } from 'react-native';
 import Button from '../components/Button';
@@ -41,16 +40,9 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
           }}
           keyboardShouldPersistTaps="handled"
         >
-          <Text
-            className="text-text-muted"
-            style={{ marginTop: 8, marginBottom: 20, fontSize: 16 }}
-          >
-            Create Account
-          </Text>
-
           <View
             className="rounded-[2px] bg-black"
-            style={{ paddingHorizontal: 44, paddingVertical: 36 }}
+            style={{ paddingHorizontal: 44, paddingVertical: 36, marginTop: 8 }}
           >
             <Image
               source={titleImage}

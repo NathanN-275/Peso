@@ -42,17 +42,11 @@ export default function ResetPasswordFormScreen({
           }}
           keyboardShouldPersistTaps="handled"
         >
-          <Text
-            className="text-text-muted"
-            style={{ marginTop: 8, marginBottom: 12, fontSize: 16, marginLeft: 2 }}
-          >
-            Reset Password
-          </Text>
-
           <View
             className="bg-black"
             style={{
               minHeight: 705,
+              marginTop: 8,
               paddingTop: 96,
               paddingHorizontal: 46,
               paddingBottom: 40,

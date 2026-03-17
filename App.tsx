@@ -1,7 +1,7 @@
 import './global.css';
 
 import { useEffect, useRef, useState } from 'react';
-import { Platform, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Button from './src/components/Button';
 import CreateAccountScreen from './src/screens/CreateAccountScreen';
@@ -10,41 +10,60 @@ import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
 import ResetPasswordFormScreen from './src/screens/ResetPasswordFormScreen';
 import WelcomeScreen from './src/screens/WelcomeScreen';
 
-type AuthRoute =
-  | 'welcome'
-  | 'login'
-  | 'create-account'
-  | 'reset-password'
-  | 'reset-password-form';
+const AUTH_ROUTES = {
+  welcome: 'welcome',
+  login: 'login',
+  createAccount: 'create-account',
+  resetPassword: 'reset-password',
+  resetPasswordForm: 'reset-password-form',
+} as const;
+
+type AuthRoute = (typeof AUTH_ROUTES)[keyof typeof AUTH_ROUTES];
 
 const WEB_ROUTE_HASHES: Record<AuthRoute, string> = {
-  welcome: '#/welcome',
-  login: '#/login',
-  'create-account': '#/create-account',
-  'reset-password': '#/reset-password',
-  'reset-password-form': '#/reset-password-form',
+  [AUTH_ROUTES.welcome]: '#/welcome',
+  [AUTH_ROUTES.login]: '#/login',
+  [AUTH_ROUTES.createAccount]: '#/create-account',
+  [AUTH_ROUTES.resetPassword]: '#/reset-password',
+  [AUTH_ROUTES.resetPasswordForm]: '#/reset-password-form',
 };
+
+const styles = StyleSheet.create({
+  webWrapper: {
+    flex: 1,
+    backgroundColor: '#3a3a3a',
+    alignItems: 'center',
+    justifyContent: Platform.OS === 'web' ? 'flex-start' : 'center',
+    paddingTop: Platform.OS === 'web' ? 24 : 0,
+    paddingBottom: Platform.OS === 'web' ? 24 : 0,
+  },
+  phoneFrame: {
+    width: 390,
+    minHeight: 844,
+    backgroundColor: '#000',
+  },
+});
 
 function parseWebAuthRoute(hash: string): AuthRoute {
   const normalizedHash = hash.toLowerCase();
 
-  if (normalizedHash === WEB_ROUTE_HASHES.login) {
-    return 'login';
+  if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.login]) {
+    return AUTH_ROUTES.login;
   }
 
-  if (normalizedHash === WEB_ROUTE_HASHES['create-account']) {
-    return 'create-account';
+  if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.createAccount]) {
+    return AUTH_ROUTES.createAccount;
   }
 
-  if (normalizedHash === WEB_ROUTE_HASHES['reset-password']) {
-    return 'reset-password';
+  if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.resetPassword]) {
+    return AUTH_ROUTES.resetPassword;
   }
 
-  if (normalizedHash === WEB_ROUTE_HASHES['reset-password-form']) {
-    return 'reset-password-form';
+  if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.resetPasswordForm]) {
+    return AUTH_ROUTES.resetPasswordForm;
   }
 
-  return 'welcome';
+  return AUTH_ROUTES.welcome;
 }
 
 function HomeScreen({
@@ -77,7 +96,7 @@ function AppContent() {
       return parseWebAuthRoute(window.location.hash);
     }
 
-    return 'welcome';
+    return AUTH_ROUTES.welcome;
   });
   const hadSessionRef = useRef(false);
 
@@ -95,6 +114,16 @@ function AppContent() {
 
     setRoute(nextRoute);
   };
+
+  const authNavigation = {
+    toWelcome: () => navigateToAuthRoute(AUTH_ROUTES.welcome),
+    toLogin: () => navigateToAuthRoute(AUTH_ROUTES.login),
+    toCreateAccount: () => navigateToAuthRoute(AUTH_ROUTES.createAccount),
+    toResetPassword: () => navigateToAuthRoute(AUTH_ROUTES.resetPassword),
+    toResetPasswordForm: () => navigateToAuthRoute(AUTH_ROUTES.resetPasswordForm),
+  };
+  const handleWelcomeLoginPress = authNavigation.toLogin;
+  const handleWelcomeCreateAccountPress = authNavigation.toCreateAccount;
 
   useEffect(() => {
     if (Platform.OS !== 'web') {
@@ -119,82 +148,111 @@ function AppContent() {
     }
 
     if (hadSessionRef.current) {
-      navigateToAuthRoute('welcome');
+      authNavigation.toWelcome();
       hadSessionRef.current = false;
     }
   }, [session]);
 
-  if (initializing) {
-    return (
-      <View className="flex-1 items-center justify-center bg-bg" style={{ paddingHorizontal: 24 }}>
-        <Text className="text-text-primary" style={{ fontSize: 18, fontWeight: '600' }}>
-          Loading session...
-        </Text>
-      </View>
-    );
+  const screenContent = (() => {
+    if (initializing) {
+      return (
+        <View className="flex-1 items-center justify-center bg-bg" style={{ paddingHorizontal: 24 }}>
+          <Text className="text-text-primary" style={{ fontSize: 18, fontWeight: '600' }}>
+            Loading session...
+          </Text>
+        </View>
+      );
+    }
+
+    if (configError) {
+      return (
+        <View
+          className="flex-1 items-center justify-center bg-bg"
+          style={{ paddingHorizontal: 24, gap: 12 }}
+        >
+          <Text className="text-text-primary" style={{ fontSize: 22, fontWeight: '700', textAlign: 'center' }}>
+            App setup incomplete
+          </Text>
+          <Text className="text-text-primary" style={{ fontSize: 16, textAlign: 'center', lineHeight: 24 }}>
+            {configError}
+          </Text>
+        </View>
+      );
+    }
+
+    if (session && user) {
+      return <HomeScreen email={user.email} onSignOut={signOut} />;
+    }
+
+    if (route === AUTH_ROUTES.welcome) {
+      return (
+        <WelcomeScreen
+          onLogin={handleWelcomeLoginPress}
+          onCreateAccount={handleWelcomeCreateAccountPress}
+        />
+      );
+    }
+
+    if (route === AUTH_ROUTES.login) {
+      return (
+        <LoginScreen
+          onBack={authNavigation.toWelcome}
+          onForgotPassword={authNavigation.toResetPassword}
+        />
+      );
+    }
+
+    if (route === AUTH_ROUTES.createAccount) {
+      return <CreateAccountScreen onBack={authNavigation.toWelcome} />;
+    }
+
+    if (route === AUTH_ROUTES.resetPassword) {
+      return (
+        <ResetPasswordScreen
+          onBack={authNavigation.toLogin}
+          onSubmit={authNavigation.toResetPasswordForm}
+        />
+      );
+    }
+
+    if (route === AUTH_ROUTES.resetPasswordForm) {
+      return (
+        <ResetPasswordFormScreen
+          onBack={authNavigation.toResetPassword}
+          onReset={authNavigation.toLogin}
+        />
+      );
+    }
+
+    return null;
+  })();
+
+  if (Platform.OS !== 'web') {
+    return screenContent;
   }
 
-  if (configError) {
-    return (
+  return (
+    <View
+      style={{
+        flex: 1,
+        width: '100%',
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#3E3E3E',
+      }}
+    >
       <View
-        className="flex-1 items-center justify-center bg-bg"
-        style={{ paddingHorizontal: 24, gap: 12 }}
+        style={{
+          flex: 1,
+          width: '100%',
+          maxWidth: 430,
+          alignSelf: 'center',
+        }}
       >
-        <Text className="text-text-primary" style={{ fontSize: 22, fontWeight: '700', textAlign: 'center' }}>
-          App setup incomplete
-        </Text>
-        <Text className="text-text-primary" style={{ fontSize: 16, textAlign: 'center', lineHeight: 24 }}>
-          {configError}
-        </Text>
+        {screenContent}
       </View>
-    );
-  }
-
-  if (session && user) {
-    return <HomeScreen email={user.email} onSignOut={signOut} />;
-  }
-
-  if (route === 'welcome') {
-    return (
-      <WelcomeScreen
-        onLogin={() => navigateToAuthRoute('login')}
-        onCreateAccount={() => navigateToAuthRoute('create-account')}
-      />
-    );
-  }
-
-  if (route === 'login') {
-    return (
-      <LoginScreen
-        onBack={() => setRoute('welcome')}
-        onForgotPassword={() => setRoute('reset-password')}
-      />
-    );
-  }
-
-  if (route === 'create-account') {
-    return <CreateAccountScreen onBack={() => setRoute('welcome')} />;
-  }
-
-  if (route === 'reset-password') {
-    return (
-      <ResetPasswordScreen
-        onBack={() => setRoute('login')}
-        onSubmit={() => setRoute('reset-password-form')}
-      />
-    );
-  }
-
-  if (route === 'reset-password-form') {
-    return (
-      <ResetPasswordFormScreen
-        onBack={() => setRoute('reset-password')}
-        onReset={() => setRoute('login')}
-      />
-    );
-  }
-
-  return null;
+    </View>
+  );
 }
 
 export default function App() {

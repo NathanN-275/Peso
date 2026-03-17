@@ -1,6 +1,13 @@
-import { Image, KeyboardAvoidingView, Platform, SafeAreaView, View } from 'react-native';
+import {
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  SafeAreaView,
+  Text,
+  View,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import Button from '../components/Button';
 import tokens from '../theme/tokens';
 
 const logo = require('../../AppLogo.png');
@@ -12,15 +19,19 @@ type WelcomeScreenProps = {
 
 export default function WelcomeScreen({ onLogin, onCreateAccount }: WelcomeScreenProps) {
   return (
-    <SafeAreaView className="flex-1 bg-bg">
+    <SafeAreaView className="flex-1" style={{ backgroundColor: '#000' }}>
       <StatusBar style="light" />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         className="flex-1"
+        style={{ backgroundColor: '#000' }}
       >
         <View
           className="flex-1 items-center"
-          style={{ paddingHorizontal: tokens.spacing.screenX }}
+          style={{
+            paddingHorizontal: tokens.spacing.screenX,
+            backgroundColor: '#000',
+          }}
         >
           <View
             className="items-center"
@@ -46,13 +57,59 @@ export default function WelcomeScreen({ onLogin, onCreateAccount }: WelcomeScree
             }}
           >
             <View className="items-center">
-              <Button label="Log in" onPress={onLogin} />
+              <Pressable
+                onPress={onLogin}
+                accessibilityRole="button"
+                style={({ pressed }) => ({
+                  width: tokens.sizes.buttonWidth,
+                  height: tokens.sizes.buttonHeight,
+                  borderRadius: tokens.radii.button,
+                  backgroundColor: pressed ? tokens.colors.brandPress : tokens.colors.brand,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                })}
+              >
+                <Text
+                  style={{
+                    color: tokens.colors.textPrimary,
+                    fontSize: tokens.typography.buttonSize,
+                    lineHeight: tokens.typography.buttonLineHeight,
+                    fontWeight: '600',
+                    letterSpacing: tokens.typography.buttonLetterSpacing,
+                  }}
+                >
+                  Log in
+                </Text>
+              </Pressable>
             </View>
             <View
               className="items-center"
               style={{ marginTop: tokens.spacing.buttonGap }}
             >
-              <Button label="Create an Account" onPress={onCreateAccount} />
+              <Pressable
+                onPress={onCreateAccount}
+                accessibilityRole="button"
+                style={({ pressed }) => ({
+                  width: tokens.sizes.buttonWidth,
+                  height: tokens.sizes.buttonHeight,
+                  borderRadius: tokens.radii.button,
+                  backgroundColor: pressed ? tokens.colors.brandPress : tokens.colors.brand,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                })}
+              >
+                <Text
+                  style={{
+                    color: tokens.colors.textPrimary,
+                    fontSize: tokens.typography.buttonSize,
+                    lineHeight: tokens.typography.buttonLineHeight,
+                    fontWeight: '600',
+                    letterSpacing: tokens.typography.buttonLetterSpacing,
+                  }}
+                >
+                  Create an Account
+                </Text>
+              </Pressable>
             </View>
           </View>
         </View>
