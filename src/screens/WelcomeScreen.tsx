@@ -4,6 +4,7 @@ import {
   Platform,
   Pressable,
   SafeAreaView,
+  StyleSheet,
   Text,
   View,
 } from 'react-native';
@@ -37,25 +38,22 @@ export default function WelcomeScreen({ onLogin, onCreateAccount }: WelcomeScree
             className="items-center"
             style={{ marginTop: tokens.spacing.logoTop }}
           >
-            <Image
-              source={logo}
-              style={{
-                width: tokens.sizes.logoWidth,
-                height: tokens.sizes.logoHeight,
-              }}
-              resizeMode="contain"
-              accessible
-              accessibilityLabel="Peso"
-            />
-          </View>
 
           <View
             className="items-center"
             style={{
-              marginTop: tokens.spacing.logoBottom,
+              marginTop: tokens.spacing.logoTop - 160,
               width: '100%',
             }}
           >
+           <Image
+              source={logo}
+              style={styles.logoImage}
+              resizeMode="contain"
+              accessible
+              accessibilityLabel="Peso"
+            />  
+          </View>
             <View className="items-center">
               <Pressable
                 onPress={onLogin}
@@ -117,3 +115,10 @@ export default function WelcomeScreen({ onLogin, onCreateAccount }: WelcomeScree
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  logoImage: {
+    width: 500,
+    height: 300,
+  },
+});
