@@ -6,6 +6,7 @@ import {
   Platform,
   SafeAreaView,
   ScrollView,
+  StyleSheet,
   Text,
   View,
 } from 'react-native';
@@ -54,13 +55,13 @@ export default function ResetPasswordFormScreen({
           >
             <Image
               source={titleImage}
-              resizeMode="contain"
-              style={{ width: '100%', height: 62, marginBottom: 42 }}
+              resizeMode="stretch"
+              style={styles.titleImage}
               accessible
               accessibilityLabel="Reset Password"
             />
 
-            <View style={{ gap: 22 }}>
+            <View style={{ gap: 10 }}>
               <Input
                 label="Enter Password"
                 placeholder="Value"
@@ -77,7 +78,7 @@ export default function ResetPasswordFormScreen({
               />
             </View>
 
-            <View style={{ marginTop: 34, gap: 26 }}>
+            <View style={{ marginTop: 10, gap: 10 }}>
               <Button label="Reset" onPress={onReset} style={{ width: '100%', height: 32 }} />
               <Button label="Back" onPress={onBack} style={{ width: '100%', height: 32 }} />
             </View>
@@ -87,3 +88,12 @@ export default function ResetPasswordFormScreen({
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  titleImage: {
+    width: '100%',
+    height: 80,
+    marginBottom: 20,
+    alignSelf: 'center',
+  },
+});
