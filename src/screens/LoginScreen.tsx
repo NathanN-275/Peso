@@ -7,6 +7,7 @@ import {
   Pressable,
   SafeAreaView,
   ScrollView,
+  StyleSheet,
   Text,
   View,
 } from 'react-native';
@@ -67,7 +68,7 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
             style={{
               minHeight: 705,
               marginTop: 8,
-              paddingTop: 96,
+              paddingTop: 20,
               paddingHorizontal: 46,
               paddingBottom: 40,
             }}
@@ -75,7 +76,7 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
             <Image
               source={titleImage}
               resizeMode="contain"
-              style={{ width: '100%', height: 62, marginBottom: 42 }}
+              style={styles.titleImage}
               accessible
               accessibilityLabel="Login"
             />
@@ -98,7 +99,7 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
               </View>
             ) : null}
 
-            <View style={{ gap: 18 }}>
+            <View style={{ gap: 28 }}>
               <Input
                 label="Email"
                 placeholder="name@example.com"
@@ -130,7 +131,7 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
               </Text>
             </Pressable>
 
-            <View style={{ marginTop: 20, gap: 26 }}>
+            <View style={{ marginTop: 20, gap: 28 }}>
               <Button
                 label={loading ? 'Signing In' : 'Sign In'}
                 onPress={handleSignIn}
@@ -150,3 +151,12 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  titleImage: {
+    width: '1000%',
+    height: 500, 
+    marginBottom: -80,
+    alignSelf: 'center',
+  },
+});
