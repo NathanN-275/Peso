@@ -59,7 +59,7 @@ const styles = StyleSheet.create({
   labelText: {
     fontSize: 16,
     lineHeight: 20,
-    marginBottom: 6,
+    marginBottom: 10,
   },
   textInput: {
     height: tokens.sizes.inputHeight - 4,
