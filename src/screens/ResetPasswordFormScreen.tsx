@@ -55,7 +55,7 @@ export default function ResetPasswordFormScreen({
           >
             <Image
               source={titleImage}
-              resizeMode="stretch"
+              resizeMode="cover"
               style={styles.titleImage}
               accessible
               accessibilityLabel="Reset Password"
@@ -91,9 +91,9 @@ export default function ResetPasswordFormScreen({
 
 const styles = StyleSheet.create({
   titleImage: {
-    width: '100%',
-    height: 80,
-    marginBottom: 20,
     alignSelf: 'center',
+    width: '180%',
+    height: 150,
+    marginBottom: 24,
   },
 });

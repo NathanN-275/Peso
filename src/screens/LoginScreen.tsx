@@ -156,7 +156,7 @@ const styles = StyleSheet.create({
   titleImage: {
     width: '1000%',
     height: 500, 
-    marginBottom: -80,
+    marginBottom: -120,
     alignSelf: 'center',
   },
 });
