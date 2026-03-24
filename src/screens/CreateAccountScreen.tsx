@@ -44,7 +44,7 @@ export default function CreateAccountScreen({ onBack, onSuccess }: CreateAccount
         >
           <View
             className="rounded-[2px] bg-black"
-            style={{ paddingHorizontal: 44, paddingTop: 16, paddingBottom: 36, marginTop: 8 }}
+            style={{ paddingHorizontal: 44, paddingTop: 16, paddingBottom: 36, marginTop: -50}}
           >
             <Image
               source={titleImage}
