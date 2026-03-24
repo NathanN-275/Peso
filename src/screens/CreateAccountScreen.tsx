@@ -17,9 +17,10 @@ const titleImage = require('../../CreateAccount.png');
 
 type CreateAccountScreenProps = {
   onBack: () => void;
+  onSuccess: () => void;
 };
 
-export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps) {
+export default function CreateAccountScreen({ onBack, onSuccess }: CreateAccountScreenProps) {
   const [name, setName] = useState('');
   const [username, setUsername] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -43,7 +44,7 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
         >
           <View
             className="rounded-[2px] bg-black"
-            style={{ paddingHorizontal: 44, paddingVertical: 36, marginTop: 8 }}
+            style={{ paddingHorizontal: 44, paddingTop: 16, paddingBottom: 36, marginTop: 8 }}
           >
             <Image
               source={titleImage}
@@ -112,7 +113,7 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
             </View>
 
             <View style={{ marginTop: 24, gap: 24 }}>
-              <Button label="Create Account" style={{ width: '100%' }} />
+              <Button label="Create Account" onPress={onSuccess} style={{ width: '100%' }} />
               <Button label="Back" onPress={onBack} style={{ width: '100%' }} />
             </View>
           </View>

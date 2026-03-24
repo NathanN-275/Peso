@@ -3,14 +3,15 @@ import './global.css';
 import { useEffect, useRef, useState } from 'react';
 import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import Button from './src/components/Button';
 import CreateAccountScreen from './src/screens/CreateAccountScreen';
+import HomeScreen from './src/screens/HomeScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
 import ResetPasswordFormScreen from './src/screens/ResetPasswordFormScreen';
 import WelcomeScreen from './src/screens/WelcomeScreen';
 
 const AUTH_ROUTES = {
+  home: 'home',
   welcome: 'welcome',
   login: 'login',
   createAccount: 'create-account',
@@ -21,6 +22,7 @@ const AUTH_ROUTES = {
 type AuthRoute = (typeof AUTH_ROUTES)[keyof typeof AUTH_ROUTES];
 
 const WEB_ROUTE_HASHES: Record<AuthRoute, string> = {
+  [AUTH_ROUTES.home]: '#/home',
   [AUTH_ROUTES.welcome]: '#/welcome',
   [AUTH_ROUTES.login]: '#/login',
   [AUTH_ROUTES.createAccount]: '#/create-account',
@@ -36,14 +38,19 @@ const styles = StyleSheet.create({
   },
   phoneFrame: {
     width: 390,
-    minHeight: 844,
+    height: 844,
     flexGrow: 1,
     backgroundColor: '#000',
+    overflow: 'hidden',
   },
 });
 
 function parseWebAuthRoute(hash: string): AuthRoute {
   const normalizedHash = hash.toLowerCase();
+
+  if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.home]) {
+    return AUTH_ROUTES.home;
+  }
 
   if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.login]) {
     return AUTH_ROUTES.login;
@@ -64,31 +71,8 @@ function parseWebAuthRoute(hash: string): AuthRoute {
   return AUTH_ROUTES.welcome;
 }
 
-function HomeScreen({
-  email,
-  onSignOut,
-}: {
-  email: string | null | undefined;
-  onSignOut: () => Promise<void>;
-}) {
-  return (
-    <View
-      className="flex-1 items-center justify-center bg-bg"
-      style={{ paddingHorizontal: 24, gap: 16 }}
-    >
-      <Text className="text-text-primary" style={{ fontSize: 24, fontWeight: '700' }}>
-        Signed in
-      </Text>
-      <Text className="text-text-primary" style={{ fontSize: 16, textAlign: 'center' }}>
-        {email ?? 'Your account is active.'}
-      </Text>
-      <Button label="Sign Out" onPress={() => void onSignOut()} />
-    </View>
-  );
-}
-
 function AppContent() {
-  const { session, user, initializing, configError, signOut } = useAuth();
+  const { session, user, initializing, configError } = useAuth();
   const [route, setRoute] = useState<AuthRoute>(() => {
     if (Platform.OS === 'web') {
       return parseWebAuthRoute(window.location.hash);
@@ -114,6 +98,7 @@ function AppContent() {
   };
 
   const authNavigation = {
+    toHome: () => navigateToAuthRoute(AUTH_ROUTES.home),
     toWelcome: () => navigateToAuthRoute(AUTH_ROUTES.welcome),
     toLogin: () => navigateToAuthRoute(AUTH_ROUTES.login),
     toCreateAccount: () => navigateToAuthRoute(AUTH_ROUTES.createAccount),
@@ -179,7 +164,11 @@ function AppContent() {
     }
 
     if (session && user) {
-      return <HomeScreen email={user.email} onSignOut={signOut} />;
+      return <HomeScreen email={user.email} />;
+    }
+
+    if (route === AUTH_ROUTES.home) {
+      return <HomeScreen email={user?.email ?? null} />;
     }
 
     if (route === AUTH_ROUTES.welcome) {
@@ -196,12 +185,18 @@ function AppContent() {
         <LoginScreen
           onBack={authNavigation.toWelcome}
           onForgotPassword={authNavigation.toResetPassword}
+          onSuccess={authNavigation.toHome}
         />
       );
     }
 
     if (route === AUTH_ROUTES.createAccount) {
-      return <CreateAccountScreen onBack={authNavigation.toWelcome} />;
+      return (
+        <CreateAccountScreen
+          onBack={authNavigation.toWelcome}
+          onSuccess={authNavigation.toHome}
+        />
+      );
     }
 
     if (route === AUTH_ROUTES.resetPassword) {

@@ -1,137 +1,23 @@
+import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView, Text, View } from 'react-native';
 import tokens from '../theme/tokens';
+
+const SECONDARY_NAV_ICON = '#174A82';
+const NAV_ICON_SIZE = 34;
 
 type HomeScreenProps = {
   email?: string | null;
 };
 
-function HomeIcon() {
-  return (
-    <View style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center' }}>
-      <View
-        style={{
-          width: 14,
-          height: 11,
-          borderWidth: 2,
-          borderColor: tokens.colors.brand,
-          borderBottomLeftRadius: 2,
-          borderBottomRightRadius: 2,
-        }}
-      />
-      <View
-        style={{
-          position: 'absolute',
-          top: 5,
-          width: 14,
-          height: 14,
-          transform: [{ rotate: '45deg' }],
-          borderTopWidth: 2,
-          borderLeftWidth: 2,
-          borderColor: tokens.colors.brand,
-          backgroundColor: 'transparent',
-        }}
-      />
-      <View
-        style={{
-          position: 'absolute',
-          bottom: 6,
-          width: 3,
-          height: 6,
-          borderWidth: 1.5,
-          borderColor: tokens.colors.brand,
-          borderRadius: 1,
-        }}
-      />
-    </View>
-  );
-}
-
-function AddIcon({ large = false }: { large?: boolean }) {
-  const size = large ? 60 : 28;
-  const line = large ? 24 : 10;
-  const stroke = large ? 3 : 2;
-
-  return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        borderRadius: size / 2,
-        borderWidth: stroke,
-        borderColor: tokens.colors.brand,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <View
-        style={{
-          position: 'absolute',
-          width: line,
-          height: stroke,
-          borderRadius: stroke,
-          backgroundColor: tokens.colors.brand,
-        }}
-      />
-      <View
-        style={{
-          position: 'absolute',
-          width: stroke,
-          height: line,
-          borderRadius: stroke,
-          backgroundColor: tokens.colors.brand,
-        }}
-      />
-    </View>
-  );
-}
-
-function ProfileIcon() {
-  return (
-    <View style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center' }}>
-      <View
-        style={{
-          position: 'absolute',
-          top: 3,
-          width: 9,
-          height: 9,
-          borderWidth: 2,
-          borderColor: tokens.colors.brand,
-          borderRadius: 999,
-        }}
-      />
-      <View
-        style={{
-          position: 'absolute',
-          bottom: 3,
-          width: 18,
-          height: 10,
-          borderWidth: 2,
-          borderColor: tokens.colors.brand,
-          borderTopLeftRadius: 12,
-          borderTopRightRadius: 12,
-          borderBottomWidth: 0,
-        }}
-      />
-    </View>
-  );
-}
-
 export default function HomeScreen({ email }: HomeScreenProps) {
   return (
-    <SafeAreaView className="flex-1 bg-bg">
-      <View className="flex-1" style={{ paddingHorizontal: tokens.spacing.screenX }}>
-        <Text
-          className="text-text-muted"
-          style={{ marginTop: 8, marginBottom: 12, fontSize: 16, marginLeft: 2 }}
+    <SafeAreaView className="flex-1 bg-bg" style={{ flex: 1, height: '100%' }}>
+      <View className="flex-1 bg-black" style={{ flex: 1, height: '100%', overflow: 'hidden' }}>
+        <View
+          className="flex-1 items-center justify-center"
+          style={{ paddingHorizontal: 36, paddingBottom: 96 }}
         >
-          Home Screen - new user
-        </Text>
-
-        <View className="flex-1 bg-black" style={{ overflow: 'hidden' }}>
-          <View
-            className="flex-1 items-center justify-center"
-            style={{ paddingHorizontal: 36, paddingBottom: 70 }}
-          >
+          <View style={{ alignItems: 'center', justifyContent: 'center', maxWidth: 320 }}>
             <Text
               style={{
                 color: tokens.colors.brand,
@@ -145,7 +31,7 @@ export default function HomeScreen({ email }: HomeScreenProps) {
               Add or record a video,{'\n'}saved videos will appear{'\n'}on the home screen
             </Text>
 
-            <AddIcon large />
+            <Ionicons name="add-circle-outline" size={60} color={tokens.colors.brand} />
 
             {email ? (
               <Text
@@ -156,21 +42,26 @@ export default function HomeScreen({ email }: HomeScreenProps) {
               </Text>
             ) : null}
           </View>
+        </View>
 
-          <View
-            style={{
-              height: 58,
-              backgroundColor: '#2A2A2A',
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-around',
-              paddingHorizontal: 24,
-            }}
-          >
-            <HomeIcon />
-            <AddIcon />
-            <ProfileIcon />
-          </View>
+        <View
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 58,
+            width: '100%',
+            backgroundColor: '#2A2A2A',
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-around',
+            paddingHorizontal: 24,
+          }}
+        >
+          <Ionicons name="home-outline" size={NAV_ICON_SIZE} color={tokens.colors.brand} />
+          <Ionicons name="add-circle-outline" size={NAV_ICON_SIZE} color={SECONDARY_NAV_ICON} />
+          <Ionicons name="person-outline" size={NAV_ICON_SIZE} color={SECONDARY_NAV_ICON} />
         </View>
       </View>
     </SafeAreaView>

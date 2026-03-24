@@ -11,7 +11,6 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useAuth } from '../../context/AuthContext';
 import Button from '../components/Button';
 import Input from '../components/Input';
 import tokens from '../theme/tokens';
@@ -21,31 +20,15 @@ const titleImage = require('../../Login.png');
 type LoginScreenProps = {
   onBack: () => void;
   onForgotPassword: () => void;
+  onSuccess: () => void;
 };
 
-export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenProps) {
-  const { signInWithEmail } = useAuth();
+export default function LoginScreen({ onBack, onForgotPassword, onSuccess }: LoginScreenProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
 
-  const handleSignIn = async () => {
-    if (!email.trim() || !password) {
-      setError('Enter both email and password.');
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      await signInWithEmail(email.trim(), password);
-    } catch (authError) {
-      setError(authError instanceof Error ? authError.message : 'Unable to sign in.');
-    } finally {
-      setLoading(false);
-    }
+  const handleSignIn = () => {
+    onSuccess();
   };
 
   return (
@@ -81,24 +64,6 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
               accessibilityLabel="Login"
             />
 
-            {error ? (
-              <View
-                style={{
-                  marginBottom: 20,
-                  borderWidth: 1,
-                  borderColor: '#5A1E24',
-                  backgroundColor: '#2C0E12',
-                  borderRadius: 12,
-                  paddingHorizontal: 14,
-                  paddingVertical: 12,
-                }}
-              >
-                <Text className="text-text-primary" style={{ color: '#FFC8CF' }}>
-                  {error}
-                </Text>
-              </View>
-            ) : null}
-
             <View style={{ gap: 28 }}>
               <Input
                 label="Email"
@@ -133,15 +98,13 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
 
             <View style={{ marginTop: 20, gap: 28 }}>
               <Button
-                label={loading ? 'Signing In' : 'Sign In'}
+                label="Log In"
                 onPress={handleSignIn}
-                disabled={loading}
                 style={{ width: '100%', height: 32 }}
               />
               <Button
                 label="Back"
                 onPress={onBack}
-                disabled={loading}
                 style={{ width: '100%', height: 32 }}
               />
             </View>
