@@ -19,8 +19,8 @@ const tokens = {
     buttonGap: 16,
   },
   sizes: {
-    logoWidth: 170,
-    logoHeight: 56,
+    logoWidth: 204,
+    logoHeight: 67,
     buttonWidth: 210,
     buttonHeight: 40,
     inputHeight: 48,

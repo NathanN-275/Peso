@@ -6,6 +6,7 @@ import {
   Platform,
   SafeAreaView,
   ScrollView,
+  StyleSheet,
   View,
 } from 'react-native';
 import Button from '../components/Button';
@@ -47,7 +48,7 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
             <Image
               source={titleImage}
               resizeMode="contain"
-              style={{ width: '100%', height: 64, marginBottom: 22 }}
+              style={styles.titleImage}
               accessible
               accessibilityLabel="Create Account"
             />
@@ -55,30 +56,30 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
             <View className="items-center" style={{ marginBottom: 28 }}>
               <View
                 className="items-center justify-center rounded-full"
-                style={{ width: 108, height: 108, backgroundColor: '#E8DDFD' }}
+                style={{ width: 84, height: 84, backgroundColor: '#E8DDFD' }}
               >
                 <View
                   className="items-center"
-                  style={{ width: 56, height: 62, justifyContent: 'center' }}
+                  style={{ width: 44, height: 48, justifyContent: 'center' }}
                 >
                   <View
                     className="rounded-full"
                     style={{
-                      width: 24,
-                      height: 24,
-                      borderWidth: 3,
+                      width: 18,
+                      height: 18,
+                      borderWidth: 2.5,
                       borderColor: '#5C4AA3',
                     }}
                   />
                   <View
                     style={{
-                      width: 46,
-                      height: 24,
-                      marginTop: 8,
-                      borderWidth: 3,
+                      width: 34,
+                      height: 18,
+                      marginTop: 6,
+                      borderWidth: 2.5,
                       borderColor: '#5C4AA3',
-                      borderTopLeftRadius: 24,
-                      borderTopRightRadius: 24,
+                      borderTopLeftRadius: 18,
+                      borderTopRightRadius: 18,
                       borderBottomWidth: 0,
                     }}
                   />
@@ -120,3 +121,12 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  titleImage: {
+    alignSelf: 'center',
+    width: '200%',
+    height: 350,
+    marginBottom: -125,
+  },
+});
