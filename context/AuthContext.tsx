@@ -32,6 +32,21 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+function isMissingProfilesTableError(error: unknown) {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const code = 'code' in error ? error.code : undefined;
+  const message = 'message' in error ? error.message : undefined;
+
+  return (
+    code === 'PGRST205' ||
+    (typeof message === 'string' &&
+      message.includes("Could not find the table 'public.profiles' in the schema cache"))
+  );
+}
+
 function deriveUsername(user: User) {
   const metadataUsername =
     typeof user.user_metadata?.username === 'string' ? user.user_metadata.username : null;
@@ -88,6 +103,13 @@ async function ensureProfile(user: User) {
   const { data, error } = await supabase.from('profiles').select('id').eq('id', user.id).maybeSingle();
 
   if (error) {
+    if (isMissingProfilesTableError(error)) {
+      console.warn(
+        "Supabase table 'public.profiles' is missing. Continuing without profile sync."
+      );
+      return;
+    }
+
     throw error;
   }
 
@@ -101,6 +123,13 @@ async function ensureProfile(user: User) {
   });
 
   if (insertError) {
+    if (isMissingProfilesTableError(insertError)) {
+      console.warn(
+        "Supabase table 'public.profiles' is missing. Continuing without profile sync."
+      );
+      return;
+    }
+
     throw insertError;
   }
 }

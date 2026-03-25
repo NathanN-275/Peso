@@ -1,11 +1,17 @@
-import { GestureResponderEvent, Pressable, Text, ViewStyle } from 'react-native';
+import {
+  GestureResponderEvent,
+  StyleProp,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  ViewStyle,
+} from 'react-native';
 import tokens from '../theme/tokens';
 
 type ButtonProps = {
   label: string;
   onPress?: (event?: GestureResponderEvent) => void;
-  className?: string;
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
   variant?: 'primary' | 'secondary';
   disabled?: boolean;
 };
@@ -13,38 +19,59 @@ type ButtonProps = {
 export default function Button({
   label,
   onPress,
-  className,
   style,
   variant = 'primary',
   disabled = false,
 }: ButtonProps) {
-  const baseClass = 'items-center justify-center rounded-button';
-  const variantClass =
-    variant === 'primary'
-      ? 'bg-brand pressed:bg-brand-press'
-      : 'bg-brand pressed:bg-brand-press';
+  const buttonStyles = [
+    styles.button,
+    variant === 'primary' ? styles.primaryButton : styles.primaryButton,
+    disabled ? styles.disabledButton : null,
+    style,
+  ];
 
   return (
-    <Pressable
+    <TouchableOpacity
       onPress={(event) => {
-        event.stopPropagation();
+        event.stopPropagation?.();
         onPress?.(event);
       }}
       disabled={disabled}
       accessibilityRole="button"
-      className={`${baseClass} ${variantClass} ${className ?? ''}`}
-      style={[
-        {
-          width: tokens.sizes.buttonWidth,
-          height: tokens.sizes.buttonHeight,
-          opacity: disabled ? 0.6 : 1,
-        },
-        style,
-      ]}
+      activeOpacity={0.85}
+      style={buttonStyles}
     >
-      <Text className="text-button text-text-primary font-semibold tracking-button">
+      <Text style={styles.label}>
         {label}
       </Text>
-    </Pressable>
+    </TouchableOpacity>
   );
 }
+
+const styles = StyleSheet.create({
+  button: {
+    width: tokens.sizes.buttonWidth,
+    minHeight: 20,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    borderRadius: tokens.radii.button,
+    overflow: 'hidden',
+  },
+  primaryButton: {
+    backgroundColor: tokens.colors.brand,
+  },
+  disabledButton: {
+    opacity: 0.6,
+  },
+  label: {
+    color: tokens.colors.textPrimary,
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: '600',
+    letterSpacing: tokens.typography.buttonLetterSpacing,
+    textAlign: 'center',
+  },
+});

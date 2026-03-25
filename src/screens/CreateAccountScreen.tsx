@@ -1,10 +1,10 @@
 import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Image,
   KeyboardAvoidingView,
   Platform,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -81,14 +81,16 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-bg">
+    <SafeAreaView className="flex-1 bg-black">
       <StatusBar style="light" />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         className="flex-1"
+        style={{ backgroundColor: '#000' }}
       >
         <ScrollView
           className="flex-1"
+          style={{ backgroundColor: '#000' }}
           contentContainerStyle={{
             paddingHorizontal: tokens.spacing.screenX,
             paddingBottom: 32,
@@ -97,7 +99,7 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
         >
           <View
             className="rounded-[2px] bg-black"
-            style={{ paddingHorizontal: 44, paddingTop: 16, paddingBottom: 36, marginTop: -50}}
+            style={{ paddingHorizontal: 44, paddingTop: 0, paddingBottom: 0, marginTop: 0 }}
           >
             <Image
               source={titleImage}
@@ -129,7 +131,7 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
                     style={{
                       width: 34,
                       height: 18,
-                      marginTop: 6,
+                      marginTop: 0,
                       borderWidth: 2.5,
                       borderColor: '#5C4AA3',
                       borderTopLeftRadius: 18,
@@ -203,7 +205,7 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
               </Text>
             ) : null}
 
-            <View style={{ marginTop: 24, gap: 24 }}>
+            <View style={{ marginTop: 24, gap: 12 }}>
               <Button
                 label={submitting ? 'Creating...' : 'Create Account'}
                 onPress={handleCreateAccount}
@@ -225,5 +227,6 @@ const styles = StyleSheet.create({
     width: '200%',
     height: 350,
     marginBottom: -125,
+    marginTop: -100,
   },
 });

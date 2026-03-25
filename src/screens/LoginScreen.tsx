@@ -1,11 +1,11 @@
 import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -51,14 +51,16 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-bg">
+    <SafeAreaView className="flex-1 bg-black">
       <StatusBar style="light" />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         className="flex-1"
+        style={{ backgroundColor: '#000' }}
       >
         <ScrollView
           className="flex-1"
+          style={{ backgroundColor: '#000' }}
           contentContainerStyle={{
             paddingHorizontal: tokens.spacing.screenX,
             paddingBottom: 32,
@@ -69,10 +71,10 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
             className="bg-black"
             style={{
               minHeight: 705,
-              marginTop: 8,
-              paddingTop: 20,
+              marginTop: -50,
+              paddingTop: 0,
               paddingHorizontal: 46,
-              paddingBottom: 40,
+              paddingBottom: 10,
             }}
           >
             <Image
@@ -127,18 +129,18 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
               </Text>
             </Pressable>
 
-            <View style={{ marginTop: 20, gap: 28 }}>
+            <View style={{ marginTop: 20, gap: 12 }}>
               <Button
                 label={submitting ? 'Logging In...' : 'Log In'}
                 onPress={handleSignIn}
                 disabled={submitting}
-                style={{ width: '100%', height: 32 }}
+                style={{ width: '100%' }}
               />
               <Button
                 label="Back"
                 onPress={onBack}
                 disabled={submitting}
-                style={{ width: '100%', height: 32 }}
+                style={{ width: '100%' }}
               />
             </View>
           </View>
@@ -152,7 +154,7 @@ const styles = StyleSheet.create({
   titleImage: {
     width: '1000%',
     height: 500, 
-    marginBottom: -120,
+    marginBottom: -180,
     alignSelf: 'center',
   },
 });

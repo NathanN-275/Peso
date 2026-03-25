@@ -1,10 +1,10 @@
 import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Image,
   KeyboardAvoidingView,
   Platform,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -59,14 +59,16 @@ export default function ResetPasswordScreen({ onBack, onSubmit }: ResetPasswordS
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-bg">
+    <SafeAreaView className="flex-1 bg-black">
       <StatusBar style="light" />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         className="flex-1"
+        style={{ backgroundColor: '#000' }}
       >
         <ScrollView
           className="flex-1"
+          style={{ backgroundColor: '#000' }}
           contentContainerStyle={{
             paddingHorizontal: tokens.spacing.screenX,
             paddingBottom: 32,
@@ -77,7 +79,7 @@ export default function ResetPasswordScreen({ onBack, onSubmit }: ResetPasswordS
             className="bg-black"
             style={{
               minHeight: 705,
-              marginTop: 8,
+              marginTop: 0,
               paddingTop: 96,
               paddingHorizontal: 46,
               paddingBottom: 40,
@@ -124,13 +126,13 @@ export default function ResetPasswordScreen({ onBack, onSubmit }: ResetPasswordS
                 label={submitting ? 'Sending...' : 'Submit'}
                 onPress={handleSubmit}
                 disabled={submitting}
-                style={{ width: '100%', height: 32 }}
+                style={{ width: '100%' }}
               />
               <Button
                 label="Back"
                 onPress={onBack}
                 disabled={submitting}
-                style={{ width: '100%', height: 32 }}
+                style={{ width: '100%' }}
               />
             </View>
           </View>
