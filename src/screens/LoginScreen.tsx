@@ -11,6 +11,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useAuth } from '../../context/AuthContext';
 import Button from '../components/Button';
 import Input from '../components/Input';
 import tokens from '../theme/tokens';
@@ -20,15 +21,33 @@ const titleImage = require('../../Login.png');
 type LoginScreenProps = {
   onBack: () => void;
   onForgotPassword: () => void;
-  onSuccess: () => void;
 };
 
-export default function LoginScreen({ onBack, onForgotPassword, onSuccess }: LoginScreenProps) {
+export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenProps) {
+  const { signInWithEmail } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const handleSignIn = () => {
-    onSuccess();
+  const handleSignIn = async () => {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!normalizedEmail || !password.trim()) {
+      setErrorMessage('Enter your email and password.');
+      return;
+    }
+
+    setSubmitting(true);
+    setErrorMessage(null);
+
+    try {
+      await signInWithEmail(normalizedEmail, password);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to log in.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -71,7 +90,9 @@ export default function LoginScreen({ onBack, onForgotPassword, onSuccess }: Log
                 value={email}
                 onChangeText={setEmail}
                 keyboardType="email-address"
+                autoCapitalize="none"
                 textContentType="emailAddress"
+                editable={!submitting}
               />
               <Input
                 label="Password"
@@ -80,11 +101,21 @@ export default function LoginScreen({ onBack, onForgotPassword, onSuccess }: Log
                 onChangeText={setPassword}
                 secureTextEntry
                 textContentType="password"
+                editable={!submitting}
               />
             </View>
 
+            {errorMessage ? (
+              <Text
+                className="text-text-primary"
+                style={{ marginTop: 16, fontSize: 14, lineHeight: 20, color: '#FF8A8A' }}
+              >
+                {errorMessage}
+              </Text>
+            ) : null}
+
             <Pressable
-              onPress={onForgotPassword}
+              onPress={submitting ? undefined : onForgotPassword}
               accessibilityRole="link"
               style={{ marginTop: 12, alignSelf: 'flex-start' }}
             >
@@ -98,13 +129,15 @@ export default function LoginScreen({ onBack, onForgotPassword, onSuccess }: Log
 
             <View style={{ marginTop: 20, gap: 28 }}>
               <Button
-                label="Log In"
+                label={submitting ? 'Logging In...' : 'Log In'}
                 onPress={handleSignIn}
+                disabled={submitting}
                 style={{ width: '100%', height: 32 }}
               />
               <Button
                 label="Back"
                 onPress={onBack}
+                disabled={submitting}
                 style={{ width: '100%', height: 32 }}
               />
             </View>

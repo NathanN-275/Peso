@@ -2,6 +2,7 @@
   "expo": {
     "name": "peso-app",
     "slug": "peso-app",
+    "scheme": "pesoapp",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
