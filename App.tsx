@@ -1,7 +1,8 @@
 import './global.css';
 
 import { useEffect, useRef, useState } from 'react';
-import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { LogBox, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import CreateAccountScreen from './src/screens/CreateAccountScreen';
 import HomeScreen from './src/screens/HomeScreen';
@@ -9,6 +10,10 @@ import LoginScreen from './src/screens/LoginScreen';
 import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
 import ResetPasswordFormScreen from './src/screens/ResetPasswordFormScreen';
 import WelcomeScreen from './src/screens/WelcomeScreen';
+
+LogBox.ignoreLogs([
+  "SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead.",
+]);
 
 const AUTH_ROUTES = {
   home: 'home',
@@ -72,7 +77,7 @@ function parseWebAuthRoute(hash: string): AuthRoute {
 }
 
 function AppContent() {
-  const { session, user, initializing, configError } = useAuth();
+  const { session, user, initializing, configError, passwordRecoveryMode } = useAuth();
   const [route, setRoute] = useState<AuthRoute>(() => {
     if (Platform.OS === 'web') {
       return parseWebAuthRoute(window.location.hash);
@@ -125,16 +130,31 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
+    if (passwordRecoveryMode) {
+      authNavigation.toResetPasswordForm();
+    }
+  }, [passwordRecoveryMode]);
+
+  useEffect(() => {
     if (session) {
       hadSessionRef.current = true;
+      if (route !== AUTH_ROUTES.home && !passwordRecoveryMode) {
+        authNavigation.toHome();
+      }
       return;
     }
 
-    if (hadSessionRef.current) {
+    if (route === AUTH_ROUTES.home) {
+      authNavigation.toWelcome();
+      hadSessionRef.current = false;
+      return;
+    }
+
+    if (hadSessionRef.current && !passwordRecoveryMode) {
       authNavigation.toWelcome();
       hadSessionRef.current = false;
     }
-  }, [session]);
+  }, [session, route, passwordRecoveryMode]);
 
   const screenContent = (() => {
     if (initializing) {
@@ -163,12 +183,17 @@ function AppContent() {
       );
     }
 
-    if (session && user) {
-      return <HomeScreen email={user.email} />;
+    if (passwordRecoveryMode) {
+      return (
+        <ResetPasswordFormScreen
+          onBack={authNavigation.toLogin}
+          onReset={authNavigation.toLogin}
+        />
+      );
     }
 
-    if (route === AUTH_ROUTES.home) {
-      return <HomeScreen email={user?.email ?? null} />;
+    if (session && user) {
+      return <HomeScreen email={user.email} />;
     }
 
     if (route === AUTH_ROUTES.welcome) {
@@ -185,7 +210,6 @@ function AppContent() {
         <LoginScreen
           onBack={authNavigation.toWelcome}
           onForgotPassword={authNavigation.toResetPassword}
-          onSuccess={authNavigation.toHome}
         />
       );
     }
@@ -194,7 +218,6 @@ function AppContent() {
       return (
         <CreateAccountScreen
           onBack={authNavigation.toWelcome}
-          onSuccess={authNavigation.toHome}
         />
       );
     }
@@ -203,7 +226,6 @@ function AppContent() {
       return (
         <ResetPasswordScreen
           onBack={authNavigation.toLogin}
-          onSubmit={authNavigation.toResetPasswordForm}
         />
       );
     }
@@ -217,7 +239,12 @@ function AppContent() {
       );
     }
 
-    return null;
+    return (
+      <WelcomeScreen
+        onLogin={handleWelcomeLoginPress}
+        onCreateAccount={handleWelcomeCreateAccountPress}
+      />
+    );
   })();
 
   if (Platform.OS !== 'web') {
@@ -245,8 +272,10 @@ function AppContent() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }

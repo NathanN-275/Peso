@@ -1,5 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaView, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Pressable, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAuth } from '../../context/AuthContext';
 import tokens from '../theme/tokens';
 
 const SECONDARY_NAV_ICON = '#174A82';
@@ -10,9 +13,47 @@ type HomeScreenProps = {
 };
 
 export default function HomeScreen({ email }: HomeScreenProps) {
+  const { signOut } = useAuth();
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const handleLogout = async () => {
+    setSubmitting(true);
+    setErrorMessage(null);
+
+    try {
+      await signOut();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to log out.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <SafeAreaView className="flex-1 bg-bg" style={{ flex: 1, height: '100%' }}>
       <View className="flex-1 bg-black" style={{ flex: 1, height: '100%', overflow: 'hidden' }}>
+        <Pressable
+          onPress={handleLogout}
+          disabled={submitting}
+          accessibilityRole="button"
+          style={{
+            position: 'absolute',
+            top: 18,
+            left: 18,
+            zIndex: 1,
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            borderWidth: 1,
+            borderColor: tokens.colors.brand,
+            borderRadius: 999,
+          }}
+        >
+          <Text style={{ color: tokens.colors.brand, fontSize: 12, fontWeight: '700' }}>
+            {submitting ? 'Logging Out...' : 'Log Out'}
+          </Text>
+        </Pressable>
+
         <View
           className="flex-1 items-center justify-center"
           style={{ paddingHorizontal: 36, paddingBottom: 96 }}
@@ -33,14 +74,15 @@ export default function HomeScreen({ email }: HomeScreenProps) {
 
             <Ionicons name="add-circle-outline" size={60} color={tokens.colors.brand} />
 
-            {email ? (
+            {errorMessage ? (
               <Text
-                className="text-text-muted"
-                style={{ marginTop: 28, fontSize: 12, textAlign: 'center' }}
+                className="text-text-primary"
+                style={{ marginTop: 20, fontSize: 12, textAlign: 'center', color: '#FF8A8A' }}
               >
-                {email}
+                {errorMessage}
               </Text>
             ) : null}
+
           </View>
         </View>
 
