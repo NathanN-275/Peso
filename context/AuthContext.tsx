@@ -32,6 +32,30 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+function toSupabaseErrorDetails(error: unknown) {
+  if (!error || typeof error !== 'object') {
+    return { raw: error };
+  }
+
+  return {
+    name: 'name' in error ? error.name : undefined,
+    message: 'message' in error ? error.message : undefined,
+    code: 'code' in error ? error.code : undefined,
+    status: 'status' in error ? error.status : undefined,
+    details: 'details' in error ? error.details : undefined,
+    hint: 'hint' in error ? error.hint : undefined,
+    __isAuthError: '__isAuthError' in error ? error.__isAuthError : undefined,
+    raw: error,
+  };
+}
+
+function logSupabaseError(context: string, error: unknown, extra?: Record<string, unknown>) {
+  console.error(`[Supabase] ${context}`, {
+    ...toSupabaseErrorDetails(error),
+    ...(extra ?? {}),
+  });
+}
+
 function isMissingProfilesTableError(error: unknown) {
   if (!error || typeof error !== 'object') {
     return false;
@@ -100,7 +124,14 @@ async function ensureProfile(user: User) {
     throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
   }
 
-  const { data, error } = await supabase.from('profiles').select('id').eq('id', user.id).maybeSingle();
+  const profilePayload = {
+    id: user.id,
+    username: deriveUsername(user),
+  };
+
+  const { error } = await supabase.from('profiles').upsert(profilePayload, {
+    onConflict: 'id',
+  });
 
   if (error) {
     if (isMissingProfilesTableError(error)) {
@@ -110,27 +141,12 @@ async function ensureProfile(user: User) {
       return;
     }
 
+    logSupabaseError('ensureProfile failed', error, {
+      table: 'profiles',
+      operation: 'upsert',
+      userId: user.id,
+    });
     throw error;
-  }
-
-  if (data) {
-    return;
-  }
-
-  const { error: insertError } = await supabase.from('profiles').insert({
-    id: user.id,
-    username: deriveUsername(user),
-  });
-
-  if (insertError) {
-    if (isMissingProfilesTableError(insertError)) {
-      console.warn(
-        "Supabase table 'public.profiles' is missing. Continuing without profile sync."
-      );
-      return;
-    }
-
-    throw insertError;
   }
 }
 
@@ -176,7 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     bootstrap().catch((error) => {
-      console.error('Failed to initialize auth session', error);
+      logSupabaseError('Failed to initialize auth session', error);
       if (active) {
         setInitializing(false);
       }
@@ -224,12 +240,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     Linking.getInitialURL()
       .then((url) => hydrateSessionFromUrl(url))
       .catch((error) => {
-        console.error('Failed to hydrate auth session from initial URL', error);
+        logSupabaseError('Failed to hydrate auth session from initial URL', error);
       });
 
     const linkingSubscription = Linking.addEventListener('url', ({ url }) => {
       hydrateSessionFromUrl(url).catch((error) => {
-        console.error('Failed to hydrate auth session from incoming URL', error);
+        logSupabaseError('Failed to hydrate auth session from incoming URL', error);
       });
     });
 
@@ -249,7 +265,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && nextSession?.user) {
         ensureProfile(nextSession.user).catch((error) => {
-          console.error('Failed to ensure profile row', error);
+          logSupabaseError('Failed to ensure profile row after auth state change', error, {
+            event,
+            userId: nextSession.user.id,
+          });
         });
       }
     });
@@ -275,6 +294,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
 
       if (error) {
+        logSupabaseError('signInWithPassword failed', error, {
+          email,
+        });
         throw error;
       }
     },
@@ -314,13 +336,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       const redirectTo = getAuthRedirectUrl();
+      console.log('[Supabase] resetPasswordForEmail requested', {
+        email,
+        redirectTo,
+      });
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         ...(redirectTo ? { redirectTo } : {}),
       });
 
       if (error) {
+        logSupabaseError('resetPasswordForEmail failed', error, {
+          email,
+          redirectTo,
+        });
         throw error;
       }
+
+      console.log('[Supabase] resetPasswordForEmail succeeded', {
+        email,
+        redirectTo,
+      });
     },
     async updatePassword(password) {
       if (!supabase) {

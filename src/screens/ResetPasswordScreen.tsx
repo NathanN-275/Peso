@@ -19,10 +19,9 @@ const titleImage = require('../../ResetPassword.png');
 
 type ResetPasswordScreenProps = {
   onBack: () => void;
-  onSubmit: () => void;
 };
 
-export default function ResetPasswordScreen({ onBack, onSubmit }: ResetPasswordScreenProps) {
+export default function ResetPasswordScreen({ onBack }: ResetPasswordScreenProps) {
   const { resetPasswordForEmail } = useAuth();
   const [identifier, setIdentifier] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -94,12 +93,13 @@ export default function ResetPasswordScreen({ onBack, onSubmit }: ResetPasswordS
             />
 
             <Input
-              label="Email or Phone Number"
-              placeholder="Value"
+              label="Email"
+              placeholder="name@example.com"
               value={identifier}
               onChangeText={setIdentifier}
               keyboardType="email-address"
               autoCapitalize="none"
+              textContentType="emailAddress"
               editable={!submitting}
             />
 

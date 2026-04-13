@@ -1,7 +1,7 @@
 import './global.css';
 
 import { useEffect, useRef, useState } from 'react';
-import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { LogBox, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import CreateAccountScreen from './src/screens/CreateAccountScreen';
@@ -10,6 +10,10 @@ import LoginScreen from './src/screens/LoginScreen';
 import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
 import ResetPasswordFormScreen from './src/screens/ResetPasswordFormScreen';
 import WelcomeScreen from './src/screens/WelcomeScreen';
+
+LogBox.ignoreLogs([
+  "SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead.",
+]);
 
 const AUTH_ROUTES = {
   home: 'home',
@@ -222,7 +226,6 @@ function AppContent() {
       return (
         <ResetPasswordScreen
           onBack={authNavigation.toLogin}
-          onSubmit={authNavigation.toResetPasswordForm}
         />
       );
     }
