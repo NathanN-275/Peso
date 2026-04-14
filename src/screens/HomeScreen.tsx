@@ -3,16 +3,15 @@ import { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
+import BottomNav, { NAV_HEIGHT } from '../components/BottomNav';
 import tokens from '../theme/tokens';
-
-const SECONDARY_NAV_ICON = '#174A82';
-const NAV_ICON_SIZE = 34;
 
 type HomeScreenProps = {
   email?: string | null;
+  onNavigateToAddVideo?: () => void;
 };
 
-export default function HomeScreen({ email }: HomeScreenProps) {
+export default function HomeScreen({ email, onNavigateToAddVideo }: HomeScreenProps) {
   const { signOut } = useAuth();
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -56,7 +55,7 @@ export default function HomeScreen({ email }: HomeScreenProps) {
 
         <View
           className="flex-1 items-center justify-center"
-          style={{ paddingHorizontal: 36, paddingBottom: 96 }}
+          style={{ paddingHorizontal: 36, paddingBottom: NAV_HEIGHT + 38 }}
         >
           <View style={{ alignItems: 'center', justifyContent: 'center', maxWidth: 320 }}>
             <Text
@@ -72,7 +71,14 @@ export default function HomeScreen({ email }: HomeScreenProps) {
               Add or record a video,{'\n'}saved videos will appear{'\n'}on the home screen
             </Text>
 
-            <Ionicons name="add-circle-outline" size={60} color={tokens.colors.brand} />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Add video"
+              hitSlop={16}
+              onPress={onNavigateToAddVideo}
+            >
+              <Ionicons name="add-circle-outline" size={60} color={tokens.colors.brand} />
+            </Pressable>
 
             {errorMessage ? (
               <Text
@@ -86,25 +92,7 @@ export default function HomeScreen({ email }: HomeScreenProps) {
           </View>
         </View>
 
-        <View
-          style={{
-            position: 'absolute',
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: 58,
-            width: '100%',
-            backgroundColor: '#2A2A2A',
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-around',
-            paddingHorizontal: 24,
-          }}
-        >
-          <Ionicons name="home-outline" size={NAV_ICON_SIZE} color={tokens.colors.brand} />
-          <Ionicons name="add-circle-outline" size={NAV_ICON_SIZE} color={SECONDARY_NAV_ICON} />
-          <Ionicons name="person-outline" size={NAV_ICON_SIZE} color={SECONDARY_NAV_ICON} />
-        </View>
+        <BottomNav activeTab="home" onHomePress={() => {}} onAddPress={onNavigateToAddVideo} />
       </View>
     </SafeAreaView>
   );

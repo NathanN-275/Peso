@@ -5,6 +5,7 @@ import { LogBox, Platform, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import CreateAccountScreen from './src/screens/CreateAccountScreen';
+import AddVideoScreen from './src/screens/AddVideoScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
@@ -17,6 +18,7 @@ LogBox.ignoreLogs([
 
 const AUTH_ROUTES = {
   home: 'home',
+  addVideo: 'add-video',
   welcome: 'welcome',
   login: 'login',
   createAccount: 'create-account',
@@ -28,6 +30,7 @@ type AuthRoute = (typeof AUTH_ROUTES)[keyof typeof AUTH_ROUTES];
 
 const WEB_ROUTE_HASHES: Record<AuthRoute, string> = {
   [AUTH_ROUTES.home]: '#/home',
+  [AUTH_ROUTES.addVideo]: '#/add-video',
   [AUTH_ROUTES.welcome]: '#/welcome',
   [AUTH_ROUTES.login]: '#/login',
   [AUTH_ROUTES.createAccount]: '#/create-account',
@@ -55,6 +58,10 @@ function parseWebAuthRoute(hash: string): AuthRoute {
 
   if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.home]) {
     return AUTH_ROUTES.home;
+  }
+
+  if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.addVideo]) {
+    return AUTH_ROUTES.addVideo;
   }
 
   if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.login]) {
@@ -104,6 +111,7 @@ function AppContent() {
 
   const authNavigation = {
     toHome: () => navigateToAuthRoute(AUTH_ROUTES.home),
+    toAddVideo: () => navigateToAuthRoute(AUTH_ROUTES.addVideo),
     toWelcome: () => navigateToAuthRoute(AUTH_ROUTES.welcome),
     toLogin: () => navigateToAuthRoute(AUTH_ROUTES.login),
     toCreateAccount: () => navigateToAuthRoute(AUTH_ROUTES.createAccount),
@@ -138,13 +146,13 @@ function AppContent() {
   useEffect(() => {
     if (session) {
       hadSessionRef.current = true;
-      if (route !== AUTH_ROUTES.home && !passwordRecoveryMode) {
+      if (route !== AUTH_ROUTES.home && route !== AUTH_ROUTES.addVideo && !passwordRecoveryMode) {
         authNavigation.toHome();
       }
       return;
     }
 
-    if (route === AUTH_ROUTES.home) {
+    if (route === AUTH_ROUTES.home || route === AUTH_ROUTES.addVideo) {
       authNavigation.toWelcome();
       hadSessionRef.current = false;
       return;
@@ -193,7 +201,16 @@ function AppContent() {
     }
 
     if (session && user) {
-      return <HomeScreen email={user.email} />;
+      if (route === AUTH_ROUTES.addVideo) {
+        return (
+          <AddVideoScreen
+            onHomePress={authNavigation.toHome}
+            onAddPress={authNavigation.toAddVideo}
+          />
+        );
+      }
+
+      return <HomeScreen email={user.email} onNavigateToAddVideo={authNavigation.toAddVideo} />;
     }
 
     if (route === AUTH_ROUTES.welcome) {
