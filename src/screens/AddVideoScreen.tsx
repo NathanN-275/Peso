@@ -8,19 +8,21 @@ type AddVideoScreenProps = {
   onHomePress?: () => void;
   onAddPress?: () => void;
   onProfilePress?: () => void;
+  onUploadVideoPress?: () => void;
 };
 
 export default function AddVideoScreen({
   onHomePress,
   onAddPress,
   onProfilePress,
+  onUploadVideoPress,
 }: AddVideoScreenProps) {
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
         <View style={styles.content}>
           <Button label="Record New Video" style={styles.actionButton} />
-          <Button label="Upload Video" style={styles.actionButton} />
+          <Button label="Upload Video" onPress={onUploadVideoPress} style={styles.actionButton} />
         </View>
 
         <BottomNav
