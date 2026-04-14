@@ -10,6 +10,7 @@ import HomeScreen from './src/screens/HomeScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
 import ResetPasswordFormScreen from './src/screens/ResetPasswordFormScreen';
+import UploadVideoScreen from './src/screens/UploadVideoScreen';
 import WelcomeScreen from './src/screens/WelcomeScreen';
 
 LogBox.ignoreLogs([
@@ -19,6 +20,7 @@ LogBox.ignoreLogs([
 const AUTH_ROUTES = {
   home: 'home',
   addVideo: 'add-video',
+  uploadVideo: 'upload-video',
   welcome: 'welcome',
   login: 'login',
   createAccount: 'create-account',
@@ -31,6 +33,7 @@ type AuthRoute = (typeof AUTH_ROUTES)[keyof typeof AUTH_ROUTES];
 const WEB_ROUTE_HASHES: Record<AuthRoute, string> = {
   [AUTH_ROUTES.home]: '#/home',
   [AUTH_ROUTES.addVideo]: '#/add-video',
+  [AUTH_ROUTES.uploadVideo]: '#/upload-video',
   [AUTH_ROUTES.welcome]: '#/welcome',
   [AUTH_ROUTES.login]: '#/login',
   [AUTH_ROUTES.createAccount]: '#/create-account',
@@ -62,6 +65,10 @@ function parseWebAuthRoute(hash: string): AuthRoute {
 
   if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.addVideo]) {
     return AUTH_ROUTES.addVideo;
+  }
+
+  if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.uploadVideo]) {
+    return AUTH_ROUTES.uploadVideo;
   }
 
   if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.login]) {
@@ -112,6 +119,7 @@ function AppContent() {
   const authNavigation = {
     toHome: () => navigateToAuthRoute(AUTH_ROUTES.home),
     toAddVideo: () => navigateToAuthRoute(AUTH_ROUTES.addVideo),
+    toUploadVideo: () => navigateToAuthRoute(AUTH_ROUTES.uploadVideo),
     toWelcome: () => navigateToAuthRoute(AUTH_ROUTES.welcome),
     toLogin: () => navigateToAuthRoute(AUTH_ROUTES.login),
     toCreateAccount: () => navigateToAuthRoute(AUTH_ROUTES.createAccount),
@@ -146,13 +154,22 @@ function AppContent() {
   useEffect(() => {
     if (session) {
       hadSessionRef.current = true;
-      if (route !== AUTH_ROUTES.home && route !== AUTH_ROUTES.addVideo && !passwordRecoveryMode) {
+      if (
+        route !== AUTH_ROUTES.home &&
+        route !== AUTH_ROUTES.addVideo &&
+        route !== AUTH_ROUTES.uploadVideo &&
+        !passwordRecoveryMode
+      ) {
         authNavigation.toHome();
       }
       return;
     }
 
-    if (route === AUTH_ROUTES.home || route === AUTH_ROUTES.addVideo) {
+    if (
+      route === AUTH_ROUTES.home ||
+      route === AUTH_ROUTES.addVideo ||
+      route === AUTH_ROUTES.uploadVideo
+    ) {
       authNavigation.toWelcome();
       hadSessionRef.current = false;
       return;
@@ -201,11 +218,16 @@ function AppContent() {
     }
 
     if (session && user) {
+      if (route === AUTH_ROUTES.uploadVideo) {
+        return <UploadVideoScreen onBack={authNavigation.toAddVideo} />;
+      }
+
       if (route === AUTH_ROUTES.addVideo) {
         return (
           <AddVideoScreen
             onHomePress={authNavigation.toHome}
             onAddPress={authNavigation.toAddVideo}
+            onUploadVideoPress={authNavigation.toUploadVideo}
           />
         );
       }
