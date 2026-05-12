@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import Depends, Header, HTTPException, status
-from jose import JWTError, jwt
 
-from .config import Settings, get_settings
+from .supabase_client import get_supabase_admin_client
 
 
 def _unauthorized(detail: str) -> HTTPException:
@@ -14,7 +11,6 @@ def _unauthorized(detail: str) -> HTTPException:
 
 def get_current_user_id(
   authorization: str | None = Header(default=None),
-  settings: Settings = Depends(get_settings),
 ) -> str:
   if not authorization or not authorization.startswith("Bearer "):
     raise _unauthorized("Missing bearer token.")
@@ -22,19 +18,13 @@ def get_current_user_id(
   token = authorization.removeprefix("Bearer ").strip()
 
   try:
-    payload: dict[str, Any] = jwt.decode(
-      token,
-      settings.supabase_jwt_secret,
-      algorithms=["HS256"],
-      options={"verify_aud": False},
-    )
-  except JWTError as error:
+    user_response = get_supabase_admin_client().auth.get_user(token)
+  except Exception as error:
     raise _unauthorized("Invalid bearer token.") from error
 
-  user_id = payload.get("sub")
-  role = payload.get("role")
+  user = user_response.user if user_response else None
 
-  if not user_id or role not in {"authenticated", "service_role"}:
+  if not user or not user.id:
     raise _unauthorized("Token does not map to an authenticated user.")
 
-  return str(user_id)
+  return str(user.id)

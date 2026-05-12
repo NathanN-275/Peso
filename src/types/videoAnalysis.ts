@@ -13,6 +13,26 @@ export type VideoAnalysisRep = {
   };
 };
 
+export type VideoAnalysisDiagnostics = {
+  quality_score?: number;
+  pose_coverage?: number;
+  lower_body_visibility?: number;
+  subject_height?: number;
+  side_view_score?: number;
+  selected_side?: string | null;
+  tracking_side_confidence?: number;
+  quality_flags?: string[];
+  rep_detection?: {
+    motion_amplitude?: number;
+    minimum_signal?: number;
+    maximum_signal?: number;
+    low_threshold?: number | null;
+    high_threshold?: number | null;
+    reason?: string | null;
+    rep_count?: number;
+  };
+};
+
 export type VideoAnalysisResult = {
   video_id: string;
   exercise: string;
@@ -26,6 +46,7 @@ export type VideoAnalysisResult = {
     code: string;
     message: string;
   };
+  diagnostics?: VideoAnalysisDiagnostics;
   model_version?: string;
 };
 

@@ -4,9 +4,14 @@ from typing import Any
 
 from ..feedback_engine import build_feedback
 from ..metrics_calculator import (
+  average_visibility,
+  blended_point,
+  clamp,
+  hip_flexion_score,
   hip_depth_ratio,
+  knee_flexion_score,
   point_for_side,
-  select_tracking_side,
+  select_tracking_side_for_clip,
   squat_depth_score,
   torso_angle_change,
   torso_angle_from_vertical,
@@ -16,6 +21,90 @@ from .base import BaseExerciseAnalyzer
 
 
 class SquatAnalyzer(BaseExerciseAnalyzer):
+  def _build_quality_report(
+    self,
+    *,
+    frames: list[dict[str, Any]],
+    sampled_frame_count: int | None = None,
+  ) -> dict[str, Any]:
+    if not frames:
+      return {
+        "quality_score": 0.0,
+        "pose_coverage": 0.0,
+        "lower_body_visibility": 0.0,
+        "subject_height": 0.0,
+        "side_view_score": 0.0,
+        "selected_side": None,
+        "tracking_side_confidence": 0.0,
+        "quality_flags": ["low_pose_coverage"],
+      }
+
+    selected_side, tracking_confidence = select_tracking_side_for_clip(frames)
+    pose_coverage = len(frames) / max(sampled_frame_count or len(frames), 1)
+    lower_body_visibility = sum(
+      (
+        point_for_side(frame, selected_side, "hip")["visibility"]
+        + point_for_side(frame, selected_side, "knee")["visibility"]
+        + point_for_side(frame, selected_side, "ankle")["visibility"]
+      ) / 3
+      for frame in frames
+    ) / len(frames)
+    subject_heights: list[float] = []
+    side_view_scores: list[float] = []
+
+    for frame in frames:
+      landmarks = frame["landmarks"]
+      tracked_points = [
+        point_for_side(frame, selected_side, "shoulder"),
+        point_for_side(frame, selected_side, "hip"),
+        point_for_side(frame, selected_side, "knee"),
+        point_for_side(frame, selected_side, "ankle"),
+      ]
+      y_values = [point["y"] for point in tracked_points if point["visibility"] >= 0.35]
+
+      if y_values:
+        subject_heights.append(max(y_values) - min(y_values))
+
+      shoulder_gap = abs(landmarks["left_shoulder"]["x"] - landmarks["right_shoulder"]["x"])
+      hip_gap = abs(landmarks["left_hip"]["x"] - landmarks["right_hip"]["x"])
+      side_view_scores.append(clamp(1.0 - ((shoulder_gap + hip_gap) / 0.42), 0.0, 1.0))
+
+    subject_height = sum(subject_heights) / max(len(subject_heights), 1)
+    side_view_score = sum(side_view_scores) / max(len(side_view_scores), 1)
+    quality_flags: list[str] = []
+
+    if pose_coverage < 0.55:
+      quality_flags.append("low_pose_coverage")
+    if lower_body_visibility < 0.58:
+      quality_flags.append("lower_body_occluded")
+    if subject_height < 0.32:
+      quality_flags.append("subject_too_small")
+    if side_view_score < 0.42:
+      quality_flags.append("camera_not_side_view")
+    if tracking_confidence < 0.08 and min(
+      average_visibility(frame, selected_side) for frame in frames
+    ) < 0.55:
+      quality_flags.append("ambiguous_tracking_side")
+
+    component_scores = [
+      clamp(pose_coverage, 0.0, 1.0),
+      clamp(lower_body_visibility, 0.0, 1.0),
+      clamp(subject_height / 0.55, 0.0, 1.0),
+      clamp(side_view_score, 0.0, 1.0),
+    ]
+    quality_score = sum(component_scores) / len(component_scores)
+
+    return {
+      "quality_score": round(quality_score, 3),
+      "pose_coverage": round(pose_coverage, 3),
+      "lower_body_visibility": round(lower_body_visibility, 3),
+      "subject_height": round(subject_height, 3),
+      "side_view_score": round(side_view_score, 3),
+      "selected_side": selected_side,
+      "tracking_side_confidence": tracking_confidence,
+      "quality_flags": quality_flags,
+    }
+
   def analyze(
     self,
     *,
@@ -23,30 +112,49 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
     exercise_type: str,
     view_type: str,
     frames: list[dict[str, Any]],
+    sampled_frame_count: int | None = None,
   ) -> dict[str, Any]:
-    tracking_side_per_frame = [select_tracking_side(frame) for frame in frames]
+    diagnostics = self._build_quality_report(
+      frames=frames,
+      sampled_frame_count=sampled_frame_count,
+    )
+    selected_side = diagnostics["selected_side"] or "left"
     hip_depths = []
+    knee_flexions = []
+    hip_flexions = []
 
-    for frame, side in zip(frames, tracking_side_per_frame, strict=False):
-      shoulder = point_for_side(frame, side, "shoulder")
-      hip = point_for_side(frame, side, "hip")
-      ankle = point_for_side(frame, side, "ankle")
+    for frame in frames:
+      shoulder = blended_point(frame, "shoulder")
+      hip = blended_point(frame, "hip")
+      knee = blended_point(frame, "knee")
+      ankle = blended_point(frame, "ankle")
       hip_depths.append(hip_depth_ratio(shoulder, hip, ankle))
+      knee_flexions.append(knee_flexion_score(hip, knee, ankle))
+      hip_flexions.append(hip_flexion_score(shoulder, hip, knee))
 
-    reps = detect_reps(hip_depths, frames)
+    reps, rep_detection = detect_reps(
+      hip_depths=hip_depths,
+      knee_flexions=knee_flexions,
+      hip_flexions=hip_flexions,
+      frames=frames,
+    )
+    diagnostics["rep_detection"] = rep_detection
+
+    if rep_detection.get("reason") and rep_detection["reason"] not in diagnostics["quality_flags"]:
+      diagnostics["quality_flags"].append(rep_detection["reason"])
+
     rep_summaries: list[dict[str, Any]] = []
 
     for rep_index, rep in enumerate(reps, start=1):
       start_frame = frames[rep["start_index"]]
       bottom_frame = frames[rep["bottom_index"]]
-      side = tracking_side_per_frame[rep["bottom_index"]]
 
-      start_shoulder = point_for_side(start_frame, side, "shoulder")
-      start_hip = point_for_side(start_frame, side, "hip")
-      bottom_shoulder = point_for_side(bottom_frame, side, "shoulder")
-      bottom_hip = point_for_side(bottom_frame, side, "hip")
-      bottom_knee = point_for_side(bottom_frame, side, "knee")
-      bottom_ankle = point_for_side(bottom_frame, side, "ankle")
+      start_shoulder = point_for_side(start_frame, selected_side, "shoulder")
+      start_hip = point_for_side(start_frame, selected_side, "hip")
+      bottom_shoulder = point_for_side(bottom_frame, selected_side, "shoulder")
+      bottom_hip = point_for_side(bottom_frame, selected_side, "hip")
+      bottom_knee = point_for_side(bottom_frame, selected_side, "knee")
+      bottom_ankle = point_for_side(bottom_frame, selected_side, "ankle")
 
       start_torso = torso_angle_from_vertical(start_shoulder, start_hip)
       bottom_torso = torso_angle_from_vertical(bottom_shoulder, bottom_hip)
@@ -74,7 +182,7 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
         }
       )
 
-    summary_flags, coach_feedback = build_feedback(rep_summaries)
+    summary_flags, coach_feedback = build_feedback(rep_summaries, diagnostics)
 
     return {
       "video_id": video_id,
@@ -85,4 +193,5 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
       "reps": rep_summaries,
       "summary_flags": summary_flags,
       "coach_feedback": coach_feedback,
+      "diagnostics": diagnostics,
     }

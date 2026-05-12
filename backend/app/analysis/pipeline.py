@@ -81,6 +81,12 @@ def analyze_video(video_id: str) -> None:
         reason="No pose detected. Make sure your full body is visible from the side.",
         error_code="no_pose_detected",
       )
+      result["diagnostics"] = {
+        "quality_score": 0.0,
+        "pose_coverage": 0.0,
+        "sampled_frame_count": estimation.get("sampled_frame_count", 0),
+        "quality_flags": ["low_pose_coverage"],
+      }
     else:
       analyzer = SquatAnalyzer()
       result = analyzer.analyze(
@@ -88,6 +94,7 @@ def analyze_video(video_id: str) -> None:
         exercise_type=video["exercise_type"],
         view_type=video["view_type"],
         frames=estimation["frames"],
+        sampled_frame_count=estimation.get("sampled_frame_count"),
       )
 
     result["model_version"] = settings.model_version

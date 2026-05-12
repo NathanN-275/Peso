@@ -49,6 +49,14 @@ function formatFlagLabel(value: string) {
   return value.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function formatPercent(value?: number | null) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return null;
+  }
+
+  return `${Math.round(value * 100)}%`;
+}
+
 export default function UploadVideoScreen({ onBack }: UploadVideoScreenProps) {
   const { user, session } = useAuth();
   const isWeb = Platform.select<boolean>({ web: true, default: false }) ?? false;
@@ -380,6 +388,21 @@ export default function UploadVideoScreen({ onBack }: UploadVideoScreenProps) {
     selectedVideo?.fileName ?? selectedVideo?.uri.split('/').pop() ?? 'Selected video';
   const resolvedFileSize = formatFileSize(displayedVideoSizeBytes ?? selectedVideo?.fileSize);
   const inlineMessage = errorMessage ?? statusMessage;
+  const diagnostics = analysisResult?.diagnostics;
+  const videoQualityRows = diagnostics
+    ? [
+        ['Overall quality', formatPercent(diagnostics.quality_score)],
+        ['Pose coverage', formatPercent(diagnostics.pose_coverage)],
+        ['Lower body visibility', formatPercent(diagnostics.lower_body_visibility)],
+        ['Side-view confidence', formatPercent(diagnostics.side_view_score)],
+        [
+          'Squat motion signal',
+          typeof diagnostics.rep_detection?.motion_amplitude === 'number'
+            ? diagnostics.rep_detection.motion_amplitude.toFixed(2)
+            : null,
+        ],
+      ].filter((row): row is [string, string] => Boolean(row[1]))
+    : [];
   const canStartAnalysis =
     Boolean(selectedVideo && videoSetup) &&
     !uploading &&
@@ -501,6 +524,22 @@ export default function UploadVideoScreen({ onBack }: UploadVideoScreenProps) {
                       {`\u2022 ${feedback}`}
                     </Text>
                   ))}
+                </View>
+              ) : null}
+
+              {videoQualityRows.length > 0 ? (
+                <View style={styles.resultSection}>
+                  <Text style={styles.resultLabel}>Video quality</Text>
+                  {videoQualityRows.map(([label, value]) => (
+                    <Text key={label} style={styles.resultText}>
+                      {label}: {value}
+                    </Text>
+                  ))}
+                  {diagnostics?.quality_flags?.length ? (
+                    <Text style={styles.resultMutedText}>
+                      Flags: {diagnostics.quality_flags.map(formatFlagLabel).join(', ')}
+                    </Text>
+                  ) : null}
                 </View>
               ) : null}
 
@@ -731,6 +770,11 @@ const styles = StyleSheet.create({
     color: tokens.colors.textPrimary,
     fontSize: 14,
     lineHeight: 20,
+  },
+  resultMutedText: {
+    color: tokens.colors.textMuted,
+    fontSize: 13,
+    lineHeight: 19,
   },
   actions: {
     width: '100%',

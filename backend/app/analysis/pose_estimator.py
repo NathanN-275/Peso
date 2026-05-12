@@ -53,12 +53,18 @@ class PoseEstimator:
     if not capture.isOpened():
       raise RuntimeError("Unable to open uploaded video.")
 
+    if hasattr(cv2, "CAP_PROP_ORIENTATION_AUTO"):
+      capture.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
+
     fps = capture.get(cv2.CAP_PROP_FPS) or 0.0
     frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+    frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
     duration_ms = int((frame_count / fps) * 1000) if fps > 0 else None
     frame_step = max(int(round(fps / self.target_fps)), 1) if fps > 0 else 1
 
     frames: list[dict[str, Any]] = []
+    sampled_frame_count = 0
     pose = mp.solutions.pose.Pose(
       static_image_mode=False,
       model_complexity=1,
@@ -81,6 +87,7 @@ class PoseEstimator:
           frame_index += 1
           continue
 
+        sampled_frame_count += 1
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = pose.process(rgb_frame)
 
@@ -116,5 +123,9 @@ class PoseEstimator:
     return {
       "fps": round(fps, 2) if fps else None,
       "duration_ms": duration_ms,
+      "frame_count": frame_count,
+      "sampled_frame_count": sampled_frame_count,
+      "frame_width": frame_width or None,
+      "frame_height": frame_height or None,
       "frames": frames,
     }
