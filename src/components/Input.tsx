@@ -12,6 +12,11 @@ type InputProps = {
   autoCorrect?: boolean;
   textContentType?: TextInputProps['textContentType'];
   editable?: boolean;
+  onFocus?: TextInputProps['onFocus'];
+  onBlur?: TextInputProps['onBlur'];
+  autoFocus?: boolean;
+  returnKeyType?: TextInputProps['returnKeyType'];
+  onSubmitEditing?: TextInputProps['onSubmitEditing'];
 };
 
 export default function Input({
@@ -25,6 +30,11 @@ export default function Input({
   autoCorrect = false,
   textContentType,
   editable = true,
+  onFocus,
+  onBlur,
+  autoFocus = false,
+  returnKeyType,
+  onSubmitEditing,
 }: InputProps) {
   return (
     <View>
@@ -48,6 +58,11 @@ export default function Input({
         autoCorrect={autoCorrect}
         textContentType={textContentType}
         editable={editable}
+        onFocus={onFocus}
+        onBlur={onBlur}
+        autoFocus={autoFocus}
+        returnKeyType={returnKeyType}
+        onSubmitEditing={onSubmitEditing}
         className="rounded-input border border-input-border bg-input-bg px-4 text-text-primary"
         style={styles.textInput}
       />

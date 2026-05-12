@@ -7,11 +7,11 @@
     "**/*.ts",
     "**/*.tsx",
     "**/*.d.ts",
-    "nativewind-env.d.ts"
+    "nativewind-env.d.ts",
+    "global.d.ts"
   ],
   "exclude": [
     "dist",
-    "node_modules",
-    "peso-app"
+    "node_modules"
   ]
 }
