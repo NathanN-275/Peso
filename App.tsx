@@ -219,7 +219,7 @@ function AppContent() {
 
     if (session && user) {
       if (route === AUTH_ROUTES.uploadVideo) {
-        return <UploadVideoScreen onBack={authNavigation.toAddVideo} />;
+        return <UploadVideoScreen onBack={authNavigation.toAddVideo} onAnalysisSaved={authNavigation.toHome} />;
       }
 
       if (route === AUTH_ROUTES.addVideo) {
