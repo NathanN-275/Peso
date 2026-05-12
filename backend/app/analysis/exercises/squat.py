@@ -20,6 +20,66 @@ from ..rep_detector import detect_reps
 from .base import BaseExerciseAnalyzer
 
 
+def _build_pose_frames(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
+  return [
+    {
+      "time": frame["timestamp_ms"] / 1000,
+      "keypoints": [
+        {
+          "name": name,
+          "x": point["x"],
+          "y": point["y"],
+          "confidence": point["visibility"],
+        }
+        for name, point in frame["landmarks"].items()
+      ],
+    }
+    for frame in frames
+  ]
+
+
+def _calculate_velocity_stats(
+  *,
+  frames: list[dict[str, Any]],
+  start_index: int,
+  end_index: int,
+) -> dict[str, float]:
+  if end_index <= start_index:
+    return {
+      "avg_velocity": 0.0,
+      "peak_velocity": 0.0,
+    }
+
+  hip_points = [
+    (
+      frames[index]["timestamp_ms"] / 1000,
+      blended_point(frames[index], "hip")["y"],
+    )
+    for index in range(start_index, end_index + 1)
+  ]
+  velocities: list[float] = []
+  total_distance = 0.0
+
+  for previous, current in zip(hip_points, hip_points[1:], strict=False):
+    previous_time, previous_y = previous
+    current_time, current_y = current
+    elapsed = current_time - previous_time
+
+    if elapsed <= 0:
+      continue
+
+    distance = abs(current_y - previous_y)
+    total_distance += distance
+    velocities.append(distance / elapsed)
+
+  duration = hip_points[-1][0] - hip_points[0][0]
+
+  return {
+    "avg_velocity": round(total_distance / duration, 3) if duration > 0 else 0.0,
+    "peak_velocity": round(max(velocities), 3) if velocities else 0.0,
+  }
+
+
 class SquatAnalyzer(BaseExerciseAnalyzer):
   def _build_quality_report(
     self,
@@ -148,6 +208,15 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
     for rep_index, rep in enumerate(reps, start=1):
       start_frame = frames[rep["start_index"]]
       bottom_frame = frames[rep["bottom_index"]]
+      duration_seconds = max(
+        (rep["end_timestamp_ms"] - rep["start_timestamp_ms"]) / 1000,
+        0.001,
+      )
+      velocity_stats = _calculate_velocity_stats(
+        frames=frames,
+        start_index=rep["start_index"],
+        end_index=rep["end_index"],
+      )
 
       start_shoulder = point_for_side(start_frame, selected_side, "shoulder")
       start_hip = point_for_side(start_frame, selected_side, "hip")
@@ -170,9 +239,19 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
       rep_summaries.append(
         {
           "rep_index": rep_index,
+          "repIndex": rep_index,
+          "startTime": rep["start_timestamp_ms"] / 1000,
+          "endTime": rep["end_timestamp_ms"] / 1000,
+          "duration": round(duration_seconds, 3),
+          "repSpeed": round(1 / duration_seconds, 3),
+          "avgVelocity": velocity_stats["avg_velocity"],
+          "peakVelocity": velocity_stats["peak_velocity"],
+          "depthScore": depth_score,
+          "torsoAngleChangeDeg": torso_delta,
           "depth_score": depth_score,
           "torso_angle": round(bottom_torso, 2),
           "torso_angle_change": torso_delta,
+          "estimated_body_velocity": velocity_stats,
           "flags": flags,
           "timestamps_ms": {
             "start": rep["start_timestamp_ms"],
@@ -194,4 +273,17 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
       "summary_flags": summary_flags,
       "coach_feedback": coach_feedback,
       "diagnostics": diagnostics,
+      "videoId": video_id,
+      "cameraView": view_type,
+      "duration": frames[-1]["timestamp_ms"] / 1000 if frames else 0,
+      "poseFrames": _build_pose_frames(frames),
+      "summaryFlags": summary_flags,
+      "videoQuality": {
+        "overallQuality": diagnostics.get("quality_score", 0),
+        "poseCoverage": diagnostics.get("pose_coverage", 0),
+        "lowerBodyVisibility": diagnostics.get("lower_body_visibility", 0),
+        "sideViewConfidence": diagnostics.get("side_view_score", 0),
+        "squatMotionSignal": diagnostics.get("rep_detection", {}).get("motion_amplitude", 0),
+      },
+      "coachingFeedback": coach_feedback,
     }

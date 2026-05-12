@@ -7,17 +7,23 @@ import { LayoutChangeEvent } from 'react-native';
 import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
-import { fetchAnalysisResult, fetchVideoStatus, triggerVideoAnalysis } from '../../lib/backendApi';
+import {
+  fetchAnalysisResult,
+  fetchVideoStatus,
+  triggerVideoAnalysis,
+} from '../../lib/backendApi';
 import { uploadVideoForAnalysis } from '../../lib/videoUpload';
 import Button from '../components/Button';
 import SelectedVideoPreview from '../components/SelectedVideoPreview';
 import VideoSetupModal from '../components/VideoSetupModal';
 import { VideoSetupSelection } from '../constants/videoSetup';
+import AnalysisReviewScreen from './AnalysisReviewScreen';
 import { VideoAnalysisResult, VideoAnalysisStatus } from '../types/videoAnalysis';
 import tokens from '../theme/tokens';
 
 type UploadVideoScreenProps = {
   onBack?: () => void;
+  onAnalysisSaved?: () => void;
 };
 
 function formatFileSize(fileSize?: number | null) {
@@ -57,7 +63,7 @@ function formatPercent(value?: number | null) {
   return `${Math.round(value * 100)}%`;
 }
 
-export default function UploadVideoScreen({ onBack }: UploadVideoScreenProps) {
+export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVideoScreenProps) {
   const { user, session } = useAuth();
   const isWeb = Platform.select<boolean>({ web: true, default: false }) ?? false;
   const [permissionStatus, setPermissionStatus] = useState<ImagePicker.PermissionStatus | null>(null);
@@ -419,6 +425,28 @@ export default function UploadVideoScreen({ onBack }: UploadVideoScreenProps) {
 
     setScreenLayout({ width, height });
   };
+
+  const handleReviewDiscarded = () => {
+    setSelectedVideo(null);
+    setAnalysisVideoId(null);
+    setAnalysisStatus(null);
+    setAnalysisResult(null);
+    setErrorMessage(null);
+    setStatusMessage(null);
+    setThumbnailUri(null);
+    setDisplayedVideoSizeBytes(null);
+  };
+
+  if (analysisResult && selectedVideo) {
+    return (
+      <AnalysisReviewScreen
+        videoUri={selectedVideo.uri}
+        result={analysisResult}
+        onDiscarded={handleReviewDiscarded}
+        onSaved={onAnalysisSaved ?? onBack ?? handleReviewDiscarded}
+      />
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea} onLayout={handleScreenLayout}>
