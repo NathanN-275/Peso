@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -44,6 +45,19 @@ class VideoRepository:
       raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found.")
 
     return response.data[0]
+
+  def mark_saved(self, video_id: str) -> dict[str, Any]:
+    return self.update_video(
+      video_id,
+      {
+        "is_saved": True,
+        "saved_at": datetime.now(timezone.utc).isoformat(),
+        "discarded_at": None,
+      },
+    )
+
+  def delete_video(self, video_id: str) -> None:
+    self.client.table("videos").delete().eq("id", video_id).execute()
 
   def save_analysis_result(self, video_id: str, model_version: str, result_json: dict[str, Any]) -> dict[str, Any]:
     response = (
