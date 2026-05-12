@@ -46,3 +46,7 @@ backend/.venv/
 .venv/
 __pycache__/
 *.pyc
+
+# Local media
+*.mov
+*.mp4

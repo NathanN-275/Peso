@@ -1,43 +1,13 @@
-import Constants from 'expo-constants';
-import { Platform } from 'react-native';
-
 import {
   AnalysisResponse,
   VideoAnalysisStatus,
   VideoStatusResponse,
 } from '../src/types/videoAnalysis';
-
-const DEFAULT_BACKEND_PORT = '8000';
-
-function normalizeBackendApiUrl(value?: string | null) {
-  return value?.trim().replace(/\/+$/, '') ?? '';
-}
-
-function inferDevelopmentBackendApiUrl() {
-  const hostUri = Constants.expoConfig?.hostUri?.trim();
-
-  if (hostUri) {
-    try {
-      const resolvedHostUri = hostUri.includes('://') ? hostUri : `http://${hostUri}`;
-      const { hostname } = new URL(resolvedHostUri);
-      return `http://${hostname}:${DEFAULT_BACKEND_PORT}`;
-    } catch {
-      // Ignore malformed host URIs and fall through to platform defaults.
-    }
-  }
-
-  if (Platform.OS === 'android') {
-    return `http://10.0.2.2:${DEFAULT_BACKEND_PORT}`;
-  }
-
-  return `http://127.0.0.1:${DEFAULT_BACKEND_PORT}`;
-}
-
-const backendApiUrl = normalizeBackendApiUrl(
-  process.env.EXPO_PUBLIC_BACKEND_URL || (__DEV__ ? inferDevelopmentBackendApiUrl() : '')
-);
+import { getBackendApiUrl, getBackendConnectionDiagnostics } from './backendConfig';
 
 function ensureBackendApiUrl() {
+  const backendApiUrl = getBackendApiUrl();
+
   if (!backendApiUrl) {
     throw new Error(
       'Missing video analysis backend URL. Set EXPO_PUBLIC_BACKEND_URL, or run the backend locally on port 8000 while using Expo development mode.'
@@ -47,22 +17,48 @@ function ensureBackendApiUrl() {
   return backendApiUrl;
 }
 
-async function requestJson<T>(path: string, accessToken: string, init?: RequestInit): Promise<T> {
+async function requestJson<T>(path: string, accessToken?: string, init?: RequestInit): Promise<T> {
   const requestUrl = `${ensureBackendApiUrl()}${path}`;
+  const method = init?.method ?? 'GET';
   let response: Response;
+
+  if (__DEV__) {
+    console.info('[BackendAPI] request', {
+      method,
+      url: requestUrl,
+      backend: getBackendConnectionDiagnostics(),
+    });
+  }
 
   try {
     response = await fetch(requestUrl, {
       ...init,
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken}`,
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         ...(init?.headers ?? {}),
       },
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown network error.';
-    throw new Error(`Unable to reach the video analysis backend at ${requestUrl}. ${message}`);
+
+    console.error('[BackendAPI] fetch failed', {
+      method,
+      url: requestUrl,
+      error,
+      backend: getBackendConnectionDiagnostics(),
+    });
+
+    throw new Error(
+      [
+        'Backend unreachable.',
+        `Current backend URL: ${ensureBackendApiUrl()}`,
+        `Request: ${method} ${requestUrl}`,
+        'Check that FastAPI is running on 0.0.0.0:8000.',
+        'Check that your phone/simulator and computer are on the same network.',
+        `Original error: ${message}`,
+      ].join('\n')
+    );
   }
 
   if (!response.ok) {
@@ -71,6 +67,12 @@ async function requestJson<T>(path: string, accessToken: string, init?: RequestI
   }
 
   return (await response.json()) as T;
+}
+
+export { getBackendApiUrl, getBackendConnectionDiagnostics };
+
+export async function testBackendConnection() {
+  return requestJson<{ status: string }>('/health');
 }
 
 export async function triggerVideoAnalysis(videoId: string, accessToken: string) {
@@ -89,4 +91,24 @@ export async function fetchVideoStatus(videoId: string, accessToken: string) {
 
 export async function fetchAnalysisResult(videoId: string, accessToken: string) {
   return requestJson<AnalysisResponse>(`/analysis/${videoId}`, accessToken);
+}
+
+export async function saveAnalyzedVideo(videoId: string, accessToken: string) {
+  return requestJson<{ video_id: string; is_saved: boolean }>(
+    `/videos/${videoId}/save`,
+    accessToken,
+    {
+      method: 'POST',
+    }
+  );
+}
+
+export async function discardAnalyzedVideo(videoId: string, accessToken: string) {
+  return requestJson<{ video_id: string; discarded: boolean }>(
+    `/videos/${videoId}`,
+    accessToken,
+    {
+      method: 'DELETE',
+    }
+  );
 }

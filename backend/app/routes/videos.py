@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from ..analysis.pipeline import analyze_video
 from ..services.auth import get_current_user_id
+from ..services.storage_service import StorageService
 from ..services.video_repository import VideoRepository
 
 
@@ -34,6 +35,16 @@ class AnalysisResponse(BaseModel):
   result_json: dict
 
 
+class SaveVideoResponse(BaseModel):
+  video_id: UUID
+  is_saved: bool
+
+
+class DiscardVideoResponse(BaseModel):
+  video_id: UUID
+  discarded: bool
+
+
 def _run_analysis_job(video_id: str) -> None:
   try:
     analyze_video(video_id)
@@ -52,6 +63,29 @@ def queue_analysis(
   repository.update_video(str(video_id), {"status": "queued"})
   background_tasks.add_task(_run_analysis_job, str(video_id))
   return AnalyzeResponse(video_id=video_id, status="queued")
+
+
+@router.post("/videos/{video_id}/save", response_model=SaveVideoResponse)
+def save_video(
+  video_id: UUID,
+  user_id: str = Depends(get_current_user_id),
+) -> SaveVideoResponse:
+  repository = VideoRepository()
+  repository.require_owned_video(str(video_id), user_id)
+  repository.mark_saved(str(video_id))
+  return SaveVideoResponse(video_id=video_id, is_saved=True)
+
+
+@router.delete("/videos/{video_id}", response_model=DiscardVideoResponse)
+def discard_video(
+  video_id: UUID,
+  user_id: str = Depends(get_current_user_id),
+) -> DiscardVideoResponse:
+  repository = VideoRepository()
+  video = repository.require_owned_video(str(video_id), user_id)
+  StorageService().delete_storage_path(video["storage_path"])
+  repository.delete_video(str(video_id))
+  return DiscardVideoResponse(video_id=video_id, discarded=True)
 
 
 @router.get("/videos/{video_id}/status", response_model=VideoStatusResponse)

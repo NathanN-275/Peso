@@ -30,6 +30,21 @@ def build_limited_result(
     "coach_feedback": [
       "Detailed v1 analysis is currently available only for squat videos from the side view."
     ],
+    "videoId": video_id,
+    "cameraView": view_type,
+    "duration": 0,
+    "poseFrames": [],
+    "summaryFlags": [reason],
+    "videoQuality": {
+      "overallQuality": 0,
+      "poseCoverage": 0,
+      "lowerBodyVisibility": 0,
+      "sideViewConfidence": 0,
+      "squatMotionSignal": 0,
+    },
+    "coachingFeedback": [
+      "Detailed v1 analysis is currently available only for squat videos from the side view."
+    ],
   }
 
   if error_code:
@@ -97,6 +112,9 @@ def analyze_video(video_id: str) -> None:
         sampled_frame_count=estimation.get("sampled_frame_count"),
       )
 
+    result["duration"] = (estimation["duration_ms"] or 0) / 1000
+    result["videoWidth"] = estimation.get("frame_width")
+    result["videoHeight"] = estimation.get("frame_height")
     result["model_version"] = settings.model_version
     repository.save_analysis_result(video_id, settings.model_version, result)
     repository.update_video(video_id, {"status": "completed"})

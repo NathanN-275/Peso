@@ -27,3 +27,6 @@ class StorageService:
       os.remove(path)
     except FileNotFoundError:
       return
+
+  def delete_storage_path(self, storage_path: str) -> None:
+    self.client.storage.from_(self.bucket).remove([storage_path])
