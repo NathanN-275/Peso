@@ -88,6 +88,19 @@ EXPO_PUBLIC_BACKEND_URL=http://localhost:8000
 npx expo start -c
 ```
 
+From the project root, `npm start` starts both the local FastAPI backend and Expo. If a backend is already responding on `http://127.0.0.1:8000/health`, the script reuses it instead of starting another copy.
+
+```bash
+npm start
+```
+
+To run the two processes separately:
+
+```bash
+npm run start:backend
+npm run start:frontend
+```
+
 ## Health Check
 
 ```bash
