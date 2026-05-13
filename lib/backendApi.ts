@@ -3,7 +3,11 @@ import {
   VideoAnalysisStatus,
   VideoStatusResponse,
 } from '../src/types/videoAnalysis';
-import { getBackendApiUrl, getBackendConnectionDiagnostics } from './backendConfig';
+import {
+  getBackendApiUrl,
+  getBackendConnectionDiagnostics,
+  resolveBackendApiConfig,
+} from './backendConfig';
 
 function ensureBackendApiUrl() {
   const backendApiUrl = getBackendApiUrl();
@@ -18,7 +22,8 @@ function ensureBackendApiUrl() {
 }
 
 async function requestJson<T>(path: string, accessToken?: string, init?: RequestInit): Promise<T> {
-  const requestUrl = `${ensureBackendApiUrl()}${path}`;
+  const backend = resolveBackendApiConfig();
+  const requestUrl = `${backend.url}${path}`;
   const method = init?.method ?? 'GET';
   let response: Response;
 
@@ -52,7 +57,8 @@ async function requestJson<T>(path: string, accessToken?: string, init?: Request
     throw new Error(
       [
         'Backend unreachable.',
-        `Current backend URL: ${ensureBackendApiUrl()}`,
+        `Current backend URL: ${backend.url}`,
+        `Backend URL source: ${backend.source}`,
         `Request: ${method} ${requestUrl}`,
         'Check that FastAPI is running on 0.0.0.0:8000.',
         'Check that your phone/simulator and computer are on the same network.',
@@ -72,12 +78,22 @@ async function requestJson<T>(path: string, accessToken?: string, init?: Request
 export { getBackendApiUrl, getBackendConnectionDiagnostics };
 
 export async function testBackendConnection() {
-  return requestJson<{ status: string }>('/health');
+  return requestJson<{ ok: boolean }>('/health');
 }
 
 export async function triggerVideoAnalysis(videoId: string, accessToken: string) {
+  const backend = resolveBackendApiConfig();
+  const analyzePath = `/analyze/${videoId}`;
+  const analyzeUrl = `${backend.url}${analyzePath}`;
+
+  console.info('[BackendAPI] analyze request', {
+    backendUrl: backend.url,
+    backendUrlSource: backend.source,
+    endpointUrl: analyzeUrl,
+  });
+
   return requestJson<{ video_id: string; status: VideoAnalysisStatus }>(
-    `/analyze/${videoId}`,
+    analyzePath,
     accessToken,
     {
       method: 'POST',

@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import Constants, { AppOwnership } from 'expo-constants';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LayoutChangeEvent } from 'react-native';
 import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -51,6 +51,10 @@ function formatStatusLabel(status: VideoAnalysisStatus) {
   }
 }
 
+function isAnalysisInProgress(status: VideoAnalysisStatus | null) {
+  return status === 'queued' || status === 'processing';
+}
+
 function formatFlagLabel(value: string) {
   return value.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
@@ -80,8 +84,12 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
   const [displayedVideoSizeBytes, setDisplayedVideoSizeBytes] = useState<number | null>(null);
+  const analysisStartInFlightRef = useRef(false);
+  const analysisQueuedForVideoRef = useRef<string | null>(null);
 
   const handleSelectedVideo = (asset: ImagePicker.ImagePickerAsset) => {
+    analysisStartInFlightRef.current = false;
+    analysisQueuedForVideoRef.current = null;
     setSelectedVideo(asset);
     setAnalysisVideoId(null);
     setAnalysisStatus(null);
@@ -94,6 +102,20 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   };
 
   const handleStartAnalysis = async () => {
+    if (analysisStartInFlightRef.current || uploading || isAnalysisInProgress(analysisStatus)) {
+      return;
+    }
+
+    if (analysisResult) {
+      setStatusMessage(null);
+      setErrorMessage(null);
+      return;
+    }
+
+    if (analysisVideoId && analysisQueuedForVideoRef.current === analysisVideoId) {
+      return;
+    }
+
     if (!selectedVideo) {
       setStatusMessage(null);
       setErrorMessage('Choose a video before starting analysis.');
@@ -116,6 +138,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     setErrorMessage(null);
     setStatusMessage(null);
     setUploading(true);
+    analysisStartInFlightRef.current = true;
 
     try {
       const uploadResult = await uploadVideoForAnalysis({
@@ -130,7 +153,9 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
       setAnalysisStatus(uploadResult.status);
 
       setStatusMessage('Starting analysis...');
+      console.log('[analysis] starting backend analysis', uploadResult.videoId);
       const queuedResponse = await triggerVideoAnalysis(uploadResult.videoId, session.access_token);
+      analysisQueuedForVideoRef.current = uploadResult.videoId;
       setAnalysisStatus(queuedResponse.status);
       setStatusMessage(null);
     } catch (error) {
@@ -141,6 +166,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
           ? `${message}. Apply the latest videos RLS migration to your Supabase project.`
           : message
       );
+      analysisStartInFlightRef.current = false;
     } finally {
       setUploading(false);
     }
@@ -319,6 +345,8 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
         setAnalysisStatus(statusResponse.status);
 
         if (statusResponse.status === 'failed') {
+          analysisStartInFlightRef.current = false;
+          analysisQueuedForVideoRef.current = null;
           setStatusMessage(null);
           setErrorMessage('Analysis failed. Check the backend logs and try another upload.');
           return;
@@ -412,8 +440,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   const canStartAnalysis =
     Boolean(selectedVideo && videoSetup) &&
     !uploading &&
-    analysisStatus !== 'queued' &&
-    analysisStatus !== 'processing' &&
+    !isAnalysisInProgress(analysisStatus) &&
     analysisStatus !== 'completed';
 
   const handleScreenLayout = ({ nativeEvent }: LayoutChangeEvent) => {
@@ -427,6 +454,8 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   };
 
   const handleReviewDiscarded = () => {
+    analysisStartInFlightRef.current = false;
+    analysisQueuedForVideoRef.current = null;
     setSelectedVideo(null);
     setAnalysisVideoId(null);
     setAnalysisStatus(null);
