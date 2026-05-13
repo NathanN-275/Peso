@@ -48,12 +48,15 @@ SUPABASE_JWT_SECRET=
 Optional variables:
 
 ```bash
+BACKEND_ENV=development
 VIDEO_BUCKET=videos
 MODEL_VERSION=mediapipe-pose-v1
 BACKEND_CORS_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhost:8082,http://127.0.0.1:8082,http://localhost:19006,http://127.0.0.1:19006,http://localhost:3000,http://127.0.0.1:3000
+BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true
 ```
 
-`BACKEND_CORS_ORIGINS` exists to support the common Expo web, simulator, and local browser ports used by the mobile client.
+`BACKEND_CORS_ORIGINS` supports common Expo web, simulator, and local browser ports used by the mobile client. In `BACKEND_ENV=development`, the API also allows local browser origins matching `localhost`, `127.0.0.1`, or `0.0.0.0` on any port so Expo web still works if it chooses a different local port. Set `BACKEND_ENV=production` in deployed environments to disable that local-dev regex and rely only on explicit `BACKEND_CORS_ORIGINS`.
+`BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true` supports Chrome's local private-network preflight during development. It is ignored when `BACKEND_ENV=production`.
 
 ## Installation
 
@@ -76,6 +79,13 @@ If you keep environment variables in a file, you can also use:
 
 ```bash
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --env-file .env
+```
+
+For Expo web on the same Mac as the backend:
+
+```bash
+EXPO_PUBLIC_BACKEND_URL=http://localhost:8000
+npx expo start -c
 ```
 
 ## Health Check

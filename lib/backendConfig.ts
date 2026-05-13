@@ -1,46 +1,28 @@
-import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 export type BackendTarget =
   | 'auto'
-  | 'ios-simulator'
-  | 'android-emulator'
   | 'physical-device'
-  | 'production';
+  | 'ios-simulator'
+  | 'android-emulator';
 
 const DEFAULT_BACKEND_PORT = '8000';
 
 export type BackendUrlSource =
-  | 'EXPO_PUBLIC_BACKEND_URL'
-  | 'EXPO_PUBLIC_PRODUCTION_BACKEND_URL'
-  | 'EXPO_PUBLIC_WEB_BACKEND_HOST'
-  | 'android-emulator fallback'
-  | 'ios-simulator fallback'
-  | 'EXPO_PUBLIC_DEV_MACHINE_HOST'
-  | 'Expo host fallback'
-  | 'fallback localhost';
+  | 'env override'
+  | 'web default localhost'
+  | 'ios simulator default'
+  | 'android emulator default'
+  | 'native default localhost'
+  | 'missing production env';
+
+export type BackendApiConfig = {
+  url: string;
+  source: BackendUrlSource;
+};
 
 function normalizeBackendApiUrl(value?: string | null) {
   return value?.trim().replace(/\/+$/, '') ?? '';
-}
-
-function getExpoHostName() {
-  const hostUri = Constants.expoConfig?.hostUri?.trim();
-
-  if (!hostUri) {
-    return null;
-  }
-
-  try {
-    const resolvedHostUri = hostUri.includes('://') ? hostUri : `http://${hostUri}`;
-    return new URL(resolvedHostUri).hostname;
-  } catch {
-    return null;
-  }
-}
-
-function isLoopbackHost(hostname: string | null) {
-  return hostname === 'localhost' || hostname === '127.0.0.1';
 }
 
 function buildLocalUrl(hostname: string) {
@@ -52,88 +34,90 @@ export function getBackendTarget(): BackendTarget {
   return (process.env.EXPO_PUBLIC_BACKEND_TARGET as BackendTarget | undefined) ?? 'auto';
 }
 
-export function resolveBackendApiConfig() {
+function getHostname(value: string) {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function isLoopbackBackendUrl(value: string) {
+  const hostname = getHostname(value);
+  return hostname === 'localhost' || hostname === '127.0.0.1';
+}
+
+export function resolveBackendApiConfig(): BackendApiConfig {
   const explicitUrl = normalizeBackendApiUrl(process.env.EXPO_PUBLIC_BACKEND_URL);
-  if (explicitUrl) {
+
+  if (!__DEV__) {
     return {
       url: explicitUrl,
-      source: 'EXPO_PUBLIC_BACKEND_URL' as BackendUrlSource,
+      source: explicitUrl ? 'env override' : 'missing production env',
     };
   }
 
   const target = getBackendTarget();
-  const productionUrl = normalizeBackendApiUrl(process.env.EXPO_PUBLIC_PRODUCTION_BACKEND_URL);
-  const devMachineHost = process.env.EXPO_PUBLIC_DEV_MACHINE_HOST?.trim();
-  const webBackendHost = process.env.EXPO_PUBLIC_WEB_BACKEND_HOST?.trim();
-
-  if (target === 'production') {
-    return {
-      url: productionUrl,
-      source: 'EXPO_PUBLIC_PRODUCTION_BACKEND_URL' as BackendUrlSource,
-    };
-  }
 
   if (Platform.OS === 'web') {
-    if (webBackendHost) {
+    if (explicitUrl && isLoopbackBackendUrl(explicitUrl)) {
       return {
-        url: buildLocalUrl(webBackendHost),
-        source: 'EXPO_PUBLIC_WEB_BACKEND_HOST' as BackendUrlSource,
+        url: explicitUrl,
+        source: 'env override',
       };
     }
 
     return {
       url: buildLocalUrl('localhost'),
-      source: 'fallback localhost' as BackendUrlSource,
+      source: 'web default localhost',
     };
   }
 
-  if (target === 'android-emulator') {
+  if (target === 'physical-device' && explicitUrl) {
     return {
-      url: buildLocalUrl('10.0.2.2'),
-      source: 'android-emulator fallback' as BackendUrlSource,
-    };
-  }
-
-  if (target === 'ios-simulator') {
-    return {
-      url: buildLocalUrl('localhost'),
-      source: 'ios-simulator fallback' as BackendUrlSource,
-    };
-  }
-
-  if (target === 'physical-device' && devMachineHost) {
-    return {
-      url: buildLocalUrl(devMachineHost),
-      source: 'EXPO_PUBLIC_DEV_MACHINE_HOST' as BackendUrlSource,
+      url: explicitUrl,
+      source: 'env override',
     };
   }
 
   if (Platform.OS === 'android') {
+    if (explicitUrl && target !== 'android-emulator') {
+      return {
+        url: explicitUrl,
+        source: 'env override',
+      };
+    }
+
     return {
       url: buildLocalUrl('10.0.2.2'),
-      source: 'android-emulator fallback' as BackendUrlSource,
+      source: 'android emulator default',
     };
   }
 
-  const expoHostName = getExpoHostName();
+  if (Platform.OS === 'ios') {
+    if (explicitUrl && target !== 'ios-simulator') {
+      return {
+        url: explicitUrl,
+        source: 'env override',
+      };
+    }
 
-  if (expoHostName && !isLoopbackHost(expoHostName)) {
     return {
-      url: buildLocalUrl(expoHostName),
-      source: 'Expo host fallback' as BackendUrlSource,
+      url: buildLocalUrl('localhost'),
+      source: 'ios simulator default',
     };
   }
 
-  if (devMachineHost) {
+  if (explicitUrl) {
     return {
-      url: buildLocalUrl(devMachineHost),
-      source: 'EXPO_PUBLIC_DEV_MACHINE_HOST' as BackendUrlSource,
+      url: explicitUrl,
+      source: 'env override',
     };
   }
 
   return {
     url: buildLocalUrl('localhost'),
-    source: 'fallback localhost' as BackendUrlSource,
+    source: 'native default localhost',
   };
 }
 
@@ -143,16 +127,14 @@ export function getBackendApiUrl() {
 
 export function getBackendConnectionDiagnostics() {
   const resolved = resolveBackendApiConfig();
+  const explicitUrl = normalizeBackendApiUrl(process.env.EXPO_PUBLIC_BACKEND_URL);
 
   return {
     url: resolved.url,
     source: resolved.source,
     target: getBackendTarget(),
     platform: Platform.OS,
-    expoHost: getExpoHostName(),
-    explicitUrl: normalizeBackendApiUrl(process.env.EXPO_PUBLIC_BACKEND_URL) || null,
-    webBackendHost: process.env.EXPO_PUBLIC_WEB_BACKEND_HOST?.trim() || null,
-    devMachineHost: process.env.EXPO_PUBLIC_DEV_MACHINE_HOST?.trim() || null,
-    productionUrl: normalizeBackendApiUrl(process.env.EXPO_PUBLIC_PRODUCTION_BACKEND_URL) || null,
+    isDev: __DEV__,
+    explicitUrl: explicitUrl || null,
   };
 }

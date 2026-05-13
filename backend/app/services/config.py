@@ -4,19 +4,36 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 
+DEFAULT_CORS_ORIGINS = (
+  "http://localhost:8081",
+  "http://127.0.0.1:8081",
+  "http://localhost:8082",
+  "http://127.0.0.1:8082",
+  "http://localhost:19006",
+  "http://127.0.0.1:19006",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+)
+
+LOCAL_DEV_CORS_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0):\d+$"
+
 
 @dataclass(frozen=True)
 class Settings:
+  backend_env: str
   supabase_url: str
   supabase_service_role_key: str
   supabase_jwt_secret: str
   video_bucket: str = "videos"
   model_version: str = "mediapipe-pose-v1"
   cors_origins: tuple[str, ...] = ()
+  cors_origin_regex: str | None = None
+  cors_allow_private_network: bool = False
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+  backend_env = os.getenv("BACKEND_ENV", "development").strip().lower() or "development"
   supabase_url = os.getenv("SUPABASE_URL", "").strip()
   supabase_service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
   supabase_jwt_secret = os.getenv("SUPABASE_JWT_SECRET", "").strip()
@@ -24,9 +41,19 @@ def get_settings() -> Settings:
   model_version = os.getenv("MODEL_VERSION", "mediapipe-pose-v1").strip() or "mediapipe-pose-v1"
   cors_origins_raw = os.getenv(
     "BACKEND_CORS_ORIGINS",
-    "http://localhost:8081,http://127.0.0.1:8081,http://localhost:8082,http://127.0.0.1:8082,http://localhost:19006,http://127.0.0.1:19006,http://localhost:3000,http://127.0.0.1:3000",
+    ",".join(DEFAULT_CORS_ORIGINS),
   )
   cors_origins = tuple(origin.strip() for origin in cors_origins_raw.split(",") if origin.strip())
+  cors_origin_regex = (
+    None
+    if backend_env in {"production", "prod"}
+    else os.getenv("BACKEND_CORS_ORIGIN_REGEX", LOCAL_DEV_CORS_ORIGIN_REGEX).strip() or None
+  )
+  cors_allow_private_network = (
+    backend_env not in {"production", "prod"}
+    and os.getenv("BACKEND_CORS_ALLOW_PRIVATE_NETWORK", "true").strip().lower()
+    in {"1", "true", "yes", "on"}
+  )
 
   missing = [
     name
@@ -42,10 +69,13 @@ def get_settings() -> Settings:
     raise RuntimeError(f"Missing required backend environment variables: {', '.join(missing)}")
 
   return Settings(
+    backend_env=backend_env,
     supabase_url=supabase_url,
     supabase_service_role_key=supabase_service_role_key,
     supabase_jwt_secret=supabase_jwt_secret,
     video_bucket=video_bucket,
     model_version=model_version,
     cors_origins=cors_origins,
+    cors_origin_regex=cors_origin_regex,
+    cors_allow_private_network=cors_allow_private_network,
   )

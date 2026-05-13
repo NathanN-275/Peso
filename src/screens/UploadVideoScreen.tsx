@@ -10,6 +10,7 @@ import { useAuth } from '../../context/AuthContext';
 import {
   fetchAnalysisResult,
   fetchVideoStatus,
+  testBackendConnection,
   triggerVideoAnalysis,
 } from '../../lib/backendApi';
 import { uploadVideoForAnalysis } from '../../lib/videoUpload';
@@ -141,6 +142,9 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     analysisStartInFlightRef.current = true;
 
     try {
+      setStatusMessage('Checking backend connection...');
+      await testBackendConnection();
+
       const uploadResult = await uploadVideoForAnalysis({
         asset: selectedVideo,
         exercise: videoSetup.exercise,
