@@ -13,7 +13,11 @@ import {
   testBackendConnection,
   triggerVideoAnalysis,
 } from '../../lib/backendApi';
-import { uploadVideoForAnalysis } from '../../lib/videoUpload';
+import {
+  cleanupUploadedVideoForAnalysis,
+  uploadVideoForAnalysis,
+} from '../../lib/videoUpload';
+import type { UploadVideoForAnalysisResult } from '../../lib/videoUpload';
 import Button from '../components/Button';
 import SelectedVideoPreview from '../components/SelectedVideoPreview';
 import VideoSetupModal from '../components/VideoSetupModal';
@@ -140,6 +144,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     setStatusMessage(null);
     setUploading(true);
     analysisStartInFlightRef.current = true;
+    let uploadedVideo: UploadVideoForAnalysisResult | null = null;
 
     try {
       setStatusMessage('Checking backend connection...');
@@ -151,6 +156,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
         angle: videoSetup.angle,
         onStatusChange: setStatusMessage,
       });
+      uploadedVideo = uploadResult;
 
       setDisplayedVideoSizeBytes(uploadResult.uploadedFileSizeBytes);
       setAnalysisVideoId(uploadResult.videoId);
@@ -164,9 +170,23 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
       setStatusMessage(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to upload and analyze this video.';
+      const triggerFailedAfterUpload = Boolean(uploadedVideo);
+
+      if (uploadedVideo) {
+        setStatusMessage('Cleaning up upload...');
+        await cleanupUploadedVideoForAnalysis({
+          videoId: uploadedVideo.videoId,
+          storagePath: uploadedVideo.storagePath,
+        });
+        setAnalysisVideoId(null);
+        setAnalysisStatus(null);
+      }
+
       setStatusMessage(null);
       setErrorMessage(
-        message.includes('row-level security policy')
+        triggerFailedAfterUpload
+          ? 'Upload succeeded, but analysis could not start. The upload was cleaned up; please try again.'
+          : message.includes('row-level security policy')
           ? `${message}. Apply the latest videos RLS migration to your Supabase project.`
           : message
       );

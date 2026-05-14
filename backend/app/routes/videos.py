@@ -14,6 +14,8 @@ from ..services.video_repository import VideoRepository
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+QUEUEABLE_ANALYSIS_STATUSES = ("uploaded", "failed")
+IDEMPOTENT_ANALYSIS_STATUSES = {"queued", "processing", "completed"}
 
 
 class AnalyzeResponse(BaseModel):
@@ -59,10 +61,40 @@ def queue_analysis(
   user_id: str = Depends(get_current_user_id),
 ) -> AnalyzeResponse:
   repository = VideoRepository()
-  repository.require_owned_video(str(video_id), user_id)
-  repository.update_video(str(video_id), {"status": "queued"})
-  background_tasks.add_task(_run_analysis_job, str(video_id))
-  return AnalyzeResponse(video_id=video_id, status="queued")
+  video_id_str = str(video_id)
+  video = repository.require_owned_video(video_id_str, user_id)
+  current_status = video["status"]
+
+  if current_status in IDEMPOTENT_ANALYSIS_STATUSES:
+    return AnalyzeResponse(video_id=video_id, status=current_status)
+
+  if current_status not in QUEUEABLE_ANALYSIS_STATUSES:
+    raise HTTPException(
+      status_code=status.HTTP_409_CONFLICT,
+      detail=f"Video cannot be queued for analysis from status '{current_status}'.",
+    )
+
+  StorageService().validate_video_object(video["storage_path"])
+  queued_video = repository.queue_owned_video_if_status(
+    video_id_str,
+    user_id,
+    QUEUEABLE_ANALYSIS_STATUSES,
+  )
+
+  if queued_video:
+    background_tasks.add_task(_run_analysis_job, video_id_str)
+    return AnalyzeResponse(video_id=video_id, status=queued_video["status"])
+
+  latest_video = repository.require_owned_video(video_id_str, user_id)
+  latest_status = latest_video["status"]
+
+  if latest_status in IDEMPOTENT_ANALYSIS_STATUSES:
+    return AnalyzeResponse(video_id=video_id, status=latest_status)
+
+  raise HTTPException(
+    status_code=status.HTTP_409_CONFLICT,
+    detail=f"Video could not be queued because its status is now '{latest_status}'.",
+  )
 
 
 @router.post("/videos/{video_id}/save", response_model=SaveVideoResponse)
