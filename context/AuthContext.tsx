@@ -1,6 +1,7 @@
-import { ReactNode, createContext, useContext, useEffect, useState } from 'react';
+import { ReactNode, createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Session, User } from '@supabase/supabase-js';
-import { Linking, Platform } from 'react-native';
+import * as ExpoLinking from 'expo-linking';
+import { Platform } from 'react-native';
 import { supabase, supabaseConfigError } from '../lib/supabase';
 
 type AuthContextValue = {
@@ -25,6 +26,7 @@ type AuthContextValue = {
   }>;
   resetPasswordForEmail: (email: string) => Promise<void>;
   updatePassword: (password: string) => Promise<void>;
+  activatePasswordRecoveryMode: () => void;
   sendPhoneOtp: (phone: string) => Promise<void>;
   verifyPhoneOtp: (phone: string, token: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -89,34 +91,11 @@ function deriveUsername(user: User) {
 function getAuthRedirectUrl() {
   if (Platform.OS === 'web') {
     return typeof window !== 'undefined' && window.location.origin
-      ? `${window.location.origin}${window.location.pathname}#/reset-password-form`
+      ? `${window.location.origin}/?auth=reset-password`
       : undefined;
   }
 
-  return 'pesoapp://reset-password-form';
-}
-
-function parseAuthCallbackUrl(url: string) {
-  const urlObject = new URL(url);
-  const queryParams = new URLSearchParams(urlObject.search);
-  const hash = urlObject.hash.startsWith('#') ? urlObject.hash.slice(1) : urlObject.hash;
-  const hashParamsSource = hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : hash;
-  const hashParams = new URLSearchParams(hashParamsSource);
-  const accessToken = queryParams.get('access_token') ?? hashParams.get('access_token');
-  const refreshToken = queryParams.get('refresh_token') ?? hashParams.get('refresh_token');
-  const type = queryParams.get('type') ?? hashParams.get('type');
-  const code = queryParams.get('code') ?? hashParams.get('code');
-
-  if (!code && (!accessToken || !refreshToken)) {
-    return null;
-  }
-
-  return {
-    accessToken,
-    refreshToken,
-    type,
-    code,
-  };
+  return ExpoLinking.createURL('reset-password');
 }
 
 async function ensureProfile(user: User) {
@@ -154,6 +133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [initializing, setInitializing] = useState(true);
   const [passwordRecoveryMode, setPasswordRecoveryMode] = useState(false);
+  const pendingRecoveryLinkRef = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -180,7 +160,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       setSession(currentSession);
-      setPasswordRecoveryMode(false);
+      if (!pendingRecoveryLinkRef.current) {
+        setPasswordRecoveryMode(false);
+      }
 
       if (currentSession?.user) {
         await ensureProfile(currentSession.user);
@@ -204,62 +186,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
     }
 
-    const hydrateSessionFromUrl = async (url: string | null) => {
-      if (!url || !supabase) {
-        return;
-      }
-
-      const callback = parseAuthCallbackUrl(url);
-
-      if (!callback) {
-        return;
-      }
-
-      if (callback.code) {
-        const { error } = await supabase.auth.exchangeCodeForSession(callback.code);
-
-        if (error) {
-          throw error;
-        }
-      } else if (callback.accessToken && callback.refreshToken) {
-        const { error } = await supabase.auth.setSession({
-          access_token: callback.accessToken,
-          refresh_token: callback.refreshToken,
-        });
-
-        if (error) {
-          throw error;
-        }
-      }
-
-      if (callback.type === 'recovery' && active) {
-        setPasswordRecoveryMode(true);
-      }
-    };
-
-    Linking.getInitialURL()
-      .then((url) => hydrateSessionFromUrl(url))
-      .catch((error) => {
-        logSupabaseError('Failed to hydrate auth session from initial URL', error);
-      });
-
-    const linkingSubscription = Linking.addEventListener('url', ({ url }) => {
-      hydrateSessionFromUrl(url).catch((error) => {
-        logSupabaseError('Failed to hydrate auth session from incoming URL', error);
-      });
-    });
-
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, nextSession) => {
       setSession(nextSession);
 
-       if (event === 'PASSWORD_RECOVERY') {
+      if (event === 'PASSWORD_RECOVERY') {
+        pendingRecoveryLinkRef.current = true;
         setPasswordRecoveryMode(true);
         return;
       }
 
       if (event === 'SIGNED_OUT') {
+        pendingRecoveryLinkRef.current = false;
         setPasswordRecoveryMode(false);
       }
 
@@ -275,7 +214,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       active = false;
-      linkingSubscription.remove();
       subscription.unsubscribe();
     };
   }, []);
@@ -336,6 +274,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       const redirectTo = getAuthRedirectUrl();
+      console.log('[Supabase] reset redirectTo', redirectTo);
       console.log('[Supabase] resetPasswordForEmail requested', {
         email,
         redirectTo,
@@ -369,6 +308,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       setPasswordRecoveryMode(false);
+      pendingRecoveryLinkRef.current = false;
+    },
+    activatePasswordRecoveryMode() {
+      pendingRecoveryLinkRef.current = true;
+      setPasswordRecoveryMode(true);
     },
     async sendPhoneOtp(phone) {
       if (!supabase) {
@@ -406,6 +350,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (error) {
         throw error;
       }
+
+      pendingRecoveryLinkRef.current = false;
     },
   };
 
