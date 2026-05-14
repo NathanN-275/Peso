@@ -1,3 +1,4 @@
+// open the app screen
 import {
   Image,
   KeyboardAvoidingView,
