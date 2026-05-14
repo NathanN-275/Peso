@@ -5,13 +5,22 @@ import type { VideoCompressorType } from 'react-native-compressor';
 import { CameraAngle, ExerciseOption } from '../src/constants/videoSetup';
 import { supabase, supabaseConfigError } from './supabase';
 
-const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = resolveFrontendMaxUploadBytes();
 const VERY_LARGE_VIDEO_BYTES = 200 * 1024 * 1024;
-const TARGET_COMPRESSED_BYTES = 45 * 1024 * 1024;
+const TARGET_COMPRESSED_BYTES = Math.min(45 * 1024 * 1024, Math.floor(MAX_UPLOAD_BYTES * 0.9));
 const TARGET_MAX_DIMENSION = 1280;
 const MIN_POSE_BITRATE = 1_800_000;
 const MAX_POSE_BITRATE = 2_500_000;
 const AUDIO_BITRATE_RESERVE = 128_000;
+const UPLOAD_LIMIT_LABEL = `${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))} MB`;
+const ALLOWED_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.m4v'] as const;
+const ALLOWED_VIDEO_MIME_TYPES = [
+  'video/mp4',
+  'video/quicktime',
+  'video/x-m4v',
+  'video/m4v',
+] as const;
 
 type UploadVideoForAnalysisArgs = {
   asset: ImagePickerAsset;
@@ -20,7 +29,7 @@ type UploadVideoForAnalysisArgs = {
   onStatusChange?: (message: string | null) => void;
 };
 
-type UploadVideoForAnalysisResult = {
+export type UploadVideoForAnalysisResult = {
   videoId: string;
   status: 'uploaded';
   storagePath: string;
@@ -43,6 +52,7 @@ type WebImagePickerAsset = ImagePickerAsset & {
 type UploadableVideoAsset = Pick<ImagePickerAsset, 'uri' | 'fileName' | 'mimeType'> & {
   file?: File | null;
   fileSize?: number;
+  type?: string | null;
 };
 
 type PreparedVideoForUpload = {
@@ -60,7 +70,35 @@ type SupabaseLikeError = {
   message?: string;
 };
 
+type CleanupUploadedVideoForAnalysisArgs = {
+  videoId: string;
+  storagePath: string;
+};
+
 let cachedNativeVideoCompressor: VideoCompressorType | null | undefined;
+
+function resolveFrontendMaxUploadBytes() {
+  const rawValue = process.env.EXPO_PUBLIC_MAX_VIDEO_UPLOAD_BYTES?.trim();
+
+  if (!rawValue) {
+    return DEFAULT_MAX_UPLOAD_BYTES;
+  }
+
+  const parsedValue = Number(rawValue);
+
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    if (__DEV__) {
+      console.warn(
+        '[VideoUpload] Invalid EXPO_PUBLIC_MAX_VIDEO_UPLOAD_BYTES. Falling back to 50 MB.',
+        { value: rawValue }
+      );
+    }
+
+    return DEFAULT_MAX_UPLOAD_BYTES;
+  }
+
+  return Math.floor(parsedValue);
+}
 
 function logVideoUploadDebug(message: string, details?: Record<string, unknown>) {
   console.log('[VideoUpload]', message, details ?? {});
@@ -89,6 +127,104 @@ function buildStoragePath(userId: string, filename: string) {
 
 function inferFileName(asset: UploadableVideoAsset) {
   return asset.fileName ?? asset.uri.split('/').pop() ?? 'video-upload.mp4';
+}
+
+function getExplicitAssetMimeType(asset: UploadableVideoAsset) {
+  if (asset.mimeType) {
+    return asset.mimeType;
+  }
+
+  return asset.type?.includes('/') ? asset.type : null;
+}
+
+function getFileExtension(filename: string) {
+  const normalizedFilename = filename.split(/[?#]/)[0];
+  const dotIndex = normalizedFilename.lastIndexOf('.');
+  return dotIndex >= 0 ? normalizedFilename.slice(dotIndex).toLowerCase() : '';
+}
+
+function isAllowedVideoExtension(filename: string) {
+  return ALLOWED_VIDEO_EXTENSIONS.includes(
+    getFileExtension(filename) as (typeof ALLOWED_VIDEO_EXTENSIONS)[number]
+  );
+}
+
+function hasFileExtension(filename: string) {
+  return Boolean(getFileExtension(filename));
+}
+
+function isAllowedVideoMimeType(mimeType?: string | null) {
+  return Boolean(
+    mimeType &&
+      ALLOWED_VIDEO_MIME_TYPES.includes(
+        mimeType.toLowerCase() as (typeof ALLOWED_VIDEO_MIME_TYPES)[number]
+      )
+  );
+}
+
+function inferMimeTypeFromFilename(filename: string) {
+  const extension = getFileExtension(filename);
+
+  if (extension === '.mov') {
+    return 'video/quicktime';
+  }
+
+  if (extension === '.m4v') {
+    return 'video/x-m4v';
+  }
+
+  if (extension === '.mp4') {
+    return 'video/mp4';
+  }
+
+  return null;
+}
+
+function inferExtensionFromMimeType(mimeType: string) {
+  const normalizedMimeType = mimeType.toLowerCase();
+
+  if (normalizedMimeType === 'video/quicktime') {
+    return '.mov';
+  }
+
+  if (normalizedMimeType === 'video/x-m4v' || normalizedMimeType === 'video/m4v') {
+    return '.m4v';
+  }
+
+  return '.mp4';
+}
+
+function buildUploadFileName(filename: string, contentType: string) {
+  if (hasFileExtension(filename)) {
+    return filename;
+  }
+
+  return `video-upload${inferExtensionFromMimeType(contentType)}`;
+}
+
+function assertSupportedVideoFile(fileName: string, mimeType?: string | null) {
+  const hasExtension = hasFileExtension(fileName);
+
+  if (hasExtension && !isAllowedVideoExtension(fileName)) {
+    throw new Error('Unsupported video file type. Choose an MP4, MOV, or M4V video.');
+  }
+
+  if (mimeType && !isAllowedVideoMimeType(mimeType)) {
+    throw new Error('Unsupported video format. Choose an MP4, MOV, or M4V video.');
+  }
+
+  if (!hasExtension && !isAllowedVideoMimeType(mimeType)) {
+    throw new Error('Unable to verify the selected video format. Choose an MP4, MOV, or M4V video.');
+  }
+}
+
+function validateInitialVideoMetadata(asset: UploadableVideoAsset) {
+  const fileName = inferFileName(asset);
+  const mimeType = getExplicitAssetMimeType(asset);
+
+  if (hasFileExtension(fileName) || mimeType) {
+    assertSupportedVideoFile(fileName, mimeType);
+  }
 }
 
 function replaceFileExtension(filename: string, nextExtension: string) {
@@ -236,12 +372,12 @@ async function prepareVideoForUpload(
 
     if (Platform.OS === 'web') {
       throw new Error(
-        'This video is over the 50 MB upload limit, and compression is not available in this web environment. Use a smaller clip and try again.'
+        `This video is over the ${UPLOAD_LIMIT_LABEL} upload limit, and compression is not available in this web environment. Use a smaller clip and try again.`
       );
     }
 
     throw new Error(
-      'This video is over the 50 MB upload limit. Trim the clip or record a shorter video and try again.'
+      `This video is over the ${UPLOAD_LIMIT_LABEL} upload limit. Trim the clip or record a shorter video and try again.`
     );
   }
 
@@ -307,8 +443,8 @@ async function prepareVideoForUpload(
 
     throw new Error(
       wasVeryLarge
-        ? 'Compressed video still exceeds the 50 MB upload limit. This clip is very large, so trim it or record a shorter video and try again.'
-        : 'Compressed video still exceeds the 50 MB upload limit. Trim the clip or record a shorter video and try again.'
+        ? `Compressed video still exceeds the ${UPLOAD_LIMIT_LABEL} upload limit. This clip is very large, so trim it or record a shorter video and try again.`
+        : `Compressed video still exceeds the ${UPLOAD_LIMIT_LABEL} upload limit. Trim the clip or record a shorter video and try again.`
     );
   }
 
@@ -347,12 +483,23 @@ function formatSupabaseError(error: unknown) {
 
 async function resolveUploadSource(asset: UploadableVideoAsset): Promise<UploadSource> {
   const webAsset = asset as UploadableVideoAsset & WebImagePickerAsset;
+  const inferredFileName = inferFileName(asset);
+  validateInitialVideoMetadata(asset);
 
   if (Platform.OS === 'web' && webAsset.file) {
+    const fileName = webAsset.file.name || inferredFileName;
+    const contentType =
+      getExplicitAssetMimeType(asset) ?? webAsset.file.type ?? inferMimeTypeFromFilename(fileName);
+    assertSupportedVideoFile(fileName, contentType);
+
+    if (!contentType) {
+      throw new Error('Unable to verify the selected video format.');
+    }
+
     return {
       body: webAsset.file,
-      contentType: asset.mimeType ?? webAsset.file.type ?? 'video/mp4',
-      fileName: webAsset.file.name || inferFileName(asset),
+      contentType,
+      fileName: buildUploadFileName(fileName, contentType),
       sizeBytes: webAsset.file.size,
     };
   }
@@ -364,13 +511,97 @@ async function resolveUploadSource(asset: UploadableVideoAsset): Promise<UploadS
   }
 
   const videoBlob = await sourceResponse.blob();
+  const contentType =
+    getExplicitAssetMimeType(asset) ?? videoBlob.type ?? inferMimeTypeFromFilename(inferredFileName);
+  assertSupportedVideoFile(inferredFileName, contentType);
+
+  if (!contentType) {
+    throw new Error('Unable to verify the selected video format.');
+  }
 
   return {
     body: videoBlob,
-    contentType: asset.mimeType ?? videoBlob.type ?? 'video/mp4',
-    fileName: inferFileName(asset),
+    contentType,
+    fileName: buildUploadFileName(inferredFileName, contentType),
     sizeBytes: videoBlob.size,
   };
+}
+
+export async function cleanupUploadedVideoForAnalysis({
+  videoId,
+  storagePath,
+}: CleanupUploadedVideoForAnalysisArgs): Promise<void> {
+  if (!supabase) {
+    return;
+  }
+
+  let storageRemoved = false;
+
+  const {
+    data: { user },
+    error: getUserError,
+  } = await supabase.auth.getUser();
+  const ownsStoragePath = Boolean(user?.id && storagePath.startsWith(`${user.id}/`));
+
+  if (getUserError) {
+    logVideoUploadWarning('Failed to verify current user before upload cleanup.', {
+      videoId,
+      storagePath,
+      error: formatSupabaseError(getUserError),
+    });
+  } else if (!ownsStoragePath) {
+    logVideoUploadWarning('Skipped storage cleanup because the path is outside the current user folder.', {
+      videoId,
+      storagePath,
+      userId: user?.id ?? null,
+    });
+  } else {
+    const { error: removeError } = await supabase.storage.from('videos').remove([storagePath]);
+
+    if (removeError) {
+      logVideoUploadWarning('Failed to remove uploaded video from storage during cleanup.', {
+        videoId,
+        storagePath,
+        error: formatSupabaseError(removeError),
+      });
+    } else {
+      storageRemoved = true;
+    }
+  }
+
+  if (storageRemoved) {
+    let deleteQuery = supabase.from('videos').delete().eq('id', videoId);
+
+    if (user?.id) {
+      deleteQuery = deleteQuery.eq('user_id', user.id);
+    }
+
+    const { error: deleteError } = await deleteQuery;
+
+    if (!deleteError) {
+      return;
+    }
+
+    logVideoUploadWarning('Failed to delete uploaded video row during cleanup.', {
+      videoId,
+      error: formatSupabaseError(deleteError),
+    });
+  }
+
+  let updateQuery = supabase.from('videos').update({ status: 'failed' }).eq('id', videoId);
+
+  if (user?.id) {
+    updateQuery = updateQuery.eq('user_id', user.id);
+  }
+
+  const { error: updateError } = await updateQuery;
+
+  if (updateError) {
+    logVideoUploadWarning('Failed to mark uploaded video row as failed during cleanup.', {
+      videoId,
+      error: formatSupabaseError(updateError),
+    });
+  }
 }
 
 export async function uploadVideoForAnalysis({
@@ -396,6 +627,7 @@ export async function uploadVideoForAnalysis({
     throw new Error('You must be logged in to upload and analyze a video.');
   }
 
+  validateInitialVideoMetadata(asset);
   const preparedVideo = await prepareVideoForUpload(asset, onStatusChange);
 
   if (preparedVideo.finalSizeBytes > MAX_UPLOAD_BYTES) {
@@ -405,7 +637,9 @@ export async function uploadVideoForAnalysis({
       reason: 'prepared_file_still_too_large',
     });
 
-    throw new Error('This video is still too large to upload. Trim the clip or record a shorter video and try again.');
+    throw new Error(
+      `This video is still too large to upload. The limit is ${UPLOAD_LIMIT_LABEL}. Trim the clip or record a shorter video and try again.`
+    );
   }
 
   onStatusChange?.('Uploading video...');
@@ -434,19 +668,6 @@ export async function uploadVideoForAnalysis({
   const videoId = createUuid();
   const normalizedExerciseType = normalizeExerciseType(exercise);
   const normalizedViewType = normalizeViewType(angle);
-
-  console.log('[Supabase] uploadVideoForAnalysis auth user', {
-    authUserId: user.id,
-  });
-
-  console.log('[Supabase] uploadVideoForAnalysis insert payload', {
-    videoId,
-    insertedUserId: user.id,
-    storagePath,
-    exerciseType: normalizedExerciseType,
-    viewType: normalizedViewType,
-    status: 'uploaded',
-  });
 
   const { error: insertError } = await supabase
     .from('videos')

@@ -46,6 +46,23 @@ class VideoRepository:
 
     return response.data[0]
 
+  def queue_owned_video_if_status(
+    self,
+    video_id: str,
+    user_id: str,
+    allowed_statuses: tuple[str, ...],
+  ) -> dict[str, Any] | None:
+    response = (
+      self.client.table("videos")
+      .update({"status": "queued"})
+      .eq("id", video_id)
+      .eq("user_id", user_id)
+      .in_("status", list(allowed_statuses))
+      .execute()
+    )
+
+    return response.data[0] if response.data else None
+
   def mark_saved(self, video_id: str) -> dict[str, Any]:
     return self.update_video(
       video_id,

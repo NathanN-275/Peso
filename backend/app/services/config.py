@@ -16,6 +16,7 @@ DEFAULT_CORS_ORIGINS = (
 )
 
 LOCAL_DEV_CORS_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0):\d+$"
+DEFAULT_MAX_VIDEO_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,7 @@ class Settings:
   supabase_service_role_key: str
   supabase_jwt_secret: str
   video_bucket: str = "videos"
+  max_video_upload_bytes: int = 50 * 1024 * 1024
   model_version: str = "mediapipe-pose-v1"
   cors_origins: tuple[str, ...] = ()
   cors_origin_regex: str | None = None
@@ -38,6 +40,19 @@ def get_settings() -> Settings:
   supabase_service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
   supabase_jwt_secret = os.getenv("SUPABASE_JWT_SECRET", "").strip()
   video_bucket = os.getenv("VIDEO_BUCKET", "videos").strip() or "videos"
+  max_video_upload_bytes_raw = os.getenv(
+    "MAX_VIDEO_UPLOAD_BYTES",
+    str(DEFAULT_MAX_VIDEO_UPLOAD_BYTES),
+  ).strip()
+
+  try:
+    max_video_upload_bytes = int(max_video_upload_bytes_raw)
+  except ValueError as error:
+    raise RuntimeError("MAX_VIDEO_UPLOAD_BYTES must be a positive integer.") from error
+
+  if max_video_upload_bytes <= 0:
+    raise RuntimeError("MAX_VIDEO_UPLOAD_BYTES must be a positive integer.")
+
   model_version = os.getenv("MODEL_VERSION", "mediapipe-pose-v1").strip() or "mediapipe-pose-v1"
   cors_origins_raw = os.getenv(
     "BACKEND_CORS_ORIGINS",
@@ -74,6 +89,7 @@ def get_settings() -> Settings:
     supabase_service_role_key=supabase_service_role_key,
     supabase_jwt_secret=supabase_jwt_secret,
     video_bucket=video_bucket,
+    max_video_upload_bytes=max_video_upload_bytes,
     model_version=model_version,
     cors_origins=cors_origins,
     cors_origin_regex=cors_origin_regex,
