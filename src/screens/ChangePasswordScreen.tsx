@@ -1,6 +1,6 @@
 // the use of this screen is to change the password after the user has clicked the reset password link in their email
 import { StatusBar } from 'expo-status-bar';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Image,
@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../lib/supabase';
 import Button from '../components/Button';
 import Input from '../components/Input';
 import tokens from '../theme/tokens';
@@ -21,9 +22,11 @@ const titleImage = require('../../ResetPassword.png');
 type ResetPasswordFormScreenProps = {
   onBack: () => void;
   onReset: () => void;
+  initialErrorMessage?: string | null;
 };
 
 export default function ResetPasswordFormScreen({
+  initialErrorMessage = null,
   onBack,
   onReset,
 }: ResetPasswordFormScreenProps) {
@@ -31,8 +34,12 @@ export default function ResetPasswordFormScreen({
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(initialErrorMessage);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setErrorMessage(initialErrorMessage);
+  }, [initialErrorMessage]);
 
   const handleReset = async () => {
     const trimmedPassword = password.trim();
@@ -67,9 +74,23 @@ export default function ResetPasswordFormScreen({
     setInfoMessage(null);
 
     try {
+      if (!supabase) {
+        throw new Error('Supabase is not configured.');
+      }
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      console.log('[ResetPassword] getSession result before submit', { hasSession: !!session });
+
+      if (!session) {
+        setErrorMessage('Reset link session expired or was not loaded. Please request a new reset link.');
+        return;
+      }
+
       await updatePassword(trimmedPassword);
       setInfoMessage('Password updated. Log in with your new password.');
-      onReset();
+      setTimeout(onReset, 900);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to reset password.');
     } finally {

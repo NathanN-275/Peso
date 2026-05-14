@@ -1,3 +1,4 @@
+// when the user logs in, this is the home screen
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
