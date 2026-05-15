@@ -128,3 +128,18 @@ class StorageService:
 
   def delete_storage_path(self, storage_path: str) -> None:
     self.client.storage.from_(self.bucket).remove([storage_path])
+
+  def create_signed_url(self, storage_path: str, expires_in: int = 3600) -> str:
+    response = self.client.storage.from_(self.bucket).create_signed_url(
+      storage_path,
+      expires_in,
+    )
+    signed_url = response.get("signedUrl") or response.get("signedURL")
+
+    if not signed_url:
+      raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Unable to create signed storage URL.",
+      )
+
+    return signed_url

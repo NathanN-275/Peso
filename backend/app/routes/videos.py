@@ -38,6 +38,30 @@ class AnalysisResponse(BaseModel):
   result_json: dict
 
 
+class SavedVideoAnalysisResponse(BaseModel):
+  id: UUID
+  model_version: str
+  created_at: str
+  result_json: dict
+  summary: list[str]
+  coaching_feedback: list[str]
+  rep_data: list[dict]
+
+
+class SavedVideoResponse(BaseModel):
+  id: UUID
+  exercise_type: str
+  view_type: str
+  storage_path: str
+  thumbnail_path: str | None = None
+  video_url: str
+  thumbnail_url: str | None = None
+  save_state: str
+  saved_at: str | None = None
+  created_at: str
+  analysis: SavedVideoAnalysisResponse | None = None
+
+
 class SaveVideoResponse(BaseModel):
   video_id: UUID
   save_state: str
@@ -114,6 +138,50 @@ def save_video(
   repository.require_owned_video(str(video_id), user_id)
   saved_video = repository.mark_saved(str(video_id))
   return SaveVideoResponse(video_id=video_id, save_state=saved_video["save_state"])
+
+
+@router.get("/videos/saved", response_model=list[SavedVideoResponse])
+def list_saved_videos(
+  user_id: str = Depends(get_current_user_id),
+) -> list[SavedVideoResponse]:
+  repository = VideoRepository()
+  storage = StorageService()
+  saved_videos: list[SavedVideoResponse] = []
+
+  for video in repository.list_saved_videos(user_id):
+    analysis = repository.get_analysis_result(video["id"])
+    result_json = analysis["result_json"] if analysis else {}
+    normalized_analysis = None
+
+    if analysis:
+      normalized_analysis = SavedVideoAnalysisResponse(
+        id=analysis["id"],
+        model_version=analysis["model_version"],
+        created_at=analysis["created_at"],
+        result_json=result_json,
+        summary=result_json.get("summary_flags") or result_json.get("summaryFlags") or [],
+        coaching_feedback=result_json.get("coach_feedback") or result_json.get("coachingFeedback") or [],
+        rep_data=result_json.get("reps") or [],
+      )
+
+    thumbnail_path = video.get("thumbnail_path")
+    saved_videos.append(
+      SavedVideoResponse(
+        id=video["id"],
+        exercise_type=video["exercise_type"],
+        view_type=video["view_type"],
+        storage_path=video["storage_path"],
+        thumbnail_path=thumbnail_path,
+        video_url=storage.create_signed_url(video["storage_path"]),
+        thumbnail_url=storage.create_signed_url(thumbnail_path) if thumbnail_path else None,
+        save_state=video["save_state"],
+        saved_at=video.get("saved_at"),
+        created_at=video["created_at"],
+        analysis=normalized_analysis,
+      )
+    )
+
+  return saved_videos
 
 
 @router.post("/videos/{video_id}/discard", response_model=DiscardVideoResponse)

@@ -99,6 +99,18 @@ class VideoRepository:
     )
     return response.data or []
 
+  def list_saved_videos(self, user_id: str) -> list[dict[str, Any]]:
+    response = (
+      self.client.table("videos")
+      .select("*")
+      .eq("user_id", user_id)
+      .eq("save_state", "saved")
+      .order("saved_at", desc=True, nullsfirst=False)
+      .order("created_at", desc=True)
+      .execute()
+    )
+    return response.data or []
+
   def save_analysis_result(self, video_id: str, model_version: str, result_json: dict[str, Any]) -> dict[str, Any]:
     # Store the latest analysis result for this model version.
     response = (

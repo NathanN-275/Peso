@@ -1,5 +1,7 @@
 export type VideoAnalysisStatus = 'uploaded' | 'queued' | 'processing' | 'completed' | 'failed';
 
+export type SaveState = 'pending' | 'saved';
+
 export type VideoAnalysisRep = {
   rep_index: number;
   repIndex?: number;
@@ -102,4 +104,28 @@ export type AnalysisResponse = {
   video_id: string;
   status: VideoAnalysisStatus;
   result_json: VideoAnalysisResult;
+};
+
+export type SavedVideoAnalysis = {
+  id: string;
+  model_version: string;
+  created_at: string;
+  result_json: VideoAnalysisResult;
+  summary: string[];
+  coaching_feedback: string[];
+  rep_data: VideoAnalysisRep[];
+};
+
+export type SavedVideo = {
+  id: string;
+  exercise_type: string;
+  view_type: string;
+  storage_path: string;
+  thumbnail_path: string | null;
+  video_url: string;
+  thumbnail_url: string | null;
+  save_state: SaveState;
+  saved_at: string | null;
+  created_at: string;
+  analysis: SavedVideoAnalysis | null;
 };
