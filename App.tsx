@@ -10,9 +10,13 @@ import HomeScreen from './src/screens/HomeScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import ResetPasswordScreen from './src/screens/EmailResetPasswordScreen';
 import ResetPasswordFormScreen from './src/screens/ChangePasswordScreen';
+import AnalysisReviewScreen from './src/screens/AnalysisReviewScreen';
+import SavedLiftVideosScreen from './src/screens/SavedLiftVideosScreen';
 import UploadVideoScreen from './src/screens/UploadVideoScreen';
 import WelcomeScreen from './src/screens/WelcomeScreen';
 import { supabase } from './lib/supabase';
+import type { SavedVideo } from './lib/backendApi';
+import { buildSavedVideoAnalysisResult } from './src/utils/savedVideos';
 
 LogBox.ignoreLogs([
   "SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead.",
@@ -23,6 +27,8 @@ const AUTH_ROUTES = {
   home: 'home',
   addVideo: 'add-video',
   uploadVideo: 'upload-video',
+  savedLiftVideos: 'saved-lift-videos',
+  savedVideoReview: 'saved-video-review',
   welcome: 'welcome',
   login: 'login',
   createAccount: 'create-account',
@@ -64,6 +70,8 @@ const WEB_ROUTE_HASHES: Record<AuthRoute, string> = {
   [AUTH_ROUTES.home]: '#/home',
   [AUTH_ROUTES.addVideo]: '#/add-video',
   [AUTH_ROUTES.uploadVideo]: '#/upload-video',
+  [AUTH_ROUTES.savedLiftVideos]: '#/saved-lift-videos',
+  [AUTH_ROUTES.savedVideoReview]: '#/saved-video-review',
   [AUTH_ROUTES.welcome]: '#/welcome',
   [AUTH_ROUTES.login]: '#/login',
   [AUTH_ROUTES.createAccount]: '#/create-account',
@@ -101,6 +109,14 @@ function parseWebAuthRoute(hash: string): AuthRoute {
 
   if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.uploadVideo]) {
     return AUTH_ROUTES.uploadVideo;
+  }
+
+  if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.savedLiftVideos]) {
+    return AUTH_ROUTES.savedLiftVideos;
+  }
+
+  if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.savedVideoReview]) {
+    return AUTH_ROUTES.savedVideoReview;
   }
 
   if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.login]) {
@@ -357,6 +373,10 @@ function AppContent() {
 
     return parseWebAuthLink(window.location.search, window.location.hash).errorMessage;
   });
+  const [homeRefreshKey, setHomeRefreshKey] = useState(0);
+  const [savedVideos, setSavedVideos] = useState<SavedVideo[]>([]);
+  const [selectedSavedExerciseType, setSelectedSavedExerciseType] = useState<string | null>(null);
+  const [selectedSavedVideo, setSelectedSavedVideo] = useState<SavedVideo | null>(null);
   const routeRef = useRef(route);
   const hadSessionRef = useRef(false);
 
@@ -499,6 +519,28 @@ function AppContent() {
     toResetPassword: () => navigateToAuthRoute(AUTH_ROUTES.resetPassword),
     toResetPasswordForm: () => navigateToAuthRoute(AUTH_ROUTES.resetPasswordForm),
   };
+  const handleAnalysisSaved = () => {
+    setHomeRefreshKey((key) => key + 1);
+    authNavigation.toHome();
+  };
+  const handleOpenSavedLiftFolder = (exerciseType: string) => {
+    setSelectedSavedExerciseType(exerciseType);
+    setSelectedSavedVideo(null);
+    navigateToAuthRoute(AUTH_ROUTES.savedLiftVideos);
+  };
+  const handleOpenSavedVideo = (video: SavedVideo) => {
+    setSelectedSavedVideo(video);
+    setSelectedSavedExerciseType(video.exercise_type);
+    navigateToAuthRoute(AUTH_ROUTES.savedVideoReview);
+  };
+  const handleSavedVideoReviewBack = () => {
+    navigateToAuthRoute(selectedSavedExerciseType ? AUTH_ROUTES.savedLiftVideos : AUTH_ROUTES.home);
+  };
+  const handleHomeRoute = () => {
+    setSelectedSavedExerciseType(null);
+    setSelectedSavedVideo(null);
+    authNavigation.toHome();
+  };
   const handleWelcomeLoginPress = authNavigation.toLogin;
   const handleWelcomeCreateAccountPress = authNavigation.toCreateAccount;
   const handleResetPasswordBack = () => {
@@ -626,6 +668,8 @@ function AppContent() {
         route !== AUTH_ROUTES.home &&
         route !== AUTH_ROUTES.addVideo &&
         route !== AUTH_ROUTES.uploadVideo &&
+        route !== AUTH_ROUTES.savedLiftVideos &&
+        route !== AUTH_ROUTES.savedVideoReview &&
         !recoveryRouteActive
       ) {
         console.log('[AuthGuard] route chosen', {
@@ -640,7 +684,9 @@ function AppContent() {
     if (
       route === AUTH_ROUTES.home ||
       route === AUTH_ROUTES.addVideo ||
-      route === AUTH_ROUTES.uploadVideo
+      route === AUTH_ROUTES.uploadVideo ||
+      route === AUTH_ROUTES.savedLiftVideos ||
+      route === AUTH_ROUTES.savedVideoReview
     ) {
       console.log('[AuthGuard] route chosen', {
         route: AUTH_ROUTES.welcome,
@@ -713,20 +759,56 @@ function AppContent() {
 
     if (session && user) {
       if (route === AUTH_ROUTES.uploadVideo) {
-        return <UploadVideoScreen onBack={authNavigation.toAddVideo} onAnalysisSaved={authNavigation.toHome} />;
+        return <UploadVideoScreen onBack={authNavigation.toAddVideo} onAnalysisSaved={handleAnalysisSaved} />;
+      }
+
+      if (route === AUTH_ROUTES.savedVideoReview && selectedSavedVideo) {
+        return (
+          <AnalysisReviewScreen
+            mode="saved"
+            videoUri={selectedSavedVideo.video_url}
+            result={buildSavedVideoAnalysisResult(selectedSavedVideo)}
+            onBack={handleSavedVideoReviewBack}
+          />
+        );
+      }
+
+      if (route === AUTH_ROUTES.savedLiftVideos && selectedSavedExerciseType) {
+        const selectedVideos = savedVideos.filter(
+          (video) => video.exercise_type === selectedSavedExerciseType
+        );
+
+        return (
+          <SavedLiftVideosScreen
+            exerciseType={selectedSavedExerciseType}
+            videos={selectedVideos}
+            onBack={handleHomeRoute}
+            onOpenSavedVideo={handleOpenSavedVideo}
+            onHomePress={handleHomeRoute}
+            onAddPress={authNavigation.toAddVideo}
+          />
+        );
       }
 
       if (route === AUTH_ROUTES.addVideo) {
         return (
           <AddVideoScreen
-            onHomePress={authNavigation.toHome}
+            onHomePress={handleHomeRoute}
             onAddPress={authNavigation.toAddVideo}
             onUploadVideoPress={authNavigation.toUploadVideo}
           />
         );
       }
 
-      return <HomeScreen email={user.email} onNavigateToAddVideo={authNavigation.toAddVideo} />;
+      return (
+        <HomeScreen
+          email={user.email}
+          refreshKey={homeRefreshKey}
+          onNavigateToAddVideo={authNavigation.toAddVideo}
+          onOpenSavedLiftFolder={handleOpenSavedLiftFolder}
+          onSavedVideosLoaded={setSavedVideos}
+        />
+      );
     }
 
     if (route === AUTH_ROUTES.welcome) {

@@ -33,8 +33,10 @@ import {
 type AnalysisReviewScreenProps = {
   videoUri: string;
   result: VideoAnalysisResult;
-  onDiscarded: () => void;
-  onSaved: () => void;
+  mode?: 'pending' | 'saved';
+  onBack?: () => void;
+  onDiscarded?: () => void;
+  onSaved?: () => void;
 };
 
 function formatFlagLabel(value: string) {
@@ -64,11 +66,14 @@ function SheetSection({ title, children }: { title: string; children: React.Reac
 export default function AnalysisReviewScreen({
   videoUri,
   result,
+  mode = 'pending',
+  onBack,
   onDiscarded,
   onSaved,
 }: AnalysisReviewScreenProps) {
   // This screen plays the analyzed clip and overlays pose feedback.
   const { session } = useAuth();
+  const isSavedMode = mode === 'saved';
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(result.duration ?? 0);
   const [videoLayout, setVideoLayout] = useState({ width: 0, height: 0 });
@@ -178,7 +183,7 @@ export default function AnalysisReviewScreen({
 
   const handleSave = async () => {
     // Save is gated by a valid session token.
-    if (!session?.access_token || saving) {
+    if (isSavedMode || !session?.access_token || saving) {
       return;
     }
 
@@ -189,7 +194,7 @@ export default function AnalysisReviewScreen({
       await saveAnalyzedVideo(result.video_id, session.access_token);
       setSaved(true);
       player.pause();
-      onSaved();
+      onSaved?.();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to save this video.');
     } finally {
@@ -199,7 +204,7 @@ export default function AnalysisReviewScreen({
 
   const discardVideo = async () => {
     // Discard removes the uploaded file from the backend and storage.
-    if (!session?.access_token || discarding) {
+    if (isSavedMode || !session?.access_token || discarding) {
       return;
     }
 
@@ -210,7 +215,7 @@ export default function AnalysisReviewScreen({
       await discardAnalyzedVideo(result.video_id, session.access_token);
       setShowDiscardSheet(false);
       player.pause();
-      onDiscarded();
+      onDiscarded?.();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to discard this video.');
     } finally {
@@ -227,9 +232,15 @@ export default function AnalysisReviewScreen({
   };
 
   const handleBack = () => {
+    if (isSavedMode) {
+      player.pause();
+      onBack?.();
+      return;
+    }
+
     // Going back warns if the analyzed clip has not been saved yet.
     if (saved) {
-      onSaved();
+      onSaved?.();
       return;
     }
 
@@ -254,10 +265,10 @@ export default function AnalysisReviewScreen({
             onPress={() => {
               void handleSave();
             }}
-            disabled={saving || discarding}
-            style={[styles.topButton, (saving || discarding) && styles.disabledButton]}
+            disabled={isSavedMode || saving || discarding}
+            style={[styles.topButton, (isSavedMode || saving || discarding) && styles.disabledButton]}
           >
-            <Text style={styles.topButtonText}>{saving ? 'Saving' : 'Save'}</Text>
+            <Text style={styles.topButtonText}>{isSavedMode ? 'Saved' : saving ? 'Saving' : 'Save'}</Text>
           </Pressable>
         </View>
 
@@ -386,7 +397,7 @@ export default function AnalysisReviewScreen({
         </ReviewBottomSheet>
 
         <ReviewBottomSheet
-          visible={showDiscardSheet}
+          visible={!isSavedMode && showDiscardSheet}
           title="Discard video?"
           onClose={closeDiscardSheet}
           showCloseButton={false}

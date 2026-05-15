@@ -1,5 +1,7 @@
-import {
+import type {
   AnalysisResponse,
+  SaveState,
+  SavedVideo,
   VideoAnalysisStatus,
   VideoStatusResponse,
 } from '../src/types/videoAnalysis';
@@ -125,7 +127,7 @@ async function requestJson<T>(path: string, accessToken?: string, init?: Request
 
 export { getBackendApiUrl, getBackendConnectionDiagnostics };
 
-export type SaveState = 'pending' | 'saved';
+export type { SaveState, SavedVideo };
 
 export async function testBackendConnection() {
   // Health checks confirm the backend is reachable before upload starts.
@@ -153,6 +155,11 @@ export async function fetchVideoStatus(videoId: string, accessToken: string) {
 export async function fetchAnalysisResult(videoId: string, accessToken: string) {
   // Fetch the completed analysis payload once processing finishes.
   return requestJson<AnalysisResponse>(`/analysis/${videoId}`, accessToken);
+}
+
+export async function getSavedVideos(accessToken: string) {
+  // Saved videos include signed URLs for private storage playback.
+  return requestJson<SavedVideo[]>('/videos/saved', accessToken);
 }
 
 export async function saveAnalyzedVideo(videoId: string, accessToken: string) {
