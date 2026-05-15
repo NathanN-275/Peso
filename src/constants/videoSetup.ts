@@ -9,6 +9,7 @@ export const EXERCISE_OPTIONS = [
   'Barbell Row',
 ] as const;
 
+// The upload flow asks for both the lift and the camera angle.
 export const ANGLE_OPTIONS = ['Side', 'Front', 'Angled'] as const;
 
 export type ExerciseOption = (typeof EXERCISE_OPTIONS)[number];

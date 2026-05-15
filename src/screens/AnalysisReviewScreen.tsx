@@ -39,10 +39,12 @@ type AnalysisReviewScreenProps = {
 };
 
 function formatFlagLabel(value: string) {
+  // Turn backend enum strings into readable labels.
   return value.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function formatNumber(value: number, suffix = '') {
+  // Keep numeric debug values compact on screen.
   if (!Number.isFinite(value)) {
     return `0${suffix}`;
   }
@@ -51,6 +53,7 @@ function formatNumber(value: number, suffix = '') {
 }
 
 function SheetSection({ title, children }: { title: string; children: React.ReactNode }) {
+  // Shared block for the review sheet sections.
   return (
     <View style={styles.sheetSection}>
       <Text style={styles.sheetLabel}>{title}</Text>
@@ -65,6 +68,7 @@ export default function AnalysisReviewScreen({
   onDiscarded,
   onSaved,
 }: AnalysisReviewScreenProps) {
+  // This screen plays the analyzed clip and overlays pose feedback.
   const { session } = useAuth();
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(result.duration ?? 0);
@@ -77,6 +81,7 @@ export default function AnalysisReviewScreen({
   const [wasPlayingBeforeScrub, setWasPlayingBeforeScrub] = useState(false);
 
   const player = useVideoPlayer(videoUri, (videoPlayer) => {
+    // Configure playback for review mode instead of normal video controls.
     videoPlayer.loop = false;
     videoPlayer.muted = true;
     videoPlayer.timeUpdateEventInterval = 0.05;
@@ -102,6 +107,7 @@ export default function AnalysisReviewScreen({
   });
 
   useEffect(() => {
+    // Keep the scrubber state in sync with the native player clock.
     setCurrentTime(timeUpdate.currentTime);
   }, [timeUpdate.currentTime]);
 
@@ -134,6 +140,7 @@ export default function AnalysisReviewScreen({
   const cameraView = result.cameraView ?? result.view;
 
   const handleVideoLayout = ({ nativeEvent }: LayoutChangeEvent) => {
+    // The overlay needs the rendered video size to map pose points correctly.
     setVideoLayout({
       width: nativeEvent.layout.width,
       height: nativeEvent.layout.height,
@@ -141,6 +148,7 @@ export default function AnalysisReviewScreen({
   };
 
   const handleSeek = (time: number) => {
+    // Clamp seeks so the scrubber cannot leave the clip bounds.
     const boundedTime = Math.min(Math.max(time, 0), duration || time);
     player.currentTime = boundedTime;
     setCurrentTime(boundedTime);
@@ -169,6 +177,7 @@ export default function AnalysisReviewScreen({
   };
 
   const handleSave = async () => {
+    // Save is gated by a valid session token.
     if (!session?.access_token || saving) {
       return;
     }
@@ -189,6 +198,7 @@ export default function AnalysisReviewScreen({
   };
 
   const discardVideo = async () => {
+    // Discard removes the uploaded file from the backend and storage.
     if (!session?.access_token || discarding) {
       return;
     }
@@ -208,6 +218,7 @@ export default function AnalysisReviewScreen({
   };
 
   const handleBack = () => {
+    // Going back warns if the analyzed clip has not been saved yet.
     if (saved) {
       onSaved();
       return;
@@ -263,6 +274,7 @@ export default function AnalysisReviewScreen({
               allowsPictureInPicture={false}
               onFirstFrameRender={() => setErrorMessage(null)}
             />
+            {/* Pose markers are drawn on top of the rendered video. */}
             <PoseOverlay
               frame={poseFrame}
               containerSize={videoLayout}

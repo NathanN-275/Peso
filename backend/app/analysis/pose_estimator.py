@@ -42,12 +42,15 @@ POSE_LANDMARK_NAMES = [
   "right_foot_index",
 ]
 
+# Pose estimation samples frames and extracts MediaPipe landmarks.
 
 class PoseEstimator:
   def __init__(self, target_fps: float = 15.0) -> None:
+    # Lower sampling keeps processing fast while preserving squat motion.
     self.target_fps = target_fps
 
   def run(self, file_path: str) -> dict[str, Any]:
+    # OpenCV streams the clip frame by frame for pose inference.
     capture = cv2.VideoCapture(file_path)
 
     if not capture.isOpened():
@@ -74,6 +77,7 @@ class PoseEstimator:
     )
 
     try:
+      # Only every Nth frame is run through MediaPipe.
       frame_index = 0
       sampled_index = 0
 
@@ -92,6 +96,7 @@ class PoseEstimator:
         results = pose.process(rgb_frame)
 
         if results.pose_landmarks:
+          # Convert the MediaPipe landmarks into plain dicts.
           landmarks = {
             name: {
               "x": landmark.x,

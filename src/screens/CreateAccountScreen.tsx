@@ -22,6 +22,7 @@ type CreateAccountScreenProps = {
 };
 
 export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps) {
+  // Collect profile fields before calling Supabase signup.
   const { signUpWithEmail } = useAuth();
   const [name, setName] = useState('');
   const [username, setUsername] = useState('');
@@ -33,6 +34,7 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
   const handleCreateAccount = async () => {
+    // Trim the user input before sending it to auth.
     const normalizedEmail = email.trim().toLowerCase();
     const trimmedPassword = password.trim();
     const trimmedUsername = username.trim();
@@ -48,6 +50,7 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
     setInfoMessage(null);
 
     try {
+      // Signup may return a session immediately or require email confirmation.
       const result = await signUpWithEmail(normalizedEmail, trimmedPassword, {
         name,
         username: trimmedUsername,
@@ -101,6 +104,7 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
             className="rounded-[2px] bg-black"
             style={{ paddingHorizontal: 44, paddingTop: 0, paddingBottom: 0, marginTop: 0 }}
           >
+            {/* Decorative title art for the signup form. */}
             <Image
               source={titleImage}
               resizeMode="contain"
@@ -110,6 +114,7 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
             />
 
             <View className="items-center" style={{ marginBottom: 28 }}>
+              {/* Static profile icon used as a visual anchor. */}
               <View
                 className="items-center justify-center rounded-full"
                 style={{ width: 84, height: 84, backgroundColor: '#E8DDFD' }}

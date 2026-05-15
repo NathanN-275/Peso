@@ -4,6 +4,7 @@ from typing import Any
 
 
 def smooth_series(values: list[float], window_size: int = 5) -> list[float]:
+  # Smooth noisy pose measurements before rep detection.
   if len(values) <= 2:
     return values
 
@@ -20,6 +21,7 @@ def smooth_series(values: list[float], window_size: int = 5) -> list[float]:
 
 
 def normalize_series(values: list[float]) -> list[float]:
+  # Scale signals into a common 0-1 range.
   if not values:
     return []
 
@@ -39,6 +41,7 @@ def build_motion_signal(
   knee_flexions: list[float],
   hip_flexions: list[float],
 ) -> list[float]:
+  # Blend depth and joint flexion into one squat signal.
   normalized_depths = normalize_series(hip_depths)
   smoothed_knees = smooth_series(knee_flexions)
   smoothed_hips = smooth_series(hip_flexions)
@@ -50,6 +53,7 @@ def build_motion_signal(
 
 
 def _frame_gap_for_min_duration(frames: list[dict[str, Any]], minimum_ms: int) -> int:
+  # Convert a duration target into a frame gap.
   if len(frames) < 2:
     return 2
 
@@ -59,6 +63,7 @@ def _frame_gap_for_min_duration(frames: list[dict[str, Any]], minimum_ms: int) -
 
 
 def _series_amplitude(values: list[float]) -> float:
+  # Measure how much motion a signal contains.
   if not values:
     return 0.0
 
@@ -71,6 +76,7 @@ def _select_primary_signal(
   knee_flexions: list[float],
   hip_flexions: list[float],
 ) -> tuple[list[float], str]:
+  # Prefer knee flexion when it has enough movement.
   knee_signal = smooth_series(knee_flexions, window_size=7)
 
   if _series_amplitude(knee_signal) >= 0.16:
@@ -93,6 +99,7 @@ def _find_boundary(
   direction: int,
   max_gap: int,
 ) -> int:
+  # Walk outward from the peak until the signal drops.
   index = peak_index
   best_index = peak_index
   best_value = signal[peak_index]
@@ -120,6 +127,7 @@ def _find_peak_candidates(
   high_threshold: float,
   min_spacing_frames: int,
 ) -> list[int]:
+  # Pick local peaks that are tall enough and spaced apart.
   local_peaks: list[int] = []
 
   for index, value in enumerate(signal):
@@ -145,6 +153,7 @@ def detect_reps(
   hip_flexions: list[float],
   frames: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+  # Rep detection turns the motion signal into rep boundaries.
   if len(hip_depths) < 5:
     return [], {
       "motion_amplitude": 0.0,

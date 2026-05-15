@@ -1,4 +1,3 @@
-// when the user logs in, this is the home screen
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
@@ -13,11 +12,13 @@ type HomeScreenProps = {
 };
 
 export default function HomeScreen({ email, onNavigateToAddVideo }: HomeScreenProps) {
+  // Home is mostly a handoff screen into video capture or upload.
   const { signOut } = useAuth();
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleLogout = async () => {
+    // Sign-out is isolated so the screen can show a local error state.
     setSubmitting(true);
     setErrorMessage(null);
 
@@ -58,6 +59,7 @@ export default function HomeScreen({ email, onNavigateToAddVideo }: HomeScreenPr
           className="flex-1 items-center justify-center"
           style={{ paddingHorizontal: 36, paddingBottom: NAV_HEIGHT + 38 }}
         >
+          {/* Centered prompt keeps the main action obvious. */}
           <View style={{ alignItems: 'center', justifyContent: 'center', maxWidth: 320 }}>
             <Text
               style={{
@@ -78,6 +80,7 @@ export default function HomeScreen({ email, onNavigateToAddVideo }: HomeScreenPr
               hitSlop={16}
               onPress={onNavigateToAddVideo}
             >
+              {/* Add button uses an icon instead of extra text. */}
               <Ionicons name="add-circle-outline" size={60} color={tokens.colors.brand} />
             </Pressable>
 

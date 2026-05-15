@@ -19,6 +19,7 @@ type WelcomeScreenProps = {
 };
 
 export default function WelcomeScreen({ onLogin, onCreateAccount }: WelcomeScreenProps) {
+  // Simple entry screen that branches into login or signup.
   return (
     <SafeAreaView className="flex-1" style={{ backgroundColor: '#000' }}>
       <StatusBar style="light" />
@@ -38,7 +39,7 @@ export default function WelcomeScreen({ onLogin, onCreateAccount }: WelcomeScree
             className="items-center"
             style={{ marginTop: tokens.spacing.logoTop }}
           >
-
+            {/* Spacer block kept for the logo alignment. */}
           <View
             className="items-center"
             style={{

@@ -10,9 +10,11 @@ from .supabase_client import get_supabase_admin_client
 
 class VideoRepository:
   def __init__(self) -> None:
+    # All video persistence goes through the Supabase admin client.
     self.client = get_supabase_admin_client()
 
   def get_video(self, video_id: str) -> dict[str, Any] | None:
+    # Load one uploaded video row by ID.
     response = (
       self.client.table("videos")
       .select("*")
@@ -23,6 +25,7 @@ class VideoRepository:
     return response.data[0] if response.data else None
 
   def require_owned_video(self, video_id: str, user_id: str) -> dict[str, Any]:
+    # Ownership checks keep user data isolated.
     video = self.get_video(video_id)
 
     if not video:
@@ -34,6 +37,7 @@ class VideoRepository:
     return video
 
   def update_video(self, video_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+    # Update any video metadata in place.
     response = (
       self.client.table("videos")
       .update(fields)
@@ -52,6 +56,7 @@ class VideoRepository:
     user_id: str,
     allowed_statuses: tuple[str, ...],
   ) -> dict[str, Any] | None:
+    # Only queue videos that are still in a queueable state.
     response = (
       self.client.table("videos")
       .update({"status": "queued"})
@@ -64,6 +69,7 @@ class VideoRepository:
     return response.data[0] if response.data else None
 
   def mark_saved(self, video_id: str) -> dict[str, Any]:
+    # Saved videos stay visible in the home flow.
     return self.update_video(
       video_id,
       {
@@ -74,9 +80,11 @@ class VideoRepository:
     )
 
   def delete_video(self, video_id: str) -> None:
+    # Deleted videos are removed entirely from the table.
     self.client.table("videos").delete().eq("id", video_id).execute()
 
   def save_analysis_result(self, video_id: str, model_version: str, result_json: dict[str, Any]) -> dict[str, Any]:
+    # Store the latest analysis result for this model version.
     response = (
       self.client.table("analysis_results")
       .upsert(
@@ -92,6 +100,7 @@ class VideoRepository:
     return response.data[0]
 
   def get_analysis_result(self, video_id: str) -> dict[str, Any] | None:
+    # Return the newest analysis result for review.
     response = (
       self.client.table("analysis_results")
       .select("*")

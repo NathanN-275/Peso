@@ -48,6 +48,7 @@ class DiscardVideoResponse(BaseModel):
 
 
 def _run_analysis_job(video_id: str) -> None:
+  # Background tasks run analysis outside the request lifecycle.
   try:
     analyze_video(video_id)
   except Exception:
@@ -60,6 +61,7 @@ def queue_analysis(
   background_tasks: BackgroundTasks,
   user_id: str = Depends(get_current_user_id),
 ) -> AnalyzeResponse:
+  # Queue analysis only when the video belongs to the current user.
   repository = VideoRepository()
   video_id_str = str(video_id)
   video = repository.require_owned_video(video_id_str, user_id)
@@ -102,6 +104,7 @@ def save_video(
   video_id: UUID,
   user_id: str = Depends(get_current_user_id),
 ) -> SaveVideoResponse:
+  # Mark a finished analysis as saved in the user's library.
   repository = VideoRepository()
   repository.require_owned_video(str(video_id), user_id)
   repository.mark_saved(str(video_id))
@@ -113,6 +116,7 @@ def discard_video(
   video_id: UUID,
   user_id: str = Depends(get_current_user_id),
 ) -> DiscardVideoResponse:
+  # Discard removes both the storage object and the DB row.
   repository = VideoRepository()
   video = repository.require_owned_video(str(video_id), user_id)
   StorageService().delete_storage_path(video["storage_path"])
@@ -125,6 +129,7 @@ def get_video_status(
   video_id: UUID,
   user_id: str = Depends(get_current_user_id),
 ) -> VideoStatusResponse:
+  # Status polling lets the client show upload progress.
   repository = VideoRepository()
   video = repository.require_owned_video(str(video_id), user_id)
   return VideoStatusResponse(
@@ -141,6 +146,7 @@ def get_analysis(
   video_id: UUID,
   user_id: str = Depends(get_current_user_id),
 ) -> AnalysisResponse:
+  # Return the latest completed analysis payload for review.
   repository = VideoRepository()
   video = repository.require_owned_video(str(video_id), user_id)
   result = repository.get_analysis_result(str(video_id))

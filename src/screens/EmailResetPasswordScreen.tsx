@@ -22,6 +22,7 @@ type ResetPasswordScreenProps = {
 };
 
 export default function ResetPasswordScreen({ onBack }: ResetPasswordScreenProps) {
+  // This screen requests the email address that should receive the reset link.
   const { resetPasswordForEmail } = useAuth();
   const [identifier, setIdentifier] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -29,6 +30,7 @@ export default function ResetPasswordScreen({ onBack }: ResetPasswordScreenProps
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
   const handleSubmit = async () => {
+    // Reset links are only accepted for normalized email addresses.
     const normalizedIdentifier = identifier.trim().toLowerCase();
 
     if (!normalizedIdentifier) {
@@ -48,6 +50,7 @@ export default function ResetPasswordScreen({ onBack }: ResetPasswordScreenProps
     setInfoMessage(null);
 
     try {
+      // Success means the email was queued, not that the password has changed yet.
       await resetPasswordForEmail(normalizedIdentifier);
       setInfoMessage('Reset email sent. Open the link in your email to choose a new password.');
     } catch (error) {
@@ -84,6 +87,7 @@ export default function ResetPasswordScreen({ onBack }: ResetPasswordScreenProps
               paddingBottom: 40,
             }}
           >
+            {/* Title art keeps this screen aligned with the rest of the auth flow. */}
             <Image
               source={titleImage}
               resizeMode="cover"

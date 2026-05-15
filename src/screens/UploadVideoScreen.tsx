@@ -32,6 +32,7 @@ type UploadVideoScreenProps = {
 };
 
 function formatFileSize(fileSize?: number | null) {
+  // Present file sizes in the same units users expect from upload dialogs.
   if (typeof fileSize !== 'number') {
     return null;
   }
@@ -40,6 +41,7 @@ function formatFileSize(fileSize?: number | null) {
 }
 
 function formatStatusLabel(status: VideoAnalysisStatus) {
+  // Map backend status values to readable progress text.
   switch (status) {
     case 'uploaded':
       return 'Uploaded';
@@ -57,14 +59,17 @@ function formatStatusLabel(status: VideoAnalysisStatus) {
 }
 
 function isAnalysisInProgress(status: VideoAnalysisStatus | null) {
+  // Queue and processing are the two active analysis states.
   return status === 'queued' || status === 'processing';
 }
 
 function formatFlagLabel(value: string) {
+  // Convert snake_case result flags into display labels.
   return value.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function formatPercent(value?: number | null) {
+  // Format quality metrics as percentages for the review summary.
   if (typeof value !== 'number' || Number.isNaN(value)) {
     return null;
   }
@@ -73,6 +78,7 @@ function formatPercent(value?: number | null) {
 }
 
 export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVideoScreenProps) {
+  // This screen handles selection, upload, queueing, and polling.
   const { user, session } = useAuth();
   const isWeb = Platform.select<boolean>({ web: true, default: false }) ?? false;
   const [permissionStatus, setPermissionStatus] = useState<ImagePicker.PermissionStatus | null>(null);
@@ -93,6 +99,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   const analysisQueuedForVideoRef = useRef<string | null>(null);
 
   const handleSelectedVideo = (asset: ImagePicker.ImagePickerAsset) => {
+    // Selecting a new asset clears any old analysis state.
     analysisStartInFlightRef.current = false;
     analysisQueuedForVideoRef.current = null;
     setSelectedVideo(asset);
@@ -107,6 +114,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   };
 
   const handleStartAnalysis = async () => {
+    // Upload first, then ask the backend to begin analysis.
     if (analysisStartInFlightRef.current || uploading || isAnalysisInProgress(analysisStatus)) {
       return;
     }
@@ -147,6 +155,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     let uploadedVideo: UploadVideoForAnalysisResult | null = null;
 
     try {
+      // Start with a backend health check so failures are clearer.
       setStatusMessage('Checking backend connection...');
       await testBackendConnection();
 
@@ -173,6 +182,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
       const triggerFailedAfterUpload = Boolean(uploadedVideo);
 
       if (uploadedVideo) {
+        // Clean up storage if analysis could not be queued.
         setStatusMessage('Cleaning up upload...');
         await cleanupUploadedVideoForAnalysis({
           videoId: uploadedVideo.videoId,
@@ -197,6 +207,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   };
 
   const launchPicker = async () => {
+    // The picker is guarded so it cannot open twice.
     if (pickerOpen || uploading) {
       return;
     }
@@ -230,6 +241,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   };
 
   const promptForSettings = () => {
+    // Fall back to settings when the app cannot prompt again.
     Alert.alert(
       'Camera roll access needed',
       'Peso needs access to your camera roll to upload videos.',
@@ -252,12 +264,14 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   };
 
   const syncPermissionStatus = async () => {
+    // Keep the cached gallery permission in sync with the OS.
     const currentPermission = await ImagePicker.getMediaLibraryPermissionsAsync();
     setPermissionStatus(currentPermission.status);
     return currentPermission;
   };
 
   const requestPermission = async (forcePrompt = false) => {
+    // Web bypasses permissions because the browser owns file access.
     if (isWeb) {
       await launchPicker();
       return;
@@ -286,6 +300,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   };
 
   useEffect(() => {
+    // Emit a warning if native compression is being tested in Expo Go.
     if (__DEV__ && Platform.OS === 'ios' && Constants.appOwnership === AppOwnership.Expo) {
       console.warn(
         '[UploadVideoScreen] Video compression requires a native iOS build. Expo Go will not support react-native-compressor. Rebuild with `npx expo run:ios`.'
@@ -294,10 +309,12 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   }, []);
 
   useEffect(() => {
+    // Read the current permission once when the screen mounts.
     void syncPermissionStatus();
   }, []);
 
   useEffect(() => {
+    // Generate a thumbnail for the selected clip when possible.
     if (!selectedVideo?.uri) {
       setThumbnailUri(null);
       return;
@@ -344,6 +361,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   }, [isWeb, selectedVideo]);
 
   useEffect(() => {
+    // Poll until the backend reports a final analysis state.
     if (!analysisVideoId || !session?.access_token) {
       return;
     }
@@ -410,6 +428,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   }, [analysisResult, analysisStatus, analysisVideoId, session?.access_token]);
 
   const handleModalContinue = async (selection: VideoSetupSelection) => {
+    // Persist the exercise and view selection before upload starts.
     setVideoSetup(selection);
     setSetupModalVisible(false);
     setErrorMessage(null);
@@ -430,6 +449,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   };
 
   const handlePickVideoPress = () => {
+    // Permissions are requested only when the user explicitly taps upload.
     if (uploading) {
       return;
     }
@@ -462,12 +482,14 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
       ].filter((row): row is [string, string] => Boolean(row[1]))
     : [];
   const canStartAnalysis =
+    // Only a fully configured, idle upload can be sent to analysis.
     Boolean(selectedVideo && videoSetup) &&
     !uploading &&
     !isAnalysisInProgress(analysisStatus) &&
     analysisStatus !== 'completed';
 
   const handleScreenLayout = ({ nativeEvent }: LayoutChangeEvent) => {
+    // Track the viewport so the setup modal can fit correctly.
     const { width, height } = nativeEvent.layout;
 
     if (width === screenLayout.width && height === screenLayout.height) {
@@ -478,6 +500,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   };
 
   const handleReviewDiscarded = () => {
+    // Clearing the review screen resets the upload flow.
     analysisStartInFlightRef.current = false;
     analysisQueuedForVideoRef.current = null;
     setSelectedVideo(null);
@@ -580,6 +603,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
           ) : null}
 
           {analysisResult ? (
+            // The result card summarizes the completed backend response.
             <View style={styles.resultCard}>
               <Text style={styles.summaryTitle}>Analysis result</Text>
               <Text style={styles.resultHeadline}>
@@ -639,6 +663,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
           ) : null}
 
           <View style={styles.actions}>
+            {/* The main action switches between picking and re-picking a clip. */}
             <Button
               label={selectedVideo ? 'Choose Another Video' : 'Choose Video'}
               onPress={handlePickVideoPress}
