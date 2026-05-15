@@ -21,6 +21,7 @@ from .base import BaseExerciseAnalyzer
 
 
 def _build_pose_frames(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
+  # Reformat backend frames into the shape the client expects.
   return [
     {
       "time": frame["timestamp_ms"] / 1000,
@@ -44,6 +45,7 @@ def _calculate_velocity_stats(
   start_index: int,
   end_index: int,
 ) -> dict[str, float]:
+  # Estimate movement speed from hip motion over time.
   if end_index <= start_index:
     return {
       "avg_velocity": 0.0,
@@ -87,6 +89,7 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
     frames: list[dict[str, Any]],
     sampled_frame_count: int | None = None,
   ) -> dict[str, Any]:
+    # Quality metrics explain how trustworthy the clip is.
     if not frames:
       return {
         "quality_score": 0.0,
@@ -174,6 +177,7 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
     frames: list[dict[str, Any]],
     sampled_frame_count: int | None = None,
   ) -> dict[str, Any]:
+    # Squat analysis combines quality checks, rep detection, and feedback.
     diagnostics = self._build_quality_report(
       frames=frames,
       sampled_frame_count=sampled_frame_count,
@@ -184,6 +188,7 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
     hip_flexions = []
 
     for frame in frames:
+      # Build the motion signals used by rep detection.
       shoulder = blended_point(frame, "shoulder")
       hip = blended_point(frame, "hip")
       knee = blended_point(frame, "knee")
@@ -206,6 +211,7 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
     rep_summaries: list[dict[str, Any]] = []
 
     for rep_index, rep in enumerate(reps, start=1):
+      # Summarize each rep with timing, speed, and form metrics.
       start_frame = frames[rep["start_index"]]
       bottom_frame = frames[rep["bottom_index"]]
       duration_seconds = max(

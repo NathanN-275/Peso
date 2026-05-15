@@ -13,6 +13,7 @@ import {
 let loggedBackendConfig = false;
 
 function ensureBackendApiUrl() {
+  // Fail fast when the backend URL is missing.
   const backend = resolveBackendApiConfig();
 
   if (!backend.url) {
@@ -25,6 +26,7 @@ function ensureBackendApiUrl() {
 }
 
 function getWebLoopbackFallbackUrl(requestUrl: string) {
+  // Local web dev sometimes needs 127.0.0.1 instead of localhost.
   if (!__DEV__ || Platform.OS !== 'web' || !requestUrl.startsWith('http://localhost:')) {
     return null;
   }
@@ -33,6 +35,7 @@ function getWebLoopbackFallbackUrl(requestUrl: string) {
 }
 
 async function requestJson<T>(path: string, accessToken?: string, init?: RequestInit): Promise<T> {
+  // Every backend call flows through this helper.
   const backend = ensureBackendApiUrl();
   const requestUrl = `${backend.url}${path}`;
   const method = init?.method ?? 'GET';
@@ -40,6 +43,7 @@ async function requestJson<T>(path: string, accessToken?: string, init?: Request
   let response: Response;
 
   if (__DEV__ && !loggedBackendConfig) {
+    // Log backend config once so connection issues are easier to trace.
     loggedBackendConfig = true;
     console.info('[BackendAPI] backend config', getBackendConnectionDiagnostics());
   }
@@ -65,6 +69,7 @@ async function requestJson<T>(path: string, accessToken?: string, init?: Request
     };
 
     try {
+      // Try the configured backend URL first.
       response = await fetch(requestUrl, requestOptions);
     } catch (error) {
       const fallbackUrl = getWebLoopbackFallbackUrl(requestUrl);
@@ -84,6 +89,7 @@ async function requestJson<T>(path: string, accessToken?: string, init?: Request
       response = await fetch(fallbackUrl, requestOptions);
     }
   } catch (error) {
+    // Expand network failures with the exact URL and environment details.
     const message = error instanceof Error ? error.message : 'Unknown network error.';
     const fallbackUrl = getWebLoopbackFallbackUrl(requestUrl);
 
@@ -119,11 +125,15 @@ async function requestJson<T>(path: string, accessToken?: string, init?: Request
 
 export { getBackendApiUrl, getBackendConnectionDiagnostics };
 
+export type SaveState = 'pending' | 'saved';
+
 export async function testBackendConnection() {
+  // Health checks confirm the backend is reachable before upload starts.
   return requestJson<{ status: string }>('/health');
 }
 
 export async function triggerVideoAnalysis(videoId: string, accessToken: string) {
+  // Queue analysis for an uploaded video.
   const analyzePath = `/analyze/${videoId}`;
 
   return requestJson<{ video_id: string; status: VideoAnalysisStatus }>(
@@ -136,15 +146,18 @@ export async function triggerVideoAnalysis(videoId: string, accessToken: string)
 }
 
 export async function fetchVideoStatus(videoId: string, accessToken: string) {
+  // Poll the backend for the current analysis status.
   return requestJson<VideoStatusResponse>(`/videos/${videoId}/status`, accessToken);
 }
 
 export async function fetchAnalysisResult(videoId: string, accessToken: string) {
+  // Fetch the completed analysis payload once processing finishes.
   return requestJson<AnalysisResponse>(`/analysis/${videoId}`, accessToken);
 }
 
 export async function saveAnalyzedVideo(videoId: string, accessToken: string) {
-  return requestJson<{ video_id: string; is_saved: boolean }>(
+  // Persist the analyzed clip to the user's saved list.
+  return requestJson<{ video_id: string; save_state: SaveState }>(
     `/videos/${videoId}/save`,
     accessToken,
     {
@@ -154,11 +167,12 @@ export async function saveAnalyzedVideo(videoId: string, accessToken: string) {
 }
 
 export async function discardAnalyzedVideo(videoId: string, accessToken: string) {
+  // Delete the upload and its analysis result from the backend.
   return requestJson<{ video_id: string; discarded: boolean }>(
-    `/videos/${videoId}`,
+    `/videos/${videoId}/discard`,
     accessToken,
     {
-      method: 'DELETE',
+      method: 'POST',
     }
   );
 }

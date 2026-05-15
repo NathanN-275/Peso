@@ -13,6 +13,7 @@ const TARGET_MAX_DIMENSION = 1280;
 const MIN_POSE_BITRATE = 1_800_000;
 const MAX_POSE_BITRATE = 2_500_000;
 const AUDIO_BITRATE_RESERVE = 128_000;
+const PENDING_VIDEO_TTL_MS = 24 * 60 * 60 * 1000;
 const UPLOAD_LIMIT_LABEL = `${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))} MB`;
 const ALLOWED_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.m4v'] as const;
 const ALLOWED_VIDEO_MIME_TYPES = [
@@ -78,6 +79,7 @@ type CleanupUploadedVideoForAnalysisArgs = {
 let cachedNativeVideoCompressor: VideoCompressorType | null | undefined;
 
 function resolveFrontendMaxUploadBytes() {
+  // Let the frontend use a configurable upload cap when provided.
   const rawValue = process.env.EXPO_PUBLIC_MAX_VIDEO_UPLOAD_BYTES?.trim();
 
   if (!rawValue) {
@@ -101,35 +103,43 @@ function resolveFrontendMaxUploadBytes() {
 }
 
 function logVideoUploadDebug(message: string, details?: Record<string, unknown>) {
+  // Upload logs stay structured for troubleshooting large clips.
   console.log('[VideoUpload]', message, details ?? {});
 }
 
 function logVideoUploadWarning(message: string, details?: Record<string, unknown>) {
+  // Warnings explain why a clip was compressed or rejected.
   console.warn('[VideoUpload]', message, details ?? {});
 }
 
 function normalizeExerciseType(exercise: ExerciseOption) {
+  // Store exercise names in a backend-friendly format.
   return exercise.trim().toLowerCase();
 }
 
 function normalizeViewType(angle: CameraAngle) {
+  // Camera angles use the same normalization as exercises.
   return angle.trim().toLowerCase();
 }
 
 function sanitizeFilename(filename: string) {
+  // Keep storage paths free of unsafe filename characters.
   return filename.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-+/g, '-');
 }
 
 function buildStoragePath(userId: string, filename: string) {
+  // Add a unique token so repeated uploads do not collide.
   const uploadToken = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   return `${userId}/${uploadToken}-${sanitizeFilename(filename)}`;
 }
 
 function inferFileName(asset: UploadableVideoAsset) {
+  // Fall back to the URI tail when the picker omits a name.
   return asset.fileName ?? asset.uri.split('/').pop() ?? 'video-upload.mp4';
 }
 
 function getExplicitAssetMimeType(asset: UploadableVideoAsset) {
+  // Some pickers provide the MIME type in different fields.
   if (asset.mimeType) {
     return asset.mimeType;
   }
@@ -138,22 +148,26 @@ function getExplicitAssetMimeType(asset: UploadableVideoAsset) {
 }
 
 function getFileExtension(filename: string) {
+  // Ignore query strings when checking the extension.
   const normalizedFilename = filename.split(/[?#]/)[0];
   const dotIndex = normalizedFilename.lastIndexOf('.');
   return dotIndex >= 0 ? normalizedFilename.slice(dotIndex).toLowerCase() : '';
 }
 
 function isAllowedVideoExtension(filename: string) {
+  // Restrict uploads to the formats this pipeline supports.
   return ALLOWED_VIDEO_EXTENSIONS.includes(
     getFileExtension(filename) as (typeof ALLOWED_VIDEO_EXTENSIONS)[number]
   );
 }
 
 function hasFileExtension(filename: string) {
+  // Some assets need MIME-type validation instead of extension validation.
   return Boolean(getFileExtension(filename));
 }
 
 function isAllowedVideoMimeType(mimeType?: string | null) {
+  // Accept only the video types the backend can process.
   return Boolean(
     mimeType &&
       ALLOWED_VIDEO_MIME_TYPES.includes(
@@ -163,6 +177,7 @@ function isAllowedVideoMimeType(mimeType?: string | null) {
 }
 
 function inferMimeTypeFromFilename(filename: string) {
+  // Fill in a MIME type when the picker leaves it blank.
   const extension = getFileExtension(filename);
 
   if (extension === '.mov') {
@@ -181,6 +196,7 @@ function inferMimeTypeFromFilename(filename: string) {
 }
 
 function inferExtensionFromMimeType(mimeType: string) {
+  // Choose a storage extension that matches the media type.
   const normalizedMimeType = mimeType.toLowerCase();
 
   if (normalizedMimeType === 'video/quicktime') {
@@ -195,6 +211,7 @@ function inferExtensionFromMimeType(mimeType: string) {
 }
 
 function buildUploadFileName(filename: string, contentType: string) {
+  // Preserve existing extensions when the picker already supplied one.
   if (hasFileExtension(filename)) {
     return filename;
   }
@@ -203,6 +220,7 @@ function buildUploadFileName(filename: string, contentType: string) {
 }
 
 function assertSupportedVideoFile(fileName: string, mimeType?: string | null) {
+  // Reject formats the analysis backend cannot handle.
   const hasExtension = hasFileExtension(fileName);
 
   if (hasExtension && !isAllowedVideoExtension(fileName)) {
@@ -219,6 +237,7 @@ function assertSupportedVideoFile(fileName: string, mimeType?: string | null) {
 }
 
 function validateInitialVideoMetadata(asset: UploadableVideoAsset) {
+  // Validate before compression so unsupported files fail early.
   const fileName = inferFileName(asset);
   const mimeType = getExplicitAssetMimeType(asset);
 
@@ -228,6 +247,7 @@ function validateInitialVideoMetadata(asset: UploadableVideoAsset) {
 }
 
 function replaceFileExtension(filename: string, nextExtension: string) {
+  // Compression can change the output container type.
   if (!filename.includes('.')) {
     return `${filename}${nextExtension}`;
   }
@@ -236,6 +256,7 @@ function replaceFileExtension(filename: string, nextExtension: string) {
 }
 
 function inferBitrateFromAsset(asset: ImagePickerAsset, fileSizeBytes: number) {
+  // Estimate the original bitrate from size and duration.
   if (typeof asset.duration !== 'number' || Number.isNaN(asset.duration) || asset.duration <= 0) {
     return null;
   }
@@ -244,6 +265,7 @@ function inferBitrateFromAsset(asset: ImagePickerAsset, fileSizeBytes: number) {
 }
 
 function calculateTargetBitrate(asset: ImagePickerAsset, fileSizeBytes: number) {
+  // Pick a bitrate that keeps pose detail while shrinking the file.
   const durationSeconds =
     typeof asset.duration === 'number' && !Number.isNaN(asset.duration) && asset.duration > 0
       ? asset.duration / 1000
@@ -261,6 +283,7 @@ function calculateTargetBitrate(asset: ImagePickerAsset, fileSizeBytes: number) 
 }
 
 async function resolveFileSizeFromUri(uri: string) {
+  // Read the file directly when picker metadata is missing.
   const response = await fetch(uri);
 
   if (!response.ok) {
@@ -272,6 +295,7 @@ async function resolveFileSizeFromUri(uri: string) {
 }
 
 async function resolveAssetFileSize(asset: UploadableVideoAsset) {
+  // Prefer picker metadata on web, then fall back to the file itself.
   if (Platform.OS === 'web' && typeof asset.fileSize === 'number' && !Number.isNaN(asset.fileSize)) {
     return asset.fileSize;
   }
@@ -280,6 +304,7 @@ async function resolveAssetFileSize(asset: UploadableVideoAsset) {
 }
 
 function getNativeVideoCompressor() {
+  // Native compression is only available outside web and Expo Go.
   if (Platform.OS === 'web' || Constants.appOwnership === AppOwnership.Expo) {
     return null;
   }
@@ -310,6 +335,7 @@ function canUseNativeCompression() {
 }
 
 function buildCompressedAsset(asset: ImagePickerAsset, compressedUri: string): UploadableVideoAsset {
+  // Compression output is normalized into an MP4 upload asset.
   return {
     uri: compressedUri,
     fileName: replaceFileExtension(inferFileName(asset), '.mp4'),
@@ -321,6 +347,7 @@ async function prepareVideoForUpload(
   asset: ImagePickerAsset,
   onStatusChange?: (message: string | null) => void
 ): Promise<PreparedVideoForUpload> {
+  // Compress only when the original file is over the upload cap.
   const metadataSizeBytes =
     typeof asset.fileSize === 'number' && !Number.isNaN(asset.fileSize) ? asset.fileSize : null;
   const originalSizeBytes = await resolveAssetFileSize(asset);
@@ -458,6 +485,7 @@ async function prepareVideoForUpload(
 }
 
 function createUuid() {
+  // UUID generation falls back to a local shim when needed.
   if (typeof globalThis.crypto?.randomUUID === 'function') {
     return globalThis.crypto.randomUUID();
   }
@@ -470,6 +498,7 @@ function createUuid() {
 }
 
 function formatSupabaseError(error: unknown) {
+  // Reduce Supabase responses to a single readable message.
   const typedError = (error ?? {}) as SupabaseLikeError;
   const segments = [
     typedError.message,
@@ -482,6 +511,7 @@ function formatSupabaseError(error: unknown) {
 }
 
 async function resolveUploadSource(asset: UploadableVideoAsset): Promise<UploadSource> {
+  // Convert the selected asset into the blob or file Supabase expects.
   const webAsset = asset as UploadableVideoAsset & WebImagePickerAsset;
   const inferredFileName = inferFileName(asset);
   validateInitialVideoMetadata(asset);
@@ -531,6 +561,7 @@ export async function cleanupUploadedVideoForAnalysis({
   videoId,
   storagePath,
 }: CleanupUploadedVideoForAnalysisArgs): Promise<void> {
+  // Remove partially processed uploads when analysis setup fails.
   if (!supabase) {
     return;
   }
@@ -610,6 +641,7 @@ export async function uploadVideoForAnalysis({
   angle,
   onStatusChange,
 }: UploadVideoForAnalysisArgs): Promise<UploadVideoForAnalysisResult> {
+  // Upload the video and create the DB row that analysis consumes.
   if (!supabase) {
     throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
   }
@@ -668,6 +700,7 @@ export async function uploadVideoForAnalysis({
   const videoId = createUuid();
   const normalizedExerciseType = normalizeExerciseType(exercise);
   const normalizedViewType = normalizeViewType(angle);
+  const expiresAt = new Date(Date.now() + PENDING_VIDEO_TTL_MS).toISOString();
 
   const { error: insertError } = await supabase
     .from('videos')
@@ -680,6 +713,8 @@ export async function uploadVideoForAnalysis({
       view_type: normalizedViewType,
       status: 'uploaded',
       duration_ms: durationMs,
+      save_state: 'pending',
+      expires_at: expiresAt,
     })
     ;
 

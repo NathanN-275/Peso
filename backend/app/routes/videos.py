@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -39,7 +40,7 @@ class AnalysisResponse(BaseModel):
 
 class SaveVideoResponse(BaseModel):
   video_id: UUID
-  is_saved: bool
+  save_state: str
 
 
 class DiscardVideoResponse(BaseModel):
@@ -47,7 +48,12 @@ class DiscardVideoResponse(BaseModel):
   discarded: bool
 
 
+class CleanupExpiredVideosResponse(BaseModel):
+  deleted_count: int
+
+
 def _run_analysis_job(video_id: str) -> None:
+  # Background tasks run analysis outside the request lifecycle.
   try:
     analyze_video(video_id)
   except Exception:
@@ -60,6 +66,7 @@ def queue_analysis(
   background_tasks: BackgroundTasks,
   user_id: str = Depends(get_current_user_id),
 ) -> AnalyzeResponse:
+  # Queue analysis only when the video belongs to the current user.
   repository = VideoRepository()
   video_id_str = str(video_id)
   video = repository.require_owned_video(video_id_str, user_id)
@@ -102,22 +109,48 @@ def save_video(
   video_id: UUID,
   user_id: str = Depends(get_current_user_id),
 ) -> SaveVideoResponse:
+  # Mark a finished analysis as saved in the user's library.
   repository = VideoRepository()
   repository.require_owned_video(str(video_id), user_id)
-  repository.mark_saved(str(video_id))
-  return SaveVideoResponse(video_id=video_id, is_saved=True)
+  saved_video = repository.mark_saved(str(video_id))
+  return SaveVideoResponse(video_id=video_id, save_state=saved_video["save_state"])
 
 
-@router.delete("/videos/{video_id}", response_model=DiscardVideoResponse)
+@router.post("/videos/{video_id}/discard", response_model=DiscardVideoResponse)
 def discard_video(
   video_id: UUID,
   user_id: str = Depends(get_current_user_id),
 ) -> DiscardVideoResponse:
+  # Discard removes both the storage object and the DB row.
   repository = VideoRepository()
   video = repository.require_owned_video(str(video_id), user_id)
   StorageService().delete_storage_path(video["storage_path"])
-  repository.delete_video(str(video_id))
+  if video.get("thumbnail_path"):
+    StorageService().delete_storage_path(video["thumbnail_path"])
+  repository.delete_video_with_analysis(str(video_id))
   return DiscardVideoResponse(video_id=video_id, discarded=True)
+
+
+@router.post("/videos/cleanup-expired", response_model=CleanupExpiredVideosResponse)
+def cleanup_expired_videos() -> CleanupExpiredVideosResponse:
+  repository = VideoRepository()
+  storage = StorageService()
+  expired_videos = repository.list_expired_pending_videos()
+  deleted_count = 0
+
+  for video in expired_videos:
+    storage.delete_storage_path(video["storage_path"])
+    if video.get("thumbnail_path"):
+      storage.delete_storage_path(video["thumbnail_path"])
+    repository.delete_video_with_analysis(video["id"])
+    deleted_count += 1
+
+  logger.info(
+    "Cleaned up %s expired pending videos at %s",
+    deleted_count,
+    datetime.now(timezone.utc).isoformat(),
+  )
+  return CleanupExpiredVideosResponse(deleted_count=deleted_count)
 
 
 @router.get("/videos/{video_id}/status", response_model=VideoStatusResponse)
@@ -125,6 +158,7 @@ def get_video_status(
   video_id: UUID,
   user_id: str = Depends(get_current_user_id),
 ) -> VideoStatusResponse:
+  # Status polling lets the client show upload progress.
   repository = VideoRepository()
   video = repository.require_owned_video(str(video_id), user_id)
   return VideoStatusResponse(
@@ -141,6 +175,7 @@ def get_analysis(
   video_id: UUID,
   user_id: str = Depends(get_current_user_id),
 ) -> AnalysisResponse:
+  # Return the latest completed analysis payload for review.
   repository = VideoRepository()
   video = repository.require_owned_video(str(video_id), user_id)
   result = repository.get_analysis_result(str(video_id))

@@ -20,6 +20,7 @@ export type MappedPoint = {
   confidence: number;
 };
 
+// Landmarks used by the review overlay and squat-specific summaries.
 export const SQUAT_LANDMARK_NAMES = [
   'left_shoulder',
   'right_shoulder',
@@ -48,6 +49,7 @@ const SQUAT_LANDMARK_SET = new Set<string>(SQUAT_LANDMARK_NAMES);
 const CONFIDENCE_THRESHOLD = 0.35;
 
 export function findClosestPoseFrame(frames: VideoPoseFrame[] | undefined, currentTime: number) {
+  // Binary search keeps pose lookup fast while the clip plays.
   if (!frames?.length) {
     return null;
   }
@@ -78,6 +80,7 @@ export function findClosestPoseFrame(frames: VideoPoseFrame[] | undefined, curre
 }
 
 export function filterSquatKeypoints(frame: VideoPoseFrame | null, confidenceThreshold = CONFIDENCE_THRESHOLD) {
+  // Keep only the landmarks that matter for squat review.
   if (!frame) {
     return [];
   }
@@ -88,6 +91,7 @@ export function filterSquatKeypoints(frame: VideoPoseFrame | null, confidenceThr
 }
 
 function getAverageConfidence(keypoints: VideoPoseKeypoint[], side: 'left' | 'right') {
+  // Compare the tracked left and right body sides.
   const sideKeypoints = keypoints.filter((keypoint) => keypoint.name.startsWith(`${side}_`));
 
   if (!sideKeypoints.length) {
@@ -98,10 +102,12 @@ function getAverageConfidence(keypoints: VideoPoseKeypoint[], side: 'left' | 'ri
 }
 
 function findKeypoint(keypoints: VideoPoseKeypoint[], name: SquatLandmarkName) {
+  // Convenience lookup for one named landmark.
   return keypoints.find((keypoint) => keypoint.name === name) ?? null;
 }
 
 export function shouldPreferSingleSideForSquat(keypoints: VideoPoseKeypoint[], cameraView?: string) {
+  // Side-view clips sometimes track only the visible side well.
   if (cameraView?.toLowerCase() !== 'side') {
     return false;
   }
@@ -122,12 +128,14 @@ export function shouldPreferSingleSideForSquat(keypoints: VideoPoseKeypoint[], c
 }
 
 export function selectVisibleSquatSide(keypoints: VideoPoseKeypoint[]) {
+  // Use the side with the stronger keypoint confidence.
   return getAverageConfidence(keypoints, 'left') >= getAverageConfidence(keypoints, 'right')
     ? 'left'
     : 'right';
 }
 
 export function getSquatPoseConnections(keypoints: VideoPoseKeypoint[], cameraView?: string) {
+  // Render either the full body or a single visible side.
   if (!shouldPreferSingleSideForSquat(keypoints, cameraView)) {
     return SQUAT_BODY_CONNECTIONS;
   }
@@ -142,6 +150,7 @@ export function getSquatPoseConnections(keypoints: VideoPoseKeypoint[], cameraVi
 }
 
 export function calculateVideoRect(container: Size, source: Size, contentFit: ContentFit = 'contain') {
+  // Compute the on-screen video rectangle for pose projection.
   if (container.width <= 0 || container.height <= 0 || source.width <= 0 || source.height <= 0) {
     return {
       x: 0,
@@ -173,6 +182,7 @@ export function mapNormalizedKeypoint(
   source: Size,
   contentFit: ContentFit = 'contain'
 ): MappedPoint {
+  // Convert normalized pose coordinates into screen pixels.
   const rect = calculateVideoRect(container, source, contentFit);
 
   return {
@@ -184,14 +194,17 @@ export function mapNormalizedKeypoint(
 }
 
 export function normalizeResultFlags(result: VideoAnalysisResult) {
+  // Accept either camelCase or snake_case result payloads.
   return result.summaryFlags ?? result.summary_flags ?? [];
 }
 
 export function normalizeCoachingFeedback(result: VideoAnalysisResult) {
+  // Accept either backend field name for coaching text.
   return result.coachingFeedback ?? result.coach_feedback ?? [];
 }
 
 export function normalizeVideoQuality(result: VideoAnalysisResult) {
+  // Merge the current response shape with older diagnostics fields.
   const diagnostics: VideoAnalysisDiagnostics | undefined = result.diagnostics;
 
   return {
@@ -205,6 +218,7 @@ export function normalizeVideoQuality(result: VideoAnalysisResult) {
 }
 
 export function getRepDuration(rep: VideoAnalysisRep) {
+  // Prefer the explicit duration, then derive it from timestamps.
   if (typeof rep.duration === 'number') {
     return rep.duration;
   }
@@ -221,6 +235,7 @@ export function getRepDuration(rep: VideoAnalysisRep) {
 }
 
 export function getRepSpeed(rep: VideoAnalysisRep) {
+  // Faster reps have a higher inverse-duration score.
   if (typeof rep.repSpeed === 'number') {
     return rep.repSpeed;
   }
@@ -230,6 +245,7 @@ export function getRepSpeed(rep: VideoAnalysisRep) {
 }
 
 export function getRepVelocity(rep: VideoAnalysisRep) {
+  // Surface the average and peak velocity in one helper.
   return {
     avgVelocity: rep.avgVelocity ?? rep.estimated_body_velocity?.avg_velocity ?? 0,
     peakVelocity: rep.peakVelocity ?? rep.estimated_body_velocity?.peak_velocity ?? 0,
@@ -237,6 +253,7 @@ export function getRepVelocity(rep: VideoAnalysisRep) {
 }
 
 export function formatSeconds(value: number) {
+  // Keep playback timestamps compact.
   if (!Number.isFinite(value)) {
     return '0:00';
   }
@@ -247,6 +264,7 @@ export function formatSeconds(value: number) {
 }
 
 export function formatPercent(value?: number | null) {
+  // Round quality values for display.
   if (typeof value !== 'number' || Number.isNaN(value)) {
     return 'n/a';
   }
@@ -255,6 +273,7 @@ export function formatPercent(value?: number | null) {
 }
 
 export function clampTimeToDuration(time: number, duration: number) {
+  // Prevent scrubber values from leaving the clip range.
   if (!Number.isFinite(time) || !Number.isFinite(duration) || duration <= 0) {
     return Math.max(time || 0, 0);
   }
@@ -263,6 +282,7 @@ export function clampTimeToDuration(time: number, duration: number) {
 }
 
 export function getTimeFromTrackX(x: number, trackWidth: number, duration: number) {
+  // Translate a scrubber x-coordinate into a playback time.
   if (trackWidth <= 0 || duration <= 0) {
     return 0;
   }

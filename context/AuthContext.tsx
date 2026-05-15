@@ -35,6 +35,7 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 function toSupabaseErrorDetails(error: unknown) {
+  // Normalize Supabase errors so logs stay structured.
   if (!error || typeof error !== 'object') {
     return { raw: error };
   }
@@ -52,6 +53,7 @@ function toSupabaseErrorDetails(error: unknown) {
 }
 
 function logSupabaseError(context: string, error: unknown, extra?: Record<string, unknown>) {
+  // Keep auth failures visible without losing the original shape.
   console.error(`[Supabase] ${context}`, {
     ...toSupabaseErrorDetails(error),
     ...(extra ?? {}),
@@ -59,6 +61,7 @@ function logSupabaseError(context: string, error: unknown, extra?: Record<string
 }
 
 function isMissingProfilesTableError(error: unknown) {
+  // Missing profile tables are tolerated during early setup.
   if (!error || typeof error !== 'object') {
     return false;
   }
@@ -74,6 +77,7 @@ function isMissingProfilesTableError(error: unknown) {
 }
 
 function deriveUsername(user: User) {
+  // Fall back through metadata, email, then phone.
   const metadataUsername =
     typeof user.user_metadata?.username === 'string' ? user.user_metadata.username : null;
 
@@ -89,6 +93,7 @@ function deriveUsername(user: User) {
 }
 
 function getAuthRedirectUrl() {
+  // Recovery links need a platform-specific redirect target.
   if (Platform.OS === 'web') {
     return typeof window !== 'undefined' && window.location.origin
       ? `${window.location.origin}/?auth=reset-password`
@@ -99,6 +104,7 @@ function getAuthRedirectUrl() {
 }
 
 async function ensureProfile(user: User) {
+  // Keep a matching profiles row in Supabase when possible.
   if (!supabase) {
     throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
   }
@@ -130,12 +136,14 @@ async function ensureProfile(user: User) {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  // Auth state lives here so every screen can read the same session.
   const [session, setSession] = useState<Session | null>(null);
   const [initializing, setInitializing] = useState(true);
   const [passwordRecoveryMode, setPasswordRecoveryMode] = useState(false);
   const pendingRecoveryLinkRef = useRef(false);
 
   useEffect(() => {
+    // Bootstrap the current session once at startup.
     let active = true;
 
     const bootstrap = async () => {
@@ -189,6 +197,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      // Track sign-in, sign-out, and password recovery in one place.
       setSession(nextSession);
 
       if (event === 'PASSWORD_RECOVERY') {
@@ -225,6 +234,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     configError: supabaseConfigError,
     passwordRecoveryMode,
     async signInWithEmail(email, password) {
+      // Password login is a thin wrapper over Supabase auth.
       if (!supabase) {
         throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
       }
@@ -239,6 +249,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     },
     async signUpWithEmail(email, password, profile) {
+      // Signup stores profile hints in auth metadata.
       if (!supabase) {
         throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
       }
@@ -269,6 +280,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
     },
     async resetPasswordForEmail(email) {
+      // Request the reset email with a platform-appropriate callback URL.
       if (!supabase) {
         throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
       }
@@ -297,6 +309,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
     },
     async updatePassword(password) {
+      // Password updates clear recovery mode after success.
       if (!supabase) {
         throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
       }
@@ -311,10 +324,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       pendingRecoveryLinkRef.current = false;
     },
     activatePasswordRecoveryMode() {
+      // The app switches into recovery UI as soon as a reset link is detected.
       pendingRecoveryLinkRef.current = true;
       setPasswordRecoveryMode(true);
     },
     async sendPhoneOtp(phone) {
+      // Phone verification follows the same auth context boundary.
       if (!supabase) {
         throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
       }

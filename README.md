@@ -55,7 +55,7 @@ BACKEND_CORS_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhos
 BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true
 ```
 
-`BACKEND_CORS_ORIGINS` supports common Expo web, simulator, and local browser ports used by the mobile client. In `BACKEND_ENV=development`, the API also allows local browser origins matching `localhost`, `127.0.0.1`, or `0.0.0.0` on any port so Expo web still works if it chooses a different local port. Set `BACKEND_ENV=production` in deployed environments to disable that local-dev regex and rely only on explicit `BACKEND_CORS_ORIGINS`.
+`BACKEND_CORS_ORIGINS` supports common Expo web, simulator, and local browser ports used by the mobile client. In `BACKEND_ENV=development`, the API also allows local browser origins matching `localhost`, `127.0.0.1`, `0.0.0.0`, or private LAN IPs on any port so Expo web and Expo Go can still work if they choose a different local port. Set `BACKEND_ENV=production` in deployed environments to disable that local-dev regex and rely only on explicit `BACKEND_CORS_ORIGINS`.
 `BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true` supports Chrome's local private-network preflight during development. It is ignored when `BACKEND_ENV=production`.
 
 ## Installation
@@ -75,6 +75,8 @@ Start the server from the `backend` directory so `app.main:app` resolves correct
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
+Use `--host 0.0.0.0` for Expo Go on a physical phone. Binding FastAPI to `localhost` only makes it unreachable from another device on the same network.
+
 If you keep environment variables in a file, you can also use:
 
 ```bash
@@ -87,6 +89,8 @@ For Expo web on the same Mac as the backend:
 EXPO_PUBLIC_BACKEND_URL=http://localhost:8000
 npx expo start -c
 ```
+
+For Expo Go on a physical phone, keep FastAPI bound to `0.0.0.0:8000`. If `EXPO_PUBLIC_BACKEND_URL` is accidentally set to `http://localhost:8000`, the frontend ignores that loopback value on-device and auto-detects the Expo dev server LAN IP for backend requests.
 
 From the project root, `npm start` starts both the local FastAPI backend and Expo. If a backend is already responding on `http://127.0.0.1:8000/health`, the script reuses it instead of starting another copy.
 
@@ -140,9 +144,13 @@ Response:
 
 Marks the video as saved.
 
-### `DELETE /videos/{video_id}`
+### `POST /videos/{video_id}/discard`
 
 Deletes the video record and removes the underlying file from Supabase Storage.
+
+### `POST /videos/cleanup-expired`
+
+Deletes expired pending videos and their analysis rows. This is a development-callable cleanup endpoint, not a scheduled job.
 
 ### `GET /videos/{video_id}/status`
 

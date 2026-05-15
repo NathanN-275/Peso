@@ -18,6 +18,7 @@ LogBox.ignoreLogs([
   "SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead.",
 ]);
 
+// Manual route map for the small auth flow.
 const AUTH_ROUTES = {
   home: 'home',
   addVideo: 'add-video',
@@ -71,6 +72,7 @@ const WEB_ROUTE_HASHES: Record<AuthRoute, string> = {
 };
 
 const styles = StyleSheet.create({
+  // Web mode renders the app inside a phone-sized frame.
   webWrapper: {
     flex: 1,
     width: '100%',
@@ -86,6 +88,7 @@ const styles = StyleSheet.create({
 });
 
 function parseWebAuthRoute(hash: string): AuthRoute {
+  // Match the URL hash to one of the known screens.
   const normalizedHash = hash.toLowerCase();
 
   if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.home]) {
@@ -120,6 +123,7 @@ function parseWebAuthRoute(hash: string): AuthRoute {
 }
 
 function parseHashParams(hash: string) {
+  // Treat fragment values like query params for reset links.
   const hashValue = hash.startsWith('#') ? hash.slice(1) : hash;
   const hashParamsSource = hashValue.includes('?')
     ? hashValue.slice(hashValue.indexOf('?') + 1)
@@ -131,6 +135,7 @@ function parseHashParams(hash: string) {
 }
 
 function parseWebAuthLink(search: string, hash: string): ParsedWebAuthLink {
+  // Detect web recovery links before the screen is chosen.
   const searchParams = new URLSearchParams(search);
   const hashParams = parseHashParams(hash);
   const auth = searchParams.get('auth');
@@ -166,6 +171,7 @@ function parseWebAuthLink(search: string, hash: string): ParsedWebAuthLink {
 }
 
 function paramsToRecord(params: URLSearchParams) {
+  // Convert params into plain objects for logging and state.
   return Array.from(params.entries()).reduce<Record<string, string>>((result, [key, value]) => {
     result[key] = value;
     return result;
@@ -173,6 +179,7 @@ function paramsToRecord(params: URLSearchParams) {
 }
 
 function redactDeepLinkParams(params: Record<string, string>) {
+  // Hide auth tokens from debug output.
   return Object.fromEntries(
     Object.entries(params).map(([key, value]) => {
       if (['access_token', 'refresh_token', 'code'].includes(key)) {
@@ -185,6 +192,7 @@ function redactDeepLinkParams(params: Record<string, string>) {
 }
 
 function normalizeRouteCandidate(value: string | null | undefined) {
+  // Collapse a route candidate into a comparable token.
   if (!value) {
     return '';
   }
@@ -197,6 +205,7 @@ function normalizeRouteCandidate(value: string | null | undefined) {
 }
 
 function parseNativeAuthRoute(url: string): ParsedNativeAuthRoute {
+  // Parse native deep links and recovery callbacks into one shape.
   let parsedUrl: URL;
 
   try {
@@ -281,6 +290,7 @@ function parseNativeAuthRoute(url: string): ParsedNativeAuthRoute {
 }
 
 async function hydrateRecoverySession(parsedRoute: ParsedNativeAuthRoute) {
+  // Load the Supabase recovery session before showing the form.
   if (!parsedRoute.isRecoveryResetLink || !supabase) {
     return null;
   }
@@ -312,6 +322,7 @@ async function hydrateRecoverySession(parsedRoute: ParsedNativeAuthRoute) {
 }
 
 function AppContent() {
+  // This app switches screens manually instead of using a router.
   const {
     session,
     user,
@@ -322,6 +333,7 @@ function AppContent() {
     signOut,
   } = useAuth();
   const [route, setRoute] = useState<AuthRoute>(() => {
+    // Web starts from the current hash so refreshes keep the same screen.
     if (Platform.OS === 'web') {
       const webAuthLink = parseWebAuthLink(window.location.search, window.location.hash);
 
@@ -349,15 +361,18 @@ function AppContent() {
   const hadSessionRef = useRef(false);
 
   useEffect(() => {
+    // Keep the current route in a ref for async deep-link handlers.
     routeRef.current = route;
   }, [route]);
 
   useEffect(() => {
+    // Native links are parsed here so recovery sessions can be hydrated early.
     if (Platform.OS === 'web') {
       return;
     }
 
     const handleUrl = async (url: string | null, source: 'initial' | 'runtime') => {
+      // Route both initial and runtime URLs through the same parser.
       if (!url) {
         console.log(`[DeepLink] raw ${source} URL`, url);
         console.log('[DeepLink] final route chosen', routeRef.current);
@@ -443,6 +458,7 @@ function AppContent() {
   }, []);
 
   const navigateToAuthRoute = (nextRoute: AuthRoute) => {
+    // Clear recovery state when leaving the reset-password flow.
     if (nextRoute !== AUTH_ROUTES.resetPasswordForm) {
       if (isHandlingRecoveryLink || isRecoveryMode || recoverySessionReady) {
         console.log('[Recovery] mode off', { reason: 'route-change', route: nextRoute });
@@ -512,11 +528,13 @@ function AppContent() {
   };
 
   useEffect(() => {
+    // Web needs explicit hash handling to keep reset links stable.
     if (Platform.OS !== 'web') {
       return;
     }
 
     const handleWebAuthLink = () => {
+      // Check the current browser URL before using the route state.
       const parsedWebLink = parseWebAuthLink(window.location.search, window.location.hash);
 
       console.log('[WebDeepLink] full window.location.href', window.location.href);
@@ -565,6 +583,7 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
+    // Force the recovery screen while Supabase says recovery mode is active.
     if (!initialDeepLinkChecked) {
       return;
     }
@@ -575,6 +594,7 @@ function AppContent() {
   }, [initialDeepLinkChecked, passwordRecoveryMode, isRecoveryMode]);
 
   useEffect(() => {
+    // Protect signed-in screens and send users back to the correct default.
     if (!initialDeepLinkChecked) {
       return;
     }

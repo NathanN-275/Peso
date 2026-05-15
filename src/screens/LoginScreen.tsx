@@ -24,6 +24,7 @@ type LoginScreenProps = {
 };
 
 export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenProps) {
+  // Login uses the shared auth context for email/password sign-in.
   const { signInWithEmail } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -31,6 +32,7 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleSignIn = async () => {
+    // Normalize the email so duplicate casing does not matter.
     const normalizedEmail = email.trim().toLowerCase();
 
     if (!normalizedEmail || !password.trim()) {
@@ -42,6 +44,7 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
     setErrorMessage(null);
 
     try {
+      // Any auth error is surfaced directly in the form.
       await signInWithEmail(normalizedEmail, password);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to log in.');
@@ -77,6 +80,7 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
               paddingBottom: 10,
             }}
           >
+            {/* Decorative title art for the login form. */}
             <Image
               source={titleImage}
               resizeMode="contain"
@@ -86,6 +90,7 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
             />
 
             <View style={{ gap: 28 }}>
+              {/* These are the only fields needed for password auth. */}
               <Input
                 label="Email"
                 placeholder="name@example.com"

@@ -15,7 +15,12 @@ DEFAULT_CORS_ORIGINS = (
   "http://127.0.0.1:3000",
 )
 
-LOCAL_DEV_CORS_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0):\d+$"
+LOCAL_DEV_CORS_ORIGIN_REGEX = (
+  r"^https?://((localhost|127\.0\.0\.1|0\.0\.0\.0)|"
+  r"10\.\d+\.\d+\.\d+|"
+  r"172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|"
+  r"192\.168\.\d+\.\d+):\d+$"
+)
 DEFAULT_MAX_VIDEO_UPLOAD_BYTES = 50 * 1024 * 1024
 
 

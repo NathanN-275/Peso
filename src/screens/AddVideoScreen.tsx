@@ -17,10 +17,12 @@ export default function AddVideoScreen({
   onProfilePress,
   onUploadVideoPress,
 }: AddVideoScreenProps) {
+  // This screen branches into recording or picking an existing video.
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
         <View style={styles.content}>
+          {/* The record action stays first because it is the primary path. */}
           <Button label="Record New Video" style={styles.actionButton} />
           <Button label="Upload Video" onPress={onUploadVideoPress} style={styles.actionButton} />
         </View>

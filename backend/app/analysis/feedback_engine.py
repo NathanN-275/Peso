@@ -31,6 +31,7 @@ def build_feedback(
   reps: list[dict[str, Any]],
   diagnostics: dict[str, Any] | None = None,
 ) -> tuple[list[str], list[str]]:
+  # Convert rep metrics and quality flags into coaching text.
   quality_flags = (diagnostics or {}).get("quality_flags", [])
 
   if not reps:

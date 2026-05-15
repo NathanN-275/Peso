@@ -18,6 +18,7 @@ type PoseOverlayProps = {
 };
 
 function Line({ from, to }: { from: { x: number; y: number }; to: { x: number; y: number } }) {
+  // Draw each skeleton segment as a rotated line.
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   const length = Math.hypot(dx, dy);
@@ -46,11 +47,13 @@ export default function PoseOverlay({
   cameraView,
   confidenceThreshold = 0.35,
 }: PoseOverlayProps) {
+  // The overlay is pure rendering; it never handles touch input.
   if (!frame || containerSize.width <= 0 || containerSize.height <= 0) {
     return null;
   }
 
   const squatKeypoints = filterSquatKeypoints(frame, confidenceThreshold);
+  // Map the normalized pose points into the rendered video rectangle.
   const connections = getSquatPoseConnections(squatKeypoints, cameraView);
   const mappedKeypoints = new Map(
     squatKeypoints.map((keypoint) => {

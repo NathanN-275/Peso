@@ -1,4 +1,3 @@
-// the use of this screen is to change the password after the user has clicked the reset password link in their email
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -30,6 +29,7 @@ export default function ResetPasswordFormScreen({
   onBack,
   onReset,
 }: ResetPasswordFormScreenProps) {
+  // The form stays locked until a real recovery session is present.
   const { passwordRecoveryMode, updatePassword } = useAuth();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -38,10 +38,12 @@ export default function ResetPasswordFormScreen({
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    // Keep the latest error message in sync with the parent screen.
     setErrorMessage(initialErrorMessage);
   }, [initialErrorMessage]);
 
   const handleReset = async () => {
+    // Validate locally before touching Supabase.
     const trimmedPassword = password.trim();
     const trimmedConfirmPassword = confirmPassword.trim();
 
@@ -74,6 +76,7 @@ export default function ResetPasswordFormScreen({
     setInfoMessage(null);
 
     try {
+      // The reset link must hydrate a session before the password can change.
       if (!supabase) {
         throw new Error('Supabase is not configured.');
       }
@@ -134,6 +137,7 @@ export default function ResetPasswordFormScreen({
             />
 
             <View style={{ gap: 10 }}>
+              {/* Both fields are required so the new password can be confirmed. */}
               <Input
                 label="Enter Password"
                 placeholder="Value"
@@ -155,6 +159,7 @@ export default function ResetPasswordFormScreen({
             </View>
 
             {!passwordRecoveryMode ? (
+              // Without a recovery session, this form is intentionally read-only.
               <Text
                 className="text-text-primary"
                 style={{ marginTop: 16, fontSize: 14, lineHeight: 20 }}

@@ -4,7 +4,6 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   LayoutChangeEvent,
   Pressable,
   ScrollView,
@@ -39,10 +38,12 @@ type AnalysisReviewScreenProps = {
 };
 
 function formatFlagLabel(value: string) {
+  // Turn backend enum strings into readable labels.
   return value.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function formatNumber(value: number, suffix = '') {
+  // Keep numeric debug values compact on screen.
   if (!Number.isFinite(value)) {
     return `0${suffix}`;
   }
@@ -51,6 +52,7 @@ function formatNumber(value: number, suffix = '') {
 }
 
 function SheetSection({ title, children }: { title: string; children: React.ReactNode }) {
+  // Shared block for the review sheet sections.
   return (
     <View style={styles.sheetSection}>
       <Text style={styles.sheetLabel}>{title}</Text>
@@ -65,6 +67,7 @@ export default function AnalysisReviewScreen({
   onDiscarded,
   onSaved,
 }: AnalysisReviewScreenProps) {
+  // This screen plays the analyzed clip and overlays pose feedback.
   const { session } = useAuth();
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(result.duration ?? 0);
@@ -74,9 +77,11 @@ export default function AnalysisReviewScreen({
   const [discarding, setDiscarding] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showDiscardSheet, setShowDiscardSheet] = useState(false);
   const [wasPlayingBeforeScrub, setWasPlayingBeforeScrub] = useState(false);
 
   const player = useVideoPlayer(videoUri, (videoPlayer) => {
+    // Configure playback for review mode instead of normal video controls.
     videoPlayer.loop = false;
     videoPlayer.muted = true;
     videoPlayer.timeUpdateEventInterval = 0.05;
@@ -102,6 +107,7 @@ export default function AnalysisReviewScreen({
   });
 
   useEffect(() => {
+    // Keep the scrubber state in sync with the native player clock.
     setCurrentTime(timeUpdate.currentTime);
   }, [timeUpdate.currentTime]);
 
@@ -134,6 +140,7 @@ export default function AnalysisReviewScreen({
   const cameraView = result.cameraView ?? result.view;
 
   const handleVideoLayout = ({ nativeEvent }: LayoutChangeEvent) => {
+    // The overlay needs the rendered video size to map pose points correctly.
     setVideoLayout({
       width: nativeEvent.layout.width,
       height: nativeEvent.layout.height,
@@ -141,6 +148,7 @@ export default function AnalysisReviewScreen({
   };
 
   const handleSeek = (time: number) => {
+    // Clamp seeks so the scrubber cannot leave the clip bounds.
     const boundedTime = Math.min(Math.max(time, 0), duration || time);
     player.currentTime = boundedTime;
     setCurrentTime(boundedTime);
@@ -169,6 +177,7 @@ export default function AnalysisReviewScreen({
   };
 
   const handleSave = async () => {
+    // Save is gated by a valid session token.
     if (!session?.access_token || saving) {
       return;
     }
@@ -189,6 +198,7 @@ export default function AnalysisReviewScreen({
   };
 
   const discardVideo = async () => {
+    // Discard removes the uploaded file from the backend and storage.
     if (!session?.access_token || discarding) {
       return;
     }
@@ -198,6 +208,7 @@ export default function AnalysisReviewScreen({
 
     try {
       await discardAnalyzedVideo(result.video_id, session.access_token);
+      setShowDiscardSheet(false);
       player.pause();
       onDiscarded();
     } catch (error) {
@@ -207,37 +218,34 @@ export default function AnalysisReviewScreen({
     }
   };
 
+  const closeDiscardSheet = () => {
+    if (discarding) {
+      return;
+    }
+
+    setShowDiscardSheet(false);
+  };
+
   const handleBack = () => {
+    // Going back warns if the analyzed clip has not been saved yet.
     if (saved) {
       onSaved();
       return;
     }
 
-    Alert.alert(
-      'Discard video?',
-      'This analyzed upload has not been saved.',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Discard Video',
-          style: 'destructive',
-          onPress: () => {
-            void discardVideo();
-          },
-        },
-      ],
-      { cancelable: true }
-    );
+    setShowDiscardSheet(true);
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
         <View style={styles.topBar}>
-          <Pressable accessibilityRole="button" onPress={handleBack} style={styles.topButton}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={handleBack}
+            disabled={saving || discarding}
+            style={[styles.topButton, (saving || discarding) && styles.disabledButton]}
+          >
             <Text style={styles.topButtonText}>Back</Text>
           </Pressable>
           <Text style={styles.title}>{formatFlagLabel(result.exercise)}</Text>
@@ -263,6 +271,7 @@ export default function AnalysisReviewScreen({
               allowsPictureInPicture={false}
               onFirstFrameRender={() => setErrorMessage(null)}
             />
+            {/* Pose markers are drawn on top of the rendered video. */}
             <PoseOverlay
               frame={poseFrame}
               containerSize={videoLayout}
@@ -374,6 +383,43 @@ export default function AnalysisReviewScreen({
               <Text key={feedback} style={styles.sheetText}>- {feedback}</Text>
             )) : <Text style={styles.sheetMutedText}>No coaching feedback available.</Text>}
           </ScrollView>
+        </ReviewBottomSheet>
+
+        <ReviewBottomSheet
+          visible={showDiscardSheet}
+          title="Discard video?"
+          onClose={closeDiscardSheet}
+          showCloseButton={false}
+          sheetStyle={styles.discardSheet}
+        >
+          <View style={styles.discardContent}>
+            <Text style={styles.discardSubtitle}>
+              This analyzed upload has not been saved. Discarding permanently removes the video and analysis.
+            </Text>
+            {errorMessage ? <Text style={styles.discardErrorText}>{errorMessage}</Text> : null}
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                void discardVideo();
+              }}
+              disabled={discarding || saving}
+              style={[styles.discardButton, (discarding || saving) && styles.disabledButton]}
+            >
+              {discarding ? (
+                <ActivityIndicator color={tokens.colors.textPrimary} />
+              ) : (
+                <Text style={styles.discardButtonText}>Discard Video</Text>
+              )}
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={closeDiscardSheet}
+              disabled={discarding}
+              style={[styles.cancelDiscardButton, discarding && styles.disabledButton]}
+            >
+              <Text style={styles.cancelDiscardButtonText}>Cancel</Text>
+            </Pressable>
+          </View>
         </ReviewBottomSheet>
       </View>
     </SafeAreaView>
@@ -545,5 +591,58 @@ const styles = StyleSheet.create({
     backgroundColor: '#0C1016',
     padding: 12,
     gap: 3,
+  },
+  discardSheet: {
+    maxHeight: '46%',
+    backgroundColor: '#202020',
+    borderColor: '#343434',
+    paddingHorizontal: 22,
+    paddingBottom: 34,
+  },
+  discardContent: {
+    gap: 14,
+  },
+  discardSubtitle: {
+    color: '#D6D6D6',
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  discardErrorText: {
+    color: '#FF8A8A',
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+  discardButton: {
+    width: '100%',
+    minHeight: 54,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    backgroundColor: '#D93025',
+    paddingHorizontal: 18,
+  },
+  discardButtonText: {
+    color: tokens.colors.textPrimary,
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  cancelDiscardButton: {
+    width: '100%',
+    minHeight: 54,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#4A4A4A',
+    backgroundColor: '#2A2A2A',
+    paddingHorizontal: 18,
+  },
+  cancelDiscardButtonText: {
+    color: tokens.colors.textPrimary,
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: '700',
   },
 });

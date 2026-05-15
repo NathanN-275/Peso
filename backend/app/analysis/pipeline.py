@@ -19,6 +19,7 @@ def build_limited_result(
   rep_count: int = 0,
   error_code: str | None = None,
 ) -> dict[str, Any]:
+  # Return a lightweight payload when full analysis is not supported.
   result: dict[str, Any] = {
     "video_id": video_id,
     "exercise": exercise_type,
@@ -57,6 +58,7 @@ def build_limited_result(
 
 
 def analyze_video(video_id: str) -> None:
+  # The pipeline loads the video, estimates pose, then stores results.
   repository = VideoRepository()
   storage = StorageService()
   settings = get_settings()
@@ -69,8 +71,10 @@ def analyze_video(video_id: str) -> None:
 
   try:
     repository.update_video(video_id, {"status": "processing"})
+    # Download the clip into a temporary file for local processing.
     temp_file = storage.download_to_tempfile(video["storage_path"])
 
+    # Pose estimation is the first stage of the backend analysis flow.
     estimator = PoseEstimator()
     estimation = estimator.run(str(temp_file))
     repository.update_video(
@@ -82,6 +86,7 @@ def analyze_video(video_id: str) -> None:
     )
 
     if video["exercise_type"] != "squat" or video["view_type"] != "side":
+      # v1 only produces full metrics for side-view squat clips.
       result = build_limited_result(
         video_id=video_id,
         exercise_type=video["exercise_type"],
@@ -89,6 +94,7 @@ def analyze_video(video_id: str) -> None:
         reason="Limited analysis: full support is available only for squat side view in v1.",
       )
     elif not estimation["frames"]:
+      # Empty pose output usually means the person was not tracked well enough.
       result = build_limited_result(
         video_id=video_id,
         exercise_type=video["exercise_type"],
@@ -103,6 +109,7 @@ def analyze_video(video_id: str) -> None:
         "quality_flags": ["low_pose_coverage"],
       }
     else:
+      # SquatAnalyzer turns pose frames into reps, metrics, and feedback.
       analyzer = SquatAnalyzer()
       result = analyzer.analyze(
         video_id=video_id,
