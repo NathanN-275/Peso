@@ -21,6 +21,26 @@ type CreateAccountScreenProps = {
   onBack: () => void;
 };
 
+type CreateAccountErrors = {
+  name?: string;
+  username?: string;
+  phone?: string;
+  email?: string;
+  password?: string;
+  general?: string;
+};
+
+function isValidEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function isValidUsPhoneNumber(phone: string) {
+  const strippedPhone = phone.replace(/[\s().-]/g, '');
+  const digitsOnlyPhone = strippedPhone.startsWith('+') ? strippedPhone.slice(1) : strippedPhone;
+
+  return /^\d{10}$/.test(digitsOnlyPhone) || /^1\d{10}$/.test(digitsOnlyPhone);
+}
+
 export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps) {
   // Collect profile fields before calling Supabase signup.
   const { signUpWithEmail } = useAuth();
@@ -30,31 +50,73 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errors, setErrors] = useState<CreateAccountErrors>({});
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
+
+  const clearFieldError = (field: keyof CreateAccountErrors) => {
+    setErrors((currentErrors) => {
+      if (!currentErrors[field]) {
+        return currentErrors;
+      }
+
+      const nextErrors = { ...currentErrors };
+      delete nextErrors[field];
+      return nextErrors;
+    });
+  };
 
   const handleCreateAccount = async () => {
     // Trim the user input before sending it to auth.
+    const trimmedName = name.trim();
+    const trimmedPhoneNumber = phoneNumber.trim();
     const normalizedEmail = email.trim().toLowerCase();
     const trimmedPassword = password.trim();
     const trimmedUsername = username.trim();
 
-    if (!name.trim() || !trimmedUsername || !normalizedEmail || !trimmedPassword) {
-      setInfoMessage(null);
-      setErrorMessage('Enter your name, username, email, and password.');
+    setErrors({});
+    setInfoMessage(null);
+
+    const nextErrors: CreateAccountErrors = {};
+
+    if (!trimmedName) {
+      nextErrors.name = 'Name is required.';
+    }
+
+    if (!trimmedUsername) {
+      nextErrors.username = 'Username is required.';
+    }
+
+    if (!trimmedPhoneNumber) {
+      nextErrors.phone = 'Phone number is required.';
+    } else if (!isValidUsPhoneNumber(trimmedPhoneNumber)) {
+      nextErrors.phone = 'Please enter a valid phone number.';
+    }
+
+    if (!normalizedEmail) {
+      nextErrors.email = 'Email is required.';
+    } else if (!isValidEmail(normalizedEmail)) {
+      nextErrors.email = 'Please enter a valid email address.';
+    }
+
+    if (!trimmedPassword) {
+      nextErrors.password = 'Password is required.';
+    } else if (trimmedPassword.length < 6) {
+      nextErrors.password = 'Password should be at least 6 characters.';
+    }
+
+    if (Object.keys(nextErrors).length > 0) {
+      setErrors(nextErrors);
       return;
     }
 
     setSubmitting(true);
-    setErrorMessage(null);
-    setInfoMessage(null);
 
     try {
       // Signup may return a session immediately or require email confirmation.
       const result = await signUpWithEmail(normalizedEmail, trimmedPassword, {
-        name,
+        name: trimmedName,
         username: trimmedUsername,
-        phone: phoneNumber,
+        phone: trimmedPhoneNumber,
       });
 
       if (result.session) {
@@ -75,9 +137,11 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
         return;
       }
 
-      setErrorMessage('Signup did not complete. Please try again.');
+      setErrors({ general: 'Signup did not complete. Please try again.' });
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to create account.');
+      setErrors({
+        general: error instanceof Error ? error.message : 'Unable to create account.',
+      });
     } finally {
       setSubmitting(false);
     }
@@ -149,56 +213,91 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
             </View>
 
             <View style={{ gap: 14 }}>
-              <Input
-                label="Name"
-                placeholder="Value"
-                value={name}
-                onChangeText={setName}
-                editable={!submitting}
-              />
-              <Input
-                label="Username"
-                placeholder="Value"
-                value={username}
-                onChangeText={setUsername}
-                editable={!submitting}
-              />
-              <Input
-                label="Phone Number"
-                placeholder="Value"
-                value={phoneNumber}
-                onChangeText={setPhoneNumber}
-                keyboardType="phone-pad"
-                editable={!submitting}
-              />
-              <Input
-                label="Email"
-                placeholder="Value"
-                value={email}
-                onChangeText={setEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                textContentType="emailAddress"
-                editable={!submitting}
-              />
-              <Input
-                label="Password"
-                placeholder="Value"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-                textContentType="newPassword"
-                editable={!submitting}
-              />
+              <View>
+                <Input
+                  label="Name"
+                  placeholder="Value"
+                  value={name}
+                  onChangeText={(value) => {
+                    setName(value);
+                    clearFieldError('name');
+                  }}
+                  editable={!submitting}
+                />
+                {errors.name ? (
+                  <Text style={styles.fieldErrorText}>{errors.name}</Text>
+                ) : null}
+              </View>
+              <View>
+                <Input
+                  label="Username"
+                  placeholder="Value"
+                  value={username}
+                  onChangeText={(value) => {
+                    setUsername(value);
+                    clearFieldError('username');
+                  }}
+                  editable={!submitting}
+                />
+                {errors.username ? (
+                  <Text style={styles.fieldErrorText}>{errors.username}</Text>
+                ) : null}
+              </View>
+              <View>
+                <Input
+                  label="Phone Number"
+                  placeholder="Value"
+                  value={phoneNumber}
+                  onChangeText={(value) => {
+                    setPhoneNumber(value);
+                    clearFieldError('phone');
+                  }}
+                  keyboardType="phone-pad"
+                  editable={!submitting}
+                />
+                {errors.phone ? (
+                  <Text style={styles.fieldErrorText}>{errors.phone}</Text>
+                ) : null}
+              </View>
+              <View>
+                <Input
+                  label="Email"
+                  placeholder="Value"
+                  value={email}
+                  onChangeText={(value) => {
+                    setEmail(value);
+                    clearFieldError('email');
+                  }}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  textContentType="emailAddress"
+                  editable={!submitting}
+                />
+                {errors.email ? (
+                  <Text style={styles.fieldErrorText}>{errors.email}</Text>
+                ) : null}
+              </View>
+              <View>
+                <Input
+                  label="Password"
+                  placeholder="Value"
+                  value={password}
+                  onChangeText={(value) => {
+                    setPassword(value);
+                    clearFieldError('password');
+                  }}
+                  secureTextEntry
+                  textContentType="newPassword"
+                  editable={!submitting}
+                />
+                {errors.password ? (
+                  <Text style={styles.fieldErrorText}>{errors.password}</Text>
+                ) : null}
+              </View>
             </View>
 
-            {errorMessage ? (
-              <Text
-                className="text-text-primary"
-                style={{ marginTop: 16, fontSize: 14, lineHeight: 20, color: '#FF8A8A' }}
-              >
-                {errorMessage}
-              </Text>
+            {errors.general ? (
+              <Text style={styles.generalErrorText}>{errors.general}</Text>
             ) : null}
 
             {infoMessage ? (
@@ -227,6 +326,18 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
 }
 
 const styles = StyleSheet.create({
+  fieldErrorText: {
+    marginTop: 6,
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#FF8A8A',
+  },
+  generalErrorText: {
+    marginTop: 16,
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#FF8A8A',
+  },
   titleImage: {
     alignSelf: 'center',
     width: '200%',
