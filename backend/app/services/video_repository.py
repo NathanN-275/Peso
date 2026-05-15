@@ -73,15 +73,31 @@ class VideoRepository:
     return self.update_video(
       video_id,
       {
-        "is_saved": True,
+        "save_state": "saved",
         "saved_at": datetime.now(timezone.utc).isoformat(),
-        "discarded_at": None,
+        "expires_at": None,
       },
     )
 
   def delete_video(self, video_id: str) -> None:
     # Deleted videos are removed entirely from the table.
     self.client.table("videos").delete().eq("id", video_id).execute()
+
+  def delete_video_with_analysis(self, video_id: str) -> None:
+    # Keep deletion safe for environments where the analysis FK cascade is not present yet.
+    self.client.table("analysis_results").delete().eq("video_id", video_id).execute()
+    self.delete_video(video_id)
+
+  def list_expired_pending_videos(self) -> list[dict[str, Any]]:
+    now = datetime.now(timezone.utc).isoformat()
+    response = (
+      self.client.table("videos")
+      .select("*")
+      .eq("save_state", "pending")
+      .lt("expires_at", now)
+      .execute()
+    )
+    return response.data or []
 
   def save_analysis_result(self, video_id: str, model_version: str, result_json: dict[str, Any]) -> dict[str, Any]:
     # Store the latest analysis result for this model version.

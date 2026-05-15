@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
 import tokens from '../theme/tokens';
 
 type ReviewBottomSheetProps = {
@@ -6,6 +6,8 @@ type ReviewBottomSheetProps = {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
+  showCloseButton?: boolean;
+  sheetStyle?: StyleProp<ViewStyle>;
 };
 
 export default function ReviewBottomSheet({
@@ -13,6 +15,8 @@ export default function ReviewBottomSheet({
   title,
   onClose,
   children,
+  showCloseButton = true,
+  sheetStyle,
 }: ReviewBottomSheetProps) {
   if (!visible) {
     return null;
@@ -21,13 +25,15 @@ export default function ReviewBottomSheet({
   return (
     <View style={styles.backdrop}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-      <View style={styles.sheet}>
+      <View style={[styles.sheet, sheetStyle]}>
         <View style={styles.handle} />
         <View style={styles.header}>
           <Text style={styles.title}>{title}</Text>
-          <Pressable accessibilityRole="button" onPress={onClose} style={styles.closeButton}>
-            <Text style={styles.closeText}>Close</Text>
-          </Pressable>
+          {showCloseButton ? (
+            <Pressable accessibilityRole="button" onPress={onClose} style={styles.closeButton}>
+              <Text style={styles.closeText}>Close</Text>
+            </Pressable>
+          ) : null}
         </View>
         <View style={styles.content}>{children}</View>
       </View>

@@ -4,7 +4,6 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   LayoutChangeEvent,
   Pressable,
   ScrollView,
@@ -78,6 +77,7 @@ export default function AnalysisReviewScreen({
   const [discarding, setDiscarding] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showDiscardSheet, setShowDiscardSheet] = useState(false);
   const [wasPlayingBeforeScrub, setWasPlayingBeforeScrub] = useState(false);
 
   const player = useVideoPlayer(videoUri, (videoPlayer) => {
@@ -208,6 +208,7 @@ export default function AnalysisReviewScreen({
 
     try {
       await discardAnalyzedVideo(result.video_id, session.access_token);
+      setShowDiscardSheet(false);
       player.pause();
       onDiscarded();
     } catch (error) {
@@ -217,6 +218,14 @@ export default function AnalysisReviewScreen({
     }
   };
 
+  const closeDiscardSheet = () => {
+    if (discarding) {
+      return;
+    }
+
+    setShowDiscardSheet(false);
+  };
+
   const handleBack = () => {
     // Going back warns if the analyzed clip has not been saved yet.
     if (saved) {
@@ -224,31 +233,19 @@ export default function AnalysisReviewScreen({
       return;
     }
 
-    Alert.alert(
-      'Discard video?',
-      'This analyzed upload has not been saved.',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Discard Video',
-          style: 'destructive',
-          onPress: () => {
-            void discardVideo();
-          },
-        },
-      ],
-      { cancelable: true }
-    );
+    setShowDiscardSheet(true);
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
         <View style={styles.topBar}>
-          <Pressable accessibilityRole="button" onPress={handleBack} style={styles.topButton}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={handleBack}
+            disabled={saving || discarding}
+            style={[styles.topButton, (saving || discarding) && styles.disabledButton]}
+          >
             <Text style={styles.topButtonText}>Back</Text>
           </Pressable>
           <Text style={styles.title}>{formatFlagLabel(result.exercise)}</Text>
@@ -386,6 +383,43 @@ export default function AnalysisReviewScreen({
               <Text key={feedback} style={styles.sheetText}>- {feedback}</Text>
             )) : <Text style={styles.sheetMutedText}>No coaching feedback available.</Text>}
           </ScrollView>
+        </ReviewBottomSheet>
+
+        <ReviewBottomSheet
+          visible={showDiscardSheet}
+          title="Discard video?"
+          onClose={closeDiscardSheet}
+          showCloseButton={false}
+          sheetStyle={styles.discardSheet}
+        >
+          <View style={styles.discardContent}>
+            <Text style={styles.discardSubtitle}>
+              This analyzed upload has not been saved. Discarding permanently removes the video and analysis.
+            </Text>
+            {errorMessage ? <Text style={styles.discardErrorText}>{errorMessage}</Text> : null}
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                void discardVideo();
+              }}
+              disabled={discarding || saving}
+              style={[styles.discardButton, (discarding || saving) && styles.disabledButton]}
+            >
+              {discarding ? (
+                <ActivityIndicator color={tokens.colors.textPrimary} />
+              ) : (
+                <Text style={styles.discardButtonText}>Discard Video</Text>
+              )}
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={closeDiscardSheet}
+              disabled={discarding}
+              style={[styles.cancelDiscardButton, discarding && styles.disabledButton]}
+            >
+              <Text style={styles.cancelDiscardButtonText}>Cancel</Text>
+            </Pressable>
+          </View>
         </ReviewBottomSheet>
       </View>
     </SafeAreaView>
@@ -557,5 +591,58 @@ const styles = StyleSheet.create({
     backgroundColor: '#0C1016',
     padding: 12,
     gap: 3,
+  },
+  discardSheet: {
+    maxHeight: '46%',
+    backgroundColor: '#202020',
+    borderColor: '#343434',
+    paddingHorizontal: 22,
+    paddingBottom: 34,
+  },
+  discardContent: {
+    gap: 14,
+  },
+  discardSubtitle: {
+    color: '#D6D6D6',
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  discardErrorText: {
+    color: '#FF8A8A',
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+  discardButton: {
+    width: '100%',
+    minHeight: 54,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    backgroundColor: '#D93025',
+    paddingHorizontal: 18,
+  },
+  discardButtonText: {
+    color: tokens.colors.textPrimary,
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  cancelDiscardButton: {
+    width: '100%',
+    minHeight: 54,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#4A4A4A',
+    backgroundColor: '#2A2A2A',
+    paddingHorizontal: 18,
+  },
+  cancelDiscardButtonText: {
+    color: tokens.colors.textPrimary,
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: '700',
   },
 });

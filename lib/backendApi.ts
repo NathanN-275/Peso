@@ -125,6 +125,8 @@ async function requestJson<T>(path: string, accessToken?: string, init?: Request
 
 export { getBackendApiUrl, getBackendConnectionDiagnostics };
 
+export type SaveState = 'pending' | 'saved';
+
 export async function testBackendConnection() {
   // Health checks confirm the backend is reachable before upload starts.
   return requestJson<{ status: string }>('/health');
@@ -155,7 +157,7 @@ export async function fetchAnalysisResult(videoId: string, accessToken: string) 
 
 export async function saveAnalyzedVideo(videoId: string, accessToken: string) {
   // Persist the analyzed clip to the user's saved list.
-  return requestJson<{ video_id: string; is_saved: boolean }>(
+  return requestJson<{ video_id: string; save_state: SaveState }>(
     `/videos/${videoId}/save`,
     accessToken,
     {
@@ -167,10 +169,10 @@ export async function saveAnalyzedVideo(videoId: string, accessToken: string) {
 export async function discardAnalyzedVideo(videoId: string, accessToken: string) {
   // Delete the upload and its analysis result from the backend.
   return requestJson<{ video_id: string; discarded: boolean }>(
-    `/videos/${videoId}`,
+    `/videos/${videoId}/discard`,
     accessToken,
     {
-      method: 'DELETE',
+      method: 'POST',
     }
   );
 }

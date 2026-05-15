@@ -13,6 +13,7 @@ const TARGET_MAX_DIMENSION = 1280;
 const MIN_POSE_BITRATE = 1_800_000;
 const MAX_POSE_BITRATE = 2_500_000;
 const AUDIO_BITRATE_RESERVE = 128_000;
+const PENDING_VIDEO_TTL_MS = 24 * 60 * 60 * 1000;
 const UPLOAD_LIMIT_LABEL = `${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))} MB`;
 const ALLOWED_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.m4v'] as const;
 const ALLOWED_VIDEO_MIME_TYPES = [
@@ -699,6 +700,7 @@ export async function uploadVideoForAnalysis({
   const videoId = createUuid();
   const normalizedExerciseType = normalizeExerciseType(exercise);
   const normalizedViewType = normalizeViewType(angle);
+  const expiresAt = new Date(Date.now() + PENDING_VIDEO_TTL_MS).toISOString();
 
   const { error: insertError } = await supabase
     .from('videos')
@@ -711,6 +713,8 @@ export async function uploadVideoForAnalysis({
       view_type: normalizedViewType,
       status: 'uploaded',
       duration_ms: durationMs,
+      save_state: 'pending',
+      expires_at: expiresAt,
     })
     ;
 

@@ -91,7 +91,7 @@ async function main() {
   if (backendAlreadyRunning) {
     log('backend', `using existing backend at ${backendHealthUrl}`);
   } else {
-    log('backend', `starting FastAPI on port ${backendPort}`);
+    log('backend', `starting FastAPI on 0.0.0.0:${backendPort} for simulator and physical-device access`);
     spawnProcess(
       'backend',
       pythonCommand,
