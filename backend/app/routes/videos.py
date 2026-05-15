@@ -146,9 +146,10 @@ def list_saved_videos(
 ) -> list[SavedVideoResponse]:
   repository = VideoRepository()
   storage = StorageService()
+  videos = repository.list_saved_videos(user_id)
   saved_videos: list[SavedVideoResponse] = []
 
-  for video in repository.list_saved_videos(user_id):
+  for video in videos:
     analysis = repository.get_analysis_result(video["id"])
     result_json = analysis["result_json"] if analysis else {}
     normalized_analysis = None
