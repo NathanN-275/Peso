@@ -34,6 +34,12 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+const INVALID_LOGIN_MESSAGE = 'Incorrect email or password. Please try again.';
+const EMAIL_NOT_CONFIRMED_MESSAGE =
+  'Please confirm your email address before logging in.';
+const AUTH_SERVICE_UNAVAILABLE_MESSAGE =
+  'Unable to reach the auth service. Check your connection and try again.';
+
 function toSupabaseErrorDetails(error: unknown) {
   // Normalize Supabase errors so logs stay structured.
   if (!error || typeof error !== 'object') {
@@ -58,6 +64,51 @@ function logSupabaseError(context: string, error: unknown, extra?: Record<string
     ...toSupabaseErrorDetails(error),
     ...(extra ?? {}),
   });
+}
+
+function getErrorMessage(error: unknown) {
+  if (!error || typeof error !== 'object' || !('message' in error)) {
+    return null;
+  }
+
+  return typeof error.message === 'string' ? error.message : null;
+}
+
+function getErrorCode(error: unknown) {
+  if (!error || typeof error !== 'object' || !('code' in error)) {
+    return null;
+  }
+
+  return typeof error.code === 'string' ? error.code : null;
+}
+
+function getErrorName(error: unknown) {
+  if (!error || typeof error !== 'object' || !('name' in error)) {
+    return null;
+  }
+
+  return typeof error.name === 'string' ? error.name : null;
+}
+
+function getSignInErrorMessage(error: unknown) {
+  const message = getErrorMessage(error);
+  const normalizedMessage = message?.toLowerCase() ?? '';
+  const code = getErrorCode(error);
+  const name = getErrorName(error);
+
+  if (code === 'invalid_credentials' || normalizedMessage === 'invalid login credentials') {
+    return INVALID_LOGIN_MESSAGE;
+  }
+
+  if (code === 'email_not_confirmed' || normalizedMessage.includes('email not confirmed')) {
+    return EMAIL_NOT_CONFIRMED_MESSAGE;
+  }
+
+  if (name === 'AuthRetryableFetchError' || normalizedMessage.includes('failed to fetch')) {
+    return AUTH_SERVICE_UNAVAILABLE_MESSAGE;
+  }
+
+  return message ?? 'Unable to log in.';
 }
 
 function isMissingProfilesTableError(error: unknown) {
@@ -242,10 +293,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
 
       if (error) {
-        logSupabaseError('signInWithPassword failed', error, {
-          email,
-        });
-        throw error;
+        logSupabaseError('signInWithPassword failed', error);
+        throw new Error(getSignInErrorMessage(error));
       }
     },
     async signUpWithEmail(email, password, profile) {
