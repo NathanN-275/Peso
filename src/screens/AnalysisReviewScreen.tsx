@@ -53,6 +53,30 @@ function formatNumber(value: number, suffix = '') {
   return `${value.toFixed(2)}${suffix}`;
 }
 
+function formatOptionalNumber(value: number | undefined, suffix = '') {
+  if (typeof value !== 'number') {
+    return `n/a${suffix}`;
+  }
+
+  return formatNumber(value, suffix);
+}
+
+function formatMilliseconds(value: number | undefined) {
+  if (typeof value !== 'number') {
+    return 'n/a';
+  }
+
+  return `${(value / 1000).toFixed(2)}s`;
+}
+
+function formatDepthStatus(value: string | undefined) {
+  if (!value) {
+    return 'Unknown';
+  }
+
+  return formatFlagLabel(value);
+}
+
 function SheetSection({ title, children }: { title: string; children: React.ReactNode }) {
   // Shared block for the review sheet sections.
   return (
@@ -143,6 +167,14 @@ export default function AnalysisReviewScreen({
   const videoQuality = normalizeVideoQuality(result);
   const hasPoseTimeline = Boolean(result.poseFrames?.length);
   const cameraView = result.cameraView ?? result.view;
+  const selectedPoseSide = result.diagnostics?.pose_validation?.selected_side
+    ?? result.diagnostics?.selected_side
+    ?? null;
+  const analysisStale = result.analysis_stale ?? result.diagnostics?.analysis_stale ?? false;
+  const poseBackend = result.pose_backend ?? result.diagnostics?.pose_backend;
+  const fallbackTriggered = result.fallback_triggered ?? result.diagnostics?.fallback_triggered ?? false;
+  const fallbackReason = result.fallback_reason ?? result.diagnostics?.fallback_reason;
+  const landmarkModel = result.landmark_model ?? result.diagnostics?.landmark_model;
 
   const handleVideoLayout = ({ nativeEvent }: LayoutChangeEvent) => {
     // The overlay needs the rendered video size to map pose points correctly.
@@ -289,6 +321,7 @@ export default function AnalysisReviewScreen({
               videoSize={videoSize}
               contentFit="cover"
               cameraView={cameraView}
+              selectedSide={selectedPoseSide}
             />
 
             {status === 'loading' ? (
@@ -348,6 +381,16 @@ export default function AnalysisReviewScreen({
         >
           <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent}>
             <SheetSection title="Summary flags">
+              <Text style={styles.debugText}>Stale analysis: {analysisStale ? 'yes' : 'no'}</Text>
+              <Text style={styles.debugText}>Pose backend: {poseBackend ?? 'n/a'}</Text>
+              <Text style={styles.debugText}>Fallback used: {fallbackTriggered ? 'yes' : 'no'}</Text>
+              <Text style={styles.debugText}>Fallback reason: {fallbackReason ?? 'n/a'}</Text>
+              <Text style={styles.debugText}>Landmark model: {landmarkModel ?? 'n/a'}</Text>
+              {analysisStale ? (
+                <Text style={styles.staleText}>
+                  This result was created by an older model version. Re-run analysis before trusting depth flags.
+                </Text>
+              ) : null}
               {summaryFlags.length ? summaryFlags.map((flag) => (
                 <Text key={flag} style={styles.sheetText}>- {formatFlagLabel(flag)}</Text>
               )) : <Text style={styles.sheetMutedText}>No summary flags.</Text>}
@@ -366,6 +409,16 @@ export default function AnalysisReviewScreen({
             <SheetSection title="Per-rep highlights">
               {result.reps.length ? result.reps.map((rep) => {
                 const velocity = getRepVelocity(rep);
+                const depthStatus = rep.depthStatus ?? rep.depth_status;
+                const depthTimestampMs = rep.depthTimestampMs ?? rep.depth_timestamp_ms;
+                const bottomTimestampMs = rep.bottomTimestampMs ?? rep.bottom_timestamp_ms;
+                const selectedSide = rep.selectedSide ?? rep.selected_side ?? rep.depth_evidence?.selected_side;
+                const hipKneeDelta = rep.depth_evidence?.hip_knee_delta ?? rep.depth_components?.hip_knee_delta;
+                const parallelScore = rep.depth_evidence?.parallel_score ?? rep.depth_components?.parallel_score;
+                const depthConfidence =
+                  rep.depth_evidence?.depth_confidence ?? rep.depthConfidence ?? rep.depth_confidence;
+                const scoredFrameDiffers = rep.depth_evidence?.scored_frame_differs_from_bottom;
+                const plateRackOcclusion = rep.depth_evidence?.plate_rack_occlusion_suspected;
                 return (
                   <View key={rep.rep_index} style={styles.repBlock}>
                     <Text style={styles.sheetText}>Rep {rep.repIndex ?? rep.rep_index}</Text>
@@ -377,6 +430,18 @@ export default function AnalysisReviewScreen({
                     <Text style={styles.sheetMutedText}>
                       Depth {formatNumber(rep.depthScore ?? rep.depth_score)}, torso change {formatNumber(rep.torsoAngleChangeDeg ?? rep.torso_angle_change, ' deg')}
                     </Text>
+                    <View style={styles.debugBlock}>
+                      <Text style={styles.debugText}>Depth status: {formatDepthStatus(depthStatus)}</Text>
+                      <Text style={styles.debugText}>Hip-knee delta: {formatOptionalNumber(hipKneeDelta)}</Text>
+                      <Text style={styles.debugText}>Parallel score: {formatOptionalNumber(parallelScore)}</Text>
+                      <Text style={styles.debugText}>Depth confidence: {formatOptionalNumber(depthConfidence)}</Text>
+                      <Text style={styles.debugText}>
+                        Scored frame: {formatMilliseconds(depthTimestampMs)} · bottom: {formatMilliseconds(bottomTimestampMs)}
+                      </Text>
+                      <Text style={styles.debugText}>Selected side: {selectedSide ?? selectedPoseSide ?? 'n/a'}</Text>
+                      <Text style={styles.debugText}>Scored frame differs: {scoredFrameDiffers ? 'yes' : 'no'}</Text>
+                      <Text style={styles.debugText}>Rack/plate occlusion: {plateRackOcclusion ? 'yes' : 'no'}</Text>
+                    </View>
                   </View>
                 );
               }) : <Text style={styles.sheetMutedText}>No reps detected.</Text>}
@@ -595,6 +660,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
   },
+  staleText: {
+    color: '#FFB020',
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '700',
+  },
   repBlock: {
     borderRadius: 8,
     borderWidth: 1,
@@ -602,6 +673,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#0C1016',
     padding: 12,
     gap: 3,
+  },
+  debugBlock: {
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#243044',
+    paddingTop: 8,
+    gap: 2,
+  },
+  debugText: {
+    color: '#9FB6D9',
+    fontSize: 12,
+    lineHeight: 17,
   },
   discardSheet: {
     maxHeight: '46%',

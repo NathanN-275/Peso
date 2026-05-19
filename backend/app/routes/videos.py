@@ -8,6 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from ..analysis.pipeline import analyze_video
+from ..analysis.versioning import annotate_analysis_freshness, analysis_is_current
 from ..services.auth import get_current_user_id
 from ..services.storage_service import StorageService
 from ..services.video_repository import VideoRepository
@@ -96,6 +97,15 @@ def queue_analysis(
   video = repository.require_owned_video(video_id_str, user_id)
   current_status = video["status"]
 
+  if current_status == "completed":
+    analysis = repository.get_analysis_result(video_id_str)
+
+    if not analysis_is_current(analysis):
+      StorageService().validate_video_object(video["storage_path"])
+      repository.update_video(video_id_str, {"status": "queued"})
+      background_tasks.add_task(_run_analysis_job, video_id_str)
+      return AnalyzeResponse(video_id=video_id, status="queued")
+
   if current_status in IDEMPOTENT_ANALYSIS_STATUSES:
     return AnalyzeResponse(video_id=video_id, status=current_status)
 
@@ -151,7 +161,7 @@ def list_saved_videos(
 
   for video in videos:
     analysis = repository.get_analysis_result(video["id"])
-    result_json = analysis["result_json"] if analysis else {}
+    result_json = annotate_analysis_freshness(analysis["result_json"], analysis) if analysis else {}
     normalized_analysis = None
 
     if analysis:
@@ -258,5 +268,5 @@ def get_analysis(
   return AnalysisResponse(
     video_id=video_id,
     status=video["status"],
-    result_json=result["result_json"],
+    result_json=annotate_analysis_freshness(result["result_json"], result),
   )

@@ -37,6 +37,10 @@ export function formatSavedDate(value?: string | null) {
 export function getSavedVideoSummary(video: SavedVideo) {
   const analysis = video.analysis;
   const result = analysis?.result_json;
+  if (result?.analysis_stale || result?.diagnostics?.analysis_stale) {
+    return 'Analysis needs re-run';
+  }
+
   return (
     result?.summary_flags?.[0] ??
     result?.summaryFlags?.[0] ??
@@ -73,5 +77,14 @@ export function buildSavedVideoAnalysisResult(video: SavedVideo): VideoAnalysisR
     videoWidth: result?.videoWidth ?? null,
     videoHeight: result?.videoHeight ?? null,
     model_version: result?.model_version ?? video.analysis?.model_version,
+    analysis_model_version:
+      result?.analysis_model_version ?? result?.diagnostics?.analysis_model_version ?? video.analysis?.model_version,
+    expected_model_version: result?.expected_model_version ?? result?.diagnostics?.expected_model_version,
+    analysis_stale: result?.analysis_stale ?? result?.diagnostics?.analysis_stale ?? false,
+    pose_backend: result?.pose_backend ?? result?.diagnostics?.pose_backend,
+    fallback_triggered: result?.fallback_triggered ?? result?.diagnostics?.fallback_triggered,
+    fallback_reason: result?.fallback_reason ?? result?.diagnostics?.fallback_reason,
+    vitpose_frame_count: result?.vitpose_frame_count ?? result?.diagnostics?.vitpose_frame_count,
+    landmark_model: result?.landmark_model ?? result?.diagnostics?.landmark_model,
   };
 }

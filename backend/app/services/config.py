@@ -32,7 +32,7 @@ class Settings:
   supabase_jwt_secret: str
   video_bucket: str = "videos"
   max_video_upload_bytes: int = 50 * 1024 * 1024
-  model_version: str = "mediapipe-pose-v1"
+  model_version: str = "mediapipe-vitpose-v1-rack-fallback"
   cors_origins: tuple[str, ...] = ()
   cors_origin_regex: str | None = None
   cors_allow_private_network: bool = False
@@ -58,7 +58,10 @@ def get_settings() -> Settings:
   if max_video_upload_bytes <= 0:
     raise RuntimeError("MAX_VIDEO_UPLOAD_BYTES must be a positive integer.")
 
-  model_version = os.getenv("MODEL_VERSION", "mediapipe-pose-v1").strip() or "mediapipe-pose-v1"
+  model_version = (
+    os.getenv("MODEL_VERSION", "mediapipe-vitpose-v1-rack-fallback").strip()
+    or "mediapipe-vitpose-v1-rack-fallback"
+  )
   cors_origins_raw = os.getenv(
     "BACKEND_CORS_ORIGINS",
     ",".join(DEFAULT_CORS_ORIGINS),
