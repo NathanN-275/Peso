@@ -37,7 +37,12 @@ export function formatSavedDate(value?: string | null) {
 export function getSavedVideoSummary(video: SavedVideo) {
   const analysis = video.analysis;
   const result = analysis?.result_json;
-  if (result?.analysis_stale || result?.diagnostics?.analysis_stale) {
+  if (
+    result?.analysis_stale
+    || result?.diagnostics?.analysis_stale
+    || result?.analysis_incomplete
+    || result?.diagnostics?.analysis_incomplete
+  ) {
     return 'Analysis needs re-run';
   }
 
@@ -81,10 +86,16 @@ export function buildSavedVideoAnalysisResult(video: SavedVideo): VideoAnalysisR
       result?.analysis_model_version ?? result?.diagnostics?.analysis_model_version ?? video.analysis?.model_version,
     expected_model_version: result?.expected_model_version ?? result?.diagnostics?.expected_model_version,
     analysis_stale: result?.analysis_stale ?? result?.diagnostics?.analysis_stale ?? false,
+    analysis_incomplete: result?.analysis_incomplete ?? result?.diagnostics?.analysis_incomplete ?? false,
     pose_backend: result?.pose_backend ?? result?.diagnostics?.pose_backend,
+    fallback_model: result?.fallback_model ?? result?.diagnostics?.fallback_model,
+    fallback_frame_count: result?.fallback_frame_count ?? result?.diagnostics?.fallback_frame_count,
+    fallback_recommended: result?.fallback_recommended ?? result?.diagnostics?.fallback_recommended,
     fallback_triggered: result?.fallback_triggered ?? result?.diagnostics?.fallback_triggered,
     fallback_reason: result?.fallback_reason ?? result?.diagnostics?.fallback_reason,
-    vitpose_frame_count: result?.vitpose_frame_count ?? result?.diagnostics?.vitpose_frame_count,
+    fallback_unavailable_reason:
+      result?.fallback_unavailable_reason ?? result?.diagnostics?.fallback_unavailable_reason,
+    fallback_error: result?.fallback_error ?? result?.diagnostics?.fallback_error,
     landmark_model: result?.landmark_model ?? result?.diagnostics?.landmark_model,
   };
 }

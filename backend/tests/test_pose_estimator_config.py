@@ -25,9 +25,10 @@ class PoseEstimatorConfigTest(unittest.TestCase):
     self.assertEqual(config.min_detection_confidence, 0.6)
     self.assertEqual(config.min_tracking_confidence, 0.6)
     self.assertEqual(config.pose_backend, "hybrid")
-    self.assertEqual(config.vitpose_enabled, False)
-    self.assertEqual(config.vitpose_device, "auto")
-    self.assertEqual(config.vitpose_det_frequency, 3)
+    self.assertEqual(config.pose_fallback_enabled, False)
+    self.assertEqual(config.pose_fallback_device, "auto")
+    self.assertEqual(config.pose_fallback_det_frequency, 3)
+    self.assertEqual(config.pose_fallback_mode, "balanced")
 
   def test_invalid_env_values_fall_back_to_defaults(self) -> None:
     with self.assertLogs("app.analysis.pose_estimator", level="WARNING"):
@@ -40,9 +41,10 @@ class PoseEstimatorConfigTest(unittest.TestCase):
           "POSE_MIN_DETECTION_CONFIDENCE": "2",
           "POSE_MIN_TRACKING_CONFIDENCE": "-0.1",
           "POSE_BACKEND": "slowpose",
-          "VITPOSE_ENABLED": "maybe",
-          "VITPOSE_DEVICE": "tpu",
-          "VITPOSE_DET_FREQUENCY": "0",
+          "POSE_FALLBACK_ENABLED": "maybe",
+          "POSE_FALLBACK_DEVICE": "tpu",
+          "POSE_FALLBACK_DET_FREQUENCY": "0",
+          "POSE_FALLBACK_MODE": "turbo",
         },
         clear=True,
       ):
@@ -59,10 +61,11 @@ class PoseEstimatorConfigTest(unittest.TestCase):
         "POSE_MODEL_COMPLEXITY": "2",
         "POSE_MIN_DETECTION_CONFIDENCE": "0.7",
         "POSE_MIN_TRACKING_CONFIDENCE": "0.65",
-        "POSE_BACKEND": "vitpose",
-        "VITPOSE_ENABLED": "true",
-        "VITPOSE_DEVICE": "cpu",
-        "VITPOSE_DET_FREQUENCY": "5",
+        "POSE_BACKEND": "rtmpose",
+        "POSE_FALLBACK_ENABLED": "true",
+        "POSE_FALLBACK_DEVICE": "cpu",
+        "POSE_FALLBACK_DET_FREQUENCY": "5",
+        "POSE_FALLBACK_MODE": "performance",
         "POSE_DEBUG_LANDMARK_EXPORT_DIR": "/tmp/peso-landmarks",
       },
       clear=True,
@@ -74,10 +77,11 @@ class PoseEstimatorConfigTest(unittest.TestCase):
     self.assertEqual(config.model_complexity, 2)
     self.assertEqual(config.min_detection_confidence, 0.7)
     self.assertEqual(config.min_tracking_confidence, 0.65)
-    self.assertEqual(config.pose_backend, "vitpose")
-    self.assertEqual(config.vitpose_enabled, True)
-    self.assertEqual(config.vitpose_device, "cpu")
-    self.assertEqual(config.vitpose_det_frequency, 5)
+    self.assertEqual(config.pose_backend, "rtmpose")
+    self.assertEqual(config.pose_fallback_enabled, True)
+    self.assertEqual(config.pose_fallback_device, "cpu")
+    self.assertEqual(config.pose_fallback_det_frequency, 5)
+    self.assertEqual(config.pose_fallback_mode, "performance")
     self.assertEqual(config.debug_landmark_export_dir, "/tmp/peso-landmarks")
 
   def test_scaled_dimensions_preserve_aspect_ratio(self) -> None:
@@ -106,7 +110,7 @@ class PoseEstimatorConfigTest(unittest.TestCase):
     self.assertIn("left_hip", landmarks)
     self.assertEqual(landmarks["left_heel"]["visibility"], 0.0)
 
-  def test_vitpose_coco17_maps_to_mediapipe_names(self) -> None:
+  def test_rtmpose_coco17_maps_to_mediapipe_names(self) -> None:
     keypoints = [[index * 10.0, index * 5.0] for index in range(17)]
     scores = [0.1 + (index * 0.01) for index in range(17)]
 

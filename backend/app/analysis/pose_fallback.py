@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 
-def analysis_needs_vitpose_fallback(result: dict[str, Any]) -> str | None:
+def analysis_needs_pose_fallback(result: dict[str, Any]) -> str | None:
   diagnostics = result.get("diagnostics") or {}
   quality_flags = set(diagnostics.get("quality_flags") or [])
   pose_validation = diagnostics.get("pose_validation") or {}

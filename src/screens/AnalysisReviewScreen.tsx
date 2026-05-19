@@ -77,6 +77,22 @@ function formatDepthStatus(value: string | undefined) {
   return formatFlagLabel(value);
 }
 
+function formatFallbackUnavailableReason(value: string | null | undefined) {
+  if (!value) {
+    return 'n/a';
+  }
+
+  if (value === 'fallback_disabled') {
+    return 'Fallback disabled';
+  }
+
+  if (value === 'fallback_dependency_missing') {
+    return 'Fallback dependency missing';
+  }
+
+  return formatFlagLabel(value);
+}
+
 function SheetSection({ title, children }: { title: string; children: React.ReactNode }) {
   // Shared block for the review sheet sections.
   return (
@@ -171,9 +187,15 @@ export default function AnalysisReviewScreen({
     ?? result.diagnostics?.selected_side
     ?? null;
   const analysisStale = result.analysis_stale ?? result.diagnostics?.analysis_stale ?? false;
+  const analysisIncomplete = result.analysis_incomplete ?? result.diagnostics?.analysis_incomplete ?? false;
+  const displaySummaryFlags = analysisIncomplete ? ['Analysis needs re-run'] : summaryFlags;
   const poseBackend = result.pose_backend ?? result.diagnostics?.pose_backend;
+  const fallbackModel = result.fallback_model ?? result.diagnostics?.fallback_model;
+  const fallbackRecommended = result.fallback_recommended ?? result.diagnostics?.fallback_recommended ?? false;
   const fallbackTriggered = result.fallback_triggered ?? result.diagnostics?.fallback_triggered ?? false;
   const fallbackReason = result.fallback_reason ?? result.diagnostics?.fallback_reason;
+  const fallbackUnavailableReason =
+    result.fallback_unavailable_reason ?? result.diagnostics?.fallback_unavailable_reason;
   const landmarkModel = result.landmark_model ?? result.diagnostics?.landmark_model;
 
   const handleVideoLayout = ({ nativeEvent }: LayoutChangeEvent) => {
@@ -382,16 +404,22 @@ export default function AnalysisReviewScreen({
           <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent}>
             <SheetSection title="Summary flags">
               <Text style={styles.debugText}>Stale analysis: {analysisStale ? 'yes' : 'no'}</Text>
+              <Text style={styles.debugText}>Analysis incomplete: {analysisIncomplete ? 'yes' : 'no'}</Text>
               <Text style={styles.debugText}>Pose backend: {poseBackend ?? 'n/a'}</Text>
+              <Text style={styles.debugText}>Fallback model: {fallbackModel === 'rtmpose' ? 'RTMPose' : 'n/a'}</Text>
+              <Text style={styles.debugText}>Fallback recommended: {fallbackRecommended ? 'yes' : 'no'}</Text>
               <Text style={styles.debugText}>Fallback used: {fallbackTriggered ? 'yes' : 'no'}</Text>
               <Text style={styles.debugText}>Fallback reason: {fallbackReason ?? 'n/a'}</Text>
+              <Text style={styles.debugText}>
+                Fallback unavailable: {formatFallbackUnavailableReason(fallbackUnavailableReason)}
+              </Text>
               <Text style={styles.debugText}>Landmark model: {landmarkModel ?? 'n/a'}</Text>
               {analysisStale ? (
                 <Text style={styles.staleText}>
-                  This result was created by an older model version. Re-run analysis before trusting depth flags.
+                  This result was created by an older or incomplete model payload. Re-run analysis before trusting depth flags.
                 </Text>
               ) : null}
-              {summaryFlags.length ? summaryFlags.map((flag) => (
+              {displaySummaryFlags.length ? displaySummaryFlags.map((flag) => (
                 <Text key={flag} style={styles.sheetText}>- {formatFlagLabel(flag)}</Text>
               )) : <Text style={styles.sheetMutedText}>No summary flags.</Text>}
             </SheetSection>

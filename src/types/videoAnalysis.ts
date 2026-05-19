@@ -105,12 +105,16 @@ export type VideoAnalysisDiagnostics = {
   expected_model_version?: string;
   analysis_model_version?: string;
   analysis_stale?: boolean;
+  analysis_incomplete?: boolean;
   pose_backend?: string;
   requested_pose_backend?: string;
+  fallback_model?: 'rtmpose' | null;
+  fallback_frame_count?: number;
+  fallback_recommended?: boolean;
   fallback_triggered?: boolean;
   fallback_reason?: string | null;
+  fallback_unavailable_reason?: 'fallback_disabled' | 'fallback_dependency_missing' | null;
   fallback_error?: string;
-  vitpose_frame_count?: number;
   landmark_model?: string;
   quality_score?: number;
   pose_coverage?: number;
@@ -200,10 +204,15 @@ export type VideoAnalysisResult = {
   analysis_model_version?: string;
   expected_model_version?: string;
   analysis_stale?: boolean;
+  analysis_incomplete?: boolean;
   pose_backend?: string;
+  fallback_model?: 'rtmpose' | null;
+  fallback_frame_count?: number;
+  fallback_recommended?: boolean;
   fallback_triggered?: boolean;
   fallback_reason?: string | null;
-  vitpose_frame_count?: number;
+  fallback_unavailable_reason?: 'fallback_disabled' | 'fallback_dependency_missing' | null;
+  fallback_error?: string;
   landmark_model?: string;
 };
 

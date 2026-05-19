@@ -69,7 +69,8 @@ COCO17_TO_MEDIAPIPE33 = {
   16: "right_ankle",
 }
 
-SUPPORTED_POSE_BACKENDS = {"mediapipe", "vitpose", "hybrid"}
+SUPPORTED_POSE_BACKENDS = {"mediapipe", "rtmpose", "hybrid"}
+SUPPORTED_FALLBACK_MODES = {"performance", "lightweight", "balanced"}
 
 
 @dataclass(frozen=True)
@@ -80,9 +81,10 @@ class PoseEstimatorConfig:
   min_detection_confidence: float = 0.6
   min_tracking_confidence: float = 0.6
   pose_backend: str = "hybrid"
-  vitpose_enabled: bool = False
-  vitpose_device: str = "auto"
-  vitpose_det_frequency: int = 3
+  pose_fallback_enabled: bool = False
+  pose_fallback_device: str = "auto"
+  pose_fallback_det_frequency: int = 3
+  pose_fallback_mode: str = "balanced"
   debug_landmark_export_dir: str | None = None
 
 
@@ -164,9 +166,10 @@ def pose_config_from_env() -> PoseEstimatorConfig:
       maximum=1.0,
     ),
     pose_backend=_choice_from_env("POSE_BACKEND", "hybrid", SUPPORTED_POSE_BACKENDS),
-    vitpose_enabled=_bool_from_env("VITPOSE_ENABLED", False),
-    vitpose_device=_choice_from_env("VITPOSE_DEVICE", "auto", {"auto", "cpu", "mps", "cuda"}),
-    vitpose_det_frequency=_int_from_env("VITPOSE_DET_FREQUENCY", 3, minimum=1, maximum=60),
+    pose_fallback_enabled=_bool_from_env("POSE_FALLBACK_ENABLED", False),
+    pose_fallback_device=_choice_from_env("POSE_FALLBACK_DEVICE", "auto", {"auto", "cpu", "mps", "cuda"}),
+    pose_fallback_det_frequency=_int_from_env("POSE_FALLBACK_DET_FREQUENCY", 3, minimum=1, maximum=60),
+    pose_fallback_mode=_choice_from_env("POSE_FALLBACK_MODE", "balanced", SUPPORTED_FALLBACK_MODES),
     debug_landmark_export_dir=(os.getenv("POSE_DEBUG_LANDMARK_EXPORT_DIR") or "").strip() or None,
   )
 
@@ -276,36 +279,23 @@ class MediaPipePoseBackend:
     self._pose.close()
 
 
-class ViTPoseBackend:
-  landmark_model = "vitpose_coco17_mapped_to_mediapipe_33"
+class RTMPoseBackend:
+  landmark_model = "rtmpose_coco17_mapped_to_mediapipe_33"
 
   def __init__(self, config: PoseEstimatorConfig) -> None:
-    from functools import partial
-
     try:
-      from rtmlib import Custom, PoseTracker
+      from rtmlib import Body, PoseTracker
     except ImportError as error:
       raise RuntimeError(
-        "ViTPose fallback requires the optional rtmlib dependency. "
-        "Install rtmlib and enable VITPOSE_ENABLED=true to use it."
+        "RTMPose fallback requires the optional rtmlib dependency. "
+        "Install rtmlib and enable POSE_FALLBACK_ENABLED=true to use it."
       ) from error
 
-    device = None if config.vitpose_device == "auto" else config.vitpose_device
-    vitpose_model = partial(
-      Custom,
-      det_class="YOLOX",
-      det=(
-        "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/"
-        "yolox_x_8xb8-300e_humanart-a39d44ed.zip"
-      ),
-      det_input_size=(640, 640),
-      pose_class="ViTPose",
-      pose="https://huggingface.co/JunkyByte/easy_ViTPose/resolve/main/onnx/coco/vitpose-b-coco.onnx",
-      pose_input_size=(192, 256),
-    )
+    device = None if config.pose_fallback_device == "auto" else config.pose_fallback_device
     self._tracker = PoseTracker(
-      vitpose_model,
-      det_frequency=config.vitpose_det_frequency,
+      Body,
+      mode=config.pose_fallback_mode,
+      det_frequency=config.pose_fallback_det_frequency,
       backend="onnxruntime",
       device=device,
       to_openpose=False,
@@ -365,9 +355,9 @@ class ViTPoseBackend:
     return None
 
 
-def _create_pose_backend(name: str, config: PoseEstimatorConfig) -> MediaPipePoseBackend | ViTPoseBackend:
-  if name == "vitpose":
-    return ViTPoseBackend(config)
+def _create_pose_backend(name: str, config: PoseEstimatorConfig) -> MediaPipePoseBackend | RTMPoseBackend:
+  if name == "rtmpose":
+    return RTMPoseBackend(config)
   if name == "mediapipe":
     return MediaPipePoseBackend(config)
   raise ValueError(f"Unsupported pose backend: {name}")
@@ -392,7 +382,7 @@ def _export_debug_landmarks(
     "pose_backend": backend_name,
     "landmark_names": POSE_LANDMARK_NAMES,
     "landmark_model": (
-      ViTPoseBackend.landmark_model if backend_name == "vitpose" else MediaPipePoseBackend.landmark_model
+      RTMPoseBackend.landmark_model if backend_name == "rtmpose" else MediaPipePoseBackend.landmark_model
     ),
     "frames": frames,
   }
@@ -415,9 +405,10 @@ class PoseEstimator:
         min_detection_confidence=env_config.min_detection_confidence,
         min_tracking_confidence=env_config.min_tracking_confidence,
         pose_backend=env_config.pose_backend,
-        vitpose_enabled=env_config.vitpose_enabled,
-        vitpose_device=env_config.vitpose_device,
-        vitpose_det_frequency=env_config.vitpose_det_frequency,
+        pose_fallback_enabled=env_config.pose_fallback_enabled,
+        pose_fallback_device=env_config.pose_fallback_device,
+        pose_fallback_det_frequency=env_config.pose_fallback_det_frequency,
+        pose_fallback_mode=env_config.pose_fallback_mode,
         debug_landmark_export_dir=env_config.debug_landmark_export_dir,
       )
     self.config = env_config
@@ -449,8 +440,8 @@ class PoseEstimator:
     frame_step = max(int(round(fps / self.target_fps)), 1) if fps > 0 else 1
 
     backend_name = "mediapipe" if self.config.pose_backend == "hybrid" else self.config.pose_backend
-    if backend_name == "vitpose" and not self.config.vitpose_enabled:
-      logger.warning("VITPOSE_ENABLED is false; falling back to MediaPipe.")
+    if backend_name == "rtmpose" and not self.config.pose_fallback_enabled:
+      logger.warning("POSE_FALLBACK_ENABLED is false; falling back to MediaPipe.")
       backend_name = "mediapipe"
 
     try:
@@ -492,12 +483,13 @@ class PoseEstimator:
       "pose_model_complexity": self.config.model_complexity,
       "pose_backend": backend_name,
       "requested_pose_backend": self.config.pose_backend,
+      "fallback_model": "rtmpose" if backend_name == "rtmpose" else None,
       "fallback_triggered": False,
       "fallback_reason": None,
-      "vitpose_enabled": self.config.vitpose_enabled,
-      "vitpose_frame_count": len(frames) if backend_name == "vitpose" else 0,
+      "pose_fallback_enabled": self.config.pose_fallback_enabled,
+      "fallback_frame_count": len(frames) if backend_name == "rtmpose" else 0,
       "landmark_model": (
-        ViTPoseBackend.landmark_model if backend_name == "vitpose" else MediaPipePoseBackend.landmark_model
+        RTMPoseBackend.landmark_model if backend_name == "rtmpose" else MediaPipePoseBackend.landmark_model
       ),
       "processing_duration_ms": processing_duration_ms,
       "frames": frames,
