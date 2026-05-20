@@ -230,7 +230,7 @@ def export_analyzed_video(
     )
 
   analysis_id = str(analysis["id"])
-  export_path = f"{user_id}/exports/{video_id_str}-{analysis_id}.mp4"
+  export_path = f"{user_id}/exports/{video_id_str}-{analysis_id}-h264-v1.mp4"
 
   if not storage.storage_path_exists(export_path):
     source_file: Path | None = None

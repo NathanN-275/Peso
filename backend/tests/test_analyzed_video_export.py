@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 from fastapi import HTTPException, status
 
 from app.routes.videos import export_analyzed_video
-from app.services.analyzed_video_renderer import render_analyzed_video
+from app.services.analyzed_video_renderer import _resolve_ffmpeg_binary, render_analyzed_video
 
 
 VIDEO_ID = UUID("11111111-1111-1111-1111-111111111111")
@@ -94,7 +94,7 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
     ):
       response = export_analyzed_video(VIDEO_ID, USER_ID)
 
-    expected_path = f"{USER_ID}/exports/{VIDEO_ID}-{ANALYSIS_ID}.mp4"
+    expected_path = f"{USER_ID}/exports/{VIDEO_ID}-{ANALYSIS_ID}-h264-v1.mp4"
     renderer.assert_not_called()
     storage.download_to_tempfile.assert_not_called()
     storage.upload_file.assert_not_called()
@@ -104,6 +104,13 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
 
 
 class AnalyzedVideoRendererTest(unittest.TestCase):
+  def test_renderer_reports_missing_ffmpeg_binary(self) -> None:
+    with (
+      patch.dict("os.environ", {"FFMPEG_BINARY": "/definitely/missing/ffmpeg"}),
+      self.assertRaisesRegex(RuntimeError, "FFmpeg binary configured by FFMPEG_BINARY was not found."),
+    ):
+      _resolve_ffmpeg_binary()
+
   def test_renderer_creates_output_file_with_pose_overlay(self) -> None:
     import cv2
     import numpy as np
@@ -156,6 +163,11 @@ class AnalyzedVideoRendererTest(unittest.TestCase):
 
       self.assertTrue(success)
       self.assertGreater(int(frame.sum()), 0)
+
+      with open(output_path, "rb") as output_file:
+        output_bytes = output_file.read()
+
+      self.assertIn(b"avc1", output_bytes)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +25,23 @@ YELLOW = (0, 245, 255)
 WHITE = (255, 255, 255)
 ORANGE = (32, 176, 255)
 BLACK = (0, 0, 0)
+
+
+def _resolve_ffmpeg_binary() -> str:
+  configured_binary = os.getenv("FFMPEG_BINARY", "").strip()
+
+  if configured_binary:
+    if shutil.which(configured_binary) or Path(configured_binary).exists():
+      return configured_binary
+
+    raise RuntimeError("FFmpeg binary configured by FFMPEG_BINARY was not found.")
+
+  ffmpeg_binary = shutil.which("ffmpeg")
+
+  if not ffmpeg_binary:
+    raise RuntimeError("FFmpeg is required to export analyzed videos. Install ffmpeg or set FFMPEG_BINARY.")
+
+  return ffmpeg_binary
 
 
 def _average_side_confidence(keypoints: list[dict[str, Any]], side: str) -> float:
@@ -190,12 +210,40 @@ def render_analyzed_video(
     raise RuntimeError("Unable to read source video dimensions for export.")
 
   output_path.parent.mkdir(parents=True, exist_ok=True)
-  writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-
-  if not writer.isOpened():
-    capture.release()
-    raise RuntimeError("Unable to create analyzed video export.")
-
+  ffmpeg_binary = _resolve_ffmpeg_binary()
+  ffmpeg_process = subprocess.Popen(
+    [
+      ffmpeg_binary,
+      "-y",
+      "-f",
+      "rawvideo",
+      "-vcodec",
+      "rawvideo",
+      "-pix_fmt",
+      "bgr24",
+      "-s",
+      f"{width}x{height}",
+      "-r",
+      f"{fps}",
+      "-i",
+      "-",
+      "-an",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "20",
+      "-pix_fmt",
+      "yuv420p",
+      "-movflags",
+      "+faststart",
+      str(output_path),
+    ],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.PIPE,
+  )
   pose_frames = sorted(result_json.get("poseFrames") or [], key=lambda frame: float(frame.get("time") or 0))
   camera_view = str(result_json.get("cameraView") or result_json.get("view") or "").lower() or None
   diagnostics = result_json.get("diagnostics") or {}
@@ -218,13 +266,29 @@ def render_analyzed_video(
         camera_view,
         selected_side,
       )
-      writer.write(image)
+
+      if not ffmpeg_process.stdin:
+        raise RuntimeError("FFmpeg input pipe was unavailable for analyzed video export.")
+
+      try:
+        ffmpeg_process.stdin.write(image.tobytes())
+      except BrokenPipeError as error:
+        raise RuntimeError("FFmpeg stopped before analyzed video export completed.") from error
+
       frame_index += 1
   finally:
     capture.release()
-    writer.release()
+    if ffmpeg_process.stdin:
+      ffmpeg_process.stdin.close()
+      ffmpeg_process.stdin = None
+
+  _, stderr = ffmpeg_process.communicate()
 
   if frame_index == 0:
     raise RuntimeError("Unable to read frames from source video for export.")
+
+  if ffmpeg_process.returncode != 0:
+    message = stderr.decode("utf-8", errors="replace").strip()
+    raise RuntimeError(f"FFmpeg failed to export analyzed video: {message}")
 
   return output_path
