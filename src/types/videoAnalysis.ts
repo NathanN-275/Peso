@@ -2,6 +2,8 @@ export type VideoAnalysisStatus = 'uploaded' | 'queued' | 'processing' | 'comple
 
 export type SaveState = 'pending' | 'saved';
 
+export type DepthStatus = 'hit_depth' | 'insufficient_depth' | 'uncertain_depth';
+
 export type VideoAnalysisRep = {
   rep_index: number;
   repIndex?: number;
@@ -12,8 +14,58 @@ export type VideoAnalysisRep = {
   avgVelocity?: number;
   peakVelocity?: number;
   depthScore?: number;
+  depthConfidence?: number;
+  depthStatus?: DepthStatus;
+  depthFrameIndex?: number;
+  depthTimestampMs?: number;
+  bottomIndex?: number;
+  bottomTimestampMs?: number;
+  selectedSide?: string;
   torsoAngleChangeDeg?: number;
   depth_score: number;
+  depth_confidence?: number;
+  depth_status?: DepthStatus;
+  depth_frame_index?: number;
+  depth_timestamp_ms?: number;
+  bottom_index?: number;
+  bottom_timestamp_ms?: number;
+  selected_side?: string;
+  depth_components?: {
+    score?: number;
+    confidence?: number;
+    hip_vs_knee_score?: number;
+    knee_flexion_score?: number;
+    hip_flexion_score?: number;
+    parallel_score?: number;
+    visibility_score?: number;
+    hip_knee_delta?: number;
+    hip_vs_knee_ratio?: number;
+    selected_bottom_frame_offset?: number;
+    selected_bottom_frame_index?: number;
+    bottom_depth_landmarks_unreliable?: boolean;
+    detected_bottom_depth_landmarks_unreliable?: boolean;
+    detected_bottom_occlusion_landmarks_unreliable?: boolean;
+  };
+  depth_evidence?: {
+    selected_side?: string;
+    bottom_index?: number;
+    bottom_timestamp_ms?: number;
+    depth_frame_index?: number;
+    depth_timestamp_ms?: number;
+    scored_frame_differs_from_bottom?: boolean;
+    scoring_landmarks?: {
+      shoulder?: VideoPoseKeypoint;
+      hip?: VideoPoseKeypoint;
+      knee?: VideoPoseKeypoint;
+      ankle?: VideoPoseKeypoint;
+    };
+    hip_knee_delta?: number;
+    parallel_score?: number;
+    depth_confidence?: number;
+    depth_status?: DepthStatus;
+    plate_rack_occlusion_suspected?: boolean;
+    depth_status_downgraded_by_occlusion?: boolean;
+  };
   torso_angle?: number;
   torso_angle_change: number;
   estimated_body_velocity?: {
@@ -35,19 +87,76 @@ export type VideoPoseKeypoint = {
   confidence: number;
 };
 
+export type PoseValidationLandmark = {
+  frame_index: number;
+  timestamp_ms?: number;
+  side: string;
+  joint: string;
+  status: 'interpolated' | 'rejected';
+  reasons: string[];
+};
+
 export type VideoPoseFrame = {
   time: number;
   keypoints: VideoPoseKeypoint[];
 };
 
 export type VideoAnalysisDiagnostics = {
+  expected_model_version?: string;
+  analysis_model_version?: string;
+  analysis_stale?: boolean;
+  analysis_incomplete?: boolean;
+  pose_backend?: string;
+  requested_pose_backend?: string;
+  fallback_model?: 'rtmpose' | null;
+  fallback_frame_count?: number;
+  fallback_recommended?: boolean;
+  fallback_triggered?: boolean;
+  fallback_reason?: string | null;
+  fallback_unavailable_reason?: 'fallback_disabled' | 'fallback_dependency_missing' | null;
+  fallback_error?: string;
+  landmark_model?: string;
   quality_score?: number;
   pose_coverage?: number;
   lower_body_visibility?: number;
   subject_height?: number;
   side_view_score?: number;
+  landmark_jitter?: number;
   selected_side?: string | null;
   tracking_side_confidence?: number;
+  pose_validation?: {
+    selected_side?: string | null;
+    tracking_side_confidence?: number;
+    subject_height?: number;
+    corrected_landmark_count?: number;
+    smoothed_landmark_count?: number;
+    hysteresis_rejected_jump_count?: number;
+    occluded_landmark_count?: number;
+    interpolated_landmark_count?: number;
+    rejected_landmark_count?: number;
+    unreliable_landmarks?: PoseValidationLandmark[];
+    quality_score_penalty?: number;
+  };
+  depth_status_counts?: {
+    hit_depth_count?: number;
+    insufficient_depth_count?: number;
+    uncertain_depth_count?: number;
+  };
+  depth_debug?: Array<{
+    rep_index?: number;
+    depth_status?: DepthStatus;
+    selected_side?: string;
+    bottom_index?: number;
+    bottom_timestamp_ms?: number;
+    depth_frame_index?: number;
+    depth_timestamp_ms?: number;
+    hip_knee_delta?: number;
+    parallel_score?: number;
+    depth_confidence?: number;
+    scored_frame_differs_from_bottom?: boolean;
+    plate_rack_occlusion_suspected?: boolean;
+  }>;
+  plate_rack_occlusion_suspected?: boolean;
   quality_flags?: string[];
   rep_detection?: {
     motion_amplitude?: number;
@@ -83,6 +192,8 @@ export type VideoAnalysisResult = {
     lowerBodyVisibility?: number;
     sideViewConfidence?: number;
     squatMotionSignal?: number;
+    landmarkJitter?: number;
+    poseValidationReliability?: number;
   };
   error?: {
     code: string;
@@ -90,6 +201,19 @@ export type VideoAnalysisResult = {
   };
   diagnostics?: VideoAnalysisDiagnostics;
   model_version?: string;
+  analysis_model_version?: string;
+  expected_model_version?: string;
+  analysis_stale?: boolean;
+  analysis_incomplete?: boolean;
+  pose_backend?: string;
+  fallback_model?: 'rtmpose' | null;
+  fallback_frame_count?: number;
+  fallback_recommended?: boolean;
+  fallback_triggered?: boolean;
+  fallback_reason?: string | null;
+  fallback_unavailable_reason?: 'fallback_disabled' | 'fallback_dependency_missing' | null;
+  fallback_error?: string;
+  landmark_model?: string;
 };
 
 export type VideoStatusResponse = {

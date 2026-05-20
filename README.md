@@ -50,10 +50,23 @@ Optional variables:
 ```bash
 BACKEND_ENV=development
 VIDEO_BUCKET=videos
-MODEL_VERSION=mediapipe-pose-v1
+MODEL_VERSION=mediapipe-rtmpose-v1-rack-fallback
+POSE_TARGET_FPS=12
+POSE_MAX_FRAME_DIMENSION=720
+POSE_MODEL_COMPLEXITY=2
+POSE_MIN_DETECTION_CONFIDENCE=0.6
+POSE_MIN_TRACKING_CONFIDENCE=0.6
+POSE_BACKEND=hybrid
+POSE_FALLBACK_ENABLED=false
+POSE_FALLBACK_DEVICE=auto
+POSE_FALLBACK_DET_FREQUENCY=3
+POSE_FALLBACK_MODE=balanced
+POSE_DEBUG_LANDMARK_EXPORT_DIR=
 BACKEND_CORS_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhost:8082,http://127.0.0.1:8082,http://localhost:19006,http://127.0.0.1:19006,http://localhost:3000,http://127.0.0.1:3000
 BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true
 ```
+
+Pose analysis samples squat videos at `POSE_TARGET_FPS` and resizes frames so the longest side is at most `POSE_MAX_FRAME_DIMENSION` before pose inference. `POSE_BACKEND=hybrid` runs MediaPipe first and can retry hard clips with RTMPose when `POSE_FALLBACK_ENABLED=true` and the optional `rtmlib` dependency is installed. `POSE_FALLBACK_MODE` accepts `performance`, `lightweight`, or `balanced`. The original and processed video dimensions are preserved in saved analysis metadata.
 
 `BACKEND_CORS_ORIGINS` supports common Expo web, simulator, and local browser ports used by the mobile client. In `BACKEND_ENV=development`, the API also allows local browser origins matching `localhost`, `127.0.0.1`, `0.0.0.0`, or private LAN IPs on any port so Expo web and Expo Go can still work if they choose a different local port. Set `BACKEND_ENV=production` in deployed environments to disable that local-dev regex and rely only on explicit `BACKEND_CORS_ORIGINS`.
 `BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true` supports Chrome's local private-network preflight during development. It is ignored when `BACKEND_ENV=production`.

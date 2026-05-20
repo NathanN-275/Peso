@@ -20,6 +20,10 @@ export type MappedPoint = {
   confidence: number;
 };
 
+export type SquatOverlayPoint = VideoPoseKeypoint & {
+  label: string;
+};
+
 // Landmarks used by the review overlay and squat-specific summaries.
 export const SQUAT_LANDMARK_NAMES = [
   'left_shoulder',
@@ -47,6 +51,17 @@ export type SquatLandmarkName = (typeof SQUAT_LANDMARK_NAMES)[number];
 
 const SQUAT_LANDMARK_SET = new Set<string>(SQUAT_LANDMARK_NAMES);
 const CONFIDENCE_THRESHOLD = 0.35;
+const ESTIMATED_CONFIDENCE_THRESHOLD = 0.15;
+const SQUAT_LABELS: Record<SquatLandmarkName, string> = {
+  left_shoulder: 'Shoulder',
+  right_shoulder: 'Shoulder',
+  left_hip: 'Hip',
+  right_hip: 'Hip',
+  left_knee: 'Knee',
+  right_knee: 'Knee',
+  left_ankle: 'Ankle',
+  right_ankle: 'Ankle',
+};
 
 export function findClosestPoseFrame(frames: VideoPoseFrame[] | undefined, currentTime: number) {
   // Binary search keeps pose lookup fast while the clip plays.
@@ -79,7 +94,10 @@ export function findClosestPoseFrame(frames: VideoPoseFrame[] | undefined, curre
     : current;
 }
 
-export function filterSquatKeypoints(frame: VideoPoseFrame | null, confidenceThreshold = CONFIDENCE_THRESHOLD) {
+export function filterSquatKeypoints(
+  frame: VideoPoseFrame | null,
+  confidenceThreshold = CONFIDENCE_THRESHOLD
+) {
   // Keep only the landmarks that matter for squat review.
   if (!frame) {
     return [];
@@ -104,6 +122,10 @@ function getAverageConfidence(keypoints: VideoPoseKeypoint[], side: 'left' | 'ri
 function findKeypoint(keypoints: VideoPoseKeypoint[], name: SquatLandmarkName) {
   // Convenience lookup for one named landmark.
   return keypoints.find((keypoint) => keypoint.name === name) ?? null;
+}
+
+function isSquatLandmarkName(name: string): name is SquatLandmarkName {
+  return SQUAT_LANDMARK_SET.has(name);
 }
 
 export function shouldPreferSingleSideForSquat(keypoints: VideoPoseKeypoint[], cameraView?: string) {
@@ -134,19 +156,54 @@ export function selectVisibleSquatSide(keypoints: VideoPoseKeypoint[]) {
     : 'right';
 }
 
-export function getSquatPoseConnections(keypoints: VideoPoseKeypoint[], cameraView?: string) {
+export function getSquatPoseConnections(
+  keypoints: VideoPoseKeypoint[],
+  cameraView?: string,
+  lockedSide?: string | null
+) {
   // Render either the full body or a single visible side.
-  if (!shouldPreferSingleSideForSquat(keypoints, cameraView)) {
+  if (cameraView?.toLowerCase() !== 'side') {
     return SQUAT_BODY_CONNECTIONS;
   }
 
-  const side = selectVisibleSquatSide(keypoints);
+  const side = lockedSide === 'left' || lockedSide === 'right'
+    ? lockedSide
+    : selectVisibleSquatSide(keypoints);
 
   return [
     [`${side}_shoulder`, `${side}_hip`],
     [`${side}_hip`, `${side}_knee`],
     [`${side}_knee`, `${side}_ankle`],
   ] as const;
+}
+
+export function getSquatOverlayKeypoints(
+  frame: VideoPoseFrame | null,
+  cameraView?: string,
+  confidenceThreshold = CONFIDENCE_THRESHOLD,
+  lockedSide?: string | null
+): SquatOverlayPoint[] {
+  const keypoints = filterSquatKeypoints(
+    frame,
+    Math.min(confidenceThreshold, ESTIMATED_CONFIDENCE_THRESHOLD)
+  );
+  const normalizedLockedSide = lockedSide === 'left' || lockedSide === 'right' ? lockedSide : null;
+  const selectedSide = normalizedLockedSide ?? (cameraView?.toLowerCase() === 'side'
+    ? selectVisibleSquatSide(keypoints)
+    : null);
+
+  return keypoints
+    .filter((keypoint) => {
+      if (!isSquatLandmarkName(keypoint.name)) {
+        return false;
+      }
+
+      return !selectedSide || keypoint.name.startsWith(`${selectedSide}_`);
+    })
+    .map((keypoint) => ({
+      ...keypoint,
+      label: SQUAT_LABELS[keypoint.name as SquatLandmarkName],
+    }));
 }
 
 export function calculateVideoRect(container: Size, source: Size, contentFit: ContentFit = 'contain') {
@@ -214,6 +271,14 @@ export function normalizeVideoQuality(result: VideoAnalysisResult) {
     sideViewConfidence: result.videoQuality?.sideViewConfidence ?? diagnostics?.side_view_score,
     squatMotionSignal:
       result.videoQuality?.squatMotionSignal ?? diagnostics?.rep_detection?.motion_amplitude,
+    landmarkJitter: result.videoQuality?.landmarkJitter ?? diagnostics?.landmark_jitter,
+    poseValidationReliability:
+      result.videoQuality?.poseValidationReliability
+      ?? (
+        typeof diagnostics?.pose_validation?.quality_score_penalty === 'number'
+          ? 1 - diagnostics.pose_validation.quality_score_penalty
+          : undefined
+      ),
   };
 }
 

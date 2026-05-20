@@ -48,7 +48,7 @@ def build_motion_signal(
 
   return [
     (depth * 0.5) + (knee * 0.35) + (hip * 0.15)
-    for depth, knee, hip in zip(normalized_depths, smoothed_knees, smoothed_hips, strict=False)
+    for depth, knee, hip in zip(normalized_depths, smoothed_knees, smoothed_hips)
   ]
 
 

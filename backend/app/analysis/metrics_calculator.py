@@ -116,11 +116,72 @@ def hip_depth_ratio(shoulder: Point, hip: Point, ankle: Point) -> float:
   return (hip["y"] - shoulder["y"]) / denominator
 
 
-def squat_depth_score(hip: Point, knee: Point, ankle: Point) -> float:
-  # Score how deep the squat bottom position is.
+def landmark_visibility_score(points: list[Point]) -> float:
+  # Average landmark visibility for a metric's input joints.
+  if not points:
+    return 0.0
+
+  return clamp(sum(point.get("visibility", 0.0) for point in points) / len(points), 0.0, 1.0)
+
+
+def squat_depth_assessment(shoulder: Point, hip: Point, knee: Point, ankle: Point) -> dict[str, Any]:
+  # Score depth from 2D side-view geometry and joint flexion; MediaPipe z is not treated as real depth.
   shin_length = max(abs(ankle["y"] - knee["y"]), 1e-6)
-  depth_ratio = (hip["y"] - knee["y"]) / shin_length
-  return round(clamp(0.55 + (depth_ratio * 0.9), 0.0, 1.0), 3)
+  hip_knee_delta = hip["y"] - knee["y"]
+  hip_vs_knee_ratio = hip_knee_delta / shin_length
+  # Hip level with the knee is parallel. Only meaningfully above-knee hips should fail depth.
+  parallel_score = clamp((hip_vs_knee_ratio + 0.18) / 0.18, 0.0, 1.0)
+  below_parallel_score = clamp(hip_vs_knee_ratio / 0.26, 0.0, 1.0)
+  hip_vs_knee_score = clamp((parallel_score * 0.72) + (below_parallel_score * 0.28), 0.0, 1.0)
+  knee_score = knee_flexion_score(hip, knee, ankle)
+  hip_score = hip_flexion_score(shoulder, hip, knee)
+  visibility_score = landmark_visibility_score([shoulder, hip, knee, ankle])
+
+  geometry_score = (
+    (hip_vs_knee_score * 0.58)
+    + (knee_score * 0.27)
+    + (hip_score * 0.15)
+  )
+  visibility_multiplier = clamp(visibility_score / 0.75, 0.35, 1.0)
+  score = clamp(geometry_score * visibility_multiplier, 0.0, 1.0)
+  consistency = 1.0 - min(
+    abs(hip_vs_knee_score - knee_score) + abs(knee_score - hip_score),
+    1.0,
+  )
+  confidence = clamp((visibility_score * 0.65) + (consistency * 0.35), 0.0, 1.0)
+
+  return {
+    "score": round(score, 3),
+    "confidence": round(confidence, 3),
+    "hip_vs_knee_score": round(hip_vs_knee_score, 3),
+    "knee_flexion_score": round(knee_score, 3),
+    "hip_flexion_score": round(hip_score, 3),
+    "parallel_score": round(parallel_score, 3),
+    "visibility_score": round(visibility_score, 3),
+    "hip_knee_delta": round(hip_knee_delta, 3),
+    "hip_vs_knee_ratio": round(hip_vs_knee_ratio, 3),
+  }
+
+
+def squat_depth_score(
+  hip: Point,
+  knee: Point,
+  ankle: Point,
+  shoulder: Point | None = None,
+) -> float:
+  # Backward-compatible score helper. Pass shoulder when hip flexion should contribute.
+  if shoulder is not None:
+    return squat_depth_assessment(shoulder, hip, knee, ankle)["score"]
+
+  shin_length = max(abs(ankle["y"] - knee["y"]), 1e-6)
+  hip_vs_knee_ratio = (hip["y"] - knee["y"]) / shin_length
+  parallel_score = clamp((hip_vs_knee_ratio + 0.18) / 0.18, 0.0, 1.0)
+  below_parallel_score = clamp(hip_vs_knee_ratio / 0.26, 0.0, 1.0)
+  hip_vs_knee_score = clamp((parallel_score * 0.72) + (below_parallel_score * 0.28), 0.0, 1.0)
+  knee_score = knee_flexion_score(hip, knee, ankle)
+  visibility_score = landmark_visibility_score([hip, knee, ankle])
+  visibility_multiplier = clamp(visibility_score / 0.75, 0.35, 1.0)
+  return round(clamp(((hip_vs_knee_score * 0.58) + (knee_score * 0.42)) * visibility_multiplier, 0.0, 1.0), 3)
 
 
 def torso_angle_change(start_angle: float, bottom_angle: float) -> float:

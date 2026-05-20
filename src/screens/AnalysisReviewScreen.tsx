@@ -37,6 +37,7 @@ type AnalysisReviewScreenProps = {
   onBack?: () => void;
   onDiscarded?: () => void;
   onSaved?: () => void;
+  onDeleteSavedVideo?: (videoId: string) => Promise<void>;
 };
 
 function formatFlagLabel(value: string) {
@@ -51,6 +52,46 @@ function formatNumber(value: number, suffix = '') {
   }
 
   return `${value.toFixed(2)}${suffix}`;
+}
+
+function formatOptionalNumber(value: number | undefined, suffix = '') {
+  if (typeof value !== 'number') {
+    return `n/a${suffix}`;
+  }
+
+  return formatNumber(value, suffix);
+}
+
+function formatMilliseconds(value: number | undefined) {
+  if (typeof value !== 'number') {
+    return 'n/a';
+  }
+
+  return `${(value / 1000).toFixed(2)}s`;
+}
+
+function formatDepthStatus(value: string | undefined) {
+  if (!value) {
+    return 'Unknown';
+  }
+
+  return formatFlagLabel(value);
+}
+
+function formatFallbackUnavailableReason(value: string | null | undefined) {
+  if (!value) {
+    return 'n/a';
+  }
+
+  if (value === 'fallback_disabled') {
+    return 'Fallback disabled';
+  }
+
+  if (value === 'fallback_dependency_missing') {
+    return 'Fallback dependency missing';
+  }
+
+  return formatFlagLabel(value);
 }
 
 function SheetSection({ title, children }: { title: string; children: React.ReactNode }) {
@@ -70,6 +111,7 @@ export default function AnalysisReviewScreen({
   onBack,
   onDiscarded,
   onSaved,
+  onDeleteSavedVideo,
 }: AnalysisReviewScreenProps) {
   // This screen plays the analyzed clip and overlays pose feedback.
   const { session } = useAuth();
@@ -80,9 +122,11 @@ export default function AnalysisReviewScreen({
   const [activeSheet, setActiveSheet] = useState<'summary' | 'coaching' | null>(null);
   const [saving, setSaving] = useState(false);
   const [discarding, setDiscarding] = useState(false);
+  const [deletingSavedVideo, setDeletingSavedVideo] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showDiscardSheet, setShowDiscardSheet] = useState(false);
+  const [showSavedDeleteSheet, setShowSavedDeleteSheet] = useState(false);
   const [wasPlayingBeforeScrub, setWasPlayingBeforeScrub] = useState(false);
 
   const player = useVideoPlayer(videoUri, (videoPlayer) => {
@@ -143,6 +187,20 @@ export default function AnalysisReviewScreen({
   const videoQuality = normalizeVideoQuality(result);
   const hasPoseTimeline = Boolean(result.poseFrames?.length);
   const cameraView = result.cameraView ?? result.view;
+  const selectedPoseSide = result.diagnostics?.pose_validation?.selected_side
+    ?? result.diagnostics?.selected_side
+    ?? null;
+  const analysisStale = result.analysis_stale ?? result.diagnostics?.analysis_stale ?? false;
+  const analysisIncomplete = result.analysis_incomplete ?? result.diagnostics?.analysis_incomplete ?? false;
+  const displaySummaryFlags = analysisIncomplete ? ['Analysis needs re-run'] : summaryFlags;
+  const poseBackend = result.pose_backend ?? result.diagnostics?.pose_backend;
+  const fallbackModel = result.fallback_model ?? result.diagnostics?.fallback_model;
+  const fallbackRecommended = result.fallback_recommended ?? result.diagnostics?.fallback_recommended ?? false;
+  const fallbackTriggered = result.fallback_triggered ?? result.diagnostics?.fallback_triggered ?? false;
+  const fallbackReason = result.fallback_reason ?? result.diagnostics?.fallback_reason;
+  const fallbackUnavailableReason =
+    result.fallback_unavailable_reason ?? result.diagnostics?.fallback_unavailable_reason;
+  const landmarkModel = result.landmark_model ?? result.diagnostics?.landmark_model;
 
   const handleVideoLayout = ({ nativeEvent }: LayoutChangeEvent) => {
     // The overlay needs the rendered video size to map pose points correctly.
@@ -231,6 +289,33 @@ export default function AnalysisReviewScreen({
     setShowDiscardSheet(false);
   };
 
+  const deleteSavedVideo = async () => {
+    if (!isSavedMode || !onDeleteSavedVideo || deletingSavedVideo) {
+      return;
+    }
+
+    setDeletingSavedVideo(true);
+    setErrorMessage(null);
+
+    try {
+      await onDeleteSavedVideo(result.video_id);
+      setShowSavedDeleteSheet(false);
+      player.pause();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to delete this video.');
+    } finally {
+      setDeletingSavedVideo(false);
+    }
+  };
+
+  const closeSavedDeleteSheet = () => {
+    if (deletingSavedVideo) {
+      return;
+    }
+
+    setShowSavedDeleteSheet(false);
+  };
+
   const handleBack = () => {
     if (isSavedMode) {
       player.pause();
@@ -254,22 +339,37 @@ export default function AnalysisReviewScreen({
           <Pressable
             accessibilityRole="button"
             onPress={handleBack}
-            disabled={saving || discarding}
-            style={[styles.topButton, (saving || discarding) && styles.disabledButton]}
+            disabled={saving || discarding || deletingSavedVideo}
+            style={[styles.topButton, (saving || discarding || deletingSavedVideo) && styles.disabledButton]}
           >
             <Text style={styles.topButtonText}>Back</Text>
           </Pressable>
           <Text style={styles.title}>{formatFlagLabel(result.exercise)}</Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              void handleSave();
-            }}
-            disabled={isSavedMode || saving || discarding}
-            style={[styles.topButton, (isSavedMode || saving || discarding) && styles.disabledButton]}
-          >
-            <Text style={styles.topButtonText}>{isSavedMode ? 'Saved' : saving ? 'Saving' : 'Save'}</Text>
-          </Pressable>
+          {isSavedMode ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setShowSavedDeleteSheet(true)}
+              disabled={deletingSavedVideo}
+              style={[styles.savedTrashButton, deletingSavedVideo && styles.disabledButton]}
+            >
+              {deletingSavedVideo ? (
+                <ActivityIndicator color={tokens.colors.brand} />
+              ) : (
+                <Ionicons name="trash-outline" size={26} color={tokens.colors.brand} />
+              )}
+            </Pressable>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                void handleSave();
+              }}
+              disabled={saving || discarding}
+              style={[styles.topButton, (saving || discarding) && styles.disabledButton]}
+            >
+              <Text style={styles.topButtonText}>{saving ? 'Saving' : 'Save'}</Text>
+            </Pressable>
+          )}
         </View>
 
         <View style={styles.videoArea} onLayout={handleVideoLayout}>
@@ -289,6 +389,7 @@ export default function AnalysisReviewScreen({
               videoSize={videoSize}
               contentFit="cover"
               cameraView={cameraView}
+              selectedSide={selectedPoseSide}
             />
 
             {status === 'loading' ? (
@@ -348,7 +449,23 @@ export default function AnalysisReviewScreen({
         >
           <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent}>
             <SheetSection title="Summary flags">
-              {summaryFlags.length ? summaryFlags.map((flag) => (
+              <Text style={styles.debugText}>Stale analysis: {analysisStale ? 'yes' : 'no'}</Text>
+              <Text style={styles.debugText}>Analysis incomplete: {analysisIncomplete ? 'yes' : 'no'}</Text>
+              <Text style={styles.debugText}>Pose backend: {poseBackend ?? 'n/a'}</Text>
+              <Text style={styles.debugText}>Fallback model: {fallbackModel === 'rtmpose' ? 'RTMPose' : 'n/a'}</Text>
+              <Text style={styles.debugText}>Fallback recommended: {fallbackRecommended ? 'yes' : 'no'}</Text>
+              <Text style={styles.debugText}>Fallback used: {fallbackTriggered ? 'yes' : 'no'}</Text>
+              <Text style={styles.debugText}>Fallback reason: {fallbackReason ?? 'n/a'}</Text>
+              <Text style={styles.debugText}>
+                Fallback unavailable: {formatFallbackUnavailableReason(fallbackUnavailableReason)}
+              </Text>
+              <Text style={styles.debugText}>Landmark model: {landmarkModel ?? 'n/a'}</Text>
+              {analysisStale ? (
+                <Text style={styles.staleText}>
+                  This result was created by an older or incomplete model payload. Re-run analysis before trusting depth flags.
+                </Text>
+              ) : null}
+              {displaySummaryFlags.length ? displaySummaryFlags.map((flag) => (
                 <Text key={flag} style={styles.sheetText}>- {formatFlagLabel(flag)}</Text>
               )) : <Text style={styles.sheetMutedText}>No summary flags.</Text>}
             </SheetSection>
@@ -366,6 +483,16 @@ export default function AnalysisReviewScreen({
             <SheetSection title="Per-rep highlights">
               {result.reps.length ? result.reps.map((rep) => {
                 const velocity = getRepVelocity(rep);
+                const depthStatus = rep.depthStatus ?? rep.depth_status;
+                const depthTimestampMs = rep.depthTimestampMs ?? rep.depth_timestamp_ms;
+                const bottomTimestampMs = rep.bottomTimestampMs ?? rep.bottom_timestamp_ms;
+                const selectedSide = rep.selectedSide ?? rep.selected_side ?? rep.depth_evidence?.selected_side;
+                const hipKneeDelta = rep.depth_evidence?.hip_knee_delta ?? rep.depth_components?.hip_knee_delta;
+                const parallelScore = rep.depth_evidence?.parallel_score ?? rep.depth_components?.parallel_score;
+                const depthConfidence =
+                  rep.depth_evidence?.depth_confidence ?? rep.depthConfidence ?? rep.depth_confidence;
+                const scoredFrameDiffers = rep.depth_evidence?.scored_frame_differs_from_bottom;
+                const plateRackOcclusion = rep.depth_evidence?.plate_rack_occlusion_suspected;
                 return (
                   <View key={rep.rep_index} style={styles.repBlock}>
                     <Text style={styles.sheetText}>Rep {rep.repIndex ?? rep.rep_index}</Text>
@@ -377,6 +504,18 @@ export default function AnalysisReviewScreen({
                     <Text style={styles.sheetMutedText}>
                       Depth {formatNumber(rep.depthScore ?? rep.depth_score)}, torso change {formatNumber(rep.torsoAngleChangeDeg ?? rep.torso_angle_change, ' deg')}
                     </Text>
+                    <View style={styles.debugBlock}>
+                      <Text style={styles.debugText}>Depth status: {formatDepthStatus(depthStatus)}</Text>
+                      <Text style={styles.debugText}>Hip-knee delta: {formatOptionalNumber(hipKneeDelta)}</Text>
+                      <Text style={styles.debugText}>Parallel score: {formatOptionalNumber(parallelScore)}</Text>
+                      <Text style={styles.debugText}>Depth confidence: {formatOptionalNumber(depthConfidence)}</Text>
+                      <Text style={styles.debugText}>
+                        Scored frame: {formatMilliseconds(depthTimestampMs)} · bottom: {formatMilliseconds(bottomTimestampMs)}
+                      </Text>
+                      <Text style={styles.debugText}>Selected side: {selectedSide ?? selectedPoseSide ?? 'n/a'}</Text>
+                      <Text style={styles.debugText}>Scored frame differs: {scoredFrameDiffers ? 'yes' : 'no'}</Text>
+                      <Text style={styles.debugText}>Rack/plate occlusion: {plateRackOcclusion ? 'yes' : 'no'}</Text>
+                    </View>
                   </View>
                 );
               }) : <Text style={styles.sheetMutedText}>No reps detected.</Text>}
@@ -432,6 +571,43 @@ export default function AnalysisReviewScreen({
             </Pressable>
           </View>
         </ReviewBottomSheet>
+
+        <ReviewBottomSheet
+          visible={isSavedMode && showSavedDeleteSheet}
+          title="Delete video?"
+          onClose={closeSavedDeleteSheet}
+          showCloseButton={false}
+          sheetStyle={styles.discardSheet}
+        >
+          <View style={styles.discardContent}>
+            <Text style={styles.discardSubtitle}>
+              This permanently removes the saved video and its analysis from your library.
+            </Text>
+            {errorMessage ? <Text style={styles.discardErrorText}>{errorMessage}</Text> : null}
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                void deleteSavedVideo();
+              }}
+              disabled={deletingSavedVideo}
+              style={[styles.savedDeleteButton, deletingSavedVideo && styles.disabledButton]}
+            >
+              {deletingSavedVideo ? (
+                <ActivityIndicator color="#D93025" />
+              ) : (
+                <Text style={styles.savedDeleteButtonText}>Delete Video</Text>
+              )}
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={closeSavedDeleteSheet}
+              disabled={deletingSavedVideo}
+              style={[styles.cancelDiscardButton, deletingSavedVideo && styles.disabledButton]}
+            >
+              <Text style={styles.cancelDiscardButtonText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </ReviewBottomSheet>
       </View>
     </SafeAreaView>
   );
@@ -462,6 +638,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 9,
     backgroundColor: tokens.colors.brand,
+    paddingHorizontal: 14,
+  },
+  savedTrashButton: {
+    minWidth: 76,
+    minHeight: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: '#173B82',
+    backgroundColor: '#07142C',
     paddingHorizontal: 14,
   },
   disabledButton: {
@@ -595,6 +782,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
   },
+  staleText: {
+    color: '#FFB020',
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '700',
+  },
   repBlock: {
     borderRadius: 8,
     borderWidth: 1,
@@ -602,6 +795,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#0C1016',
     padding: 12,
     gap: 3,
+  },
+  debugBlock: {
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#243044',
+    paddingTop: 8,
+    gap: 2,
+  },
+  debugText: {
+    color: '#9FB6D9',
+    fontSize: 12,
+    lineHeight: 17,
   },
   discardSheet: {
     maxHeight: '46%',
@@ -638,6 +843,23 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 20,
     fontWeight: '700',
+  },
+  savedDeleteButton: {
+    width: '100%',
+    minHeight: 54,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D93025',
+    backgroundColor: '#241010',
+    paddingHorizontal: 18,
+  },
+  savedDeleteButtonText: {
+    color: '#D93025',
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: '800',
   },
   cancelDiscardButton: {
     width: '100%',

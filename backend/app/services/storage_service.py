@@ -129,6 +129,41 @@ class StorageService:
   def delete_storage_path(self, storage_path: str) -> None:
     self.client.storage.from_(self.bucket).remove([storage_path])
 
+  def delete_storage_prefix(self, prefix: str) -> None:
+    folder, _, name_prefix = prefix.rstrip("/").rpartition("/")
+    try:
+      objects = self.client.storage.from_(self.bucket).list(folder)
+    except Exception:
+      return
+
+    paths = [
+      f"{folder}/{item['name']}" if folder else item["name"]
+      for item in objects
+      if isinstance(item, dict)
+      and item.get("name")
+      and str(item["name"]).startswith(name_prefix)
+    ]
+
+    if paths:
+      self.client.storage.from_(self.bucket).remove(paths)
+
+  def storage_path_exists(self, storage_path: str) -> bool:
+    try:
+      return bool(self.client.storage.from_(self.bucket).exists(storage_path))
+    except Exception:
+      return False
+
+  def upload_file(self, storage_path: str, local_path: Path, content_type: str) -> None:
+    self.client.storage.from_(self.bucket).upload(
+      storage_path,
+      local_path,
+      {
+        "content-type": content_type,
+        "cache-control": "3600",
+        "upsert": "true",
+      },
+    )
+
   def create_signed_url(self, storage_path: str, expires_in: int = 3600) -> str:
     response = self.client.storage.from_(self.bucket).create_signed_url(
       storage_path,

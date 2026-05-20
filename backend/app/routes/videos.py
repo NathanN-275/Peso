@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from ..analysis.pipeline import analyze_video
+from ..analysis.versioning import annotate_analysis_freshness, analysis_is_current
+from ..services.analyzed_video_renderer import render_analyzed_video
 from ..services.auth import get_current_user_id
 from ..services.storage_service import StorageService
 from ..services.video_repository import VideoRepository
@@ -72,6 +76,13 @@ class DiscardVideoResponse(BaseModel):
   discarded: bool
 
 
+class AnalyzedVideoExportResponse(BaseModel):
+  video_id: UUID
+  analysis_id: UUID
+  storage_path: str
+  export_url: str
+
+
 class CleanupExpiredVideosResponse(BaseModel):
   deleted_count: int
 
@@ -95,6 +106,15 @@ def queue_analysis(
   video_id_str = str(video_id)
   video = repository.require_owned_video(video_id_str, user_id)
   current_status = video["status"]
+
+  if current_status == "completed":
+    analysis = repository.get_analysis_result(video_id_str)
+
+    if not analysis_is_current(analysis):
+      StorageService().validate_video_object(video["storage_path"])
+      repository.update_video(video_id_str, {"status": "queued"})
+      background_tasks.add_task(_run_analysis_job, video_id_str)
+      return AnalyzeResponse(video_id=video_id, status="queued")
 
   if current_status in IDEMPOTENT_ANALYSIS_STATUSES:
     return AnalyzeResponse(video_id=video_id, status=current_status)
@@ -151,7 +171,7 @@ def list_saved_videos(
 
   for video in videos:
     analysis = repository.get_analysis_result(video["id"])
-    result_json = analysis["result_json"] if analysis else {}
+    result_json = annotate_analysis_freshness(analysis["result_json"], analysis) if analysis else {}
     normalized_analysis = None
 
     if analysis:
@@ -185,6 +205,64 @@ def list_saved_videos(
   return saved_videos
 
 
+@router.post("/videos/{video_id}/analyzed-export", response_model=AnalyzedVideoExportResponse)
+def export_analyzed_video(
+  video_id: UUID,
+  user_id: str = Depends(get_current_user_id),
+) -> AnalyzedVideoExportResponse:
+  repository = VideoRepository()
+  storage = StorageService()
+  video_id_str = str(video_id)
+  video = repository.require_owned_video(video_id_str, user_id)
+
+  if video.get("save_state") != "saved":
+    raise HTTPException(
+      status_code=status.HTTP_409_CONFLICT,
+      detail="Only saved videos can be exported.",
+    )
+
+  analysis = repository.get_analysis_result(video_id_str)
+
+  if not analysis:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="Analysis result not available for export.",
+    )
+
+  analysis_id = str(analysis["id"])
+  export_path = f"{user_id}/exports/{video_id_str}-{analysis_id}-h264-v1.mp4"
+
+  if not storage.storage_path_exists(export_path):
+    source_file: Path | None = None
+    output_file: Path | None = None
+
+    try:
+      source_file = storage.download_to_tempfile(video["storage_path"])
+
+      with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_output:
+        output_file = Path(temp_output.name)
+
+      render_analyzed_video(
+        source_path=source_file,
+        output_path=output_file,
+        result_json=annotate_analysis_freshness(analysis["result_json"], analysis),
+      )
+      storage.upload_file(export_path, output_file, "video/mp4")
+    finally:
+      if source_file:
+        storage.remove_tempfile(source_file)
+
+      if output_file:
+        storage.remove_tempfile(output_file)
+
+  return AnalyzedVideoExportResponse(
+    video_id=video_id,
+    analysis_id=analysis["id"],
+    storage_path=export_path,
+    export_url=storage.create_signed_url(export_path),
+  )
+
+
 @router.post("/videos/{video_id}/discard", response_model=DiscardVideoResponse)
 def discard_video(
   video_id: UUID,
@@ -192,10 +270,12 @@ def discard_video(
 ) -> DiscardVideoResponse:
   # Discard removes both the storage object and the DB row.
   repository = VideoRepository()
+  storage = StorageService()
   video = repository.require_owned_video(str(video_id), user_id)
-  StorageService().delete_storage_path(video["storage_path"])
+  storage.delete_storage_path(video["storage_path"])
   if video.get("thumbnail_path"):
-    StorageService().delete_storage_path(video["thumbnail_path"])
+    storage.delete_storage_path(video["thumbnail_path"])
+  storage.delete_storage_prefix(f"{user_id}/exports/{video_id}-")
   repository.delete_video_with_analysis(str(video_id))
   return DiscardVideoResponse(video_id=video_id, discarded=True)
 
@@ -258,5 +338,5 @@ def get_analysis(
   return AnalysisResponse(
     video_id=video_id,
     status=video["status"],
-    result_json=result["result_json"],
+    result_json=annotate_analysis_freshness(result["result_json"], result),
   )
