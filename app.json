@@ -16,6 +16,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.anonymous.peso-app",
       "infoPlist": {
+        "NSPhotoLibraryAddUsageDescription": "Allow Peso to save exported lift videos to your photo library.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
         }
@@ -35,6 +36,16 @@
     },
     "plugins": [
       "expo-video",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow Peso to access your photo library.",
+          "savePhotosPermission": "Allow Peso to save exported lift videos to your photo library.",
+          "granularPermissions": [
+            "video"
+          ]
+        }
+      ],
       "react-native-compressor",
       [
         "expo-build-properties",

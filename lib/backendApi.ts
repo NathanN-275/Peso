@@ -183,3 +183,8 @@ export async function discardAnalyzedVideo(videoId: string, accessToken: string)
     }
   );
 }
+
+export async function deleteSavedVideo(videoId: string, accessToken: string) {
+  // Saved-video deletion uses the same backend cleanup path as discarding.
+  return discardAnalyzedVideo(videoId, accessToken);
+}

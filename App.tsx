@@ -15,6 +15,7 @@ import SavedLiftVideosScreen from './src/screens/SavedLiftVideosScreen';
 import UploadVideoScreen from './src/screens/UploadVideoScreen';
 import WelcomeScreen from './src/screens/WelcomeScreen';
 import { supabase } from './lib/supabase';
+import { deleteSavedVideo } from './lib/backendApi';
 import type { SavedVideo } from './lib/backendApi';
 import { buildSavedVideoAnalysisResult } from './src/utils/savedVideos';
 
@@ -536,6 +537,37 @@ function AppContent() {
   const handleSavedVideoReviewBack = () => {
     navigateToAuthRoute(selectedSavedExerciseType ? AUTH_ROUTES.savedLiftVideos : AUTH_ROUTES.home);
   };
+  const handleDeleteSavedVideos = async (videoIds: string[]) => {
+    if (!session?.access_token) {
+      throw new Error('You need to be signed in to delete saved videos.');
+    }
+
+    const deletedIds = new Set<string>();
+    const failedIds = new Set<string>();
+
+    for (const videoId of videoIds) {
+      try {
+        await deleteSavedVideo(videoId, session.access_token);
+        deletedIds.add(videoId);
+      } catch {
+        failedIds.add(videoId);
+      }
+    }
+
+    if (deletedIds.size > 0) {
+      setSavedVideos((currentVideos) => currentVideos.filter((video) => !deletedIds.has(video.id)));
+      setSelectedSavedVideo((currentVideo) => currentVideo && deletedIds.has(currentVideo.id) ? null : currentVideo);
+      setHomeRefreshKey((key) => key + 1);
+    }
+
+    if (failedIds.size > 0) {
+      throw new Error(`Unable to delete ${failedIds.size} ${failedIds.size === 1 ? 'video' : 'videos'}.`);
+    }
+  };
+  const handleDeleteSavedVideoFromReview = async (videoId: string) => {
+    await handleDeleteSavedVideos([videoId]);
+    navigateToAuthRoute(selectedSavedExerciseType ? AUTH_ROUTES.savedLiftVideos : AUTH_ROUTES.home);
+  };
   const handleHomeRoute = () => {
     setSelectedSavedExerciseType(null);
     setSelectedSavedVideo(null);
@@ -769,6 +801,7 @@ function AppContent() {
             videoUri={selectedSavedVideo.video_url}
             result={buildSavedVideoAnalysisResult(selectedSavedVideo)}
             onBack={handleSavedVideoReviewBack}
+            onDeleteSavedVideo={handleDeleteSavedVideoFromReview}
           />
         );
       }
@@ -784,8 +817,7 @@ function AppContent() {
             videos={selectedVideos}
             onBack={handleHomeRoute}
             onOpenSavedVideo={handleOpenSavedVideo}
-            onHomePress={handleHomeRoute}
-            onAddPress={authNavigation.toAddVideo}
+            onDeleteSavedVideos={handleDeleteSavedVideos}
           />
         );
       }

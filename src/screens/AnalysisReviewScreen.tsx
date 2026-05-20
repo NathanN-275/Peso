@@ -37,6 +37,7 @@ type AnalysisReviewScreenProps = {
   onBack?: () => void;
   onDiscarded?: () => void;
   onSaved?: () => void;
+  onDeleteSavedVideo?: (videoId: string) => Promise<void>;
 };
 
 function formatFlagLabel(value: string) {
@@ -110,6 +111,7 @@ export default function AnalysisReviewScreen({
   onBack,
   onDiscarded,
   onSaved,
+  onDeleteSavedVideo,
 }: AnalysisReviewScreenProps) {
   // This screen plays the analyzed clip and overlays pose feedback.
   const { session } = useAuth();
@@ -120,9 +122,11 @@ export default function AnalysisReviewScreen({
   const [activeSheet, setActiveSheet] = useState<'summary' | 'coaching' | null>(null);
   const [saving, setSaving] = useState(false);
   const [discarding, setDiscarding] = useState(false);
+  const [deletingSavedVideo, setDeletingSavedVideo] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showDiscardSheet, setShowDiscardSheet] = useState(false);
+  const [showSavedDeleteSheet, setShowSavedDeleteSheet] = useState(false);
   const [wasPlayingBeforeScrub, setWasPlayingBeforeScrub] = useState(false);
 
   const player = useVideoPlayer(videoUri, (videoPlayer) => {
@@ -285,6 +289,33 @@ export default function AnalysisReviewScreen({
     setShowDiscardSheet(false);
   };
 
+  const deleteSavedVideo = async () => {
+    if (!isSavedMode || !onDeleteSavedVideo || deletingSavedVideo) {
+      return;
+    }
+
+    setDeletingSavedVideo(true);
+    setErrorMessage(null);
+
+    try {
+      await onDeleteSavedVideo(result.video_id);
+      setShowSavedDeleteSheet(false);
+      player.pause();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to delete this video.');
+    } finally {
+      setDeletingSavedVideo(false);
+    }
+  };
+
+  const closeSavedDeleteSheet = () => {
+    if (deletingSavedVideo) {
+      return;
+    }
+
+    setShowSavedDeleteSheet(false);
+  };
+
   const handleBack = () => {
     if (isSavedMode) {
       player.pause();
@@ -308,22 +339,37 @@ export default function AnalysisReviewScreen({
           <Pressable
             accessibilityRole="button"
             onPress={handleBack}
-            disabled={saving || discarding}
-            style={[styles.topButton, (saving || discarding) && styles.disabledButton]}
+            disabled={saving || discarding || deletingSavedVideo}
+            style={[styles.topButton, (saving || discarding || deletingSavedVideo) && styles.disabledButton]}
           >
             <Text style={styles.topButtonText}>Back</Text>
           </Pressable>
           <Text style={styles.title}>{formatFlagLabel(result.exercise)}</Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              void handleSave();
-            }}
-            disabled={isSavedMode || saving || discarding}
-            style={[styles.topButton, (isSavedMode || saving || discarding) && styles.disabledButton]}
-          >
-            <Text style={styles.topButtonText}>{isSavedMode ? 'Saved' : saving ? 'Saving' : 'Save'}</Text>
-          </Pressable>
+          {isSavedMode ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setShowSavedDeleteSheet(true)}
+              disabled={deletingSavedVideo}
+              style={[styles.savedTrashButton, deletingSavedVideo && styles.disabledButton]}
+            >
+              {deletingSavedVideo ? (
+                <ActivityIndicator color={tokens.colors.brand} />
+              ) : (
+                <Ionicons name="trash-outline" size={26} color={tokens.colors.brand} />
+              )}
+            </Pressable>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                void handleSave();
+              }}
+              disabled={saving || discarding}
+              style={[styles.topButton, (saving || discarding) && styles.disabledButton]}
+            >
+              <Text style={styles.topButtonText}>{saving ? 'Saving' : 'Save'}</Text>
+            </Pressable>
+          )}
         </View>
 
         <View style={styles.videoArea} onLayout={handleVideoLayout}>
@@ -525,6 +571,43 @@ export default function AnalysisReviewScreen({
             </Pressable>
           </View>
         </ReviewBottomSheet>
+
+        <ReviewBottomSheet
+          visible={isSavedMode && showSavedDeleteSheet}
+          title="Delete video?"
+          onClose={closeSavedDeleteSheet}
+          showCloseButton={false}
+          sheetStyle={styles.discardSheet}
+        >
+          <View style={styles.discardContent}>
+            <Text style={styles.discardSubtitle}>
+              This permanently removes the saved video and its analysis from your library.
+            </Text>
+            {errorMessage ? <Text style={styles.discardErrorText}>{errorMessage}</Text> : null}
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                void deleteSavedVideo();
+              }}
+              disabled={deletingSavedVideo}
+              style={[styles.savedDeleteButton, deletingSavedVideo && styles.disabledButton]}
+            >
+              {deletingSavedVideo ? (
+                <ActivityIndicator color="#D93025" />
+              ) : (
+                <Text style={styles.savedDeleteButtonText}>Delete Video</Text>
+              )}
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={closeSavedDeleteSheet}
+              disabled={deletingSavedVideo}
+              style={[styles.cancelDiscardButton, deletingSavedVideo && styles.disabledButton]}
+            >
+              <Text style={styles.cancelDiscardButtonText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </ReviewBottomSheet>
       </View>
     </SafeAreaView>
   );
@@ -555,6 +638,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 9,
     backgroundColor: tokens.colors.brand,
+    paddingHorizontal: 14,
+  },
+  savedTrashButton: {
+    minWidth: 76,
+    minHeight: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: '#173B82',
+    backgroundColor: '#07142C',
     paddingHorizontal: 14,
   },
   disabledButton: {
@@ -749,6 +843,23 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 20,
     fontWeight: '700',
+  },
+  savedDeleteButton: {
+    width: '100%',
+    minHeight: 54,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D93025',
+    backgroundColor: '#241010',
+    paddingHorizontal: 18,
+  },
+  savedDeleteButtonText: {
+    color: '#D93025',
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: '800',
   },
   cancelDiscardButton: {
     width: '100%',
