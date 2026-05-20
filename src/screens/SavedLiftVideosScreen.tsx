@@ -16,6 +16,8 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAuth } from '../../context/AuthContext';
+import { exportAnalyzedVideo } from '../../lib/backendApi';
 import type { SavedVideo } from '../../lib/backendApi';
 import tokens from '../theme/tokens';
 import {
@@ -44,15 +46,9 @@ function getSelectionLabel(count: number) {
   return `${count} ${count === 1 ? 'Video' : 'Videos'} Selected`;
 }
 
-function getExportExtension(video: SavedVideo) {
-  const path = video.storage_path.split('?')[0] ?? '';
-  const match = path.match(/\.(mp4|mov|m4v|webm)$/i);
-  return match?.[0] ?? '.mp4';
-}
-
 function getExportFileName(video: SavedVideo, index: number) {
   const exercise = formatExerciseLabel(video.exercise_type).replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
-  return `peso-${exercise || 'video'}-${video.id.slice(0, 8)}-${index + 1}${getExportExtension(video)}`;
+  return `peso-${exercise || 'video'}-${video.id.slice(0, 8)}-${index + 1}.mp4`;
 }
 
 function SavedVideoFramePreview({ videoUrl }: { videoUrl: string }) {
@@ -158,6 +154,7 @@ export default function SavedLiftVideosScreen({
   onOpenSavedVideo,
   onDeleteSavedVideos,
 }: SavedLiftVideosScreenProps) {
+  const { session } = useAuth();
   const title = formatExerciseLabel(exerciseType);
   const [sortOrder, setSortOrder] = useState<SortOrder>('newest');
   const [selecting, setSelecting] = useState(false);
@@ -226,15 +223,21 @@ export default function SavedLiftVideosScreen({
     setActionMessage(null);
 
     try {
+      if (!session?.access_token) {
+        throw new Error('You need to be signed in to export saved videos.');
+      }
+
       if (Platform.OS === 'web') {
         const webGlobal = globalThis as typeof globalThis & {
           open?: (url?: string | URL, target?: string) => Window | null;
         };
 
-        selectedVideos.forEach((video) => {
-          webGlobal.open?.(video.video_url, '_blank');
-        });
-        setActionMessage(`Opened ${selectedVideos.length} ${selectedVideos.length === 1 ? 'video' : 'videos'} for download.`);
+        for (const video of selectedVideos) {
+          const exportResponse = await exportAnalyzedVideo(video.id, session.access_token);
+          webGlobal.open?.(exportResponse.export_url, '_blank');
+        }
+
+        setActionMessage(`Opened ${selectedVideos.length} analyzed ${selectedVideos.length === 1 ? 'video' : 'videos'} for download.`);
         return;
       }
 
@@ -255,8 +258,9 @@ export default function SavedLiftVideosScreen({
       }
 
       for (const [index, video] of selectedVideos.entries()) {
+        const exportResponse = await exportAnalyzedVideo(video.id, session.access_token);
         const destination = new File(Paths.cache, getExportFileName(video, index));
-        const downloadedFile = await File.downloadFileAsync(video.video_url, destination, {
+        const downloadedFile = await File.downloadFileAsync(exportResponse.export_url, destination, {
           idempotent: true,
         });
 

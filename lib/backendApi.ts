@@ -173,6 +173,22 @@ export async function saveAnalyzedVideo(videoId: string, accessToken: string) {
   );
 }
 
+export async function exportAnalyzedVideo(videoId: string, accessToken: string) {
+  // Render and sign an analyzed copy with the pose overlay burned in.
+  return requestJson<{
+    video_id: string;
+    analysis_id: string;
+    storage_path: string;
+    export_url: string;
+  }>(
+    `/videos/${videoId}/analyzed-export`,
+    accessToken,
+    {
+      method: 'POST',
+    }
+  );
+}
+
 export async function discardAnalyzedVideo(videoId: string, accessToken: string) {
   // Delete the upload and its analysis result from the backend.
   return requestJson<{ video_id: string; discarded: boolean }>(
