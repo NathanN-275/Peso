@@ -555,7 +555,7 @@ export default function AnalysisReviewScreen({
                 </Text>
               ) : null}
               {displaySummaryFlags.length ? displaySummaryFlags.map((flag) => (
-                <Text key={flag} style={styles.sheetText}>- {formatFlagLabel(flag)}</Text>
+                <Text key={flag} style={styles.sheetText}>{formatFlagLabel(flag)}</Text>
               )) : <Text style={styles.sheetMutedText}>No summary flags.</Text>}
             </SheetSection>
 
@@ -676,7 +676,7 @@ export default function AnalysisReviewScreen({
         >
           <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent}>
             {coachingFeedback.length ? coachingFeedback.map((feedback) => (
-              <Text key={feedback} style={styles.sheetText}>- {feedback}</Text>
+              <Text key={feedback} style={styles.sheetText}>{feedback}</Text>
             )) : <Text style={styles.sheetMutedText}>No coaching feedback available.</Text>}
           </ScrollView>
         </ReviewBottomSheet>
