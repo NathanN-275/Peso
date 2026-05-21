@@ -18,6 +18,10 @@ from ..services.video_repository import VideoRepository
 logger = logging.getLogger(__name__)
 
 
+def _is_squat_variation(exercise_type: str) -> bool:
+  return exercise_type.strip().lower().endswith("squat")
+
+
 def build_limited_result(
   *,
   video_id: str,
@@ -282,7 +286,7 @@ def _analyze_squat_result(
   video: dict[str, Any],
   estimation: dict[str, Any],
 ) -> dict[str, Any]:
-  if video["exercise_type"] != "squat" or video["view_type"] != "side":
+  if not _is_squat_variation(video["exercise_type"]) or video["view_type"] != "side":
     return build_limited_result(
       video_id=video_id,
       exercise_type=video["exercise_type"],
