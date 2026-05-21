@@ -98,12 +98,74 @@ function formatFallbackUnavailableReason(value: string | null | undefined) {
   return formatFlagLabel(value);
 }
 
-function SheetSection({ title, children }: { title: string; children: React.ReactNode }) {
+function SheetSection({
+  title,
+  children,
+  collapsible = false,
+  defaultExpanded = true,
+}: {
+  title: string;
+  children: React.ReactNode;
+  collapsible?: boolean;
+  defaultExpanded?: boolean;
+}) {
   // Shared block for the review sheet sections.
+  const [expanded, setExpanded] = useState(!collapsible || defaultExpanded);
+
   return (
     <View style={styles.sheetSection}>
-      <Text style={styles.sheetLabel}>{title}</Text>
-      {children}
+      {collapsible ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          onPress={() => setExpanded((value) => !value)}
+          style={styles.sheetSectionHeader}
+        >
+          <Text style={styles.sheetLabel}>{title}</Text>
+          <Ionicons
+            name={expanded ? 'chevron-up-outline' : 'chevron-down-outline'}
+            size={18}
+            color={tokens.colors.textMuted}
+          />
+        </Pressable>
+      ) : (
+        <Text style={styles.sheetLabel}>{title}</Text>
+      )}
+      {expanded ? children : null}
+    </View>
+  );
+}
+
+function DetailDisclosure({
+  title,
+  summary,
+  children,
+}: {
+  title: string;
+  summary?: string;
+  children: React.ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <View style={styles.debugBlock}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        onPress={() => setExpanded((value) => !value)}
+        style={styles.detailHeader}
+      >
+        <View style={styles.detailHeaderText}>
+          <Text style={styles.detailTitle}>{title}</Text>
+          {summary ? <Text style={styles.detailSummary}>{summary}</Text> : null}
+        </View>
+        <Ionicons
+          name={expanded ? 'chevron-up-outline' : 'chevron-down-outline'}
+          size={18}
+          color={tokens.colors.textMuted}
+        />
+      </Pressable>
+      {expanded ? <View style={styles.detailBody}>{children}</View> : null}
     </View>
   );
 }
@@ -475,6 +537,22 @@ export default function AnalysisReviewScreen({
         >
           <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent}>
             <SheetSection title="Summary flags">
+              {analysisStale ? (
+                <Text style={styles.staleText}>
+                  This result was created by an older or incomplete model payload. Re-run analysis before trusting depth flags.
+                </Text>
+              ) : null}
+              {summaryDepthMismatch ? (
+                <Text style={styles.staleText}>
+                  Summary flag inconsistent with rep statuses.
+                </Text>
+              ) : null}
+              {displaySummaryFlags.length ? displaySummaryFlags.map((flag) => (
+                <Text key={flag} style={styles.sheetText}>- {formatFlagLabel(flag)}</Text>
+              )) : <Text style={styles.sheetMutedText}>No summary flags.</Text>}
+            </SheetSection>
+
+            <SheetSection title="Analysis details" collapsible defaultExpanded={false}>
               <Text style={styles.debugText}>Stale analysis: {analysisStale ? 'yes' : 'no'}</Text>
               <Text style={styles.debugText}>Analysis incomplete: {analysisIncomplete ? 'yes' : 'no'}</Text>
               <Text style={styles.debugText}>Pose backend: {poseBackend ?? 'n/a'}</Text>
@@ -496,19 +574,6 @@ export default function AnalysisReviewScreen({
               <Text style={styles.debugText}>
                 Depth summary reason: {depthSummaryDebug?.summary_depth_reason ?? 'n/a'}
               </Text>
-              {analysisStale ? (
-                <Text style={styles.staleText}>
-                  This result was created by an older or incomplete model payload. Re-run analysis before trusting depth flags.
-                </Text>
-              ) : null}
-              {summaryDepthMismatch ? (
-                <Text style={styles.staleText}>
-                  Summary flag inconsistent with rep statuses.
-                </Text>
-              ) : null}
-              {displaySummaryFlags.length ? displaySummaryFlags.map((flag) => (
-                <Text key={flag} style={styles.sheetText}>- {formatFlagLabel(flag)}</Text>
-              )) : <Text style={styles.sheetMutedText}>No summary flags.</Text>}
             </SheetSection>
 
             <SheetSection title="Video quality">
@@ -559,7 +624,10 @@ export default function AnalysisReviewScreen({
                     <Text style={styles.sheetMutedText}>
                       Depth {formatNumber(rep.depthScore ?? rep.depth_score)}, torso change {formatNumber(rep.torsoAngleChangeDeg ?? rep.torso_angle_change, ' deg')}
                     </Text>
-                    <View style={styles.debugBlock}>
+                    <DetailDisclosure
+                      title="Depth details"
+                      summary={`${formatDepthStatus(depthStatus)} · ${depthReason ?? 'no reason'}`}
+                    >
                       <Text style={styles.debugText}>Depth status: {formatDepthStatus(depthStatus)}</Text>
                       <Text style={styles.debugText}>Hip-knee delta: {formatOptionalNumber(hipKneeDelta)}</Text>
                       <Text style={styles.debugText}>Raw hip-knee delta: {formatOptionalNumber(rawHipKneeDelta)}</Text>
@@ -586,7 +654,7 @@ export default function AnalysisReviewScreen({
                       </Text>
                       <Text style={styles.debugText}>Scored frame differs: {scoredFrameDiffers ? 'yes' : 'no'}</Text>
                       <Text style={styles.debugText}>Rack/plate occlusion: {plateRackOcclusion ? 'yes' : 'no'}</Text>
-                    </View>
+                    </DetailDisclosure>
                   </View>
                 );
               }) : <Text style={styles.sheetMutedText}>No reps detected.</Text>}
@@ -835,6 +903,13 @@ const styles = StyleSheet.create({
   sheetSection: {
     gap: 8,
   },
+  sheetSectionHeader: {
+    minHeight: 34,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
   sheetLabel: {
     color: tokens.colors.textMuted,
     fontSize: 12,
@@ -871,6 +946,32 @@ const styles = StyleSheet.create({
     marginTop: 8,
     borderTopWidth: 1,
     borderTopColor: '#243044',
+    paddingTop: 8,
+  },
+  detailHeader: {
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  detailHeaderText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  detailTitle: {
+    color: tokens.colors.textPrimary,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  detailSummary: {
+    color: '#9FB6D9',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  detailBody: {
     paddingTop: 8,
     gap: 2,
   },
