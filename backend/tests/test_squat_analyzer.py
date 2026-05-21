@@ -86,9 +86,74 @@ class SquatAnalyzerTest(unittest.TestCase):
     self.assertEqual(result["reps"][0]["bottom_index"], 1)
     self.assertIn("depth_evidence", result["reps"][0])
     self.assertIn("scoring_landmarks", result["reps"][0]["depth_evidence"])
+    self.assertIn("estimatedHipCreaseY", result["reps"][0]["depth_evidence"])
+    self.assertIn("estimatedKneeTopY", result["reps"][0]["depth_evidence"])
+    self.assertIn("depthDeltaPx", result["reps"][0]["depth_evidence"])
+    self.assertIn("depthTolerancePx", result["reps"][0]["depth_evidence"])
+    self.assertIn("depthReason", result["reps"][0]["depth_evidence"])
     self.assertEqual(result["diagnostics"]["depth_debug"][0]["depth_status"], "hit_depth")
     self.assertIn("videoQuality", result)
     self.assertIn("poseFrames", result)
+
+  def test_depth_uses_clearest_side_not_average(self) -> None:
+    frames = [
+      frame(
+        0,
+        left_visibility=0.30,
+        right_visibility=0.95,
+        left_hip_y=0.46,
+        left_knee_y=0.70,
+        right_hip_y=0.46,
+        right_knee_y=0.70,
+      ),
+      frame(
+        500,
+        left_visibility=0.30,
+        right_visibility=0.95,
+        left_hip_y=0.46,
+        left_knee_y=0.70,
+        right_hip_y=0.72,
+        right_knee_y=0.58,
+      ),
+      frame(
+        1000,
+        left_visibility=0.30,
+        right_visibility=0.95,
+        left_hip_y=0.46,
+        left_knee_y=0.70,
+        right_hip_y=0.46,
+        right_knee_y=0.70,
+      ),
+    ]
+
+    with patch(
+      "app.analysis.exercises.squat.detect_reps",
+      return_value=(
+        [
+          {
+            "start_index": 0,
+            "bottom_index": 1,
+            "end_index": 2,
+            "start_timestamp_ms": 0,
+            "bottom_timestamp_ms": 500,
+            "end_timestamp_ms": 1000,
+          }
+        ],
+        {"motion_amplitude": 0.5, "reason": None, "rep_count": 1},
+      ),
+    ):
+      result = SquatAnalyzer().analyze(
+        video_id="video-1",
+        exercise_type="squat",
+        view_type="side",
+        frames=frames,
+        sampled_frame_count=3,
+      )
+
+    rep = result["reps"][0]
+    self.assertEqual(rep["selected_side"], "right")
+    self.assertEqual(rep["depth_status"], "hit_depth")
+    self.assertNotIn("insufficient_depth", rep["flags"])
 
   def test_parallel_depth_does_not_flag_insufficient_depth(self) -> None:
     frames = [
@@ -211,7 +276,7 @@ class SquatAnalyzerTest(unittest.TestCase):
     self.assertTrue(rep["depth_evidence"]["plate_rack_occlusion_suspected"])
     self.assertTrue(rep["depth_components"]["bottom_depth_landmarks_unreliable"])
 
-  def test_noisy_bottom_frame_uses_nearby_parallel_depth(self) -> None:
+  def test_noisy_bottom_frame_disagreement_is_uncertain_not_insufficient(self) -> None:
     frames = [
       frame(0, left_hip_y=0.46, left_knee_y=0.70),
       frame(250, left_hip_y=0.60, left_knee_y=0.61),
@@ -245,10 +310,51 @@ class SquatAnalyzerTest(unittest.TestCase):
       )
 
     rep = result["reps"][0]
-    self.assertEqual(rep["depth_status"], "hit_depth")
+    self.assertEqual(rep["depth_status"], "uncertain_depth")
+    self.assertEqual(rep["depth_reason"], "bottom_window_disagreement")
+    self.assertIn("low_depth_confidence", rep["flags"])
     self.assertNotIn("insufficient_depth", rep["flags"])
     self.assertNotIn("Insufficient depth", result["summary_flags"])
-    self.assertNotEqual(rep["depth_frame_index"], 2)
+    self.assertEqual(rep["depth_frame_index"], 2)
+
+  def test_visible_bottom_hit_is_not_overridden_by_nearby_noisy_fail(self) -> None:
+    frames = [
+      frame(0, left_hip_y=0.46, left_knee_y=0.70),
+      frame(250, left_hip_y=0.48, left_knee_y=0.68),
+      frame(500, left_hip_y=0.60, left_knee_y=0.58),
+      frame(750, left_hip_y=0.48, left_knee_y=0.68),
+      frame(1000, left_hip_y=0.46, left_knee_y=0.70),
+    ]
+
+    with patch(
+      "app.analysis.exercises.squat.detect_reps",
+      return_value=(
+        [
+          {
+            "start_index": 0,
+            "bottom_index": 2,
+            "end_index": 4,
+            "start_timestamp_ms": 0,
+            "bottom_timestamp_ms": 500,
+            "end_timestamp_ms": 1000,
+          }
+        ],
+        {"motion_amplitude": 0.5, "reason": None, "rep_count": 1},
+      ),
+    ):
+      result = SquatAnalyzer().analyze(
+        video_id="video-1",
+        exercise_type="squat",
+        view_type="side",
+        frames=frames,
+        sampled_frame_count=5,
+      )
+
+    rep = result["reps"][0]
+    self.assertEqual(rep["depth_status"], "hit_depth")
+    self.assertEqual(rep["depth_frame_index"], 2)
+    self.assertNotIn("insufficient_depth", rep["flags"])
+    self.assertNotIn("Insufficient depth", result["summary_flags"])
 
   def test_hit_and_uncertain_reps_do_not_create_insufficient_summary(self) -> None:
     frames = [

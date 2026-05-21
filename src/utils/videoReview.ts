@@ -94,6 +94,78 @@ export function findClosestPoseFrame(frames: VideoPoseFrame[] | undefined, curre
     : current;
 }
 
+export function findInterpolatedPoseFrame(frames: VideoPoseFrame[] | undefined, currentTime: number) {
+  // Interpolate between sampled backend pose frames so fast reps do not snap frame-to-frame.
+  if (!frames?.length) {
+    return null;
+  }
+
+  if (frames.length === 1 || currentTime <= frames[0].time) {
+    return frames[0];
+  }
+
+  const lastFrame = frames[frames.length - 1];
+
+  if (currentTime >= lastFrame.time) {
+    return lastFrame;
+  }
+
+  let low = 0;
+  let high = frames.length - 1;
+
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+
+    if (frames[mid].time < currentTime) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+
+  const nextFrame = frames[low];
+  const previousFrame = frames[low - 1];
+
+  if (!previousFrame) {
+    return nextFrame;
+  }
+
+  const frameGap = nextFrame.time - previousFrame.time;
+
+  if (frameGap <= 0 || frameGap > 0.5) {
+    return Math.abs(previousFrame.time - currentTime) <= Math.abs(nextFrame.time - currentTime)
+      ? previousFrame
+      : nextFrame;
+  }
+
+  const progress = Math.min(Math.max((currentTime - previousFrame.time) / frameGap, 0), 1);
+  const previousKeypoints = new Map(previousFrame.keypoints.map((keypoint) => [keypoint.name, keypoint]));
+  const nextKeypoints = new Map(nextFrame.keypoints.map((keypoint) => [keypoint.name, keypoint]));
+  const names = new Set([...previousKeypoints.keys(), ...nextKeypoints.keys()]);
+
+  return {
+    time: currentTime,
+    keypoints: [...names].map((name) => {
+      const previous = previousKeypoints.get(name);
+      const next = nextKeypoints.get(name);
+
+      if (!previous) {
+        return next as VideoPoseKeypoint;
+      }
+      if (!next) {
+        return previous;
+      }
+
+      return {
+        name,
+        x: previous.x + ((next.x - previous.x) * progress),
+        y: previous.y + ((next.y - previous.y) * progress),
+        confidence: Math.min(previous.confidence, next.confidence),
+      };
+    }),
+  };
+}
+
 export function filterSquatKeypoints(
   frame: VideoPoseFrame | null,
   confidenceThreshold = CONFIDENCE_THRESHOLD

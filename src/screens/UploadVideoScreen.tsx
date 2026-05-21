@@ -615,7 +615,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
                   <Text style={styles.resultLabel}>Summary flags</Text>
                   {analysisResult.summary_flags.map((flag) => (
                     <Text key={flag} style={styles.resultText}>
-                      {`\u2022 ${formatFlagLabel(flag)}`}
+                      {formatFlagLabel(flag)}
                     </Text>
                   ))}
                 </View>
@@ -626,7 +626,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
                   <Text style={styles.resultLabel}>Coach feedback</Text>
                   {analysisResult.coach_feedback.map((feedback) => (
                     <Text key={feedback} style={styles.resultText}>
-                      {`\u2022 ${feedback}`}
+                      {feedback}
                     </Text>
                   ))}
                 </View>

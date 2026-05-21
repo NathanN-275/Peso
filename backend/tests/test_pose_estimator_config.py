@@ -19,13 +19,13 @@ class PoseEstimatorConfigTest(unittest.TestCase):
     with patch.dict(os.environ, {}, clear=True):
       config = pose_config_from_env()
 
-    self.assertEqual(config.target_fps, 12.0)
+    self.assertEqual(config.target_fps, 18.0)
     self.assertEqual(config.max_frame_dimension, 720)
     self.assertEqual(config.model_complexity, 2)
     self.assertEqual(config.min_detection_confidence, 0.6)
     self.assertEqual(config.min_tracking_confidence, 0.6)
     self.assertEqual(config.pose_backend, "hybrid")
-    self.assertEqual(config.pose_fallback_enabled, False)
+    self.assertEqual(config.pose_fallback_enabled, True)
     self.assertEqual(config.pose_fallback_device, "auto")
     self.assertEqual(config.pose_fallback_det_frequency, 3)
     self.assertEqual(config.pose_fallback_mode, "balanced")

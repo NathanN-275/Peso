@@ -20,7 +20,7 @@ import TimelineScrubber from '../components/TimelineScrubber';
 import tokens from '../theme/tokens';
 import { VideoAnalysisResult } from '../types/videoAnalysis';
 import {
-  findClosestPoseFrame,
+  findInterpolatedPoseFrame,
   formatPercent,
   getRepDuration,
   getRepSpeed,
@@ -91,15 +91,81 @@ function formatFallbackUnavailableReason(value: string | null | undefined) {
     return 'Fallback dependency missing';
   }
 
+  if (value === 'fallback_no_pose_detected') {
+    return 'Fallback found no pose';
+  }
+
   return formatFlagLabel(value);
 }
 
-function SheetSection({ title, children }: { title: string; children: React.ReactNode }) {
+function SheetSection({
+  title,
+  children,
+  collapsible = false,
+  defaultExpanded = true,
+}: {
+  title: string;
+  children: React.ReactNode;
+  collapsible?: boolean;
+  defaultExpanded?: boolean;
+}) {
   // Shared block for the review sheet sections.
+  const [expanded, setExpanded] = useState(!collapsible || defaultExpanded);
+
   return (
     <View style={styles.sheetSection}>
-      <Text style={styles.sheetLabel}>{title}</Text>
-      {children}
+      {collapsible ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          onPress={() => setExpanded((value) => !value)}
+          style={styles.sheetSectionHeader}
+        >
+          <Text style={styles.sheetLabel}>{title}</Text>
+          <Ionicons
+            name={expanded ? 'chevron-up-outline' : 'chevron-down-outline'}
+            size={18}
+            color={tokens.colors.textMuted}
+          />
+        </Pressable>
+      ) : (
+        <Text style={styles.sheetLabel}>{title}</Text>
+      )}
+      {expanded ? children : null}
+    </View>
+  );
+}
+
+function DetailDisclosure({
+  title,
+  summary,
+  children,
+}: {
+  title: string;
+  summary?: string;
+  children: React.ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <View style={styles.debugBlock}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        onPress={() => setExpanded((value) => !value)}
+        style={styles.detailHeader}
+      >
+        <View style={styles.detailHeaderText}>
+          <Text style={styles.detailTitle}>{title}</Text>
+          {summary ? <Text style={styles.detailSummary}>{summary}</Text> : null}
+        </View>
+        <Ionicons
+          name={expanded ? 'chevron-up-outline' : 'chevron-down-outline'}
+          size={18}
+          color={tokens.colors.textMuted}
+        />
+      </Pressable>
+      {expanded ? <View style={styles.detailBody}>{children}</View> : null}
     </View>
   );
 }
@@ -175,7 +241,7 @@ export default function AnalysisReviewScreen({
   }, [error?.message]);
 
   const poseFrame = useMemo(
-    () => findClosestPoseFrame(result.poseFrames, currentTime),
+    () => findInterpolatedPoseFrame(result.poseFrames, currentTime),
     [currentTime, result.poseFrames]
   );
   const videoSize = {
@@ -192,10 +258,38 @@ export default function AnalysisReviewScreen({
     ?? null;
   const analysisStale = result.analysis_stale ?? result.diagnostics?.analysis_stale ?? false;
   const analysisIncomplete = result.analysis_incomplete ?? result.diagnostics?.analysis_incomplete ?? false;
-  const displaySummaryFlags = analysisIncomplete ? ['Analysis needs re-run'] : summaryFlags;
+  const depthSummaryDebug = result.diagnostics?.depth_summary_debug;
+  const finalInsufficientDepthReps =
+    depthSummaryDebug?.insufficient_depth_reps
+    ?? result.reps
+      .filter((rep) => (rep.depthStatus ?? rep.depth_status) === 'insufficient_depth')
+      .map((rep) => rep.repIndex ?? rep.rep_index);
+  const finalHitDepthReps =
+    depthSummaryDebug?.hit_depth_reps
+    ?? result.reps
+      .filter((rep) => (rep.depthStatus ?? rep.depth_status) === 'hit_depth')
+      .map((rep) => rep.repIndex ?? rep.rep_index);
+  const finalUncertainDepthReps =
+    depthSummaryDebug?.uncertain_depth_reps
+    ?? result.reps
+      .filter((rep) => (rep.depthStatus ?? rep.depth_status) === 'uncertain_depth')
+      .map((rep) => rep.repIndex ?? rep.rep_index);
+  const summaryDepthMismatch =
+    summaryFlags.includes('Insufficient depth') && finalInsufficientDepthReps.length === 0;
+  const sanitizedSummaryFlags = summaryDepthMismatch
+    ? summaryFlags.filter((flag) => flag !== 'Insufficient depth')
+    : summaryFlags;
+  const displaySummaryFlags = analysisIncomplete ? ['Analysis needs re-run'] : sanitizedSummaryFlags;
+  const depthHitCount = finalHitDepthReps.length;
+  const repCount = result.rep_count || result.reps.length;
+  const depthHitLabel =
+    repCount > 0
+      ? `Depth hit: ${depthHitCount > 0 ? 'yes' : 'no'} (${depthHitCount}/${repCount} reps)`
+      : 'Depth hit: n/a (0 reps)';
   const poseBackend = result.pose_backend ?? result.diagnostics?.pose_backend;
   const fallbackModel = result.fallback_model ?? result.diagnostics?.fallback_model;
   const fallbackRecommended = result.fallback_recommended ?? result.diagnostics?.fallback_recommended ?? false;
+  const fallbackAttempted = result.fallback_attempted ?? result.diagnostics?.fallback_attempted ?? false;
   const fallbackTriggered = result.fallback_triggered ?? result.diagnostics?.fallback_triggered ?? false;
   const fallbackReason = result.fallback_reason ?? result.diagnostics?.fallback_reason;
   const fallbackUnavailableReason =
@@ -449,25 +543,44 @@ export default function AnalysisReviewScreen({
         >
           <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent}>
             <SheetSection title="Summary flags">
+              <Text style={styles.sheetText}>{depthHitLabel}</Text>
+              {analysisStale ? (
+                <Text style={styles.staleText}>
+                  This result was created by an older or incomplete model payload. Re-run analysis before trusting depth flags.
+                </Text>
+              ) : null}
+              {summaryDepthMismatch ? (
+                <Text style={styles.staleText}>
+                  Summary flag inconsistent with rep statuses.
+                </Text>
+              ) : null}
+              {displaySummaryFlags.length ? displaySummaryFlags.map((flag) => (
+                <Text key={flag} style={styles.sheetText}>{formatFlagLabel(flag)}</Text>
+              )) : <Text style={styles.sheetMutedText}>No summary flags.</Text>}
+            </SheetSection>
+
+            <SheetSection title="Analysis details" collapsible defaultExpanded={false}>
               <Text style={styles.debugText}>Stale analysis: {analysisStale ? 'yes' : 'no'}</Text>
               <Text style={styles.debugText}>Analysis incomplete: {analysisIncomplete ? 'yes' : 'no'}</Text>
               <Text style={styles.debugText}>Pose backend: {poseBackend ?? 'n/a'}</Text>
               <Text style={styles.debugText}>Fallback model: {fallbackModel === 'rtmpose' ? 'RTMPose' : 'n/a'}</Text>
               <Text style={styles.debugText}>Fallback recommended: {fallbackRecommended ? 'yes' : 'no'}</Text>
+              <Text style={styles.debugText}>Fallback attempted: {fallbackAttempted ? 'yes' : 'no'}</Text>
               <Text style={styles.debugText}>Fallback used: {fallbackTriggered ? 'yes' : 'no'}</Text>
               <Text style={styles.debugText}>Fallback reason: {fallbackReason ?? 'n/a'}</Text>
               <Text style={styles.debugText}>
                 Fallback unavailable: {formatFallbackUnavailableReason(fallbackUnavailableReason)}
               </Text>
               <Text style={styles.debugText}>Landmark model: {landmarkModel ?? 'n/a'}</Text>
-              {analysisStale ? (
-                <Text style={styles.staleText}>
-                  This result was created by an older or incomplete model payload. Re-run analysis before trusting depth flags.
-                </Text>
-              ) : null}
-              {displaySummaryFlags.length ? displaySummaryFlags.map((flag) => (
-                <Text key={flag} style={styles.sheetText}>- {formatFlagLabel(flag)}</Text>
-              )) : <Text style={styles.sheetMutedText}>No summary flags.</Text>}
+              <Text style={styles.debugText}>
+                Depth reps hit / insufficient / uncertain: {finalHitDepthReps.join(', ') || 'none'} / {finalInsufficientDepthReps.join(', ') || 'none'} / {finalUncertainDepthReps.join(', ') || 'none'}
+              </Text>
+              <Text style={styles.debugText}>
+                Depth summary decision: {depthSummaryDebug?.summary_depth_decision ?? 'n/a'}
+              </Text>
+              <Text style={styles.debugText}>
+                Depth summary reason: {depthSummaryDebug?.summary_depth_reason ?? 'n/a'}
+              </Text>
             </SheetSection>
 
             <SheetSection title="Video quality">
@@ -487,7 +600,21 @@ export default function AnalysisReviewScreen({
                 const depthTimestampMs = rep.depthTimestampMs ?? rep.depth_timestamp_ms;
                 const bottomTimestampMs = rep.bottomTimestampMs ?? rep.bottom_timestamp_ms;
                 const selectedSide = rep.selectedSide ?? rep.selected_side ?? rep.depth_evidence?.selected_side;
+                const selectedSource = rep.selectedSource ?? rep.selected_source ?? rep.depth_evidence?.selectedSource ?? rep.depth_evidence?.selected_source;
+                const selectedModel = rep.selectedModel ?? rep.selected_model ?? rep.depth_evidence?.selectedModel ?? rep.depth_evidence?.selected_model;
+                const depthReason = rep.depthReason ?? rep.depth_reason ?? rep.depth_evidence?.depthReason ?? rep.depth_evidence?.depth_reason ?? rep.depth_components?.depthReason ?? rep.depth_components?.depth_reason;
                 const hipKneeDelta = rep.depth_evidence?.hip_knee_delta ?? rep.depth_components?.hip_knee_delta;
+                const rawHipKneeDelta = rep.depth_components?.raw_hip_knee_delta;
+                const hipY = rep.depth_evidence?.hipY;
+                const kneeY = rep.depth_evidence?.kneeY;
+                const ankleY = rep.depth_evidence?.ankleY;
+                const hipConfidence = rep.depth_evidence?.hipConfidence;
+                const kneeConfidence = rep.depth_evidence?.kneeConfidence;
+                const ankleConfidence = rep.depth_evidence?.ankleConfidence;
+                const estimatedHipCreaseY = rep.depth_evidence?.estimatedHipCreaseY ?? rep.depth_evidence?.estimated_hip_crease_y ?? rep.depth_components?.estimated_hip_crease_y;
+                const estimatedKneeTopY = rep.depth_evidence?.estimatedKneeTopY ?? rep.depth_evidence?.estimated_knee_top_y ?? rep.depth_components?.estimated_knee_top_y;
+                const depthDeltaPx = rep.depth_evidence?.depthDeltaPx ?? rep.depth_evidence?.depth_delta_px ?? rep.depth_components?.depth_delta_px;
+                const depthTolerancePx = rep.depth_evidence?.depthTolerancePx ?? rep.depth_evidence?.depth_tolerance_px ?? rep.depth_components?.depth_tolerance_px;
                 const parallelScore = rep.depth_evidence?.parallel_score ?? rep.depth_components?.parallel_score;
                 const depthConfidence =
                   rep.depth_evidence?.depth_confidence ?? rep.depthConfidence ?? rep.depth_confidence;
@@ -504,18 +631,37 @@ export default function AnalysisReviewScreen({
                     <Text style={styles.sheetMutedText}>
                       Depth {formatNumber(rep.depthScore ?? rep.depth_score)}, torso change {formatNumber(rep.torsoAngleChangeDeg ?? rep.torso_angle_change, ' deg')}
                     </Text>
-                    <View style={styles.debugBlock}>
+                    <DetailDisclosure
+                      title="Depth details"
+                      summary={`${formatDepthStatus(depthStatus)} · ${depthReason ?? 'no reason'}`}
+                    >
                       <Text style={styles.debugText}>Depth status: {formatDepthStatus(depthStatus)}</Text>
                       <Text style={styles.debugText}>Hip-knee delta: {formatOptionalNumber(hipKneeDelta)}</Text>
+                      <Text style={styles.debugText}>Raw hip-knee delta: {formatOptionalNumber(rawHipKneeDelta)}</Text>
                       <Text style={styles.debugText}>Parallel score: {formatOptionalNumber(parallelScore)}</Text>
                       <Text style={styles.debugText}>Depth confidence: {formatOptionalNumber(depthConfidence)}</Text>
+                      <Text style={styles.debugText}>Depth reason: {depthReason ?? 'n/a'}</Text>
                       <Text style={styles.debugText}>
                         Scored frame: {formatMilliseconds(depthTimestampMs)} · bottom: {formatMilliseconds(bottomTimestampMs)}
                       </Text>
                       <Text style={styles.debugText}>Selected side: {selectedSide ?? selectedPoseSide ?? 'n/a'}</Text>
+                      <Text style={styles.debugText}>Selected source: {selectedSource ?? 'n/a'}</Text>
+                      <Text style={styles.debugText}>Selected model: {selectedModel ?? 'n/a'}</Text>
+                      <Text style={styles.debugText}>
+                        Hip/knee/ankle Y: {formatOptionalNumber(hipY)} / {formatOptionalNumber(kneeY)} / {formatOptionalNumber(ankleY)}
+                      </Text>
+                      <Text style={styles.debugText}>
+                        Hip/knee/ankle confidence: {formatOptionalNumber(hipConfidence)} / {formatOptionalNumber(kneeConfidence)} / {formatOptionalNumber(ankleConfidence)}
+                      </Text>
+                      <Text style={styles.debugText}>
+                        Hip crease / knee top: {formatOptionalNumber(estimatedHipCreaseY)} / {formatOptionalNumber(estimatedKneeTopY)}
+                      </Text>
+                      <Text style={styles.debugText}>
+                        Depth delta / tolerance px: {formatOptionalNumber(depthDeltaPx)} / {formatOptionalNumber(depthTolerancePx)}
+                      </Text>
                       <Text style={styles.debugText}>Scored frame differs: {scoredFrameDiffers ? 'yes' : 'no'}</Text>
                       <Text style={styles.debugText}>Rack/plate occlusion: {plateRackOcclusion ? 'yes' : 'no'}</Text>
-                    </View>
+                    </DetailDisclosure>
                   </View>
                 );
               }) : <Text style={styles.sheetMutedText}>No reps detected.</Text>}
@@ -530,7 +676,7 @@ export default function AnalysisReviewScreen({
         >
           <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent}>
             {coachingFeedback.length ? coachingFeedback.map((feedback) => (
-              <Text key={feedback} style={styles.sheetText}>- {feedback}</Text>
+              <Text key={feedback} style={styles.sheetText}>{feedback}</Text>
             )) : <Text style={styles.sheetMutedText}>No coaching feedback available.</Text>}
           </ScrollView>
         </ReviewBottomSheet>
@@ -764,6 +910,13 @@ const styles = StyleSheet.create({
   sheetSection: {
     gap: 8,
   },
+  sheetSectionHeader: {
+    minHeight: 34,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
   sheetLabel: {
     color: tokens.colors.textMuted,
     fontSize: 12,
@@ -800,6 +953,32 @@ const styles = StyleSheet.create({
     marginTop: 8,
     borderTopWidth: 1,
     borderTopColor: '#243044',
+    paddingTop: 8,
+  },
+  detailHeader: {
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  detailHeaderText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  detailTitle: {
+    color: tokens.colors.textPrimary,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  detailSummary: {
+    color: '#9FB6D9',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  detailBody: {
     paddingTop: 8,
     gap: 2,
   },

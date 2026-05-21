@@ -75,13 +75,13 @@ SUPPORTED_FALLBACK_MODES = {"performance", "lightweight", "balanced"}
 
 @dataclass(frozen=True)
 class PoseEstimatorConfig:
-  target_fps: float = 12.0
+  target_fps: float = 18.0
   max_frame_dimension: int = 720
   model_complexity: int = 2
   min_detection_confidence: float = 0.6
   min_tracking_confidence: float = 0.6
   pose_backend: str = "hybrid"
-  pose_fallback_enabled: bool = False
+  pose_fallback_enabled: bool = True
   pose_fallback_device: str = "auto"
   pose_fallback_det_frequency: int = 3
   pose_fallback_mode: str = "balanced"
@@ -150,7 +150,7 @@ def _choice_from_env(name: str, default: str, choices: set[str]) -> str:
 
 def pose_config_from_env() -> PoseEstimatorConfig:
   return PoseEstimatorConfig(
-    target_fps=_float_from_env("POSE_TARGET_FPS", 12.0, minimum=1.0, maximum=60.0),
+    target_fps=_float_from_env("POSE_TARGET_FPS", 18.0, minimum=1.0, maximum=60.0),
     max_frame_dimension=_int_from_env("POSE_MAX_FRAME_DIMENSION", 720, minimum=128, maximum=4096),
     model_complexity=_int_from_env("POSE_MODEL_COMPLEXITY", 2, minimum=0, maximum=2),
     min_detection_confidence=_float_from_env(
@@ -166,7 +166,7 @@ def pose_config_from_env() -> PoseEstimatorConfig:
       maximum=1.0,
     ),
     pose_backend=_choice_from_env("POSE_BACKEND", "hybrid", SUPPORTED_POSE_BACKENDS),
-    pose_fallback_enabled=_bool_from_env("POSE_FALLBACK_ENABLED", False),
+    pose_fallback_enabled=_bool_from_env("POSE_FALLBACK_ENABLED", True),
     pose_fallback_device=_choice_from_env("POSE_FALLBACK_DEVICE", "auto", {"auto", "cpu", "mps", "cuda"}),
     pose_fallback_det_frequency=_int_from_env("POSE_FALLBACK_DET_FREQUENCY", 3, minimum=1, maximum=60),
     pose_fallback_mode=_choice_from_env("POSE_FALLBACK_MODE", "balanced", SUPPORTED_FALLBACK_MODES),
@@ -538,6 +538,8 @@ class PoseEstimator:
               "frame_index": sampled_index,
               "source_frame_index": frame_index,
               "timestamp_ms": timestamp_ms,
+              "frame_width": processed_width,
+              "frame_height": processed_height,
               "landmarks": landmarks,
               "pose_backend": backend_name,
               "landmark_model": backend.landmark_model,
