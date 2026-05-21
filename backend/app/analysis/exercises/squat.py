@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from ..feedback_engine import build_feedback
+from ..feedback_engine import build_depth_summary_debug, build_feedback
 from ..metrics_calculator import (
   blended_point,
   clamp,
@@ -11,6 +11,7 @@ from ..metrics_calculator import (
   hip_depth_ratio,
   knee_flexion_score,
   point_for_side,
+  select_depth_side,
   select_tracking_side_for_clip,
   squat_depth_assessment,
   torso_angle_change,
@@ -21,10 +22,23 @@ from ..rep_detector import detect_reps
 from .base import BaseExerciseAnalyzer
 
 
-DEPTH_PARALLEL_THRESHOLD = 0.82
+DEPTH_PARALLEL_THRESHOLD = 0.64
 DEPTH_CONFIDENCE_THRESHOLD = 0.55
 DEPTH_JUDGMENT_CONFIDENCE_THRESHOLD = 0.45
 DEPTH_BOTTOM_WINDOW = 2
+
+
+def _clean_depth_flags(rep_summaries: list[dict[str, Any]]) -> None:
+  for rep in rep_summaries:
+    flags = list(rep.get("flags") or [])
+    depth_status = rep.get("depth_status") or rep.get("depthStatus")
+
+    if depth_status != "insufficient_depth":
+      flags = [flag for flag in flags if flag != "insufficient_depth"]
+    if depth_status == "uncertain_depth" and "low_depth_confidence" not in flags:
+      flags.append("low_depth_confidence")
+
+    rep["flags"] = flags
 
 
 def _public_point(point: dict[str, float]) -> dict[str, float]:
@@ -130,6 +144,8 @@ def _depth_status(depth_assessment: dict[str, Any], *, bottom_landmarks_unreliab
   # Separate the coaching decision from the composite numeric score.
   if bottom_landmarks_unreliable or depth_assessment["confidence"] < DEPTH_JUDGMENT_CONFIDENCE_THRESHOLD:
     return "uncertain_depth"
+  if depth_assessment.get("depth_classification"):
+    return depth_assessment["depth_classification"]
   if depth_assessment["parallel_score"] >= DEPTH_PARALLEL_THRESHOLD:
     return "hit_depth"
   return "insufficient_depth"
@@ -154,7 +170,6 @@ def _has_unreliable_bottom_occlusion_landmarks(pose_validation: dict[str, Any], 
 def _rep_bottom_depth_assessment(
   *,
   frames: list[dict[str, Any]],
-  selected_side: str,
   bottom_index: int,
   pose_validation: dict[str, Any],
 ) -> tuple[dict[str, Any], int]:
@@ -165,24 +180,55 @@ def _rep_bottom_depth_assessment(
 
   for frame_index in range(start_index, end_index + 1):
     frame = frames[frame_index]
+    selected_side, selected_score, alternate_score, side_clarity = select_depth_side(frame)
     assessment = squat_depth_assessment(
       point_for_side(frame, selected_side, "shoulder"),
       point_for_side(frame, selected_side, "hip"),
       point_for_side(frame, selected_side, "knee"),
       point_for_side(frame, selected_side, "ankle"),
+      frame_height_px=frame.get("frame_height"),
+      selected_side=selected_side,
+      selected_side_score=selected_score,
+      alternate_side_score=alternate_score,
+      side_clarity=side_clarity,
     )
     assessments.append((assessment, frame_index))
 
-  def sort_key(item: tuple[dict[str, Any], int]) -> tuple[float, float, float]:
-    assessment, frame_index = item
-    bottom_preference = 1.0 - (abs(frame_index - bottom_index) / max(DEPTH_BOTTOM_WINDOW + 1, 1))
-    return (
-      assessment["parallel_score"],
-      assessment["confidence"],
-      bottom_preference,
-    )
+  bottom_assessment, _bottom_frame_index = next(
+    item for item in assessments if item[1] == bottom_index
+  )
+  best_assessment, best_index = bottom_assessment, bottom_index
+  bottom_classification = bottom_assessment.get("depth_classification")
+  bottom_reliable = not (
+    _has_unreliable_bottom_depth_landmarks(pose_validation, bottom_index)
+    or _has_unreliable_bottom_occlusion_landmarks(pose_validation, bottom_index)
+  )
 
-  best_assessment, best_index = max(assessments, key=sort_key)
+  for assessment, frame_index in assessments:
+    if frame_index == bottom_index:
+      continue
+    if assessment.get("depth_classification") != bottom_classification:
+      continue
+    if (
+      assessment["confidence"] >= best_assessment["confidence"] + 0.12
+      and assessment["parallel_score"] >= best_assessment["parallel_score"]
+    ):
+      best_assessment, best_index = assessment, frame_index
+
+  if (
+    best_assessment.get("depth_classification") == "insufficient_depth"
+    and bottom_reliable
+    and any(
+      assessment.get("depth_classification") != "insufficient_depth"
+      and assessment["confidence"] >= best_assessment["confidence"] - 0.08
+      for assessment, _frame_index in assessments
+    )
+  ):
+    best_assessment = {
+      **best_assessment,
+      "depth_classification": "uncertain_depth",
+      "depth_reason": "bottom_window_disagreement",
+    }
 
   if best_index != bottom_index:
     best_assessment = {
@@ -190,11 +236,26 @@ def _rep_bottom_depth_assessment(
       "selected_bottom_frame_offset": best_index - bottom_index,
       "selected_bottom_frame_index": best_index,
     }
+    if best_assessment.get("depth_classification") != bottom_classification:
+      best_assessment = {
+        **best_assessment,
+        "depth_classification": "uncertain_depth",
+        "depth_reason": "scored_frame_disagreement",
+      }
 
   if _has_unreliable_bottom_depth_landmarks(pose_validation, best_index):
     best_assessment = {
       **best_assessment,
       "bottom_depth_landmarks_unreliable": True,
+    }
+  elif (
+    _has_unreliable_bottom_occlusion_landmarks(pose_validation, best_index)
+    and best_assessment["parallel_score"] < DEPTH_PARALLEL_THRESHOLD
+  ):
+    best_assessment = {
+      **best_assessment,
+      "bottom_depth_landmarks_unreliable": True,
+      "detected_bottom_occlusion_landmarks_unreliable": True,
     }
   elif (
     best_index != bottom_index
@@ -220,21 +281,29 @@ def _rep_bottom_depth_assessment(
 def _depth_evidence(
   *,
   frames: list[dict[str, Any]],
-  selected_side: str,
   bottom_index: int,
   depth_frame_index: int,
   depth_assessment: dict[str, Any],
 ) -> dict[str, Any]:
   bottom_frame = frames[bottom_index]
   depth_frame = frames[depth_frame_index]
+  selected_side = depth_assessment.get("selected_side") or "left"
   hip = point_for_side(depth_frame, selected_side, "hip")
   knee = point_for_side(depth_frame, selected_side, "knee")
   shoulder = point_for_side(depth_frame, selected_side, "shoulder")
   ankle = point_for_side(depth_frame, selected_side, "ankle")
+  selected_source = depth_frame.get("pose_backend") or "unknown"
+  selected_model = depth_frame.get("landmark_model") or "unknown"
 
   return {
     "selected_side": selected_side,
+    "selectedSide": selected_side,
+    "selected_source": selected_source,
+    "selectedSource": selected_source,
+    "selected_model": selected_model,
+    "selectedModel": selected_model,
     "bottom_index": bottom_index,
+    "bottomFrameIndex": bottom_index,
     "bottom_timestamp_ms": bottom_frame["timestamp_ms"],
     "depth_frame_index": depth_frame_index,
     "depth_timestamp_ms": depth_frame["timestamp_ms"],
@@ -248,6 +317,24 @@ def _depth_evidence(
     "hip_knee_delta": depth_assessment["hip_knee_delta"],
     "parallel_score": depth_assessment["parallel_score"],
     "depth_confidence": depth_assessment["confidence"],
+    "hipY": round(hip["y"], 4),
+    "kneeY": round(knee["y"], 4),
+    "ankleY": round(ankle["y"], 4),
+    "hipConfidence": round(hip.get("visibility", 0.0), 3),
+    "kneeConfidence": round(knee.get("visibility", 0.0), 3),
+    "ankleConfidence": round(ankle.get("visibility", 0.0), 3),
+    "estimatedHipCreaseY": depth_assessment["estimated_hip_crease_y"],
+    "estimatedKneeTopY": depth_assessment["estimated_knee_top_y"],
+    "depthDeltaPx": depth_assessment["depth_delta_px"],
+    "depthTolerancePx": depth_assessment["depth_tolerance_px"],
+    "depthClassification": depth_assessment["depth_classification"],
+    "depthReason": depth_assessment["depth_reason"],
+    "estimated_hip_crease_y": depth_assessment["estimated_hip_crease_y"],
+    "estimated_knee_top_y": depth_assessment["estimated_knee_top_y"],
+    "depth_delta_px": depth_assessment["depth_delta_px"],
+    "depth_tolerance_px": depth_assessment["depth_tolerance_px"],
+    "depth_classification": depth_assessment["depth_classification"],
+    "depth_reason": depth_assessment["depth_reason"],
   }
 
 
@@ -452,10 +539,10 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
       bottom_torso = torso_angle_from_vertical(bottom_shoulder, bottom_hip)
       depth_assessment, depth_frame_index = _rep_bottom_depth_assessment(
         frames=frames,
-        selected_side=selected_side,
         bottom_index=rep["bottom_index"],
         pose_validation=pose_validation,
       )
+      rep_depth_side = depth_assessment.get("selected_side") or selected_side
       depth_score = depth_assessment["score"]
       depth_status = _depth_status(
         depth_assessment,
@@ -464,14 +551,13 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
       torso_delta = torso_angle_change(start_torso, bottom_torso)
       depth_evidence = _depth_evidence(
         frames=frames,
-        selected_side=selected_side,
         bottom_index=rep["bottom_index"],
         depth_frame_index=depth_frame_index,
         depth_assessment=depth_assessment,
       )
       occlusion_suspected = _plate_rack_occlusion_suspected(
         frame=frames[depth_frame_index],
-        selected_side=selected_side,
+        selected_side=rep_depth_side,
         subject_height=diagnostics.get("subject_height", 0.0),
       ) or depth_assessment.get("detected_bottom_occlusion_landmarks_unreliable", False)
       if occlusion_suspected and depth_status == "insufficient_depth":
@@ -480,9 +566,16 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
           **depth_assessment,
           "plate_rack_occlusion_suspected": True,
           "depth_status_downgraded_by_occlusion": True,
+          "depth_classification": "uncertain_depth",
+          "depth_reason": "occlusion_uncertain",
         }
       depth_evidence["plate_rack_occlusion_suspected"] = occlusion_suspected
       depth_evidence["depth_status"] = depth_status
+      depth_evidence["depthStatus"] = depth_status
+      depth_evidence["depth_classification"] = depth_status
+      depth_evidence["depthClassification"] = depth_status
+      depth_evidence["depth_reason"] = depth_assessment.get("depth_reason")
+      depth_evidence["depthReason"] = depth_assessment.get("depth_reason")
       depth_evidence["depth_status_downgraded_by_occlusion"] = depth_assessment.get(
         "depth_status_downgraded_by_occlusion",
         False,
@@ -513,7 +606,10 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
           "depthTimestampMs": frames[depth_frame_index]["timestamp_ms"],
           "bottomIndex": rep["bottom_index"],
           "bottomTimestampMs": rep["bottom_timestamp_ms"],
-          "selectedSide": selected_side,
+          "selectedSide": rep_depth_side,
+          "selectedModel": depth_evidence["selectedModel"],
+          "selectedSource": depth_evidence["selectedSource"],
+          "depthReason": depth_evidence["depthReason"],
           "torsoAngleChangeDeg": torso_delta,
           "depth_score": depth_score,
           "depth_confidence": depth_assessment["confidence"],
@@ -522,7 +618,10 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
           "depth_timestamp_ms": frames[depth_frame_index]["timestamp_ms"],
           "bottom_index": rep["bottom_index"],
           "bottom_timestamp_ms": rep["bottom_timestamp_ms"],
-          "selected_side": selected_side,
+          "selected_side": rep_depth_side,
+          "selected_model": depth_evidence["selected_model"],
+          "selected_source": depth_evidence["selected_source"],
+          "depth_reason": depth_evidence["depth_reason"],
           "depth_components": depth_assessment,
           "depth_evidence": depth_evidence,
           "torso_angle": round(bottom_torso, 2),
@@ -537,6 +636,7 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
         }
       )
 
+    _clean_depth_flags(rep_summaries)
     diagnostics["depth_status_counts"] = {
       "hit_depth_count": sum(1 for rep in rep_summaries if rep["depth_status"] == "hit_depth"),
       "insufficient_depth_count": sum(
@@ -546,15 +646,34 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
         1 for rep in rep_summaries if rep["depth_status"] == "uncertain_depth"
       ),
     }
+    diagnostics["depth_summary_debug"] = build_depth_summary_debug(rep_summaries)
     diagnostics["depth_debug"] = [
       {
         "rep_index": rep["rep_index"],
         "depth_status": rep["depth_status"],
         "selected_side": rep["selected_side"],
+        "selectedSide": rep["selectedSide"],
+        "selected_model": rep["selected_model"],
+        "selectedModel": rep["selectedModel"],
+        "selected_source": rep["selected_source"],
+        "selectedSource": rep["selectedSource"],
         "bottom_index": rep["bottom_index"],
+        "bottomFrameIndex": rep["bottomIndex"],
         "bottom_timestamp_ms": rep["bottom_timestamp_ms"],
         "depth_frame_index": rep["depth_frame_index"],
         "depth_timestamp_ms": rep["depth_timestamp_ms"],
+        "hipY": rep["depth_evidence"]["hipY"],
+        "kneeY": rep["depth_evidence"]["kneeY"],
+        "ankleY": rep["depth_evidence"]["ankleY"],
+        "hipConfidence": rep["depth_evidence"]["hipConfidence"],
+        "kneeConfidence": rep["depth_evidence"]["kneeConfidence"],
+        "ankleConfidence": rep["depth_evidence"]["ankleConfidence"],
+        "estimatedHipCreaseY": rep["depth_evidence"]["estimatedHipCreaseY"],
+        "estimatedKneeTopY": rep["depth_evidence"]["estimatedKneeTopY"],
+        "depthDeltaPx": rep["depth_evidence"]["depthDeltaPx"],
+        "depthTolerancePx": rep["depth_evidence"]["depthTolerancePx"],
+        "depthClassification": rep["depth_evidence"]["depthClassification"],
+        "depthReason": rep["depth_evidence"]["depthReason"],
         "hip_knee_delta": rep["depth_components"]["hip_knee_delta"],
         "parallel_score": rep["depth_components"]["parallel_score"],
         "depth_confidence": rep["depth_confidence"],

@@ -14,6 +14,7 @@ QUALITY_FLAG_LABELS = {
   "unreliable_pose_landmarks": "Some squat landmarks were unreliable",
   "plate_rack_occlusion_suspected": "Rack or plates may have blocked key landmarks",
   "ambiguous_tracking_side": "Tracking side was ambiguous",
+  "pose_model_disagreement": "Pose models disagreed on depth",
   "low_squat_motion": "Squat motion was too small to measure",
   "no_complete_rep_cycle": "No complete squat cycle detected",
 }
@@ -28,9 +29,59 @@ QUALITY_FLAG_FEEDBACK = {
   "unreliable_pose_landmarks": "Keep the bar, rack, and plates from blocking your hips and shoulders when possible.",
   "plate_rack_occlusion_suspected": "The rack or plates may be covering the hip or shoulder; use the clearest side angle you can while keeping the lift safe.",
   "ambiguous_tracking_side": "Use a cleaner side angle with less overlap from the rack or other people.",
+  "pose_model_disagreement": (
+    "The app could not confidently judge depth from this video. "
+    "Record from a clear side angle with the hip, knee, and ankle visible."
+  ),
   "low_squat_motion": "Use a clip with a full descent and return to standing.",
   "no_complete_rep_cycle": "Include the start, bottom, and return-to-standing portions of each rep.",
 }
+
+
+def _rep_index(rep: dict[str, Any], fallback: int) -> int:
+  value = rep.get("rep_index") or rep.get("repIndex")
+  return int(value) if isinstance(value, int) else fallback
+
+
+def build_depth_summary_debug(reps: list[dict[str, Any]]) -> dict[str, Any]:
+  hit_reps: list[int] = []
+  insufficient_reps: list[int] = []
+  uncertain_reps: list[int] = []
+
+  for index, rep in enumerate(reps, start=1):
+    rep_index = _rep_index(rep, index)
+    depth_status = rep.get("depth_status") or rep.get("depthStatus")
+
+    if depth_status == "hit_depth":
+      hit_reps.append(rep_index)
+    elif depth_status == "insufficient_depth":
+      insufficient_reps.append(rep_index)
+    elif depth_status == "uncertain_depth":
+      uncertain_reps.append(rep_index)
+
+  if insufficient_reps and (hit_reps or uncertain_reps):
+    decision = "mixed_depth"
+    reason = "some_reps_insufficient"
+  elif insufficient_reps:
+    decision = "insufficient_depth"
+    reason = "all_depth_reps_insufficient"
+  elif uncertain_reps:
+    decision = "uncertain_depth"
+    reason = "depth_confidence_limited"
+  elif hit_reps:
+    decision = "hit_depth"
+    reason = "all_depth_reps_hit"
+  else:
+    decision = "unknown_depth"
+    reason = "no_depth_statuses"
+
+  return {
+    "hit_depth_reps": hit_reps,
+    "insufficient_depth_reps": insufficient_reps,
+    "uncertain_depth_reps": uncertain_reps,
+    "summary_depth_decision": decision,
+    "summary_depth_reason": reason,
+  }
 
 
 def build_feedback(
@@ -66,22 +117,50 @@ def build_feedback(
 
   depth_scores = [rep["depth_score"] for rep in reps]
   torso_changes = [rep["torso_angle_change"] for rep in reps]
-  flag_counter = Counter(flag for rep in reps for flag in rep["flags"])
   depth_statuses = [rep.get("depth_status") or rep.get("depthStatus") for rep in reps]
+  depth_summary = build_depth_summary_debug(reps)
+  effective_flags = [
+    flag
+    for rep, depth_status in zip(reps, depth_statuses)
+    for flag in rep["flags"]
+    if flag != "insufficient_depth" or depth_status == "insufficient_depth"
+  ]
+  flag_counter = Counter(effective_flags)
+  depth_reasons = [
+    rep.get("depth_reason")
+    or rep.get("depthReason")
+    or (rep.get("depth_evidence") or {}).get("depth_reason")
+    or (rep.get("depth_evidence") or {}).get("depthReason")
+    or (rep.get("depth_components") or {}).get("depth_reason")
+    for rep in reps
+  ]
+  insufficient_reps = depth_summary["insufficient_depth_reps"]
 
-  if flag_counter.get("insufficient_depth", 0) > 0 or "insufficient_depth" in depth_statuses:
+  if insufficient_reps and len(insufficient_reps) == len(reps):
     summary_flags.append("Insufficient depth")
-    coach_feedback.append("Sit deeper into the squat and keep the hip crease at or below knee level.")
+    coach_feedback.append("Try to lower the hip crease a little more so it reaches the top of the knee.")
+  elif insufficient_reps:
+    summary_flags.append("Inconsistent depth")
+    rep_list = ", ".join(str(rep_index) for rep_index in insufficient_reps)
+    coach_feedback.append(f"Some reps were above depth: rep {rep_list}. Try to match your deepest reps.")
+
+  if "borderline_depth" in depth_reasons and "Insufficient depth" not in summary_flags:
+    summary_flags.append("Depth looked close")
+    coach_feedback.append("The rep looked close to depth; try getting the hip crease slightly lower.")
 
   if flag_counter.get("forward_lean", 0) > 0:
     summary_flags.append("Forward lean")
     coach_feedback.append("Keep your chest taller and brace harder to reduce forward torso collapse.")
 
-  if flag_counter.get("low_depth_confidence", 0) > 0:
+  if flag_counter.get("low_depth_confidence", 0) > 0 or "uncertain_depth" in depth_statuses:
     summary_flags.append("Depth confidence was limited")
-    coach_feedback.append("Keep hips, knees, and ankles clearly visible at the bottom of each rep.")
+    if "borderline_depth" not in depth_reasons:
+      coach_feedback.append(
+        "The app could not confidently judge depth from this video. "
+        "Record from a clear side angle with the hip, knee, and ankle visible."
+      )
 
-  if len(depth_scores) > 1 and pstdev(depth_scores) > 0.12:
+  if len(depth_scores) > 1 and pstdev(depth_scores) > 0.12 and "Inconsistent depth" not in summary_flags:
     summary_flags.append("Inconsistent depth")
     coach_feedback.append("Aim to hit the same depth on each rep.")
 
@@ -100,16 +179,20 @@ def build_feedback(
       "unreliable_pose_landmarks",
       "plate_rack_occlusion_suspected",
       "ambiguous_tracking_side",
+      "pose_model_disagreement",
     }
   ]
 
   if quality_warning_flags:
     summary_flags.append("Video quality limited confidence")
     feedback = QUALITY_FLAG_FEEDBACK.get(quality_warning_flags[0])
-    if feedback:
+    if feedback and feedback not in coach_feedback:
       coach_feedback.append(feedback)
 
   if not summary_flags:
-    coach_feedback.append("Reps looked consistent. Keep the same depth and torso control.")
+    if all(status == "hit_depth" for status in depth_statuses):
+      coach_feedback.append("Reps reached depth. Keep the same depth and torso control.")
+    else:
+      coach_feedback.append("Reps looked consistent. Keep the same depth and torso control.")
 
   return summary_flags, coach_feedback
