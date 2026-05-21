@@ -280,6 +280,12 @@ export default function AnalysisReviewScreen({
     ? summaryFlags.filter((flag) => flag !== 'Insufficient depth')
     : summaryFlags;
   const displaySummaryFlags = analysisIncomplete ? ['Analysis needs re-run'] : sanitizedSummaryFlags;
+  const depthHitCount = finalHitDepthReps.length;
+  const repCount = result.rep_count || result.reps.length;
+  const depthHitLabel =
+    repCount > 0
+      ? `Depth hit: ${depthHitCount > 0 ? 'yes' : 'no'} (${depthHitCount}/${repCount} reps)`
+      : 'Depth hit: n/a (0 reps)';
   const poseBackend = result.pose_backend ?? result.diagnostics?.pose_backend;
   const fallbackModel = result.fallback_model ?? result.diagnostics?.fallback_model;
   const fallbackRecommended = result.fallback_recommended ?? result.diagnostics?.fallback_recommended ?? false;
@@ -537,6 +543,7 @@ export default function AnalysisReviewScreen({
         >
           <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent}>
             <SheetSection title="Summary flags">
+              <Text style={styles.sheetText}>{depthHitLabel}</Text>
               {analysisStale ? (
                 <Text style={styles.staleText}>
                   This result was created by an older or incomplete model payload. Re-run analysis before trusting depth flags.
