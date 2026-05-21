@@ -1,6 +1,9 @@
 export const EXERCISE_OPTIONS = [
   'Squat',
   'Front Squat',
+  'Zercher Squat',
+  'Box Squat',
+  'Goblet Squat',
   'Bench Press',
   'Incline Bench Press',
   'Deadlift',
@@ -10,7 +13,7 @@ export const EXERCISE_OPTIONS = [
 ] as const;
 
 // The upload flow asks for both the lift and the camera angle.
-export const ANGLE_OPTIONS = ['Side', 'Front', 'Angled'] as const;
+export const ANGLE_OPTIONS = ['Side', 'Front'] as const;
 
 export type ExerciseOption = (typeof EXERCISE_OPTIONS)[number];
 export type CameraAngle = (typeof ANGLE_OPTIONS)[number];

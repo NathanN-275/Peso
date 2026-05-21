@@ -141,7 +141,52 @@ class PipelineFallbackTest(unittest.TestCase):
     with patch.dict(sys.modules, {"fastapi": fake_fastapi, "supabase": fake_supabase}):
       from app.analysis import pipeline
 
+    sys.modules[pipeline.__name__] = pipeline
     return pipeline
+
+  def test_squat_variations_use_squat_analyzer(self) -> None:
+    pipeline = self._import_pipeline()
+
+    for exercise_type in ["squat", "front squat", "zercher squat", "box squat", "goblet squat"]:
+      with self.subTest(exercise_type=exercise_type):
+        analyzer = MagicMock()
+        analyzer.analyze.return_value = {
+          "video_id": "video-1",
+          "exercise": exercise_type,
+          "view": "side",
+          "rep_count": 0,
+          "reps": [],
+        }
+
+        with patch("app.analysis.pipeline.SquatAnalyzer", return_value=analyzer):
+          result = pipeline._analyze_squat_result(
+            video_id="video-1",
+            video={
+              "id": "video-1",
+              "exercise_type": exercise_type,
+              "view_type": "side",
+            },
+            estimation=self._estimation(),
+          )
+
+        self.assertFalse(result.get("analysis_limited", False))
+        analyzer.analyze.assert_called_once()
+        self.assertEqual(analyzer.analyze.call_args.kwargs["exercise_type"], exercise_type)
+
+  def test_non_squat_variation_remains_limited(self) -> None:
+    pipeline = self._import_pipeline()
+
+    result = pipeline._analyze_squat_result(
+      video_id="video-1",
+      video={
+        "id": "video-1",
+        "exercise_type": "bench press",
+        "view_type": "side",
+      },
+      estimation=self._estimation(),
+    )
+
+    self.assertTrue(result["analysis_limited"])
 
   def test_clean_analysis_does_not_trigger_fallback(self) -> None:
     self.assertIsNone(
