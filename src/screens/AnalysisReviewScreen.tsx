@@ -449,7 +449,7 @@ export default function AnalysisReviewScreen({
               {deletingSavedVideo ? (
                 <ActivityIndicator color={tokens.colors.brand} />
               ) : (
-                <Ionicons name="trash-outline" size={26} color={tokens.colors.brand} />
+                <Ionicons name="trash-outline" size={24} color={tokens.colors.brand} />
               )}
             </Pressable>
           ) : (
@@ -778,32 +778,32 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
   },
   topButton: {
-    minWidth: 76,
-    minHeight: 46,
+    minWidth: 68,
+    minHeight: 40,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 9,
+    borderRadius: 8,
     backgroundColor: tokens.colors.brand,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
   },
   savedTrashButton: {
-    minWidth: 76,
-    minHeight: 46,
+    minWidth: 68,
+    minHeight: 40,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 9,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#173B82',
     backgroundColor: '#07142C',
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
   },
   disabledButton: {
     opacity: 0.6,
   },
   topButtonText: {
     color: tokens.colors.textPrimary,
-    fontSize: 16,
-    lineHeight: 20,
+    fontSize: 15,
+    lineHeight: 19,
     fontWeight: '600',
   },
   title: {
