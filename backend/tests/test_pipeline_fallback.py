@@ -373,6 +373,70 @@ class PipelineFallbackTest(unittest.TestCase):
     self.assertEqual(saved_result["pose_backend"], "mediapipe")
     self.assertEqual(saved_result["diagnostics"]["fallback_selection"], "primary_retained")
 
+  def test_analyze_attaches_barbell_path_for_side_squat(self) -> None:
+    pipeline = self._import_pipeline()
+    repository = self._repository()
+    storage = MagicMock()
+    storage.download_to_tempfile.return_value = "/tmp/video.mov"
+    estimator = MagicMock()
+    estimator.config = PoseEstimatorConfig(pose_backend="hybrid", pose_fallback_enabled=True)
+    estimator.run.return_value = self._estimation()
+    tracker = MagicMock()
+    tracker.track.return_value = {
+      "barbellPath": {
+        "available": True,
+        "target": "near_plate_collar_center",
+        "source": "opencv_circle_tracker",
+        "coverage": 1.0,
+        "points": [{"time": 0.0, "x": 0.5, "y": 0.25, "confidence": 0.9}],
+      },
+      "diagnostics": {
+        "available": True,
+        "target": "near_plate_collar_center",
+        "source": "opencv_circle_tracker",
+        "coverage": 1.0,
+      },
+    }
+
+    with (
+      patch("app.analysis.pipeline.VideoRepository", return_value=repository),
+      patch("app.analysis.pipeline.StorageService", return_value=storage),
+      patch("app.analysis.pipeline.get_settings", return_value=SimpleNamespace(model_version="test-model")),
+      patch("app.analysis.pipeline.PoseEstimator", return_value=estimator),
+      patch("app.analysis.pipeline.BarbellTracker", return_value=tracker),
+      patch("app.analysis.pipeline._analyze_squat_result", return_value=self._depth_result(status="hit_depth", delta_px=12.0)),
+    ):
+      pipeline.analyze_video("video-1")
+
+    saved_result = repository.save_analysis_result.call_args.args[2]
+    self.assertTrue(saved_result["barbellPath"]["available"])
+    self.assertEqual(saved_result["diagnostics"]["barbell_tracking"]["source"], "opencv_circle_tracker")
+    tracker.track.assert_called_once()
+
+  def test_analyze_skips_barbell_path_for_non_side_video(self) -> None:
+    pipeline = self._import_pipeline()
+    repository = self._repository()
+    repository.get_video.return_value["view_type"] = "front"
+    storage = MagicMock()
+    storage.download_to_tempfile.return_value = "/tmp/video.mov"
+    estimator = MagicMock()
+    estimator.config = PoseEstimatorConfig(pose_backend="hybrid", pose_fallback_enabled=True)
+    estimator.run.return_value = self._estimation()
+    tracker = MagicMock()
+
+    with (
+      patch("app.analysis.pipeline.VideoRepository", return_value=repository),
+      patch("app.analysis.pipeline.StorageService", return_value=storage),
+      patch("app.analysis.pipeline.get_settings", return_value=SimpleNamespace(model_version="test-model")),
+      patch("app.analysis.pipeline.PoseEstimator", return_value=estimator),
+      patch("app.analysis.pipeline.BarbellTracker", return_value=tracker),
+    ):
+      pipeline.analyze_video("video-1")
+
+    saved_result = repository.save_analysis_result.call_args.args[2]
+    self.assertNotIn("barbellPath", saved_result)
+    tracker.track.assert_not_called()
+
   def test_model_disagreement_downgrades_depth_to_uncertain(self) -> None:
     pipeline = self._import_pipeline()
     repository = self._repository()

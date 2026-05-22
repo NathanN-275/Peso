@@ -153,6 +153,21 @@ export type VideoPoseFrame = {
   keypoints: VideoPoseKeypoint[];
 };
 
+export type BarbellPathPoint = {
+  time: number;
+  x: number;
+  y: number;
+  confidence: number;
+};
+
+export type BarbellPath = {
+  available: boolean;
+  target: 'near_plate_collar_center' | string;
+  source: 'opencv_circle_tracker' | string;
+  coverage: number;
+  points: BarbellPathPoint[];
+};
+
 export type VideoAnalysisDiagnostics = {
   expected_model_version?: string;
   analysis_model_version?: string;
@@ -252,6 +267,19 @@ export type VideoAnalysisDiagnostics = {
     reason?: string | null;
     rep_count?: number;
   };
+  barbell_tracking?: {
+    available?: boolean;
+    target?: string;
+    source?: string;
+    coverage?: number;
+    sampled_frame_count?: number;
+    detected_point_count?: number;
+    interpolated_point_count?: number;
+    rejected_frame_count?: number;
+    failure_reason?: string | null;
+    error?: string;
+    processing_duration_ms?: number;
+  };
 };
 
 export type VideoAnalysisResult = {
@@ -264,6 +292,7 @@ export type VideoAnalysisResult = {
   videoWidth?: number | null;
   videoHeight?: number | null;
   poseFrames?: VideoPoseFrame[];
+  barbellPath?: BarbellPath;
   analysis_limited?: boolean;
   rep_count: number;
   reps: VideoAnalysisRep[];

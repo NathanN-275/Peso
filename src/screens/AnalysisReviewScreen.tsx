@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
 import { discardAnalyzedVideo, saveAnalyzedVideo } from '../../lib/backendApi';
+import BarbellPathOverlay from '../components/BarbellPathOverlay';
 import PoseOverlay from '../components/PoseOverlay';
 import ReviewBottomSheet from '../components/ReviewBottomSheet';
 import TimelineScrubber from '../components/TimelineScrubber';
@@ -484,6 +485,13 @@ export default function AnalysisReviewScreen({
               contentFit="cover"
               cameraView={cameraView}
               selectedSide={selectedPoseSide}
+            />
+            <BarbellPathOverlay
+              path={result.barbellPath}
+              currentTime={currentTime}
+              containerSize={videoLayout}
+              videoSize={videoSize}
+              contentFit="cover"
             />
 
             {status === 'loading' ? (
