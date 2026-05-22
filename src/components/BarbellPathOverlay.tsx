@@ -106,7 +106,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     height: 4,
     borderRadius: 4,
-    backgroundColor: 'rgba(0, 229, 255, 0.92)',
+    backgroundColor: 'rgba(64, 235, 52, 0.72)',
     transformOrigin: '0px 2px',
   },
   currentPoint: {
@@ -114,7 +114,7 @@ const styles = StyleSheet.create({
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: '#00E5FF',
+    backgroundColor: 'rgba(64, 235, 52, 0.82)',
     borderWidth: 2,
     borderColor: '#FFFFFF',
   },

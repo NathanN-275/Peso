@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 TRACKING_TARGET = "near_plate_collar_center"
 TRACKING_SOURCE = "opencv_circle_tracker"
+BARBELL_TRACK_TARGET_FPS = 6.0
+MAX_DETECTION_CROP_WIDTH = 320
 MIN_TRACK_COVERAGE = 0.2
 MIN_TRACK_POINTS = 4
 MAX_INTERPOLATION_GAP_FRAMES = 4
@@ -30,7 +32,10 @@ def _empty_result(
   *,
   sampled_frame_count: int = 0,
   detected_point_count: int = 0,
+  skipped_no_pose_frame_count: int = 0,
   processing_duration_ms: int = 0,
+  target_fps: float = BARBELL_TRACK_TARGET_FPS,
+  tracking_frame_step: int | None = None,
 ) -> dict[str, Any]:
   return {
     "barbellPath": {
@@ -49,8 +54,11 @@ def _empty_result(
       "detected_point_count": detected_point_count,
       "interpolated_point_count": 0,
       "rejected_frame_count": max(sampled_frame_count - detected_point_count, 0),
+      "skipped_no_pose_frame_count": skipped_no_pose_frame_count,
       "failure_reason": reason,
       "processing_duration_ms": processing_duration_ms,
+      "target_fps": target_fps,
+      "tracking_frame_step": tracking_frame_step,
     },
   }
 
@@ -138,7 +146,7 @@ def _candidate_in_bounds(candidate: Candidate, bounds: tuple[float, float, float
   return min_x <= candidate.x <= max_x and min_y <= candidate.y <= max_y
 
 
-def _detect_circle_candidates(cv2: Any, frame: Any) -> list[Candidate]:
+def _detect_circle_candidates(cv2: Any, frame: Any, *, offset_x: float = 0.0, offset_y: float = 0.0) -> list[Candidate]:
   height, width = frame.shape[:2]
   min_dimension = max(min(width, height), 1)
   gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -159,13 +167,60 @@ def _detect_circle_candidates(cv2: Any, frame: Any) -> list[Candidate]:
 
   return [
     Candidate(
-      x=float(circle[0]),
-      y=float(circle[1]),
+      x=float(circle[0]) + offset_x,
+      y=float(circle[1]) + offset_y,
       radius=float(circle[2]),
       confidence=0.62,
     )
     for circle in circles[0]
   ]
+
+
+def _detection_crop(
+  cv2: Any,
+  frame: Any,
+  bounds: tuple[float, float, float, float],
+) -> tuple[Any, float, float, float, float]:
+  height, width = frame.shape[:2]
+  min_x, min_y, max_x, max_y = bounds
+  x0 = max(int(math.floor(min_x)), 0)
+  y0 = max(int(math.floor(min_y)), 0)
+  x1 = min(int(math.ceil(max_x)), width)
+  y1 = min(int(math.ceil(max_y)), height)
+
+  if x1 <= x0 or y1 <= y0:
+    return frame, 0.0, 0.0, float(width), float(height)
+
+  crop = frame[y0:y1, x0:x1]
+  crop_width = crop.shape[1]
+  crop_height = crop.shape[0]
+  if crop_width > MAX_DETECTION_CROP_WIDTH:
+    scale = MAX_DETECTION_CROP_WIDTH / crop_width
+    resized_width = MAX_DETECTION_CROP_WIDTH
+    resized_height = max(int(round(crop_height * scale)), 1)
+    crop = cv2.resize(crop, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
+    return crop, float(x0), float(y0), 1 / scale, 1 / scale
+
+  return crop, float(x0), float(y0), 1.0, 1.0
+
+
+def _detect_crop_candidates(
+  cv2: Any,
+  frame: Any,
+  bounds: tuple[float, float, float, float],
+) -> tuple[list[Candidate], int, int]:
+  crop, offset_x, offset_y, scale_x, scale_y = _detection_crop(cv2, frame, bounds)
+  candidates = _detect_circle_candidates(cv2, crop)
+  crop_height, crop_width = crop.shape[:2]
+  return [
+    Candidate(
+      x=(candidate.x * scale_x) + offset_x,
+      y=(candidate.y * scale_y) + offset_y,
+      radius=candidate.radius * ((scale_x + scale_y) / 2),
+      confidence=candidate.confidence,
+    )
+    for candidate in candidates
+  ], crop_width, crop_height
 
 
 def _score_candidate(
@@ -177,23 +232,60 @@ def _score_candidate(
   height: int,
 ) -> float:
   score = candidate.confidence
+  bootstrapping = previous is None
   min_dimension = max(min(width, height), 1)
   radius_ratio = candidate.radius / min_dimension
-  score += min(radius_ratio / 0.16, 1.0) * 0.42
+  score += min(radius_ratio / 0.16, 1.0) * (0.66 if bootstrapping else 0.42)
 
   if shoulder:
     shoulder_distance = math.hypot(candidate.x - shoulder[0], candidate.y - shoulder[1])
-    score += max(0.0, 0.18 * (1.0 - shoulder_distance / max(width, height)))
-    if candidate.y <= shoulder[1]:
-      score += min((shoulder[1] - candidate.y) / (height * 0.28), 1.0) * 0.7
+    score += max(0.0, 0.14 * (1.0 - shoulder_distance / max(width, height)))
+    vertical_offset = (shoulder[1] - candidate.y) / height
+    if vertical_offset >= 0:
+      ideal_offset = 0.13
+      tolerance = 0.13
+      band_score = max(0.0, 1.0 - (abs(vertical_offset - ideal_offset) / tolerance))
+      score += band_score * (0.95 if bootstrapping else 0.58)
+
+      if vertical_offset > 0.25:
+        score -= min((vertical_offset - 0.25) / 0.16, 1.0) * (1.1 if bootstrapping else 0.54)
     else:
-      score -= min((candidate.y - shoulder[1]) / (height * 0.18), 1.0) * 0.24
+      score -= min(abs(vertical_offset) / 0.18, 1.0) * (0.76 if bootstrapping else 0.24)
 
   if previous:
     previous_distance = math.hypot(candidate.x - previous["x"], candidate.y - previous["y"])
     score += max(0.0, 0.34 * (1.0 - previous_distance / (max(width, height) * 0.22)))
 
   return score
+
+
+def _select_candidate(
+  candidates: list[Candidate],
+  *,
+  previous: dict[str, float] | None,
+  shoulder: tuple[float, float] | None,
+  width: int,
+  height: int,
+) -> Candidate:
+  if previous is None and shoulder:
+    preferred = [
+      candidate
+      for candidate in candidates
+      if shoulder[1] - (height * 0.26) <= candidate.y <= shoulder[1] + (height * 0.08)
+    ]
+    if preferred:
+      candidates = preferred
+
+  return max(
+    candidates,
+    key=lambda candidate: _score_candidate(
+      candidate,
+      previous=previous,
+      shoulder=shoulder,
+      width=width,
+      height=height,
+    ),
+  )
 
 
 def _interpolate_missing(samples: list[dict[str, Any] | None]) -> tuple[list[dict[str, Any]], int]:
@@ -302,15 +394,28 @@ class BarbellTracker:
       capture.release()
       return _empty_result("invalid_video_dimensions")
 
-    frame_step = max(int(frame_step or 1), 1)
+    pose_frame_step = max(int(frame_step or 1), 1)
+    target_frame_step = max(int(round(fps / BARBELL_TRACK_TARGET_FPS)), 1) if fps > 0 else pose_frame_step
+    tracking_frame_step = pose_frame_step * max(int(round(target_frame_step / pose_frame_step)), 1)
     pose_by_source_index = {
       int(frame.get("source_frame_index", -1)): frame
       for frame in pose_frames
       if frame.get("source_frame_index") is not None
     }
+    if not pose_by_source_index:
+      capture.release()
+      return _empty_result(
+        "no_pose_frames",
+        target_fps=BARBELL_TRACK_TARGET_FPS,
+        tracking_frame_step=tracking_frame_step,
+      )
+
     samples: list[dict[str, Any] | None] = []
     previous_point: dict[str, float] | None = None
     detected_count = 0
+    skipped_no_pose_frame_count = 0
+    crop_widths: list[int] = []
+    crop_heights: list[int] = []
     frame_index = 0
 
     try:
@@ -319,7 +424,7 @@ class BarbellTracker:
         if not success:
           break
 
-        if frame_index % frame_step != 0:
+        if frame_index % tracking_frame_step != 0:
           frame_index += 1
           continue
 
@@ -328,29 +433,30 @@ class BarbellTracker:
 
         timestamp = frame_index / fps if fps > 0 else len(samples) / 18.0
         pose_frame = pose_by_source_index.get(frame_index)
+        if not pose_frame:
+          skipped_no_pose_frame_count += 1
+          frame_index += 1
+          continue
+
         bounds = _pose_bounds(pose_frame, width=width, height=height)
         candidate_bounds = bounds[:4]
         shoulder = bounds[4]
-        candidates = [
-          candidate
-          for candidate in _detect_circle_candidates(cv2, frame)
-          if _candidate_in_bounds(candidate, candidate_bounds)
-        ]
+        candidates, crop_width, crop_height = _detect_crop_candidates(cv2, frame, candidate_bounds)
+        crop_widths.append(crop_width)
+        crop_heights.append(crop_height)
+        candidates = [candidate for candidate in candidates if _candidate_in_bounds(candidate, candidate_bounds)]
 
         if not candidates:
           samples.append(None)
           frame_index += 1
           continue
 
-        selected = max(
+        selected = _select_candidate(
           candidates,
-          key=lambda candidate: _score_candidate(
-            candidate,
-            previous=previous_point,
-            shoulder=shoulder,
-            width=width,
-            height=height,
-          ),
+          previous=previous_point,
+          shoulder=shoulder,
+          width=width,
+          height=height,
         )
         point = {
           "time": timestamp,
@@ -377,7 +483,13 @@ class BarbellTracker:
     sampled_count = len(samples)
     processing_duration_ms = int((time.perf_counter() - started) * 1000)
     if sampled_count == 0:
-      return _empty_result("no_sampled_frames", processing_duration_ms=processing_duration_ms)
+      return _empty_result(
+        "no_sampled_frames",
+        skipped_no_pose_frame_count=skipped_no_pose_frame_count,
+        processing_duration_ms=processing_duration_ms,
+        target_fps=BARBELL_TRACK_TARGET_FPS,
+        tracking_frame_step=tracking_frame_step,
+      )
 
     points, interpolated_count = _interpolate_missing(samples)
     coverage = len(points) / sampled_count if sampled_count else 0.0
@@ -387,7 +499,10 @@ class BarbellTracker:
         "low_barbell_tracking_coverage",
         sampled_frame_count=sampled_count,
         detected_point_count=detected_count,
+        skipped_no_pose_frame_count=skipped_no_pose_frame_count,
         processing_duration_ms=processing_duration_ms,
+        target_fps=BARBELL_TRACK_TARGET_FPS,
+        tracking_frame_step=tracking_frame_step,
       )
 
     smoothed_points = _smooth_points(points)
@@ -409,7 +524,12 @@ class BarbellTracker:
         "detected_point_count": detected_count,
         "interpolated_point_count": interpolated_count,
         "rejected_frame_count": max(sampled_count - detected_count - interpolated_count, 0),
+        "skipped_no_pose_frame_count": skipped_no_pose_frame_count,
         "failure_reason": None,
         "processing_duration_ms": processing_duration_ms,
+        "target_fps": BARBELL_TRACK_TARGET_FPS,
+        "tracking_frame_step": tracking_frame_step,
+        "crop_width": round(sum(crop_widths) / len(crop_widths), 1) if crop_widths else None,
+        "crop_height": round(sum(crop_heights) / len(crop_heights), 1) if crop_heights else None,
       },
     }

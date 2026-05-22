@@ -39,12 +39,13 @@ def write_video(
   centers: list[tuple[int, int] | None],
   *,
   size: tuple[int, int] = (320, 240),
+  fps: float = 6.0,
   distractors: list[list[tuple[int, int, int]]] | None = None,
 ) -> None:
   writer = cv2.VideoWriter(
     str(path),
     cv2.VideoWriter_fourcc(*"mp4v"),
-    18.0,
+    fps,
     size,
   )
   if not writer.isOpened():
@@ -64,18 +65,19 @@ def write_video(
 
 
 class BarbellTrackerTest(unittest.TestCase):
-  def _track(self, centers: list[tuple[int, int] | None]) -> dict:
+  def _track(self, centers: list[tuple[int, int] | None], *, fps: float = 6.0, frame_step: int = 1) -> dict:
     with tempfile.TemporaryDirectory() as temp_dir:
       path = Path(temp_dir) / "barbell.mp4"
-      write_video(path, centers)
+      write_video(path, centers, fps=fps)
       pose_frames = [
         pose_frame(index, x=(center[0] / 320 if center else 0.5), y=(center[1] / 240 if center else 0.4))
         for index, center in enumerate(centers)
+        if index % frame_step == 0
       ]
       return BarbellTracker().track(
         str(path),
         pose_frames=pose_frames,
-        frame_step=1,
+        frame_step=frame_step,
         processed_width=320,
         processed_height=240,
       )
@@ -104,6 +106,76 @@ class BarbellTrackerTest(unittest.TestCase):
     first_point = result["barbellPath"]["points"][0]
     self.assertAlmostEqual(first_point["x"], 226 / 320, delta=0.06)
     self.assertAlmostEqual(first_point["y"], 72 / 240, delta=0.08)
+
+  def test_bootstrap_starts_on_plate_center_before_motion(self) -> None:
+    centers = [(226, 72), (226, 72), (226, 72), (226, 78), (226, 84), (226, 90)]
+    distractors = [[(150, 116, 18), (178, 132, 16)] for _ in centers]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-start.mp4"
+      write_video(path, centers, distractors=distractors)
+      pose_frames = [pose_frame(index, x=0.48, y=0.43) for index in range(len(centers))]
+
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+      )
+
+    first_point = result["barbellPath"]["points"][0]
+    self.assertAlmostEqual(first_point["x"], 226 / 320, delta=0.06)
+    self.assertAlmostEqual(first_point["y"], 72 / 240, delta=0.08)
+
+  def test_bootstrap_rejects_high_rack_hardware(self) -> None:
+    centers = [(226, 72), (226, 72), (226, 78), (226, 84), (226, 90), (226, 96)]
+    distractors = [[(226, 32, 18), (178, 128, 16)] for _ in centers]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-rack-distractor.mp4"
+      write_video(path, centers, distractors=distractors)
+      pose_frames = [pose_frame(index, x=0.48, y=0.43) for index in range(len(centers))]
+
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+      )
+
+    first_point = result["barbellPath"]["points"][0]
+    self.assertAlmostEqual(first_point["x"], 226 / 320, delta=0.06)
+    self.assertAlmostEqual(first_point["y"], 72 / 240, delta=0.08)
+
+  def test_tracks_about_six_fps_on_sixty_fps_video(self) -> None:
+    centers = [(150, 78 + (index // 10)) for index in range(60)]
+
+    result = self._track(centers, fps=60.0, frame_step=3)
+
+    self.assertTrue(result["barbellPath"]["available"])
+    self.assertEqual(result["diagnostics"]["tracking_frame_step"], 9)
+    self.assertLessEqual(result["diagnostics"]["sampled_frame_count"], 8)
+    self.assertGreaterEqual(result["diagnostics"]["sampled_frame_count"], 6)
+
+  def test_returns_unavailable_without_pose_frames(self) -> None:
+    centers = [(150, 78) for _ in range(20)]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-no-pose.mp4"
+      write_video(path, centers, fps=60.0)
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=[],
+        frame_step=3,
+        processed_width=320,
+        processed_height=240,
+      )
+
+    self.assertFalse(result["barbellPath"]["available"])
+    self.assertEqual(result["diagnostics"]["failure_reason"], "no_pose_frames")
+    self.assertEqual(result["diagnostics"]["sampled_frame_count"], 0)
 
   def test_tracks_synthetic_moving_plate_center(self) -> None:
     centers = [(150, 78 + index * 5) for index in range(10)]
