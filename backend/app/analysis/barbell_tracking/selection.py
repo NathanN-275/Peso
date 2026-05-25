@@ -200,11 +200,6 @@ def _plate_match_is_consistent(
   if abs(candidate.radius - previous_radius) / previous_radius > 0.38:
     return False
 
-  offset = _shoulder_relative_offset(candidate, shoulder)
-  if offset and "dx" in previous and "dy" in previous:
-    if math.hypot(offset[0] - previous["dx"], offset[1] - previous["dy"]) > max(width, height) * 0.18:
-      return False
-
   return True
 
 

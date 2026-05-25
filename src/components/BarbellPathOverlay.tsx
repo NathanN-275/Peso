@@ -1,5 +1,5 @@
 import { StyleSheet, View } from 'react-native';
-import { BarbellPath, BarbellPathPoint } from '../types/videoAnalysis';
+import { BarbellPath } from '../types/videoAnalysis';
 import { calculateVideoRect, ContentFit, Size } from '../utils/videoReview';
 
 type BarbellPathOverlayProps = {
@@ -32,62 +32,43 @@ function Line({ from, to }: { from: { x: number; y: number }; to: { x: number; y
   );
 }
 
-function progressivePoints(points: BarbellPathPoint[], currentTime: number) {
-  const visible = points.filter((point) => point.time <= currentTime);
-  const next = points.find((point) => point.time > currentTime);
-  const previous = visible[visible.length - 1];
-
-  if (!previous || !next) {
-    return visible;
-  }
-
-  const gap = next.time - previous.time;
-  if (gap <= 0 || gap > 0.5) {
-    return visible;
-  }
-
-  const progress = Math.min(Math.max((currentTime - previous.time) / gap, 0), 1);
-  return [
-    ...visible,
-    {
-      time: currentTime,
-      x: previous.x + ((next.x - previous.x) * progress),
-      y: previous.y + ((next.y - previous.y) * progress),
-      confidence: Math.min(previous.confidence, next.confidence),
-    },
-  ];
-}
-
 export default function BarbellPathOverlay({
   path,
-  currentTime,
+  currentTime: _currentTime,
   containerSize,
   videoSize,
   contentFit = 'cover',
   confidenceThreshold = 0.25,
 }: BarbellPathOverlayProps) {
-  if (!path?.available || path.points.length <= 0 || containerSize.width <= 0 || containerSize.height <= 0) {
+  const pathPoints = Array.isArray(path?.points) ? path.points : [];
+
+  if (
+    path?.available !== true
+    || pathPoints.length < 2
+    || containerSize.width <= 0
+    || containerSize.height <= 0
+  ) {
     return null;
   }
 
   const rect = calculateVideoRect(containerSize, videoSize, contentFit);
-  const mappedPoints = progressivePoints(
-    path.points.filter((point) => point.confidence >= confidenceThreshold),
-    currentTime
-  ).map((point) => ({
-    x: rect.x + (point.x * rect.width),
-    y: rect.y + (point.y * rect.height),
-    time: point.time,
-  }));
+  const mappedPoints = pathPoints
+    .filter((point) => point.confidence >= confidenceThreshold)
+    .map((point) => ({
+      x: rect.x + (point.x * rect.width),
+      y: rect.y + (point.y * rect.height),
+      time: point.time,
+    }));
 
-  if (mappedPoints.length <= 0) {
+  if (mappedPoints.length < 2) {
     return null;
   }
 
+  const firstPoint = mappedPoints[0];
   const lastPoint = mappedPoints[mappedPoints.length - 1];
 
   return (
-    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+    <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.overlay]}>
       {mappedPoints.slice(1).map((point, index) => {
         const previous = mappedPoints[index];
         if (!previous || point.time - previous.time > 0.5) {
@@ -96,25 +77,39 @@ export default function BarbellPathOverlay({
 
         return <Line key={`${previous.time}-${point.time}`} from={previous} to={point} />;
       })}
-      <View style={[styles.currentPoint, { left: lastPoint.x - 6, top: lastPoint.y - 6 }]} />
+      <View style={[styles.startPoint, { left: firstPoint.x - 3, top: firstPoint.y - 3 }]} />
+      <View style={[styles.currentPoint, { left: lastPoint.x - 7, top: lastPoint.y - 7 }]} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  overlay: {
+    zIndex: 20,
+    elevation: 20,
+  },
   line: {
     position: 'absolute',
-    height: 4,
-    borderRadius: 4,
-    backgroundColor: 'rgba(64, 235, 52, 0.72)',
-    transformOrigin: '0px 2px',
+    height: 3,
+    borderRadius: 3,
+    backgroundColor: 'rgba(64, 235, 52, 0.86)',
+    transformOrigin: '0px 1.5px',
+  },
+  startPoint: {
+    position: 'absolute',
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(64, 235, 52, 0.88)',
+    borderWidth: 1,
+    borderColor: '#FFFFFF',
   },
   currentPoint: {
     position: 'absolute',
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: 'rgba(64, 235, 52, 0.82)',
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: 'rgba(64, 235, 52, 0.92)',
     borderWidth: 2,
     borderColor: '#FFFFFF',
   },

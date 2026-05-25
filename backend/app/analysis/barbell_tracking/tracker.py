@@ -247,14 +247,27 @@ class BarbellTracker:
             sleeve_direction = (tracking_lock["collar_direction_x"], tracking_lock["collar_direction_y"])
             collar_geometry_valid = True
             consecutive_local_failures = 0
-            samples.append(
-              {
-                "time": timestamp,
-                "x": refined_collar[0] / width,
-                "y": refined_collar[1] / height,
-                "confidence": min(float(selected_plate.confidence) + 0.25, 1.0),
-              }
+            point = {
+              "time": timestamp,
+              "x": refined_collar[0] / width,
+              "y": refined_collar[1] / height,
+              "confidence": min(float(selected_plate.confidence) + 0.25, 1.0),
+            }
+            logger.info(
+              "Barbell point emitted frame=%s plate=(%.2f, %.2f r=%.2f) predicted=(%.2f, %.2f) refined=(%.2f, %.2f) normalized=(%.4f, %.4f) pending_confirmation_count=%s",
+              frame_index,
+              selected_plate.x,
+              selected_plate.y,
+              selected_plate.radius,
+              predicted_collar[0],
+              predicted_collar[1],
+              refined_collar[0],
+              refined_collar[1],
+              point["x"],
+              point["y"],
+              pending_confirmation_count,
             )
+            samples.append(point)
             detected_count += 1
             previous_gray = gray
             if debug_writer:
@@ -478,7 +491,7 @@ class BarbellTracker:
           shoulder=shoulder,
           width=width,
           height=height,
-          previous=pending_plate,
+          previous=None,
         )
         refined_candidate, collar_confidence_penalty, collar_refinement_reason = _refine_collar_point(
           cv2,
@@ -486,13 +499,13 @@ class BarbellTracker:
           predicted=predicted_collar,
           plate=selected_plate,
           sleeve_direction=sleeve_direction,
-          previous=pending_plate,
+          previous=None,
         )
         collar_rejection_reason = _validate_collar_geometry(
           refined_candidate,
           plate=selected_plate,
           sleeve_direction=sleeve_direction,
-          previous=pending_plate,
+          previous=None,
         )
         fallback_used = collar_rejection_reason is not None
         if collar_refinement_reason is not None:
@@ -503,7 +516,7 @@ class BarbellTracker:
           refined_collar,
           plate=selected_plate,
           sleeve_direction=sleeve_direction,
-          previous=pending_plate,
+          previous=None,
         )
         if final_geometry_reason is not None:
           collar_rejection_reason = final_geometry_reason
@@ -549,6 +562,20 @@ class BarbellTracker:
           "y": refined_collar[1] / height,
           "confidence": confidence,
         }
+        logger.info(
+          "Barbell point emitted frame=%s plate=(%.2f, %.2f r=%.2f) predicted=(%.2f, %.2f) refined=(%.2f, %.2f) normalized=(%.4f, %.4f) pending_confirmation_count=%s",
+          frame_index,
+          selected_plate.x,
+          selected_plate.y,
+          selected_plate.radius,
+          predicted_collar[0],
+          predicted_collar[1],
+          refined_collar[0],
+          refined_collar[1],
+          point["x"],
+          point["y"],
+          pending_confirmation_count,
+        )
         relative_offset = _shoulder_relative_offset(selected_plate, shoulder)
         tracking_lock = _make_tracking_lock(
           cv2,
