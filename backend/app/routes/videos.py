@@ -56,9 +56,9 @@ class SavedVideoResponse(BaseModel):
   id: UUID
   exercise_type: str
   view_type: str
-  storage_path: str
+  storage_path: str | None = None
   thumbnail_path: str | None = None
-  video_url: str
+  video_url: str | None = None
   thumbnail_url: str | None = None
   save_state: str
   saved_at: str | None = None
@@ -76,6 +76,12 @@ class DiscardVideoResponse(BaseModel):
   discarded: bool
 
 
+class VideoPlaybackUrlResponse(BaseModel):
+  video_id: UUID
+  video_url: str
+  expires_in: int
+
+
 class AnalyzedVideoExportResponse(BaseModel):
   video_id: UUID
   analysis_id: UUID
@@ -85,6 +91,65 @@ class AnalyzedVideoExportResponse(BaseModel):
 
 class CleanupExpiredVideosResponse(BaseModel):
   deleted_count: int
+  candidate_count: int = 0
+  dry_run: bool = True
+
+
+def _video_is_saved(video: dict) -> bool:
+  return video.get("save_state") == "saved" or video.get("is_saved") is True
+
+
+def _summary_analysis_payload(result_json: dict) -> dict:
+  summary = result_json.get("summary_flags") or result_json.get("summaryFlags") or []
+  coaching_feedback = result_json.get("coach_feedback") or result_json.get("coachingFeedback") or []
+  analysis_stale = result_json.get("analysis_stale") or result_json.get("diagnostics", {}).get("analysis_stale") or False
+  analysis_incomplete = (
+    result_json.get("analysis_incomplete")
+    or result_json.get("diagnostics", {}).get("analysis_incomplete")
+    or False
+  )
+  diagnostics: dict[str, bool] = {}
+
+  if analysis_stale:
+    diagnostics["analysis_stale"] = True
+
+  if analysis_incomplete:
+    diagnostics["analysis_incomplete"] = True
+
+  return {
+    "summary_flags": summary,
+    "summaryFlags": summary,
+    "coach_feedback": coaching_feedback,
+    "coachingFeedback": coaching_feedback,
+    "analysis_stale": analysis_stale,
+    "analysis_incomplete": analysis_incomplete,
+    "diagnostics": diagnostics,
+  }
+
+
+def _playback_storage_path(video: dict) -> str:
+  return str(video.get("playback_path") or video["storage_path"])
+
+
+def _path_belongs_to_user(path: str, user_id: str) -> bool:
+  return bool(path) and path.startswith(f"{user_id}/")
+
+
+def _delete_owned_storage_path(storage: StorageService, path: str, user_id: str, label: str) -> bool:
+  if not path:
+    return False
+
+  if not _path_belongs_to_user(path, user_id):
+    logger.warning("Skipping %s deletion outside user folder user_id=%s path=%s", label, user_id, path)
+    return False
+
+  try:
+    logger.info("Deleting %s storage object path=%s", label, path)
+    storage.delete_storage_path(path)
+    return True
+  except Exception as error:
+    logger.warning("Unable to delete %s storage object path=%s: %s", label, path, error)
+    return False
 
 
 def _run_analysis_job(video_id: str) -> None:
@@ -111,7 +176,7 @@ def queue_analysis(
     analysis = repository.get_analysis_result(video_id_str)
 
     if not analysis_is_current(analysis):
-      StorageService().validate_video_object(video["storage_path"])
+      StorageService().validate_video_object(_playback_storage_path(video))
       repository.update_video(video_id_str, {"status": "queued"})
       background_tasks.add_task(_run_analysis_job, video_id_str)
       return AnalyzeResponse(video_id=video_id, status="queued")
@@ -125,7 +190,7 @@ def queue_analysis(
       detail=f"Video cannot be queued for analysis from status '{current_status}'.",
     )
 
-  StorageService().validate_video_object(video["storage_path"])
+  StorageService().validate_video_object(_playback_storage_path(video))
   queued_video = repository.queue_owned_video_if_status(
     video_id_str,
     user_id,
@@ -155,7 +220,12 @@ def save_video(
 ) -> SaveVideoResponse:
   # Mark a finished analysis as saved in the user's library.
   repository = VideoRepository()
-  repository.require_owned_video(str(video_id), user_id)
+  video = repository.require_owned_video(str(video_id), user_id)
+  if video.get("discarded_at"):
+    raise HTTPException(
+      status_code=status.HTTP_409_CONFLICT,
+      detail="Discarded videos cannot be saved.",
+    )
   saved_video = repository.mark_saved(str(video_id))
   return SaveVideoResponse(video_id=video_id, save_state=saved_video["save_state"])
 
@@ -175,14 +245,15 @@ def list_saved_videos(
     normalized_analysis = None
 
     if analysis:
+      summary_payload = _summary_analysis_payload(result_json)
       normalized_analysis = SavedVideoAnalysisResponse(
         id=analysis["id"],
         model_version=analysis["model_version"],
         created_at=analysis["created_at"],
-        result_json=result_json,
-        summary=result_json.get("summary_flags") or result_json.get("summaryFlags") or [],
-        coaching_feedback=result_json.get("coach_feedback") or result_json.get("coachingFeedback") or [],
-        rep_data=result_json.get("reps") or [],
+        result_json=summary_payload,
+        summary=summary_payload["summary_flags"],
+        coaching_feedback=summary_payload["coach_feedback"],
+        rep_data=[],
       )
 
     thumbnail_path = video.get("thumbnail_path")
@@ -191,11 +262,11 @@ def list_saved_videos(
         id=video["id"],
         exercise_type=video["exercise_type"],
         view_type=video["view_type"],
-        storage_path=video["storage_path"],
+        storage_path=None,
         thumbnail_path=thumbnail_path,
-        video_url=storage.create_signed_url(video["storage_path"]),
+        video_url=None,
         thumbnail_url=storage.create_signed_url(thumbnail_path) if thumbnail_path else None,
-        save_state=video["save_state"],
+        save_state=video.get("save_state") or ("saved" if video.get("is_saved") else "pending"),
         saved_at=video.get("saved_at"),
         created_at=video["created_at"],
         analysis=normalized_analysis,
@@ -203,6 +274,28 @@ def list_saved_videos(
     )
 
   return saved_videos
+
+
+@router.get("/videos/{video_id}/playback-url", response_model=VideoPlaybackUrlResponse)
+def get_video_playback_url(
+  video_id: UUID,
+  user_id: str = Depends(get_current_user_id),
+) -> VideoPlaybackUrlResponse:
+  repository = VideoRepository()
+  storage = StorageService()
+  video = repository.require_owned_video(str(video_id), user_id)
+
+  if video.get("discarded_at"):
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found.")
+
+  expires_in = 300
+  playback_path = _playback_storage_path(video)
+  logger.info("Signing playback URL for video_id=%s path=%s expires_in=%s", video_id, playback_path, expires_in)
+  return VideoPlaybackUrlResponse(
+    video_id=video_id,
+    video_url=storage.create_signed_url(playback_path, expires_in=expires_in),
+    expires_in=expires_in,
+  )
 
 
 @router.post("/videos/{video_id}/analyzed-export", response_model=AnalyzedVideoExportResponse)
@@ -215,7 +308,7 @@ def export_analyzed_video(
   video_id_str = str(video_id)
   video = repository.require_owned_video(video_id_str, user_id)
 
-  if video.get("save_state") != "saved":
+  if not _video_is_saved(video):
     raise HTTPException(
       status_code=status.HTTP_409_CONFLICT,
       detail="Only saved videos can be exported.",
@@ -237,7 +330,7 @@ def export_analyzed_video(
     output_file: Path | None = None
 
     try:
-      source_file = storage.download_to_tempfile(video["storage_path"])
+      source_file = storage.download_to_tempfile(_playback_storage_path(video))
 
       with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_output:
         output_file = Path(temp_output.name)
@@ -268,38 +361,71 @@ def discard_video(
   video_id: UUID,
   user_id: str = Depends(get_current_user_id),
 ) -> DiscardVideoResponse:
-  # Discard removes both the storage object and the DB row.
+  # Discard removes storage objects and keeps a discarded metadata row.
   repository = VideoRepository()
   storage = StorageService()
   video = repository.require_owned_video(str(video_id), user_id)
-  storage.delete_storage_path(video["storage_path"])
-  if video.get("thumbnail_path"):
-    storage.delete_storage_path(video["thumbnail_path"])
-  storage.delete_storage_prefix(f"{user_id}/exports/{video_id}-")
-  repository.delete_video_with_analysis(str(video_id))
+
+  paths = [
+    str(video.get("storage_path") or ""),
+    str(video.get("original_storage_path") or ""),
+    str(video.get("playback_path") or ""),
+    str(video.get("thumbnail_path") or ""),
+  ]
+
+  for path in [path for path in dict.fromkeys(paths) if path]:
+    _delete_owned_storage_path(storage, path, user_id, "discard")
+
+  for path in storage.list_storage_prefix(f"{user_id}/exports/{video_id}-"):
+    _delete_owned_storage_path(storage, path, user_id, "export")
+
+  repository.mark_discarded(str(video_id))
   return DiscardVideoResponse(video_id=video_id, discarded=True)
 
 
 @router.post("/videos/cleanup-expired", response_model=CleanupExpiredVideosResponse)
-def cleanup_expired_videos() -> CleanupExpiredVideosResponse:
+def cleanup_expired_videos(confirm: bool = False) -> CleanupExpiredVideosResponse:
   repository = VideoRepository()
   storage = StorageService()
-  expired_videos = repository.list_expired_pending_videos()
+  expired_videos = repository.list_storage_cleanup_candidates()
   deleted_count = 0
 
   for video in expired_videos:
-    storage.delete_storage_path(video["storage_path"])
-    if video.get("thumbnail_path"):
-      storage.delete_storage_path(video["thumbnail_path"])
-    repository.delete_video_with_analysis(video["id"])
-    deleted_count += 1
+    paths = [
+      str(video.get("storage_path") or ""),
+      str(video.get("original_storage_path") or ""),
+      str(video.get("playback_path") or ""),
+      str(video.get("thumbnail_path") or ""),
+      *storage.list_storage_prefix(f"{video['user_id']}/exports/{video['id']}-"),
+    ]
+
+    for path in [path for path in dict.fromkeys(paths) if path]:
+      if not _path_belongs_to_user(path, str(video["user_id"])):
+        logger.warning("Skipping cleanup deletion outside user folder user_id=%s path=%s", video["user_id"], path)
+        continue
+
+      if confirm:
+        logger.info("Deleting cleanup storage object: %s", path)
+        if _delete_owned_storage_path(storage, path, str(video["user_id"]), "cleanup"):
+          deleted_count += 1
+      else:
+        logger.info("Dry run would delete cleanup storage object: %s", path)
+
+    if confirm:
+      repository.mark_discarded(video["id"])
 
   logger.info(
-    "Cleaned up %s expired pending videos at %s",
+    "Storage cleanup dry_run=%s candidates=%s deleted_objects=%s at %s",
+    not confirm,
+    len(expired_videos),
     deleted_count,
     datetime.now(timezone.utc).isoformat(),
   )
-  return CleanupExpiredVideosResponse(deleted_count=deleted_count)
+  return CleanupExpiredVideosResponse(
+    deleted_count=deleted_count,
+    candidate_count=len(expired_videos),
+    dry_run=not confirm,
+  )
 
 
 @router.get("/videos/{video_id}/status", response_model=VideoStatusResponse)

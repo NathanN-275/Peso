@@ -1,6 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import * as VideoThumbnails from 'expo-video-thumbnails';
 import Constants, { AppOwnership } from 'expo-constants';
 import { useEffect, useRef, useState } from 'react';
 import { LayoutChangeEvent } from 'react-native';
@@ -25,6 +24,7 @@ import { VideoSetupSelection } from '../constants/videoSetup';
 import AnalysisReviewScreen from './AnalysisReviewScreen';
 import { VideoAnalysisResult, VideoAnalysisStatus } from '../types/videoAnalysis';
 import tokens from '../theme/tokens';
+import { createLocalVideoThumbnail, getUriScheme } from '../utils/localVideoThumbnail';
 
 type UploadVideoScreenProps = {
   onBack?: () => void;
@@ -320,20 +320,16 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
       return;
     }
 
-    if (isWeb) {
-      setThumbnailUri(null);
-      return;
-    }
-
     let active = true;
+    setThumbnailUri(null);
 
     const generateThumbnail = async () => {
       try {
         const time = typeof selectedVideo.duration === 'number'
           ? Math.max(0, Math.min(selectedVideo.duration / 3, 1500))
           : 1000;
-        const thumbnail = await VideoThumbnails.getThumbnailAsync(selectedVideo.uri, {
-          time,
+        const thumbnail = await createLocalVideoThumbnail(selectedVideo.uri, {
+          timeMs: time,
           quality: 0.7,
         });
 
@@ -341,10 +337,14 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
           return;
         }
 
-        setThumbnailUri(thumbnail.uri);
+        setThumbnailUri(thumbnail);
       } catch (error) {
         if (__DEV__) {
-          console.warn('Unable to generate video thumbnail.', error);
+          console.warn('Unable to generate selected video thumbnail.', {
+            platform: Platform.OS,
+            uriScheme: getUriScheme(selectedVideo.uri),
+            error,
+          });
         }
 
         if (active) {
@@ -358,7 +358,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     return () => {
       active = false;
     };
-  }, [isWeb, selectedVideo]);
+  }, [selectedVideo]);
 
   useEffect(() => {
     // Poll until the backend reports a final analysis state.
