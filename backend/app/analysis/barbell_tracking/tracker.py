@@ -340,6 +340,7 @@ class BarbellTracker:
             shoulder=shoulder,
             width=width,
             height=height,
+            bootstrapping=True,
           )
           if reason:
             rejected.append(candidate)

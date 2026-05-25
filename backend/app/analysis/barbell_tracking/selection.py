@@ -135,6 +135,7 @@ def _plate_rejection_reason(
   shoulder: tuple[float, float] | None,
   width: int,
   height: int,
+  bootstrapping: bool,
 ) -> str | None:
   if shoulder:
     offset = _shoulder_relative_offset(candidate, shoulder)
@@ -162,12 +163,12 @@ def _plate_rejection_reason(
     offset = _shoulder_relative_offset(candidate, shoulder)
     if offset and "dx" in previous and "dy" in previous:
       relative_jump = math.hypot(offset[0] - previous["dx"], offset[1] - previous["dy"])
-      if relative_jump > max(width, height) * 0.08:
+      if not bootstrapping and relative_jump > max(width, height) * 0.08:
         return "relative_offset_jump"
 
       previous_shoulder_x = previous.get("shoulder_x")
       previous_shoulder_y = previous.get("shoulder_y")
-      if previous_shoulder_x is not None and previous_shoulder_y is not None and shoulder:
+      if not bootstrapping and previous_shoulder_x is not None and previous_shoulder_y is not None and shoulder:
         shoulder_motion = math.hypot(shoulder[0] - previous_shoulder_x, shoulder[1] - previous_shoulder_y)
         pose_relative_motion = _pose_relative_displacement(candidate, previous=previous, shoulder=shoulder)
         if pose_relative_motion is not None and shoulder_motion >= 3.0 and pose_relative_motion > max(2.5, shoulder_motion * 0.45):
@@ -184,16 +185,24 @@ def _plate_match_is_consistent(
   width: int,
   height: int,
 ) -> bool:
-  if _plate_rejection_reason(candidate, previous=previous, shoulder=shoulder, width=width, height=height):
+  rejection_reason = _plate_rejection_reason(
+    candidate,
+    previous=previous,
+    shoulder=shoulder,
+    width=width,
+    height=height,
+    bootstrapping=True,
+  )
+  if rejection_reason:
     return False
 
   previous_radius = max(previous.get("radius", candidate.radius), 1.0)
-  if abs(candidate.radius - previous_radius) / previous_radius > 0.28:
+  if abs(candidate.radius - previous_radius) / previous_radius > 0.38:
     return False
 
   offset = _shoulder_relative_offset(candidate, shoulder)
   if offset and "dx" in previous and "dy" in previous:
-    if math.hypot(offset[0] - previous["dx"], offset[1] - previous["dy"]) > max(width, height) * 0.08:
+    if math.hypot(offset[0] - previous["dx"], offset[1] - previous["dy"]) > max(width, height) * 0.18:
       return False
 
   return True
@@ -207,11 +216,18 @@ def _best_initial_plate(
   width: int,
   height: int,
 ) -> Candidate | None:
-  plausible = [
-    candidate
+  rejected_reasons = [
+    _plate_rejection_reason(
+      candidate,
+      previous=pending_plate,
+      shoulder=shoulder,
+      width=width,
+      height=height,
+      bootstrapping=True,
+    )
     for candidate in candidates
-    if not _plate_rejection_reason(candidate, previous=pending_plate, shoulder=shoulder, width=width, height=height)
   ]
+  plausible = [candidate for candidate, reason in zip(candidates, rejected_reasons) if not reason]
   if not plausible:
     return None
 
