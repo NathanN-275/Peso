@@ -1,6 +1,5 @@
 import Constants, { AppOwnership } from 'expo-constants';
 import * as ImagePicker from 'expo-image-picker';
-import * as VideoThumbnails from 'expo-video-thumbnails';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Linking, Platform } from 'react-native';
 import { useAuth } from '../../context/AuthContext';
@@ -17,6 +16,7 @@ import {
 import type { UploadVideoForAnalysisResult } from '../../lib/videoUpload';
 import { VideoSetupSelection } from '../constants/videoSetup';
 import { VideoAnalysisResult, VideoAnalysisStatus } from '../types/videoAnalysis';
+import { createLocalVideoThumbnail, getUriScheme } from '../utils/localVideoThumbnail';
 
 export function isAnalysisInProgress(status: VideoAnalysisStatus | null) {
   return status === 'queued' || status === 'processing';
@@ -252,11 +252,6 @@ export function useUploadVideoSession() {
       return;
     }
 
-    if (isWeb) {
-      setThumbnailUri(null);
-      return;
-    }
-
     let active = true;
 
     const generateThumbnail = async () => {
@@ -264,8 +259,8 @@ export function useUploadVideoSession() {
         const time = typeof selectedVideo.duration === 'number'
           ? Math.max(0, Math.min(selectedVideo.duration / 3, 1500))
           : 1000;
-        const thumbnail = await VideoThumbnails.getThumbnailAsync(selectedVideo.uri, {
-          time,
+        const thumbnail = await createLocalVideoThumbnail(selectedVideo.uri, {
+          timeMs: time,
           quality: 0.7,
         });
 
@@ -273,10 +268,14 @@ export function useUploadVideoSession() {
           return;
         }
 
-        setThumbnailUri(thumbnail.uri);
+        setThumbnailUri(thumbnail);
       } catch (error) {
         if (__DEV__) {
-          console.warn('Unable to generate video thumbnail.', error);
+          console.warn('Unable to generate selected video thumbnail.', {
+            platform: Platform.OS,
+            uriScheme: getUriScheme(selectedVideo.uri),
+            error,
+          });
         }
 
         if (active) {
@@ -290,7 +289,7 @@ export function useUploadVideoSession() {
     return () => {
       active = false;
     };
-  }, [isWeb, selectedVideo]);
+  }, [selectedVideo]);
 
   useEffect(() => {
     if (!analysisVideoId || !session?.access_token) {

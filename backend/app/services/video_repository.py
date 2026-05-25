@@ -1,11 +1,24 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException, status
 
 from .supabase_client import get_supabase_admin_client
+
+
+logger = logging.getLogger(__name__)
+VIDEO_BASE_COLUMNS = (
+  "id,user_id,storage_path,source_type,exercise_type,view_type,status,duration_ms,"
+  "save_state,saved_at,expires_at,created_at,updated_at"
+)
+VIDEO_STORAGE_COLUMNS = (
+  f"{VIDEO_BASE_COLUMNS},is_saved,discarded_at,thumbnail_path,playback_path,original_storage_path,"
+  "storage_optimized_at,storage_optimization_error"
+)
+ANALYSIS_RESULT_COLUMNS = "id,video_id,model_version,result_json,created_at"
 
 
 class VideoRepository:
@@ -15,13 +28,24 @@ class VideoRepository:
 
   def get_video(self, video_id: str) -> dict[str, Any] | None:
     # Load one uploaded video row by ID.
-    response = (
-      self.client.table("videos")
-      .select("*")
-      .eq("id", video_id)
-      .limit(1)
-      .execute()
-    )
+    try:
+      response = (
+        self.client.table("videos")
+        .select(VIDEO_STORAGE_COLUMNS)
+        .eq("id", video_id)
+        .limit(1)
+        .execute()
+      )
+    except Exception as error:
+      logger.warning("Falling back to legacy video query for video %s: %s", video_id, error)
+      response = (
+        self.client.table("videos")
+        .select(VIDEO_BASE_COLUMNS)
+        .eq("id", video_id)
+        .limit(1)
+        .execute()
+      )
+
     return response.data[0] if response.data else None
 
   def require_owned_video(self, video_id: str, user_id: str) -> dict[str, Any]:
@@ -70,14 +94,48 @@ class VideoRepository:
 
   def mark_saved(self, video_id: str) -> dict[str, Any]:
     # Saved videos stay visible in the home flow.
-    return self.update_video(
-      video_id,
-      {
-        "save_state": "saved",
-        "saved_at": datetime.now(timezone.utc).isoformat(),
-        "expires_at": None,
-      },
-    )
+    saved_at = datetime.now(timezone.utc).isoformat()
+    fields = {
+      "save_state": "saved",
+      "is_saved": True,
+      "saved_at": saved_at,
+      "discarded_at": None,
+      "expires_at": None,
+    }
+
+    try:
+      return self.update_video(video_id, fields)
+    except Exception as error:
+      logger.warning("Falling back to legacy save metadata for video %s: %s", video_id, error)
+      return self.update_video(
+        video_id,
+        {
+          "save_state": "saved",
+          "saved_at": saved_at,
+          "expires_at": None,
+        },
+      )
+
+  def mark_discarded(self, video_id: str) -> dict[str, Any]:
+    # Discarded rows remain as metadata, but they leave the saved library.
+    fields = {
+      "save_state": "pending",
+      "is_saved": False,
+      "discarded_at": datetime.now(timezone.utc).isoformat(),
+      "expires_at": None,
+    }
+
+    try:
+      return self.update_video(video_id, fields)
+    except Exception as error:
+      logger.warning("Falling back to legacy discard metadata for video %s: %s", video_id, error)
+      return self.update_video(
+        video_id,
+        {
+          "save_state": "pending",
+          "expires_at": None,
+        },
+      )
 
   def delete_video(self, video_id: str) -> None:
     # Deleted videos are removed entirely from the table.
@@ -92,24 +150,87 @@ class VideoRepository:
     now = datetime.now(timezone.utc).isoformat()
     response = (
       self.client.table("videos")
-      .select("*")
+      .select(VIDEO_BASE_COLUMNS)
       .eq("save_state", "pending")
       .lt("expires_at", now)
       .execute()
     )
     return response.data or []
 
+  def list_storage_cleanup_candidates(self, older_than_days: int = 7) -> list[dict[str, Any]]:
+    # The video table is small; filter in Python so mixed schema eras stay safe.
+    cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+    try:
+      response = self.client.table("videos").select(VIDEO_STORAGE_COLUMNS).execute()
+    except Exception as error:
+      logger.warning("Falling back to legacy storage cleanup query: %s", error)
+      response = self.client.table("videos").select(VIDEO_BASE_COLUMNS).execute()
+    candidates: dict[str, dict[str, Any]] = {}
+
+    for video in response.data or []:
+      if self.video_is_saved(video):
+        continue
+
+      created_at = self._parse_timestamp(video.get("created_at"))
+      is_discarded = video.get("discarded_at") is not None
+      is_failed = video.get("status") == "failed"
+      is_old_pending_status = (
+        video.get("status") in {"uploaded", "queued", "pending"}
+        and created_at is not None
+        and created_at < cutoff
+      )
+
+      if is_discarded or is_failed or is_old_pending_status:
+        candidates[str(video["id"])] = video
+
+    return list(candidates.values())
+
   def list_saved_videos(self, user_id: str) -> list[dict[str, Any]]:
-    response = (
-      self.client.table("videos")
-      .select("*")
-      .eq("user_id", user_id)
-      .eq("save_state", "saved")
-      .order("saved_at", desc=True, nullsfirst=False)
-      .order("created_at", desc=True)
-      .execute()
-    )
+    try:
+      response = (
+        self.client.table("videos")
+        .select(VIDEO_STORAGE_COLUMNS)
+        .eq("user_id", user_id)
+        .or_("save_state.eq.saved,is_saved.eq.true")
+        .filter("discarded_at", "is", "null")
+        .order("saved_at", desc=True, nullsfirst=False)
+        .order("created_at", desc=True)
+        .execute()
+      )
+    except Exception as error:
+      logger.warning("Falling back to legacy saved-video query for user %s: %s", user_id, error)
+      response = (
+        self.client.table("videos")
+        .select(VIDEO_BASE_COLUMNS)
+        .eq("user_id", user_id)
+        .eq("save_state", "saved")
+        .order("saved_at", desc=True, nullsfirst=False)
+        .order("created_at", desc=True)
+        .execute()
+      )
+
     return response.data or []
+
+  @staticmethod
+  def video_is_saved(video: dict[str, Any]) -> bool:
+    return video.get("save_state") == "saved" or video.get("is_saved") is True
+
+  @staticmethod
+  def _parse_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+      return None
+
+    normalized_value = value.replace("Z", "+00:00")
+
+    try:
+      parsed = datetime.fromisoformat(normalized_value)
+    except ValueError:
+      return None
+
+    if parsed.tzinfo is None:
+      return parsed.replace(tzinfo=timezone.utc)
+
+    return parsed.astimezone(timezone.utc)
 
   def save_analysis_result(self, video_id: str, model_version: str, result_json: dict[str, Any]) -> dict[str, Any]:
     # Store the latest analysis result for this model version.
@@ -131,7 +252,7 @@ class VideoRepository:
     # Return the newest analysis result for review.
     response = (
       self.client.table("analysis_results")
-      .select("*")
+      .select(ANALYSIS_RESULT_COLUMNS)
       .eq("video_id", video_id)
       .order("created_at", desc=True)
       .limit(1)
