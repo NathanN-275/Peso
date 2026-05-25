@@ -1,11 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
-import { VideoView, useVideoPlayer } from 'expo-video';
-import * as VideoThumbnails from 'expo-video-thumbnails';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -57,73 +54,12 @@ function groupSavedVideos(videos: SavedVideo[]): SavedVideoGroup[] {
   }));
 }
 
-function VideoFramePreview({ videoUrl }: { videoUrl: string }) {
-  const player = useVideoPlayer(videoUrl, (videoPlayer) => {
-    videoPlayer.muted = true;
-    videoPlayer.loop = false;
-    videoPlayer.currentTime = 0;
-    videoPlayer.pause();
-  });
-
-  useEffect(() => {
-    player.pause();
-    player.currentTime = 0;
-  }, [player, videoUrl]);
-
-  return (
-    <VideoView
-      style={styles.previewImage}
-      player={player}
-      nativeControls={false}
-      allowsPictureInPicture={false}
-      contentFit="cover"
-    />
-  );
-}
-
 function PreviewTile({ video }: { video: SavedVideo }) {
-  const [generatedThumbnailUri, setGeneratedThumbnailUri] = useState<string | null>(null);
   const [thumbnailLoadFailed, setThumbnailLoadFailed] = useState(false);
 
   useEffect(() => {
     setThumbnailLoadFailed(false);
   }, [video.thumbnail_url]);
-
-  useEffect(() => {
-    if (video.thumbnail_url || !video.video_url || Platform.OS === 'web') {
-      setGeneratedThumbnailUri(null);
-      return;
-    }
-
-    let active = true;
-
-    const generateVideoPreview = async () => {
-      try {
-        const thumbnail = await VideoThumbnails.getThumbnailAsync(video.video_url, {
-          time: 1000,
-          quality: 0.65,
-        });
-
-        if (active) {
-          setGeneratedThumbnailUri(thumbnail.uri);
-        }
-      } catch (error) {
-        if (__DEV__) {
-          console.warn('Unable to generate saved video preview thumbnail.', error);
-        }
-
-        if (active) {
-          setGeneratedThumbnailUri(null);
-        }
-      }
-    };
-
-    void generateVideoPreview();
-
-    return () => {
-      active = false;
-    };
-  }, [video.thumbnail_url, video.video_url]);
 
   if (video.thumbnail_url && !thumbnailLoadFailed) {
     return (
@@ -134,20 +70,6 @@ function PreviewTile({ video }: { video: SavedVideo }) {
         onError={() => setThumbnailLoadFailed(true)}
       />
     );
-  }
-
-  if (generatedThumbnailUri) {
-    return (
-      <Image
-        source={{ uri: generatedThumbnailUri }}
-        style={styles.previewImage}
-        resizeMode="cover"
-      />
-    );
-  }
-
-  if (video.video_url) {
-    return <VideoFramePreview videoUrl={video.video_url} />;
   }
 
   return <View style={styles.previewPlaceholder} />;
@@ -217,6 +139,19 @@ export default function HomeScreen({
 
         if (cancelled) {
           return;
+        }
+
+        if (__DEV__) {
+          const missingThumbnailCount = videos.filter((video) => !video.thumbnail_url).length;
+
+          if (missingThumbnailCount > 0) {
+            console.warn('Saved videos missing thumbnail URLs.', {
+              count: missingThumbnailCount,
+              videoIds: videos
+                .filter((video) => !video.thumbnail_url)
+                .map((video) => video.id),
+            });
+          }
         }
 
         setSavedVideos(videos);

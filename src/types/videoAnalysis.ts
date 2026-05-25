@@ -320,7 +320,7 @@ export type SavedVideoAnalysis = {
   id: string;
   model_version: string;
   created_at: string;
-  result_json: VideoAnalysisResult;
+  result_json: Partial<VideoAnalysisResult>;
   summary: string[];
   coaching_feedback: string[];
   rep_data: VideoAnalysisRep[];
@@ -330,9 +330,9 @@ export type SavedVideo = {
   id: string;
   exercise_type: string;
   view_type: string;
-  storage_path: string;
+  storage_path: string | null;
   thumbnail_path: string | null;
-  video_url: string;
+  video_url: string | null;
   thumbnail_url: string | null;
   save_state: SaveState;
   saved_at: string | null;

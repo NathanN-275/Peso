@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,11 @@ ALLOWED_VIDEO_MIME_TYPES = {
   "video/x-m4v",
   "video/m4v",
 }
+DEFAULT_CACHE_CONTROL_SECONDS = "3600"
+IMMUTABLE_CACHE_CONTROL_SECONDS = "31536000"
+
+
+logger = logging.getLogger(__name__)
 
 
 def _metadata_value(object_info: dict[str, Any], *keys: str) -> Any:
@@ -114,6 +120,7 @@ class StorageService:
   def download_to_tempfile(self, storage_path: str) -> Path:
     self.validate_video_object(storage_path)
     file_bytes = self.client.storage.from_(self.bucket).download(storage_path)
+    logger.info("Downloaded storage object path=%s size_bytes=%s", storage_path, len(file_bytes))
     suffix = Path(storage_path).suffix or ".mp4"
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
@@ -127,22 +134,34 @@ class StorageService:
       return
 
   def delete_storage_path(self, storage_path: str) -> None:
+    if not storage_path:
+      return
+
     self.client.storage.from_(self.bucket).remove([storage_path])
 
-  def delete_storage_prefix(self, prefix: str) -> None:
+  def list_storage_prefix(self, prefix: str) -> list[str]:
     folder, _, name_prefix = prefix.rstrip("/").rpartition("/")
     try:
       objects = self.client.storage.from_(self.bucket).list(folder)
     except Exception:
-      return
+      return []
 
-    paths = [
+    return [
       f"{folder}/{item['name']}" if folder else item["name"]
       for item in objects
       if isinstance(item, dict)
       and item.get("name")
       and str(item["name"]).startswith(name_prefix)
     ]
+
+  def delete_storage_prefix(self, prefix: str) -> None:
+    paths = self.list_storage_prefix(prefix)
+
+    if paths:
+      self.client.storage.from_(self.bucket).remove(paths)
+
+  def delete_storage_paths(self, storage_paths: list[str]) -> None:
+    paths = [path for path in dict.fromkeys(storage_paths) if path]
 
     if paths:
       self.client.storage.from_(self.bucket).remove(paths)
@@ -153,13 +172,27 @@ class StorageService:
     except Exception:
       return False
 
-  def upload_file(self, storage_path: str, local_path: Path, content_type: str) -> None:
+  def upload_file(
+    self,
+    storage_path: str,
+    local_path: Path,
+    content_type: str,
+    cache_control: str = DEFAULT_CACHE_CONTROL_SECONDS,
+  ) -> None:
+    size_bytes = local_path.stat().st_size
+    logger.info(
+      "Uploading storage object path=%s content_type=%s cache_control=%s size_bytes=%s",
+      storage_path,
+      content_type,
+      cache_control,
+      size_bytes,
+    )
     self.client.storage.from_(self.bucket).upload(
       storage_path,
       local_path,
       {
         "content-type": content_type,
-        "cache-control": "3600",
+        "cache-control": cache_control,
         "upsert": "true",
       },
     )
