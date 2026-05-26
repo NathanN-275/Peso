@@ -580,7 +580,6 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
 
                 <View style={styles.thumbnailFrame}>
                   <SelectedVideoPreview
-                    videoUri={selectedVideo.uri}
                     thumbnailUri={thumbnailUri}
                   />
                 </View>

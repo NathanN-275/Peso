@@ -15,6 +15,7 @@ def _draw_debug_frame(
   selected_plate: Candidate | None,
   predicted_collar: tuple[float, float] | None,
   refined_collar: tuple[float, float] | None,
+  emitted_point: tuple[float, float] | None = None,
   mode: str | None = None,
 ) -> Any:
   debug = frame.copy()
@@ -29,6 +30,16 @@ def _draw_debug_frame(
   if selected_plate:
     cv2.circle(debug, (int(selected_plate.x), int(selected_plate.y)), max(int(selected_plate.radius), 4), (0, 255, 0), 3)
     cv2.circle(debug, (int(selected_plate.x), int(selected_plate.y)), 3, (0, 255, 0), -1)
+
+  if emitted_point:
+    cv2.drawMarker(
+      debug,
+      (int(emitted_point[0]), int(emitted_point[1])),
+      (80, 255, 80),
+      markerType=cv2.MARKER_STAR,
+      markerSize=14,
+      thickness=2,
+    )
 
   if predicted_collar:
     cv2.drawMarker(

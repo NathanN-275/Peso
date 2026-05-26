@@ -28,8 +28,16 @@ def _score_plate_candidate(
   min_dimension = max(min(width, height), 1)
   radius_ratio = candidate.radius / min_dimension
   score += min(radius_ratio / 0.18, 1.0) * (1.1 if bootstrapping else 0.52)
+  if radius_ratio < 0.08:
+    score -= (1.0 - (radius_ratio / 0.08)) * 0.55
 
   if shoulder:
+    horizontal_offset = candidate.x - shoulder[0]
+    if horizontal_offset > width * 0.18:
+      score -= min((horizontal_offset - (width * 0.18)) / max(width * 0.12, 1.0), 1.0) * (
+        1.05 if bootstrapping else 0.65
+      )
+
     shoulder_distance = math.hypot(candidate.x - shoulder[0], candidate.y - shoulder[1])
     score += max(0.0, 0.38 * (1.0 - shoulder_distance / (max(width, height) * 0.42)))
     vertical_offset = (shoulder[1] - candidate.y) / height
@@ -198,6 +206,9 @@ def _plate_match_is_consistent(
 
   previous_radius = max(previous.get("radius", candidate.radius), 1.0)
   if abs(candidate.radius - previous_radius) / previous_radius > 0.38:
+    return False
+
+  if abs(candidate.x - previous["x"]) > width * 0.2:
     return False
 
   return True

@@ -67,12 +67,14 @@ def _make_tracking_lock(
   sleeve_direction: tuple[float, float],
   shoulder: tuple[float, float] | None,
 ) -> dict[str, Any]:
-  template, template_bounds = _extract_template(gray, collar, plate_radius=plate.radius)
-  features = _feature_points(cv2, gray, collar, plate_radius=plate.radius)
+  tracking_point = (plate.x, plate.y)
+  template, template_bounds = _extract_template(gray, tracking_point, plate_radius=plate.radius)
+  features = _feature_points(cv2, gray, tracking_point, plate_radius=plate.radius)
   relative_offset = _shoulder_relative_offset(plate, shoulder)
   return {
     "plate": plate,
     "collar": collar,
+    "tracking_point": tracking_point,
     "x": plate.x,
     "y": plate.y,
     "collar_dx": collar[0] - plate.x,
@@ -110,6 +112,7 @@ def _track_local_patch(
   }
   old_collar = lock["collar"]
   old_plate = lock["plate"]
+  old_tracking_point = lock.get("tracking_point", (old_plate.x, old_plate.y))
   flow_motion: tuple[float, float] | None = None
   points = lock.get("features")
 
@@ -129,10 +132,10 @@ def _track_local_patch(
   template = lock.get("template")
   if template is not None and float(template.std()) >= 3.0:
     search_radius = max(int(round(old_plate.radius * 0.7)), 24)
-    x0 = max(int(round(old_collar[0])) - search_radius, 0)
-    y0 = max(int(round(old_collar[1])) - search_radius, 0)
-    x1 = min(int(round(old_collar[0])) + search_radius + 1, width)
-    y1 = min(int(round(old_collar[1])) + search_radius + 1, height)
+    x0 = max(int(round(old_tracking_point[0])) - search_radius, 0)
+    y0 = max(int(round(old_tracking_point[1])) - search_radius, 0)
+    x1 = min(int(round(old_tracking_point[0])) + search_radius + 1, width)
+    y1 = min(int(round(old_tracking_point[1])) + search_radius + 1, height)
     search = gray[y0:y1, x0:x1]
     if search.shape[0] >= template.shape[0] and search.shape[1] >= template.shape[1] and float(search.std()) >= 3.0:
       result = cv2.matchTemplate(search, template, cv2.TM_CCOEFF_NORMED)
@@ -143,7 +146,10 @@ def _track_local_patch(
           x0 + max_loc[0] + (template.shape[1] / 2),
           y0 + max_loc[1] + (template.shape[0] / 2),
         )
-        template_motion = (template_center[0] - old_collar[0], template_center[1] - old_collar[1])
+        template_motion = (
+          template_center[0] - old_tracking_point[0],
+          template_center[1] - old_tracking_point[1],
+        )
 
   if flow_motion is not None and template_motion is not None:
     motion = (
