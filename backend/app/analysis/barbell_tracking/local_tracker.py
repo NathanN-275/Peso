@@ -4,7 +4,7 @@ import math
 from typing import Any
 
 from .candidate import Candidate
-from .geometry import _estimate_collar_from_plate, _validate_collar_geometry
+from .geometry import _estimate_collar_from_plate, _point_inside_plate, _validate_collar_geometry
 from .selection import _shoulder_relative_offset
 
 
@@ -14,9 +14,9 @@ def _tracking_patch_bounds(
   plate_radius: float,
   width: int,
   height: int,
-  scale: float = 0.45,
+  scale: float = 0.26,
 ) -> tuple[int, int, int, int]:
-  radius = max(int(round(plate_radius * scale)), 14)
+  radius = max(int(round(plate_radius * scale)), 10)
   x0 = max(int(round(center[0])) - radius, 0)
   y0 = max(int(round(center[1])) - radius, 0)
   x1 = min(int(round(center[0])) + radius + 1, width)
@@ -36,12 +36,20 @@ def _extract_template(gray: Any, center: tuple[float, float], *, plate_radius: f
 
 def _feature_points(cv2: Any, gray: Any, center: tuple[float, float], *, plate_radius: float) -> Any:
   height, width = gray.shape[:2]
-  x0, y0, x1, y1 = _tracking_patch_bounds(center, plate_radius=plate_radius, width=width, height=height, scale=0.55)
+  x0, y0, x1, y1 = _tracking_patch_bounds(center, plate_radius=plate_radius, width=width, height=height, scale=0.32)
   if x1 <= x0 or y1 <= y0:
     return None
 
-  mask = None
   patch = gray[y0:y1, x0:x1]
+  mask = patch.copy()
+  mask[:] = 0
+  cv2.circle(
+    mask,
+    (int(round(center[0] - x0)), int(round(center[1] - y0))),
+    max(int(round(plate_radius * 0.26)), 6),
+    255,
+    -1,
+  )
   points = cv2.goodFeaturesToTrack(
     patch,
     maxCorners=32,
@@ -66,21 +74,36 @@ def _make_tracking_lock(
   collar: tuple[float, float],
   sleeve_direction: tuple[float, float],
   shoulder: tuple[float, float] | None,
+  final_bar_point: tuple[float, float] | None = None,
+  final_bar_confidence: float = 0.65,
+  final_bar_reason: str | None = None,
 ) -> dict[str, Any]:
-  tracking_point = (plate.x, plate.y)
+  tracking_point = final_bar_point or (plate.x, plate.y)
   template, template_bounds = _extract_template(gray, tracking_point, plate_radius=plate.radius)
   features = _feature_points(cv2, gray, tracking_point, plate_radius=plate.radius)
-  relative_offset = _shoulder_relative_offset(plate, shoulder)
+  plate_relative_offset = _shoulder_relative_offset(plate, shoulder)
+  final_relative_offset = (
+    (tracking_point[0] - shoulder[0], tracking_point[1] - shoulder[1])
+    if shoulder
+    else None
+  )
   return {
     "plate": plate,
     "collar": collar,
+    "final_bar_point": tracking_point,
+    "final_bar_confidence": final_bar_confidence,
+    "final_bar_reason": final_bar_reason,
     "tracking_point": tracking_point,
     "x": plate.x,
     "y": plate.y,
     "collar_dx": collar[0] - plate.x,
     "collar_dy": collar[1] - plate.y,
-    "dx": relative_offset[0] if relative_offset else 0.0,
-    "dy": relative_offset[1] if relative_offset else 0.0,
+    "dx": plate_relative_offset[0] if plate_relative_offset else 0.0,
+    "dy": plate_relative_offset[1] if plate_relative_offset else 0.0,
+    "final_bar_x": tracking_point[0],
+    "final_bar_y": tracking_point[1],
+    "final_bar_dx": final_relative_offset[0] if final_relative_offset else 0.0,
+    "final_bar_dy": final_relative_offset[1] if final_relative_offset else 0.0,
     "radius": plate.radius,
     "shoulder_x": shoulder[0] if shoulder else plate.x,
     "shoulder_y": shoulder[1] if shoulder else plate.y,
@@ -112,7 +135,7 @@ def _track_local_patch(
   }
   old_collar = lock["collar"]
   old_plate = lock["plate"]
-  old_tracking_point = lock.get("tracking_point", (old_plate.x, old_plate.y))
+  old_tracking_point = lock.get("final_bar_point") or lock.get("tracking_point", (old_plate.x, old_plate.y))
   flow_motion: tuple[float, float] | None = None
   points = lock.get("features")
 
@@ -131,7 +154,7 @@ def _track_local_patch(
   template_motion: tuple[float, float] | None = None
   template = lock.get("template")
   if template is not None and float(template.std()) >= 3.0:
-    search_radius = max(int(round(old_plate.radius * 0.7)), 24)
+    search_radius = max(int(round(old_plate.radius * 0.34)), 18)
     x0 = max(int(round(old_tracking_point[0])) - search_radius, 0)
     y0 = max(int(round(old_tracking_point[1])) - search_radius, 0)
     x1 = min(int(round(old_tracking_point[0])) + search_radius + 1, width)
@@ -177,6 +200,14 @@ def _track_local_patch(
     radius=old_plate.radius,
     confidence=old_plate.confidence,
   )
+  tracked_final_bar_point = (
+    old_tracking_point[0] + motion[0],
+    old_tracking_point[1] + motion[1],
+  )
+  if not _point_inside_plate(tracked_final_bar_point, plate=tracked_plate, max_radius_ratio=0.58):
+    stats["collar_rejection_reason"] = "hub_left_plate_region"
+    return None, stats
+
   predicted_collar, sleeve_direction = _estimate_collar_from_plate(
     tracked_plate,
     shoulder=shoulder,
@@ -212,6 +243,9 @@ def _track_local_patch(
     plate=tracked_plate,
     collar=final_collar,
     sleeve_direction=sleeve_direction,
+    final_bar_point=tracked_final_bar_point,
+    final_bar_confidence=float(lock.get("final_bar_confidence", 0.65)),
+    final_bar_reason=lock.get("final_bar_reason"),
     shoulder=shoulder,
   )
   new_lock["predicted_collar"] = predicted_collar

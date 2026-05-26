@@ -37,6 +37,9 @@ def _interpolate_missing(samples: list[dict[str, Any] | None]) -> tuple[list[dic
     if previous is None or next_point is None:
       continue
 
+    if math.hypot(float(next_point["x"]) - float(previous["x"]), float(next_point["y"]) - float(previous["y"])) > 0.12:
+      continue
+
     total_steps = next_index - previous_index
     for missing_index in range(gap_start, gap_end + 1):
       progress = (missing_index - previous_index) / total_steps

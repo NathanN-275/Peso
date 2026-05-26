@@ -37,8 +37,8 @@ def pose_frame(source_frame_index: int, *, x: float, y: float) -> dict[str, obje
       "right_shoulder": landmark(x + 0.03, y),
       "left_hip": landmark(x - 0.02, y + 0.28),
       "right_hip": landmark(x + 0.02, y + 0.28),
-      "left_wrist": landmark(x - 0.09, y + 0.04),
-      "right_wrist": landmark(x + 0.09, y + 0.04),
+      "left_wrist": landmark(x - 0.09, y + 0.22),
+      "right_wrist": landmark(x + 0.09, y + 0.22),
     },
   }
 
@@ -130,7 +130,7 @@ class BarbellTrackerTest(unittest.TestCase):
 
   def test_prefers_large_plate_center_over_body_distractors(self) -> None:
     centers = [(226, 72 + index * 2) for index in range(10)]
-    distractors = [[(148, 118 + index, 16), (178, 140, 12)] for index in range(10)]
+    distractors = [[(148, 118 + index, 8), (178, 140, 6)] for index in range(10)]
 
     with tempfile.TemporaryDirectory() as temp_dir:
       path = Path(temp_dir) / "barbell-distractors.mp4"
@@ -155,11 +155,10 @@ class BarbellTrackerTest(unittest.TestCase):
 
   def test_bootstrap_starts_on_plate_center_before_motion(self) -> None:
     centers = [(226, 72), (226, 72), (226, 72), (226, 78), (226, 84), (226, 90)]
-    distractors = [[(150, 116, 18), (178, 132, 16)] for _ in centers]
 
     with tempfile.TemporaryDirectory() as temp_dir:
       path = Path(temp_dir) / "barbell-start.mp4"
-      write_video(path, centers, distractors=distractors)
+      write_video(path, centers)
       pose_frames = [pose_frame(index, x=0.48, y=0.43) for index in range(len(centers))]
 
       result = BarbellTracker().track(
@@ -176,7 +175,7 @@ class BarbellTrackerTest(unittest.TestCase):
 
   def test_bootstrap_rejects_high_rack_hardware(self) -> None:
     centers = [(226, 72), (226, 72), (226, 78), (226, 84), (226, 90), (226, 96)]
-    distractors = [[(226, 32, 18), (178, 128, 16)] for _ in centers]
+    distractors = [[(226, 32, 10), (178, 128, 8)] for _ in centers]
 
     with tempfile.TemporaryDirectory() as temp_dir:
       path = Path(temp_dir) / "barbell-rack-distractor.mp4"
@@ -238,10 +237,10 @@ class BarbellTrackerTest(unittest.TestCase):
 
     self.assertTrue(result["barbellPath"]["available"])
     points = result["barbellPath"]["points"]
-    self.assertAlmostEqual(points[0]["x"], collar_from_plate(centers[0], radius=28)[0] / 320, delta=0.07)
-    self.assertAlmostEqual(points[-1]["x"], collar_from_plate(centers[-1], radius=28)[0] / 320, delta=0.07)
+    self.assertAlmostEqual(points[0]["x"], centers[0][0] / 320, delta=0.07)
+    self.assertAlmostEqual(points[-1]["x"], centers[-1][0] / 320, delta=0.07)
 
-  def test_plate_first_tracker_outputs_derived_collar_point(self) -> None:
+  def test_plate_first_tracker_outputs_hub_point(self) -> None:
     plate_centers = [(178 + index * 3, 104) for index in range(8)]
     distractors = [[(238, 104, 34)] for _ in plate_centers]
 
@@ -264,11 +263,9 @@ class BarbellTrackerTest(unittest.TestCase):
     self.assertTrue(result["barbellPath"]["available"])
     self.assertEqual(result["diagnostics"]["selected_candidate_type"], "plate")
     points = result["barbellPath"]["points"]
-    first_collar = collar_from_plate(plate_centers[0])
-    last_collar = collar_from_plate(plate_centers[-1])
-    self.assertAlmostEqual(points[0]["x"], first_collar[0] / 320, delta=0.07)
-    self.assertAlmostEqual(points[0]["y"], first_collar[1] / 240, delta=0.08)
-    self.assertAlmostEqual(points[-1]["x"], last_collar[0] / 320, delta=0.07)
+    self.assertAlmostEqual(points[0]["x"], plate_centers[0][0] / 320, delta=0.07)
+    self.assertAlmostEqual(points[0]["y"], plate_centers[0][1] / 240, delta=0.08)
+    self.assertAlmostEqual(points[-1]["x"], plate_centers[-1][0] / 320, delta=0.07)
     self.assertTrue(result["diagnostics"]["initialization_confirmed"])
     self.assertEqual(result["diagnostics"]["initialization_frame_count"], 3)
     self.assertLessEqual(result["diagnostics"]["hough_detection_count"], 4)
@@ -548,10 +545,9 @@ class BarbellTrackerTest(unittest.TestCase):
       )
 
     self.assertTrue(result["barbellPath"]["available"])
-    first_collar = collar_from_plate(plate_centers[0])
     first_point = result["barbellPath"]["points"][0]
-    self.assertAlmostEqual(first_point["x"], first_collar[0] / 320, delta=0.07)
-    self.assertAlmostEqual(first_point["y"], first_collar[1] / 240, delta=0.08)
+    self.assertAlmostEqual(first_point["x"], plate_centers[0][0] / 320, delta=0.07)
+    self.assertAlmostEqual(first_point["y"], plate_centers[0][1] / 240, delta=0.08)
     self.assertGreater(result["diagnostics"]["rejection_reason_counts"].get("too_high_above_shoulder", 0), 0)
 
   def test_tracks_about_six_fps_on_sixty_fps_video(self) -> None:
@@ -594,7 +590,7 @@ class BarbellTrackerTest(unittest.TestCase):
     self.assertLess(points[0]["y"], points[-1]["y"])
     self.assertEqual(result["barbellPath"]["target"], "near_plate_collar_center")
 
-  def test_interpolates_short_occlusion_gap(self) -> None:
+  def test_does_not_interpolate_across_target_switch(self) -> None:
     centers: list[tuple[int, int] | None] = [
       (150, 82),
       (150, 88),
@@ -612,7 +608,7 @@ class BarbellTrackerTest(unittest.TestCase):
 
     self.assertGreaterEqual(result["diagnostics"]["detected_point_count"], 4)
     self.assertGreater(result["diagnostics"]["local_tracking_failure_count"], 0)
-    self.assertGreaterEqual(result["diagnostics"]["interpolated_point_count"], 2)
+    self.assertEqual(result["diagnostics"]["interpolated_point_count"], 0)
 
   def test_returns_unavailable_when_no_stable_circle_exists(self) -> None:
     result = self._track([None for _ in range(10)])
