@@ -19,6 +19,7 @@ from .constants import (
 from .debug import _draw_debug_frame
 from .detection import _candidate_in_bounds, _detect_crop_candidates, _wrist_points_from_landmarks
 from .geometry import (
+  MIN_HUB_CONFIDENCE,
   _detect_hub_point,
   _estimate_collar_from_plate,
   _point_inside_plate,
@@ -39,6 +40,16 @@ from .selection import (
 )
 
 logger = logging.getLogger(__name__)
+
+UNSAFE_HUB_REASONS = {
+  "hub_fallback_plate_center",
+  "hub_crop_empty",
+  "hub_outside_plate_region",
+  "low_confidence_hub",
+  "moments_fallback_uncertain",
+  "no_hub_candidates",
+  "fresh_hub_not_found",
+}
 
 
 class BarbellTracker:
@@ -128,6 +139,10 @@ class BarbellTracker:
     template_match_score: float | None,
     collar_rejection_reason: str | None,
     point_source: str,
+    final_bar_reason: str | None = None,
+    final_bar_confidence: float = 0.0,
+    final_bar_source: str | None = None,
+    fallback_used: bool = False,
   ) -> dict[str, Any] | None:
     frames = self.bootstrap_diagnostics.setdefault("tracking_frames", [])
     if len(frames) >= 20:
@@ -159,10 +174,14 @@ class BarbellTracker:
       "template_match_score": round(template_match_score, 4) if template_match_score is not None else None,
       "collar_rejection_reason": collar_rejection_reason,
       "point_source": point_source,
+      "final_bar_reason": final_bar_reason,
+      "final_bar_confidence": round(final_bar_confidence, 3),
+      "final_bar_source": final_bar_source,
+      "fallback_used": fallback_used,
     }
     frames.append(diagnostic)
     logger.info(
-      "[BARBELL_TRACK_DIAG] frame=%s time=%.4f mode=%s source=%s plate=(%s, %s r=%s) final=(%s, %s) pose_pred=(%s, %s) predicted=(%s, %s) refined=(%s, %s) emitted_norm=(%s, %s) emitted_px=(%s, %s) local=%s flow_inliers=%s template=%s collar_reason=%s",
+      "[BARBELL_TRACK_DIAG] frame=%s time=%.4f mode=%s source=%s plate=(%s, %s r=%s) final=(%s, %s) final_reason=%s final_conf=%s final_source=%s fallback=%s pose_pred=(%s, %s) predicted=(%s, %s) refined=(%s, %s) emitted_norm=(%s, %s) emitted_px=(%s, %s) local=%s flow_inliers=%s template=%s collar_reason=%s",
       diagnostic["frame_index"],
       diagnostic["timestamp"],
       diagnostic["tracking_mode"],
@@ -172,6 +191,10 @@ class BarbellTracker:
       diagnostic["selected_plate_radius"],
       diagnostic["final_bar_point_x"],
       diagnostic["final_bar_point_y"],
+      diagnostic["final_bar_reason"],
+      diagnostic["final_bar_confidence"],
+      diagnostic["final_bar_source"],
+      diagnostic["fallback_used"],
       diagnostic["pose_predicted_bar_x"],
       diagnostic["pose_predicted_bar_y"],
       diagnostic["predicted_collar_x"],
@@ -209,17 +232,47 @@ class BarbellTracker:
     *,
     plate: Candidate,
     previous: dict[str, Any] | None,
-  ) -> tuple[tuple[float, float], float, str | None]:
-    final_bar_point, final_bar_confidence, final_bar_reason = _detect_hub_point(
+  ) -> dict[str, Any]:
+    result = _detect_hub_point(
       cv2,
       frame,
       plate=plate,
       previous=previous,
     )
-    if not _point_inside_plate(final_bar_point, plate=plate, max_radius_ratio=0.58):
-      return (plate.x, plate.y), 0.0, "hub_outside_plate_region"
+    point = result.get("point")
+    if point is not None and not _point_inside_plate(point, plate=plate, max_radius_ratio=0.58):
+      rejected_candidates = list(result.get("rejected_candidates") or [])
+      rejected_candidates.append(
+        {
+          "point": point,
+          "radius": 0.0,
+          "confidence": float(result.get("confidence") or 0.0),
+          "reason": "hub_outside_plate_region",
+        }
+      )
+      return {
+        **result,
+        "point": None,
+        "confidence": 0.0,
+        "reason": "hub_outside_plate_region",
+        "source": "no_hub",
+        "rejected_candidates": rejected_candidates,
+      }
 
-    return final_bar_point, final_bar_confidence, final_bar_reason
+    return result
+
+  def _hub_result_is_emit_safe(self, result: dict[str, Any] | None) -> bool:
+    if not result:
+      return False
+    if result.get("point") is None:
+      return False
+    if result.get("source") != "hough_hub":
+      return False
+    if result.get("reason") in UNSAFE_HUB_REASONS:
+      return False
+    if result.get("reason") is not None:
+      return False
+    return float(result.get("confidence") or 0.0) >= MIN_HUB_CONFIDENCE
 
   def _final_bar_point_is_motion_consistent(
     self,
@@ -391,6 +444,10 @@ class BarbellTracker:
     final_bar_point: tuple[float, float] | None = None
     final_bar_confidence = 0.0
     final_bar_reason: str | None = None
+    final_bar_source: str | None = None
+    final_bar_reason_counts: dict[str, int] = {}
+    real_hub_detection_count = 0
+    hub_rejected_count = 0
     pose_predicted_point: tuple[float, float] | None = None
     predicted_collar: tuple[float, float] | None = None
     refined_collar: tuple[float, float] | None = None
@@ -470,6 +527,7 @@ class BarbellTracker:
           local_tracker_type = local_stats["local_tracker_type"]
           fallback_used = bool(local_stats["fallback_used"])
           collar_rejection_reason = local_stats["collar_rejection_reason"]
+          hub_result_for_debug: dict[str, Any] | None = None
 
           if next_lock:
             pose_predicted_point = self._pose_predicted_bar_point(tracking_lock, shoulder)
@@ -495,31 +553,26 @@ class BarbellTracker:
               height=height,
             )
             if fresh_plate:
-              fresh_final_bar_point, fresh_final_bar_confidence, fresh_final_bar_reason = self._final_bar_point_from_plate(
+              fresh_hub_result = self._final_bar_point_from_plate(
                 cv2,
                 frame,
                 plate=fresh_plate,
                 previous=tracking_lock,
               )
-              fresh_motion_reason = self._final_bar_point_is_motion_consistent(
-                fresh_final_bar_point,
-                previous=tracking_lock,
-                shoulder=shoulder,
-                width=width,
-                height=height,
+              hub_result_for_debug = fresh_hub_result
+              fresh_final_bar_point = fresh_hub_result.get("point")
+              fresh_motion_reason = (
+                self._final_bar_point_is_motion_consistent(
+                  fresh_final_bar_point,
+                  previous=tracking_lock,
+                  shoulder=shoulder,
+                  width=width,
+                  height=height,
+                )
+                if fresh_final_bar_point
+                else None
               )
-              local_plate = next_lock["plate"]
-              disagreement = math.hypot(
-                local_final_bar_point[0] - fresh_final_bar_point[0],
-                local_final_bar_point[1] - fresh_final_bar_point[1],
-              )
-              disagreement_threshold = max(fresh_plate.radius * 0.3, max(width, height) * 0.045)
-              fresh_valid = (
-                fresh_motion_reason is None
-                and fresh_final_bar_reason != "hub_outside_plate_region"
-                and _point_inside_plate(fresh_final_bar_point, plate=fresh_plate, max_radius_ratio=0.58)
-              )
-              if fresh_valid and (local_final_rejection_reason is not None or disagreement > disagreement_threshold):
+              if self._hub_result_is_emit_safe(fresh_hub_result) and fresh_motion_reason is None and fresh_final_bar_point:
                 fresh_predicted_collar, fresh_sleeve_direction = _estimate_collar_from_plate(
                   fresh_plate,
                   shoulder=shoulder,
@@ -550,19 +603,30 @@ class BarbellTracker:
                   collar=fresh_refined_collar,
                   sleeve_direction=fresh_sleeve_direction,
                   final_bar_point=fresh_final_bar_point,
-                  final_bar_confidence=fresh_final_bar_confidence,
-                  final_bar_reason=fresh_final_bar_reason,
+                  final_bar_confidence=float(fresh_hub_result.get("confidence") or 0.0),
+                  final_bar_reason=fresh_hub_result.get("reason"),
                   shoulder=shoulder,
                 )
                 next_lock["predicted_collar"] = fresh_predicted_collar
                 next_lock["refined_collar"] = fresh_refined_collar
                 next_lock["collar_geometry_valid"] = fresh_geometry_reason is None
                 next_lock["fallback_used"] = bool(fresh_refinement_reason or fresh_geometry_reason)
+                next_lock["final_bar_source"] = fresh_hub_result.get("source")
                 local_tracker_type = "fresh_hough_validation"
                 local_stats["local_tracker_type"] = local_tracker_type
                 collar_rejection_reason = fresh_refinement_reason or fresh_geometry_reason
                 local_stats["collar_rejection_reason"] = collar_rejection_reason
                 local_final_rejection_reason = None
+              else:
+                next_lock = None
+                local_final_rejection_reason = fresh_motion_reason or fresh_hub_result.get("reason") or "low_confidence_hub"
+                local_stats["collar_rejection_reason"] = local_final_rejection_reason
+                collar_rejection_reason = local_final_rejection_reason
+            else:
+              next_lock = None
+              local_final_rejection_reason = "fresh_hub_not_found"
+              local_stats["collar_rejection_reason"] = local_final_rejection_reason
+              collar_rejection_reason = local_final_rejection_reason
 
             if local_final_rejection_reason:
               next_lock = None
@@ -577,6 +641,7 @@ class BarbellTracker:
             final_bar_point = tracking_lock.get("final_bar_point") or (selected_plate.x, selected_plate.y)
             final_bar_confidence = float(tracking_lock.get("final_bar_confidence", 0.65))
             final_bar_reason = tracking_lock.get("final_bar_reason")
+            final_bar_source = tracking_lock.get("final_bar_source")
             predicted_collar = tracking_lock["predicted_collar"]
             refined_collar = tracking_lock["refined_collar"]
             sleeve_direction = (tracking_lock["collar_direction_x"], tracking_lock["collar_direction_y"])
@@ -586,18 +651,21 @@ class BarbellTracker:
               "time": timestamp,
               "x": final_bar_point[0] / width,
               "y": final_bar_point[1] / height,
-              "confidence": min(float(selected_plate.confidence) + 0.2, 1.0)
-              if final_bar_reason is None
-              else min(max(final_bar_confidence, 0.4), 0.72),
+              "confidence": min(float(selected_plate.confidence) + 0.2, 1.0),
             }
+            real_hub_detection_count += 1
             logger.info(
-              "Barbell point emitted frame=%s plate=(%.2f, %.2f r=%.2f) final=(%.2f, %.2f) predicted=(%.2f, %.2f) refined=(%.2f, %.2f) normalized=(%.4f, %.4f) pending_confirmation_count=%s",
+              "Barbell point emitted frame=%s plate=(%.2f, %.2f r=%.2f) final=(%.2f, %.2f) final_reason=%s final_conf=%.3f point_source=%s fallback_used=%s predicted=(%.2f, %.2f) refined=(%.2f, %.2f) normalized=(%.4f, %.4f) pending_confirmation_count=%s",
               frame_index,
               selected_plate.x,
               selected_plate.y,
               selected_plate.radius,
               final_bar_point[0],
               final_bar_point[1],
+              final_bar_reason,
+              final_bar_confidence,
+              "local_tracking",
+              fallback_used,
               predicted_collar[0],
               predicted_collar[1],
               refined_collar[0],
@@ -623,6 +691,10 @@ class BarbellTracker:
               template_match_score=template_match_score,
               collar_rejection_reason=collar_rejection_reason,
               point_source="local_tracking",
+              final_bar_reason=final_bar_reason,
+              final_bar_confidence=final_bar_confidence,
+              final_bar_source=final_bar_source,
+              fallback_used=fallback_used,
             )
             samples.append(point)
             detected_count += 1
@@ -636,6 +708,8 @@ class BarbellTracker:
                   candidates=[],
                   rejected=[],
                   selected_plate=selected_plate,
+                  hub_candidates=list((hub_result_for_debug or {}).get("candidates") or []),
+                  rejected_hub_candidates=list((hub_result_for_debug or {}).get("rejected_candidates") or []),
                   final_bar_point=final_bar_point,
                   pose_predicted_point=pose_predicted_point,
                   predicted_collar=predicted_collar,
@@ -649,6 +723,9 @@ class BarbellTracker:
 
           local_tracking_failure_count += 1
           consecutive_local_failures += 1
+          if collar_rejection_reason:
+            hub_rejected_count += 1
+            final_bar_reason_counts[collar_rejection_reason] = final_bar_reason_counts.get(collar_rejection_reason, 0) + 1
           if collar_rejection_reason == "stationary_hardware_like":
             stationary_hardware_rejection_count += 1
           if consecutive_local_failures <= MAX_LOCAL_TRACKING_FAILURES:
@@ -670,6 +747,10 @@ class BarbellTracker:
               template_match_score=template_match_score,
               collar_rejection_reason=collar_rejection_reason,
               point_source="no_emission",
+              final_bar_reason=collar_rejection_reason,
+              final_bar_confidence=0.0,
+              final_bar_source=(hub_result_for_debug or {}).get("source"),
+              fallback_used=fallback_used,
             )
             samples.append(None)
             # Keep previous_gray aligned with tracking_lock/features after a failed local update.
@@ -682,6 +763,8 @@ class BarbellTracker:
                   candidates=[],
                   rejected=[],
                   selected_plate=tracking_lock["plate"],
+                  hub_candidates=list((hub_result_for_debug or {}).get("candidates") or []),
+                  rejected_hub_candidates=list((hub_result_for_debug or {}).get("rejected_candidates") or []),
                   final_bar_point=tracking_lock.get("final_bar_point"),
                   pose_predicted_point=self._pose_predicted_bar_point(tracking_lock, shoulder),
                   predicted_collar=tracking_lock.get("predicted_collar"),
@@ -1027,14 +1110,20 @@ class BarbellTracker:
           frame_index += 1
           continue
 
-        final_bar_point, final_bar_confidence, final_bar_reason = self._final_bar_point_from_plate(
+        hub_result = self._final_bar_point_from_plate(
           cv2,
           frame,
           plate=selected_plate,
           previous=None,
         )
-        if final_bar_reason == "hub_outside_plate_region":
-          collar_rejection_reason = final_bar_reason
+        final_bar_point = hub_result.get("point")
+        final_bar_confidence = float(hub_result.get("confidence") or 0.0)
+        final_bar_reason = hub_result.get("reason")
+        final_bar_source = hub_result.get("source")
+        if not self._hub_result_is_emit_safe(hub_result) or final_bar_point is None:
+          collar_rejection_reason = final_bar_reason or "low_confidence_hub"
+          hub_rejected_count += 1
+          final_bar_reason_counts[collar_rejection_reason] = final_bar_reason_counts.get(collar_rejection_reason, 0) + 1
           self._record_tracking_frame_diagnostic(
             frame_index=frame_index,
             timestamp=timestamp,
@@ -1052,6 +1141,10 @@ class BarbellTracker:
             template_match_score=template_match_score,
             collar_rejection_reason=collar_rejection_reason,
             point_source="no_emission",
+            final_bar_reason=collar_rejection_reason,
+            final_bar_confidence=final_bar_confidence,
+            final_bar_source=final_bar_source,
+            fallback_used=fallback_used,
           )
           samples.append(None)
           if debug_writer:
@@ -1063,6 +1156,8 @@ class BarbellTracker:
                 candidates=candidates,
                 rejected=rejected,
                 selected_plate=selected_plate,
+                hub_candidates=list(hub_result.get("candidates") or []),
+                rejected_hub_candidates=list(hub_result.get("rejected_candidates") or []),
                 final_bar_point=final_bar_point,
                 pose_predicted_point=None,
                 predicted_collar=predicted_collar,
@@ -1096,14 +1191,19 @@ class BarbellTracker:
           "y": final_bar_point[1] / height,
           "confidence": confidence,
         }
+        real_hub_detection_count += 1
         logger.info(
-          "Barbell point emitted frame=%s plate=(%.2f, %.2f r=%.2f) final=(%.2f, %.2f) predicted=(%.2f, %.2f) refined=(%.2f, %.2f) normalized=(%.4f, %.4f) pending_confirmation_count=%s",
+          "Barbell point emitted frame=%s plate=(%.2f, %.2f r=%.2f) final=(%.2f, %.2f) final_reason=%s final_conf=%.3f point_source=%s fallback_used=%s predicted=(%.2f, %.2f) refined=(%.2f, %.2f) normalized=(%.4f, %.4f) pending_confirmation_count=%s",
           frame_index,
           selected_plate.x,
           selected_plate.y,
           selected_plate.radius,
           final_bar_point[0],
           final_bar_point[1],
+          final_bar_reason,
+          final_bar_confidence,
+          "reacquisition" if has_ever_locked else "bootstrap",
+          fallback_used,
           predicted_collar[0],
           predicted_collar[1],
           refined_collar[0],
@@ -1129,6 +1229,10 @@ class BarbellTracker:
           template_match_score=template_match_score,
           collar_rejection_reason=collar_rejection_reason,
           point_source="reacquisition" if has_ever_locked else "bootstrap",
+          final_bar_reason=final_bar_reason,
+          final_bar_confidence=final_bar_confidence,
+          final_bar_source=final_bar_source,
+          fallback_used=fallback_used,
         )
         relative_offset = _shoulder_relative_offset(selected_plate, shoulder)
         tracking_lock = _make_tracking_lock(
@@ -1151,6 +1255,7 @@ class BarbellTracker:
             "refined_collar": refined_collar,
             "collar_geometry_valid": True,
             "fallback_used": fallback_used,
+            "final_bar_source": final_bar_source,
           }
         )
         samples.append(point)
@@ -1165,6 +1270,8 @@ class BarbellTracker:
               candidates=candidates,
               rejected=rejected,
               selected_plate=selected_plate,
+              hub_candidates=list(hub_result.get("candidates") or []),
+              rejected_hub_candidates=list(hub_result.get("rejected_candidates") or []),
               final_bar_point=final_bar_point,
               pose_predicted_point=None,
               predicted_collar=predicted_collar,
@@ -1268,6 +1375,9 @@ class BarbellTracker:
         final_bar_point=final_bar_point,
         final_bar_confidence=final_bar_confidence,
         final_bar_reason=final_bar_reason,
+        final_bar_reason_counts=final_bar_reason_counts,
+        real_hub_detection_count=real_hub_detection_count,
+        hub_rejected_count=hub_rejected_count,
       )
       result["diagnostics"]["bootstrap_diagnostics"] = self.bootstrap_diagnostics
       return result
@@ -1310,6 +1420,9 @@ class BarbellTracker:
         final_bar_point=final_bar_point,
         final_bar_confidence=final_bar_confidence,
         final_bar_reason=final_bar_reason,
+        final_bar_reason_counts=final_bar_reason_counts,
+        real_hub_detection_count=real_hub_detection_count,
+        hub_rejected_count=hub_rejected_count,
       )
       result["diagnostics"]["bootstrap_diagnostics"] = self.bootstrap_diagnostics
       return result
@@ -1366,6 +1479,9 @@ class BarbellTracker:
         "final_bar_point_y": round(final_bar_point[1], 2) if final_bar_point else None,
         "final_bar_confidence": round(final_bar_confidence, 3),
         "final_bar_reason": final_bar_reason,
+        "final_bar_reason_counts": final_bar_reason_counts,
+        "real_hub_detection_count": real_hub_detection_count,
+        "hub_rejected_count": hub_rejected_count,
         "sleeve_direction_x": round(sleeve_direction[0], 4) if sleeve_direction else None,
         "sleeve_direction_y": round(sleeve_direction[1], 4) if sleeve_direction else None,
         "predicted_collar_x": round(predicted_collar[0], 2) if predicted_collar else None,

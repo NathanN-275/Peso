@@ -14,7 +14,7 @@ from app.analysis.barbell_tracker import (
   _validate_collar_geometry,
 )
 from app.analysis.barbell_tracking.detection import _crop_bounds_from_landmarks, _filter_wrist_candidates
-from app.analysis.barbell_tracking.geometry import _refine_collar_point
+from app.analysis.barbell_tracking.geometry import _detect_hub_point, _refine_collar_point
 
 TEST_COLLAR_OFFSET_RATIO = 0.28
 
@@ -269,7 +269,37 @@ class BarbellTrackerTest(unittest.TestCase):
     self.assertTrue(result["diagnostics"]["initialization_confirmed"])
     self.assertEqual(result["diagnostics"]["initialization_frame_count"], 3)
     self.assertLessEqual(result["diagnostics"]["hough_detection_count"], 4)
-    self.assertIn(result["diagnostics"]["local_tracker_type"], ("klt_optical_flow", "template_matching"))
+    self.assertIn(
+      result["diagnostics"]["local_tracker_type"],
+      ("klt_optical_flow", "template_matching", "fresh_hough_validation"),
+    )
+
+  def test_hub_detection_accepts_compact_visible_hub(self) -> None:
+    frame = np.zeros((180, 240, 3), dtype=np.uint8)
+    plate = Candidate(x=120, y=90, radius=42, confidence=0.9)
+    cv2.circle(frame, (120, 90), 42, (72, 118, 108), -1, cv2.LINE_AA)
+    cv2.circle(frame, (120, 90), 42, (235, 235, 235), 3, cv2.LINE_AA)
+    cv2.circle(frame, (130, 90), 7, (245, 245, 245), 2, cv2.LINE_AA)
+    cv2.circle(frame, (130, 90), 3, (30, 30, 30), -1, cv2.LINE_AA)
+
+    result = _detect_hub_point(cv2, frame, plate=plate)
+
+    self.assertEqual(result["source"], "hough_hub")
+    self.assertIsNone(result["reason"])
+    self.assertIsNotNone(result["point"])
+    self.assertGreaterEqual(result["confidence"], 0.8)
+
+  def test_hub_detection_does_not_emit_plate_center_fallback(self) -> None:
+    frame = np.zeros((180, 240, 3), dtype=np.uint8)
+    plate = Candidate(x=120, y=90, radius=42, confidence=0.9)
+    cv2.circle(frame, (120, 90), 42, (72, 118, 108), -1, cv2.LINE_AA)
+    cv2.circle(frame, (120, 90), 42, (235, 235, 235), 3, cv2.LINE_AA)
+
+    result = _detect_hub_point(cv2, frame, plate=plate)
+
+    self.assertIsNone(result["point"])
+    self.assertEqual(result["source"], "no_hub")
+    self.assertIn(result["reason"], ("moments_fallback_uncertain", "no_hub_candidates"))
 
   def test_detection_crop_is_anchored_to_shoulder(self) -> None:
     shoulder = (136.0, 103.2)
@@ -544,10 +574,14 @@ class BarbellTrackerTest(unittest.TestCase):
         processed_height=240,
       )
 
-    self.assertTrue(result["barbellPath"]["available"])
-    first_point = result["barbellPath"]["points"][0]
-    self.assertAlmostEqual(first_point["x"], plate_centers[0][0] / 320, delta=0.07)
-    self.assertAlmostEqual(first_point["y"], plate_centers[0][1] / 240, delta=0.08)
+    self.assertFalse(result["barbellPath"]["available"])
+    self.assertEqual(result["diagnostics"]["failure_reason"], "low_barbell_tracking_coverage")
+    self.assertEqual(result["diagnostics"]["detected_point_count"], 3)
+    tracking_frames = result["diagnostics"]["bootstrap_diagnostics"]["tracking_frames"]
+    emitted = [frame for frame in tracking_frames if frame["emitted_pixel_y"] is not None]
+    self.assertTrue(emitted)
+    for frame in emitted:
+      self.assertGreater(frame["emitted_pixel_y"], 95)
     self.assertGreater(result["diagnostics"]["rejection_reason_counts"].get("too_high_above_shoulder", 0), 0)
 
   def test_tracks_about_six_fps_on_sixty_fps_video(self) -> None:

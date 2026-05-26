@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { ActivityIndicator, Image, StyleSheet, View } from 'react-native';
+import { useEffect } from 'react';
 import type { ImageErrorEventData, NativeSyntheticEvent } from 'react-native';
 import tokens from '../theme/tokens';
 
@@ -12,9 +13,21 @@ export default function SelectedVideoPreview({
   thumbnailUri,
   thumbnailLoading = false,
 }: SelectedVideoPreviewProps) {
+  useEffect(() => {
+    if (__DEV__) {
+      console.log('[UPLOAD_THUMB] SelectedVideoPreview received thumbnailUri=', thumbnailUri);
+    }
+  }, [thumbnailUri]);
+
+  const handleThumbnailLoad = () => {
+    if (__DEV__) {
+      console.log('[UPLOAD_THUMB] Image onLoad fired');
+    }
+  };
+
   const handleThumbnailError = (event: NativeSyntheticEvent<ImageErrorEventData>) => {
     if (__DEV__) {
-      console.warn('[SelectedVideoPreview] thumbnail image failed to render', {
+      console.warn('[UPLOAD_THUMB] Image onError=', {
         thumbnailUri,
         error: event.nativeEvent,
       });
@@ -28,6 +41,7 @@ export default function SelectedVideoPreview({
           source={{ uri: thumbnailUri }}
           style={styles.thumbnail}
           resizeMode="cover"
+          onLoad={handleThumbnailLoad}
           onError={handleThumbnailError}
         />
       ) : thumbnailLoading ? (

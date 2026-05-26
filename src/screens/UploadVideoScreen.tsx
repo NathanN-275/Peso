@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import Constants, { AppOwnership } from 'expo-constants';
@@ -75,6 +76,45 @@ function formatPercent(value?: number | null) {
   }
 
   return `${Math.round(value * 100)}%`;
+}
+
+function sanitizeCacheSegment(value: string) {
+  return value.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
+}
+
+function videoCacheExtension(asset: ImagePicker.ImagePickerAsset) {
+  const source = asset.fileName || asset.uri;
+  const match = source.match(/\.(mov|mp4|m4v)(?:[?#].*)?$/i);
+  return match ? `.${match[1].toLowerCase()}` : '.mov';
+}
+
+async function cachedVideoUriForThumbnail(asset: ImagePicker.ImagePickerAsset) {
+  if (!FileSystem.cacheDirectory) {
+    throw new Error('FileSystem.cacheDirectory is unavailable.');
+  }
+
+  const key = sanitizeCacheSegment(
+    [
+      asset.assetId,
+      asset.fileName,
+      asset.fileSize,
+      asset.duration,
+      asset.uri,
+    ]
+      .filter((value) => value !== undefined && value !== null)
+      .join('_')
+  );
+  const destination = `${FileSystem.cacheDirectory}selected-video-thumbnail-source-${key}${videoCacheExtension(asset)}`;
+  const info = await FileSystem.getInfoAsync(destination);
+
+  if (!info.exists) {
+    await FileSystem.copyAsync({
+      from: asset.uri,
+      to: destination,
+    });
+  }
+
+  return destination;
 }
 
 export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVideoScreenProps) {
@@ -336,44 +376,75 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
 
     let active = true;
     const selectedVideoUri = selectedVideo.uri;
+    const shouldCopyBeforeGeneration = selectedVideoUri.startsWith('content://');
+    const canRetryWithCache =
+      Platform.OS === 'ios' && /\.(mov|m4v)(?:[?#].*)?$/i.test(selectedVideo.fileName || selectedVideoUri);
     setSelectedVideoThumbnailUri(null);
     setThumbnailError(null);
     setThumbnailLoading(true);
+    if (__DEV__) {
+      console.log('[UPLOAD_THUMB] selectedVideoUri=', selectedVideoUri);
+      console.log('[UPLOAD_THUMB] selectedVideo object=', selectedVideo);
+      console.log('[UPLOAD_THUMB] starting thumbnail generation');
+    }
 
-    const generateThumbnail = async () => {
-      try {
-        if (__DEV__) {
-          console.log('[UploadVideoScreen] generating local video thumbnail', {
-            selectedVideoUri,
-          });
-        }
+    const generateThumbnailFromUri = async (uri: string) => {
         const time = typeof selectedVideo.duration === 'number'
           ? Math.max(0, Math.min(selectedVideo.duration / 3, 1500))
           : 1000;
-        const thumbnail = await VideoThumbnails.getThumbnailAsync(selectedVideoUri, {
+      return VideoThumbnails.getThumbnailAsync(uri, {
           time,
           quality: 0.7,
         });
+    };
+
+    const generateThumbnail = async () => {
+      let sourceUri = selectedVideoUri;
+      let copiedUri: string | null = null;
+
+      try {
+        if (shouldCopyBeforeGeneration) {
+          copiedUri = await cachedVideoUriForThumbnail(selectedVideo);
+          sourceUri = copiedUri;
+          if (__DEV__) {
+            console.log('[UPLOAD_THUMB] cached video uri if copied=', copiedUri);
+          }
+        } else if (__DEV__) {
+          console.log('[UPLOAD_THUMB] cached video uri if copied=', null);
+        }
+
+        let thumbnail: VideoThumbnails.VideoThumbnailsResult;
+        try {
+          thumbnail = await generateThumbnailFromUri(sourceUri);
+        } catch (initialError) {
+          if (!copiedUri && canRetryWithCache) {
+            copiedUri = await cachedVideoUriForThumbnail(selectedVideo);
+            sourceUri = copiedUri;
+            if (__DEV__) {
+              console.log('[UPLOAD_THUMB] cached video uri if copied=', copiedUri);
+            }
+            thumbnail = await generateThumbnailFromUri(sourceUri);
+          } else {
+            throw initialError;
+          }
+        }
 
         if (!active) {
           return;
         }
 
-        setSelectedVideoThumbnailUri(thumbnail.uri);
-        setThumbnailLoading(false);
         if (__DEV__) {
-          console.log('[UploadVideoScreen] generated local video thumbnail', {
-            selectedVideoUri,
-            thumbnailUri: thumbnail.uri,
-          });
+          console.log('[UPLOAD_THUMB] generated thumbnailUri=', thumbnail.uri);
         }
+        setSelectedVideoThumbnailUri(thumbnail.uri);
+        if (__DEV__) {
+          console.log('[UPLOAD_THUMB] setSelectedVideoThumbnailUri=', thumbnail.uri);
+        }
+        setThumbnailLoading(false);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (__DEV__) {
-          console.warn('[UploadVideoScreen] unable to generate local video thumbnail', {
-            selectedVideoUri,
-            error: message,
-          });
+          console.warn('[UPLOAD_THUMB] thumbnail generation error=', message);
         }
 
         if (active) {
@@ -401,6 +472,12 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
       });
     }
   }, [selectedVideo?.uri, selectedVideoThumbnailUri, thumbnailLoading, thumbnailError]);
+
+  useEffect(() => {
+    if (__DEV__) {
+      console.log('[UPLOAD_THUMB] passing thumbnailUri to SelectedVideoPreview=', selectedVideoThumbnailUri);
+    }
+  }, [selectedVideoThumbnailUri]);
 
   useEffect(() => {
     // Poll until the backend reports a final analysis state.

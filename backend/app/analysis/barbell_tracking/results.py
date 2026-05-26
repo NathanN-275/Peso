@@ -44,6 +44,9 @@ def _empty_result(
   final_bar_point: tuple[float, float] | None = None,
   final_bar_confidence: float = 0.0,
   final_bar_reason: str | None = None,
+  final_bar_reason_counts: dict[str, int] | None = None,
+  real_hub_detection_count: int = 0,
+  hub_rejected_count: int = 0,
 ) -> dict[str, Any]:
   return {
     "barbellPath": {
@@ -95,6 +98,9 @@ def _empty_result(
       "final_bar_point_y": round(final_bar_point[1], 2) if final_bar_point else None,
       "final_bar_confidence": round(final_bar_confidence, 3),
       "final_bar_reason": final_bar_reason,
+      "final_bar_reason_counts": final_bar_reason_counts or {},
+      "real_hub_detection_count": real_hub_detection_count,
+      "hub_rejected_count": hub_rejected_count,
       "sleeve_direction_x": round(sleeve_direction[0], 4) if sleeve_direction else None,
       "sleeve_direction_y": round(sleeve_direction[1], 4) if sleeve_direction else None,
       "predicted_collar_x": round(predicted_collar[0], 2) if predicted_collar else None,

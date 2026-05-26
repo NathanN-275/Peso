@@ -14,6 +14,9 @@ from .constants import (
   MIN_COLLAR_OFFSET_RATIO,
 )
 
+MIN_HUB_CONFIDENCE = 0.80
+HUB_CENTRAL_REGION_RATIO = 0.36
+
 
 def _estimate_collar_from_plate(
   plate: Candidate,
@@ -105,7 +108,7 @@ def _detect_hub_point(
   *,
   plate: Candidate,
   previous: dict[str, float] | None = None,
-) -> tuple[tuple[float, float], float, str | None]:
+) -> dict[str, Any]:
   height, width = frame.shape[:2]
   crop_radius = max(int(round(plate.radius * 0.52)), 12)
   center_x = int(round(plate.x))
@@ -115,7 +118,14 @@ def _detect_hub_point(
   x1 = min(center_x + crop_radius + 1, width)
   y1 = min(center_y + crop_radius + 1, height)
   if x1 <= x0 or y1 <= y0:
-    return (plate.x, plate.y), 0.36, "hub_crop_empty"
+    return {
+      "point": None,
+      "confidence": 0.0,
+      "reason": "hub_crop_empty",
+      "source": "no_hub",
+      "candidates": [],
+      "rejected_candidates": [],
+    }
 
   crop = frame[y0:y1, x0:x1]
   gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
@@ -143,11 +153,20 @@ def _detect_hub_point(
     minRadius=min_radius,
     maxRadius=max_radius,
   )
-  candidates: list[tuple[tuple[float, float], float]] = []
+  candidates: list[dict[str, Any]] = []
+  rejected_candidates: list[dict[str, Any]] = []
   if circles is not None:
     for circle in circles[0]:
       hub = (float(circle[0]) + x0, float(circle[1]) + y0)
-      if not _point_inside_plate(hub, plate=plate, max_radius_ratio=0.28):
+      if not _point_inside_plate(hub, plate=plate, max_radius_ratio=HUB_CENTRAL_REGION_RATIO):
+        rejected_candidates.append(
+          {
+            "point": hub,
+            "radius": float(circle[2]),
+            "confidence": 0.0,
+            "reason": "hub_outside_plate_region",
+          }
+        )
         continue
       center_distance = math.hypot(hub[0] - plate.x, hub[1] - plate.y)
       radius_ratio = float(circle[2]) / max(plate.radius, 1.0)
@@ -157,11 +176,28 @@ def _detect_hub_point(
       if previous and "final_bar_x" in previous and "final_bar_y" in previous:
         previous_distance = math.hypot(hub[0] - previous["final_bar_x"], hub[1] - previous["final_bar_y"])
         score += max(0.0, 0.08 * (1.0 - previous_distance / max(plate.radius * 0.45, 1.0)))
-      candidates.append((hub, min(score, 1.0)))
+      score = min(score, 1.0)
+      candidate = {
+        "point": hub,
+        "radius": float(circle[2]),
+        "confidence": score,
+        "reason": None,
+      }
+      if score < MIN_HUB_CONFIDENCE:
+        rejected_candidates.append({**candidate, "reason": "low_confidence_hub"})
+      else:
+        candidates.append(candidate)
 
   if candidates:
-    hub, confidence = max(candidates, key=lambda item: item[1])
-    return hub, confidence, None
+    selected = max(candidates, key=lambda item: item["confidence"])
+    return {
+      "point": selected["point"],
+      "confidence": float(selected["confidence"]),
+      "reason": None,
+      "source": "hough_hub",
+      "candidates": candidates,
+      "rejected_candidates": rejected_candidates,
+    }
 
   edges = cv2.Canny(gray, 55, 140)
   edges = cv2.bitwise_and(edges, edges, mask=mask)
@@ -174,9 +210,31 @@ def _detect_hub_point(
     if _point_inside_plate(hub, plate=plate, max_radius_ratio=0.44):
       center_distance = math.hypot(hub[0] - plate.x, hub[1] - plate.y)
       confidence = max(0.52, 0.68 * (1.0 - center_distance / max(plate.radius * 0.58, 1.0)))
-      return hub, min(confidence, 0.72), None
+      rejected_candidates.append(
+        {
+          "point": hub,
+          "radius": 0.0,
+          "confidence": min(confidence, 0.72),
+          "reason": "moments_fallback_uncertain",
+        }
+      )
+      return {
+        "point": None,
+        "confidence": min(confidence, 0.72),
+        "reason": "moments_fallback_uncertain",
+        "source": "no_hub",
+        "candidates": [],
+        "rejected_candidates": rejected_candidates,
+      }
 
-  return (plate.x, plate.y), 0.42, "hub_fallback_plate_center"
+  return {
+    "point": None,
+    "confidence": 0.0,
+    "reason": "no_hub_candidates",
+    "source": "no_hub",
+    "candidates": [],
+    "rejected_candidates": rejected_candidates,
+  }
 
 
 def _refine_collar_point(
