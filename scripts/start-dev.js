@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const { spawn } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -11,6 +11,7 @@ const backendPort = process.env.BACKEND_PORT || '8000';
 const backendHealthUrl = `http://127.0.0.1:${backendPort}/health`;
 const backendPython = path.join(backendDir, '.venv', 'bin', 'python');
 const pythonCommand = fs.existsSync(backendPython) ? backendPython : 'python3';
+const backendEnvFile = path.join(backendDir, '.env');
 const expoBinary = path.join(
   rootDir,
   'node_modules',
@@ -41,6 +42,72 @@ function checkBackendHealth() {
       resolve(false);
     });
   });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function waitForBackendHealth({ attempts = 40, delayMs = 500 } = {}) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (await checkBackendHealth()) {
+      return true;
+    }
+
+    await sleep(delayMs);
+  }
+
+  return false;
+}
+
+function parseEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`Missing backend env file: ${filePath}`);
+  }
+
+  return fs.readFileSync(filePath, 'utf8').split(/\r?\n/).reduce((values, line) => {
+    const trimmed = line.trim();
+
+    if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) {
+      return values;
+    }
+
+    const separatorIndex = trimmed.indexOf('=');
+    const key = trimmed.slice(0, separatorIndex).trim();
+    const value = trimmed.slice(separatorIndex + 1).trim().replace(/^["']|["']$/g, '');
+
+    values[key] = value;
+    return values;
+  }, {});
+}
+
+function verifyBackendEnv() {
+  const env = parseEnvFile(backendEnvFile);
+  const missingKeys = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_JWT_SECRET']
+    .filter((key) => !env[key]);
+
+  if (missingKeys.length > 0) {
+    throw new Error(`backend/.env is missing required keys: ${missingKeys.join(', ')}`);
+  }
+
+  return env;
+}
+
+function verifyFfmpeg(env) {
+  const configuredBinary = env.FFMPEG_BINARY?.trim();
+  const command = configuredBinary || 'ffmpeg';
+
+  try {
+    execFileSync(command, ['-version'], { stdio: 'ignore' });
+  } catch {
+    throw new Error(
+      configuredBinary
+        ? `FFMPEG_BINARY is set but not executable: ${configuredBinary}`
+        : 'ffmpeg is required for video playback compression. Install it with `brew install ffmpeg` or set FFMPEG_BINARY.'
+    );
+  }
 }
 
 function spawnProcess(scope, command, args, options) {
@@ -86,6 +153,9 @@ function shutdown(exitCode = 0) {
 }
 
 async function main() {
+  const backendEnv = verifyBackendEnv();
+  verifyFfmpeg(backendEnv);
+
   const backendAlreadyRunning = await checkBackendHealth();
 
   if (backendAlreadyRunning) {
@@ -110,8 +180,15 @@ async function main() {
         cwd: backendDir,
       }
     );
+
+    const backendReady = await waitForBackendHealth();
+
+    if (!backendReady) {
+      throw new Error(`FastAPI did not become healthy at ${backendHealthUrl}. Check the backend logs above.`);
+    }
   }
 
+  log('backend', `health check passed at ${backendHealthUrl}`);
   log('expo', 'starting Expo');
   spawnProcess('expo', expoBinary, ['start'], {
     cwd: rootDir,

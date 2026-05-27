@@ -189,7 +189,7 @@ class StorageCleanupService:
     referenced_paths: set[str] = set()
 
     for video in videos:
-      for key in ("storage_path", "thumbnail_path"):
+      for key in ("storage_path", "original_storage_path", "playback_path", "thumbnail_path"):
         path = video.get(key)
 
         if isinstance(path, str) and path:
@@ -274,10 +274,10 @@ class StorageCleanupService:
         continue
 
       try:
-        self.repository.delete_video_with_analysis(video_id)
+        self.repository.mark_discarded(video_id)
         report.deleted_count += 1
       except Exception as error:
-        message = f"Unable to delete video row {video_id}: {error}"
+        message = f"Unable to mark video {video_id} as discarded: {error}"
         logger.warning(message)
         report.errors.append(message)
 
@@ -295,7 +295,7 @@ class StorageCleanupService:
   def _video_storage_paths(self, video: dict[str, Any]) -> list[str]:
     storage_paths: list[str] = []
 
-    for key in ("storage_path", "thumbnail_path"):
+    for key in ("storage_path", "original_storage_path", "playback_path", "thumbnail_path"):
       path = video.get(key)
 
       if isinstance(path, str) and is_app_storage_path(path):

@@ -97,6 +97,9 @@ class FakeRepository:
   def delete_video_with_analysis(self, video_id: str) -> None:
     self.deleted_video_ids.append(video_id)
 
+  def mark_discarded(self, video_id: str) -> None:
+    self.deleted_video_ids.append(video_id)
+
 
 class FakeStorage:
   def __init__(self, storage_objects: list[dict] | None = None) -> None:

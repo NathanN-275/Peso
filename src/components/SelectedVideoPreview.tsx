@@ -1,58 +1,30 @@
 import { Ionicons } from '@expo/vector-icons';
-import { ActivityIndicator, Image, StyleSheet, View } from 'react-native';
-import { useEffect } from 'react';
-import type { ImageErrorEventData, NativeSyntheticEvent } from 'react-native';
+import { Image, StyleSheet, View } from 'react-native';
 import tokens from '../theme/tokens';
 
 type SelectedVideoPreviewProps = {
+  videoUri: string;
   thumbnailUri?: string | null;
-  thumbnailLoading?: boolean;
 };
 
 export default function SelectedVideoPreview({
   thumbnailUri,
-  thumbnailLoading = false,
 }: SelectedVideoPreviewProps) {
-  useEffect(() => {
-    if (__DEV__) {
-      console.log('[UPLOAD_THUMB] SelectedVideoPreview received thumbnailUri=', thumbnailUri);
-    }
-  }, [thumbnailUri]);
-
-  const handleThumbnailLoad = () => {
-    if (__DEV__) {
-      console.log('[UPLOAD_THUMB] Image onLoad fired');
-    }
-  };
-
-  const handleThumbnailError = (event: NativeSyntheticEvent<ImageErrorEventData>) => {
-    if (__DEV__) {
-      console.warn('[UPLOAD_THUMB] Image onError=', {
-        thumbnailUri,
-        error: event.nativeEvent,
-      });
-    }
-  };
-
   return (
     <View style={styles.container}>
       {thumbnailUri ? (
-        <Image
-          source={{ uri: thumbnailUri }}
-          style={styles.thumbnail}
-          resizeMode="cover"
-          onLoad={handleThumbnailLoad}
-          onError={handleThumbnailError}
-        />
-      ) : thumbnailLoading ? (
-        <View style={styles.placeholder}>
-          <ActivityIndicator color={tokens.colors.textMuted} />
-        </View>
+        <Image source={{ uri: thumbnailUri }} style={styles.thumbnail} />
       ) : (
         <View style={styles.placeholder}>
-          <Ionicons name="image-outline" size={20} color={tokens.colors.textMuted} />
+          <Ionicons name="videocam" size={20} color={tokens.colors.textMuted} />
         </View>
       )}
+
+      <View style={styles.overlay}>
+        <View style={styles.playbackBadge}>
+          <Ionicons name="play" size={14} color={tokens.colors.textPrimary} />
+        </View>
+      </View>
     </View>
   );
 }
@@ -74,5 +46,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#151A22',
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'flex-end',
+    alignItems: 'flex-end',
+    padding: 8,
+  },
+  playbackBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
   },
 });
