@@ -49,6 +49,21 @@ def _parse_size_bytes(value: Any) -> int | None:
   return None
 
 
+def _storage_item_is_folder(item: dict[str, Any]) -> bool:
+  metadata = item.get("metadata")
+  name = item.get("name")
+
+  if item.get("id"):
+    return False
+
+  if isinstance(metadata, dict) and any(
+    key in metadata for key in ("size", "mimetype", "mimeType", "contentType", "content_length")
+  ):
+    return False
+
+  return isinstance(name, str) and not Path(name).suffix
+
+
 class StorageService:
   def __init__(self) -> None:
     settings = get_settings()
@@ -138,6 +153,43 @@ class StorageService:
       return
 
     self.client.storage.from_(self.bucket).remove([storage_path])
+
+  def list_storage_objects(self, folder: str = "") -> list[dict[str, Any]]:
+    objects = self.client.storage.from_(self.bucket).list(folder.strip("/"))
+    return objects if isinstance(objects, list) else []
+
+  def list_storage_objects_recursive(
+    self,
+    folder: str = "",
+    *,
+    max_depth: int = 4,
+  ) -> list[dict[str, Any]]:
+    storage_objects: list[dict[str, Any]] = []
+    normalized_folder = folder.strip("/")
+
+    def walk(current_folder: str, depth: int) -> None:
+      if depth > max_depth:
+        return
+
+      for item in self.list_storage_objects(current_folder):
+        if not isinstance(item, dict):
+          continue
+
+        name = item.get("name")
+
+        if not isinstance(name, str) or not name:
+          continue
+
+        path = f"{current_folder}/{name}" if current_folder else name
+
+        if _storage_item_is_folder(item):
+          walk(path, depth + 1)
+          continue
+
+        storage_objects.append({**item, "path": path})
+
+    walk(normalized_folder, 0)
+    return storage_objects
 
   def list_storage_prefix(self, prefix: str) -> list[str]:
     folder, _, name_prefix = prefix.rstrip("/").rpartition("/")

@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import logging
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 
 from ..analysis.pipeline import analyze_video
 from ..analysis.versioning import annotate_analysis_freshness, analysis_is_current
 from ..services.analyzed_video_renderer import render_analyzed_video
 from ..services.auth import get_current_user_id
+from ..services.config import get_settings
+from ..services.storage_cleanup import StorageCleanupService, cleanup_requires_token
 from ..services.storage_service import StorageService
 from ..services.video_repository import VideoRepository
 
@@ -89,10 +91,40 @@ class AnalyzedVideoExportResponse(BaseModel):
   export_url: str
 
 
+class CleanupDetailsResponse(BaseModel):
+  expired_pending_videos: int
+  stale_pending_videos: int
+  old_export_objects: int
+  orphan_objects: int
+  storage_objects: int
+  bytes_reclaimable: int
+  errors: list[str]
+
+
 class CleanupExpiredVideosResponse(BaseModel):
   deleted_count: int
   candidate_count: int = 0
   dry_run: bool = True
+  details: CleanupDetailsResponse
+
+
+def _authorize_cleanup(cleanup_token: str | None) -> None:
+  settings = get_settings()
+
+  if not cleanup_requires_token(settings):
+    return
+
+  if not settings.cleanup_job_token:
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail="CLEANUP_JOB_TOKEN must be configured before running cleanup outside development.",
+    )
+
+  if cleanup_token != settings.cleanup_job_token:
+    raise HTTPException(
+      status_code=status.HTTP_401_UNAUTHORIZED,
+      detail="Invalid cleanup token.",
+    )
 
 
 def _video_is_saved(video: dict) -> bool:
@@ -384,47 +416,36 @@ def discard_video(
 
 
 @router.post("/videos/cleanup-expired", response_model=CleanupExpiredVideosResponse)
-def cleanup_expired_videos(confirm: bool = False) -> CleanupExpiredVideosResponse:
-  repository = VideoRepository()
-  storage = StorageService()
-  expired_videos = repository.list_storage_cleanup_candidates()
-  deleted_count = 0
-
-  for video in expired_videos:
-    paths = [
-      str(video.get("storage_path") or ""),
-      str(video.get("original_storage_path") or ""),
-      str(video.get("playback_path") or ""),
-      str(video.get("thumbnail_path") or ""),
-      *storage.list_storage_prefix(f"{video['user_id']}/exports/{video['id']}-"),
-    ]
-
-    for path in [path for path in dict.fromkeys(paths) if path]:
-      if not _path_belongs_to_user(path, str(video["user_id"])):
-        logger.warning("Skipping cleanup deletion outside user folder user_id=%s path=%s", video["user_id"], path)
-        continue
-
-      if confirm:
-        logger.info("Deleting cleanup storage object: %s", path)
-        if _delete_owned_storage_path(storage, path, str(video["user_id"]), "cleanup"):
-          deleted_count += 1
-      else:
-        logger.info("Dry run would delete cleanup storage object: %s", path)
-
-    if confirm:
-      repository.mark_discarded(video["id"])
+def cleanup_expired_videos(
+  confirm: bool = False,
+  dry_run: bool | None = None,
+  cleanup_token: Annotated[str | None, Header(alias="X-Cleanup-Token")] = None,
+) -> CleanupExpiredVideosResponse:
+  _authorize_cleanup(cleanup_token)
+  effective_dry_run = not confirm if dry_run is None else dry_run
+  report = StorageCleanupService().run(dry_run=effective_dry_run)
 
   logger.info(
-    "Storage cleanup dry_run=%s candidates=%s deleted_objects=%s at %s",
-    not confirm,
-    len(expired_videos),
-    deleted_count,
-    datetime.now(timezone.utc).isoformat(),
+    "Storage cleanup completed: deleted_videos=%s dry_run=%s storage_objects=%s bytes_reclaimable=%s",
+    report.deleted_count,
+    report.dry_run,
+    report.storage_objects,
+    report.bytes_reclaimable,
   )
+  candidate_count = report.expired_pending_videos + report.stale_pending_videos
   return CleanupExpiredVideosResponse(
-    deleted_count=deleted_count,
-    candidate_count=len(expired_videos),
-    dry_run=not confirm,
+    deleted_count=report.deleted_count,
+    candidate_count=candidate_count,
+    dry_run=report.dry_run,
+    details=CleanupDetailsResponse(
+      expired_pending_videos=report.expired_pending_videos,
+      stale_pending_videos=report.stale_pending_videos,
+      old_export_objects=report.old_export_objects,
+      orphan_objects=report.orphan_objects,
+      storage_objects=report.storage_objects,
+      bytes_reclaimable=report.bytes_reclaimable,
+      errors=report.errors,
+    ),
   )
 
 

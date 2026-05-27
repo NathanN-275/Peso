@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .barbell_tracker import BarbellTracker
 from .feedback_engine import build_depth_summary_debug, build_feedback
 from .exercises.squat import SquatAnalyzer
 from .pose_fallback import analysis_needs_pose_fallback
@@ -430,6 +431,48 @@ def _finalize_storage_assets(
   finally:
     if compressed_temp:
       storage.remove_tempfile(compressed_temp)
+
+
+def _attach_barbell_tracking(
+  *,
+  result: dict[str, Any],
+  video: dict[str, Any],
+  file_path: str,
+  estimation: dict[str, Any],
+) -> None:
+  if not _is_squat_variation(video["exercise_type"]) or video["view_type"] != "side":
+    return
+
+  diagnostics = result.setdefault("diagnostics", {})
+  try:
+    tracking = BarbellTracker().track(
+      file_path,
+      pose_frames=estimation.get("frames") or [],
+      frame_step=int(estimation.get("frame_step") or 1),
+      processed_width=estimation.get("processed_frame_width") or estimation.get("frame_width"),
+      processed_height=estimation.get("processed_frame_height") or estimation.get("frame_height"),
+    )
+    result["barbellPath"] = tracking["barbellPath"]
+    diagnostics["barbell_tracking"] = tracking["diagnostics"]
+  except Exception as error:
+    logger.warning("Barbell tracking failed for video %s: %s", video.get("id"), error)
+    result["barbellPath"] = {
+      "available": False,
+      "target": "near_plate_collar_center",
+      "source": "opencv_circle_tracker",
+      "coverage": 0.0,
+      "points": [],
+    }
+    diagnostics["barbell_tracking"] = {
+      "available": False,
+      "target": "near_plate_collar_center",
+      "source": "opencv_circle_tracker",
+      "coverage": 0.0,
+      "failure_reason": "tracker_error",
+      "error": str(error),
+    }
+
+
 def analyze_video(video_id: str) -> None:
   # The pipeline loads the video, estimates pose, then stores results.
   analysis_started = time.perf_counter()
@@ -599,6 +642,18 @@ def analyze_video(video_id: str) -> None:
     result["duration"] = (estimation["duration_ms"] or 0) / 1000
     result["videoWidth"] = estimation.get("frame_width")
     result["videoHeight"] = estimation.get("frame_height")
+    stage_started = time.perf_counter()
+    _attach_barbell_tracking(
+      result=result,
+      video=video,
+      file_path=str(temp_file),
+      estimation=estimation,
+    )
+    logger.info(
+      "Tracked barbell path for video %s in %sms.",
+      video_id,
+      int((time.perf_counter() - stage_started) * 1000),
+    )
     video_metadata = {
       "fps": estimation.get("fps"),
       "duration_ms": estimation.get("duration_ms"),

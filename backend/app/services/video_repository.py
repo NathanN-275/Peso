@@ -148,13 +148,53 @@ class VideoRepository:
 
   def list_expired_pending_videos(self) -> list[dict[str, Any]]:
     now = datetime.now(timezone.utc).isoformat()
-    response = (
-      self.client.table("videos")
-      .select(VIDEO_BASE_COLUMNS)
-      .eq("save_state", "pending")
-      .lt("expires_at", now)
-      .execute()
-    )
+    try:
+      response = (
+        self.client.table("videos")
+        .select(VIDEO_STORAGE_COLUMNS)
+        .eq("save_state", "pending")
+        .lt("expires_at", now)
+        .execute()
+      )
+    except Exception as error:
+      logger.warning("Falling back to legacy expired-video query: %s", error)
+      response = (
+        self.client.table("videos")
+        .select(VIDEO_BASE_COLUMNS)
+        .eq("save_state", "pending")
+        .lt("expires_at", now)
+        .execute()
+      )
+    return response.data or []
+
+  def list_stale_pending_in_progress_videos(self, cutoff_iso: str) -> list[dict[str, Any]]:
+    try:
+      response = (
+        self.client.table("videos")
+        .select(VIDEO_STORAGE_COLUMNS)
+        .eq("save_state", "pending")
+        .in_("status", ["queued", "processing"])
+        .lt("updated_at", cutoff_iso)
+        .execute()
+      )
+    except Exception as error:
+      logger.warning("Falling back to legacy stale-pending query: %s", error)
+      response = (
+        self.client.table("videos")
+        .select(VIDEO_BASE_COLUMNS)
+        .eq("save_state", "pending")
+        .in_("status", ["queued", "processing"])
+        .lt("updated_at", cutoff_iso)
+        .execute()
+      )
+    return response.data or []
+
+  def list_storage_referenced_videos(self) -> list[dict[str, Any]]:
+    try:
+      response = self.client.table("videos").select(VIDEO_STORAGE_COLUMNS).execute()
+    except Exception as error:
+      logger.warning("Falling back to legacy referenced-video query: %s", error)
+      response = self.client.table("videos").select(VIDEO_BASE_COLUMNS).execute()
     return response.data or []
 
   def list_storage_cleanup_candidates(self, older_than_days: int = 7) -> list[dict[str, Any]]:

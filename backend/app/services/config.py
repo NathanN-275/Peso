@@ -23,6 +23,9 @@ LOCAL_DEV_CORS_ORIGIN_REGEX = (
 )
 DEFAULT_MAX_VIDEO_UPLOAD_BYTES = 50 * 1024 * 1024
 DEFAULT_MODEL_VERSION = "mediapipe-rtmpose-v2-hip-crease-depth"
+DEFAULT_EXPORT_CACHE_TTL_HOURS = 24
+DEFAULT_ORPHAN_STORAGE_MIN_AGE_HOURS = 24
+DEFAULT_STALE_PROCESSING_HOURS = 6
 
 
 @dataclass(frozen=True)
@@ -31,12 +34,30 @@ class Settings:
   supabase_url: str
   supabase_service_role_key: str
   supabase_jwt_secret: str
+  cleanup_job_token: str | None = None
   video_bucket: str = "videos"
   max_video_upload_bytes: int = 50 * 1024 * 1024
   model_version: str = DEFAULT_MODEL_VERSION
+  export_cache_ttl_hours: int = DEFAULT_EXPORT_CACHE_TTL_HOURS
+  orphan_storage_min_age_hours: int = DEFAULT_ORPHAN_STORAGE_MIN_AGE_HOURS
+  stale_processing_hours: int = DEFAULT_STALE_PROCESSING_HOURS
   cors_origins: tuple[str, ...] = ()
   cors_origin_regex: str | None = None
   cors_allow_private_network: bool = False
+
+
+def _parse_positive_int_env(name: str, default: int) -> int:
+  raw_value = os.getenv(name, str(default)).strip()
+
+  try:
+    parsed_value = int(raw_value)
+  except ValueError as error:
+    raise RuntimeError(f"{name} must be a positive integer.") from error
+
+  if parsed_value <= 0:
+    raise RuntimeError(f"{name} must be a positive integer.")
+
+  return parsed_value
 
 
 @lru_cache(maxsize=1)
@@ -45,19 +66,24 @@ def get_settings() -> Settings:
   supabase_url = os.getenv("SUPABASE_URL", "").strip()
   supabase_service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
   supabase_jwt_secret = os.getenv("SUPABASE_JWT_SECRET", "").strip()
+  cleanup_job_token = os.getenv("CLEANUP_JOB_TOKEN", "").strip() or None
   video_bucket = os.getenv("VIDEO_BUCKET", "videos").strip() or "videos"
-  max_video_upload_bytes_raw = os.getenv(
+  max_video_upload_bytes = _parse_positive_int_env(
     "MAX_VIDEO_UPLOAD_BYTES",
-    str(DEFAULT_MAX_VIDEO_UPLOAD_BYTES),
-  ).strip()
-
-  try:
-    max_video_upload_bytes = int(max_video_upload_bytes_raw)
-  except ValueError as error:
-    raise RuntimeError("MAX_VIDEO_UPLOAD_BYTES must be a positive integer.") from error
-
-  if max_video_upload_bytes <= 0:
-    raise RuntimeError("MAX_VIDEO_UPLOAD_BYTES must be a positive integer.")
+    DEFAULT_MAX_VIDEO_UPLOAD_BYTES,
+  )
+  export_cache_ttl_hours = _parse_positive_int_env(
+    "EXPORT_CACHE_TTL_HOURS",
+    DEFAULT_EXPORT_CACHE_TTL_HOURS,
+  )
+  orphan_storage_min_age_hours = _parse_positive_int_env(
+    "ORPHAN_STORAGE_MIN_AGE_HOURS",
+    DEFAULT_ORPHAN_STORAGE_MIN_AGE_HOURS,
+  )
+  stale_processing_hours = _parse_positive_int_env(
+    "STALE_PROCESSING_HOURS",
+    DEFAULT_STALE_PROCESSING_HOURS,
+  )
 
   model_version = (
     os.getenv("MODEL_VERSION", DEFAULT_MODEL_VERSION).strip()
@@ -97,9 +123,13 @@ def get_settings() -> Settings:
     supabase_url=supabase_url,
     supabase_service_role_key=supabase_service_role_key,
     supabase_jwt_secret=supabase_jwt_secret,
+    cleanup_job_token=cleanup_job_token,
     video_bucket=video_bucket,
     max_video_upload_bytes=max_video_upload_bytes,
     model_version=model_version,
+    export_cache_ttl_hours=export_cache_ttl_hours,
+    orphan_storage_min_age_hours=orphan_storage_min_age_hours,
+    stale_processing_hours=stale_processing_hours,
     cors_origins=cors_origins,
     cors_origin_regex=cors_origin_regex,
     cors_allow_private_network=cors_allow_private_network,

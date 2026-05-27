@@ -1,0 +1,655 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+from app.analysis.barbell_tracker import (
+  BarbellTracker,
+  Candidate,
+  _remove_motion_outliers,
+  _validate_collar_geometry,
+)
+from app.analysis.barbell_tracking.detection import _crop_bounds_from_landmarks, _filter_wrist_candidates
+from app.analysis.barbell_tracking.geometry import _detect_hub_point, _refine_collar_point
+
+TEST_COLLAR_OFFSET_RATIO = 0.28
+
+
+def landmark(x: float, y: float, visibility: float = 0.95) -> dict[str, float]:
+  return {
+    "x": x,
+    "y": y,
+    "z": 0.0,
+    "visibility": visibility,
+  }
+
+
+def pose_frame(source_frame_index: int, *, x: float, y: float) -> dict[str, object]:
+  return {
+    "source_frame_index": source_frame_index,
+    "timestamp_ms": int(source_frame_index / 18 * 1000),
+    "landmarks": {
+      "left_shoulder": landmark(x - 0.03, y),
+      "right_shoulder": landmark(x + 0.03, y),
+      "left_hip": landmark(x - 0.02, y + 0.28),
+      "right_hip": landmark(x + 0.02, y + 0.28),
+      "left_wrist": landmark(x - 0.09, y + 0.22),
+      "right_wrist": landmark(x + 0.09, y + 0.22),
+    },
+  }
+
+
+def write_video(
+  path: Path,
+  centers: list[tuple[int, int] | None],
+  *,
+  size: tuple[int, int] = (320, 240),
+  fps: float = 6.0,
+  distractors: list[list[tuple[int, int, int]]] | None = None,
+) -> None:
+  writer = cv2.VideoWriter(
+    str(path),
+    cv2.VideoWriter_fourcc(*"mp4v"),
+    fps,
+    size,
+  )
+  if not writer.isOpened():
+    raise RuntimeError("Unable to open test video writer.")
+
+  for index, center in enumerate(centers):
+    frame = np.zeros((size[1], size[0], 3), dtype=np.uint8)
+    if center is not None:
+      cv2.circle(frame, center, 28, (235, 235, 235), 3, cv2.LINE_AA)
+      cv2.circle(frame, center, 5, (255, 255, 255), -1, cv2.LINE_AA)
+    for x, y, radius in (distractors[index] if distractors else []):
+      cv2.circle(frame, (x, y), radius, (235, 235, 235), 3, cv2.LINE_AA)
+      cv2.circle(frame, (x, y), 4, (255, 255, 255), -1, cv2.LINE_AA)
+    writer.write(frame)
+
+  writer.release()
+
+
+def collar_from_plate(center: tuple[int, int], radius: int = 42) -> tuple[int, int]:
+  return (int(round(center[0] + radius * TEST_COLLAR_OFFSET_RATIO)), center[1])
+
+
+def write_plate_video(
+  path: Path,
+  plate_centers: list[tuple[int, int]],
+  *,
+  size: tuple[int, int] = (320, 240),
+  fps: float = 6.0,
+  plate_radius: int = 42,
+  distractors: list[list[tuple[int, int, int]]] | None = None,
+) -> None:
+  writer = cv2.VideoWriter(
+    str(path),
+    cv2.VideoWriter_fourcc(*"mp4v"),
+    fps,
+    size,
+  )
+  if not writer.isOpened():
+    raise RuntimeError("Unable to open test video writer.")
+
+  for index, center in enumerate(plate_centers):
+    frame = np.zeros((size[1], size[0], 3), dtype=np.uint8)
+    cv2.circle(frame, center, plate_radius, (72, 118, 108), -1, cv2.LINE_AA)
+    cv2.circle(frame, center, plate_radius, (235, 235, 235), 3, cv2.LINE_AA)
+    collar = collar_from_plate(center, plate_radius)
+    cv2.circle(frame, collar, 7, (245, 245, 245), 2, cv2.LINE_AA)
+    cv2.circle(frame, collar, 3, (30, 30, 30), -1, cv2.LINE_AA)
+    for x, y, radius in (distractors[index] if distractors else []):
+      cv2.circle(frame, (x, y), radius, (235, 235, 235), 3, cv2.LINE_AA)
+      cv2.circle(frame, (x, y), 4, (255, 255, 255), -1, cv2.LINE_AA)
+    writer.write(frame)
+
+  writer.release()
+
+
+class BarbellTrackerTest(unittest.TestCase):
+  def _track(self, centers: list[tuple[int, int] | None], *, fps: float = 6.0, frame_step: int = 1) -> dict:
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell.mp4"
+      write_video(path, centers, fps=fps)
+      pose_frames = [
+        pose_frame(index, x=(center[0] / 320 if center else 0.5), y=(center[1] / 240 if center else 0.4))
+        for index, center in enumerate(centers)
+        if index % frame_step == 0
+      ]
+      return BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=frame_step,
+        processed_width=320,
+        processed_height=240,
+      )
+
+  def test_prefers_large_plate_center_over_body_distractors(self) -> None:
+    centers = [(226, 72 + index * 2) for index in range(10)]
+    distractors = [[(148, 118 + index, 8), (178, 140, 6)] for index in range(10)]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-distractors.mp4"
+      write_video(path, centers, distractors=distractors)
+      pose_frames = [
+        pose_frame(index, x=0.48, y=0.43)
+        for index in range(len(centers))
+      ]
+
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+      )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    first_point = result["barbellPath"]["points"][0]
+    self.assertAlmostEqual(first_point["x"], 226 / 320, delta=0.06)
+    self.assertAlmostEqual(first_point["y"], 72 / 240, delta=0.08)
+
+  def test_bootstrap_starts_on_plate_center_before_motion(self) -> None:
+    centers = [(226, 72), (226, 72), (226, 72), (226, 78), (226, 84), (226, 90)]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-start.mp4"
+      write_video(path, centers)
+      pose_frames = [pose_frame(index, x=0.48, y=0.43) for index in range(len(centers))]
+
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+      )
+
+    first_point = result["barbellPath"]["points"][0]
+    self.assertAlmostEqual(first_point["x"], 226 / 320, delta=0.06)
+    self.assertAlmostEqual(first_point["y"], 72 / 240, delta=0.08)
+
+  def test_bootstrap_rejects_high_rack_hardware(self) -> None:
+    centers = [(226, 72), (226, 72), (226, 78), (226, 84), (226, 90), (226, 96)]
+    distractors = [[(226, 32, 10), (178, 128, 8)] for _ in centers]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-rack-distractor.mp4"
+      write_video(path, centers, distractors=distractors)
+      pose_frames = [pose_frame(index, x=0.48, y=0.43) for index in range(len(centers))]
+
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+      )
+
+    first_point = result["barbellPath"]["points"][0]
+    self.assertAlmostEqual(first_point["x"], 226 / 320, delta=0.06)
+    self.assertAlmostEqual(first_point["y"], 72 / 240, delta=0.08)
+
+  def test_rejects_high_rack_loop_when_collar_is_missing(self) -> None:
+    centers = [None for _ in range(10)]
+    distractors = [[(226, 32, 18), (210, 38, 14)] for _ in centers]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-rack-loop.mp4"
+      write_video(path, centers, distractors=distractors)
+      pose_frames = [pose_frame(index, x=0.48, y=0.43) for index in range(len(centers))]
+
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+      )
+
+    self.assertFalse(result["barbellPath"]["available"])
+    self.assertEqual(result["diagnostics"]["failure_reason"], "low_barbell_tracking_coverage")
+
+  def test_prefers_candidate_moving_with_shoulder_over_stationary_rack(self) -> None:
+    centers = [(210 + index * 4, 104) for index in range(12)]
+    stationary_rack = [(250, 104, 28)]
+    distractors = [stationary_rack for _ in centers]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-relative-motion.mp4"
+      write_plate_video(path, centers, distractors=distractors, plate_radius=28)
+      pose_frames = [
+        pose_frame(index, x=(center[0] - 60) / 320, y=0.43)
+        for index, center in enumerate(centers)
+      ]
+
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+      )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    points = result["barbellPath"]["points"]
+    self.assertAlmostEqual(points[0]["x"], centers[0][0] / 320, delta=0.07)
+    self.assertAlmostEqual(points[-1]["x"], centers[-1][0] / 320, delta=0.07)
+
+  def test_plate_first_tracker_outputs_hub_point(self) -> None:
+    plate_centers = [(178 + index * 3, 104) for index in range(8)]
+    distractors = [[(238, 104, 34)] for _ in plate_centers]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-moving-plate.mp4"
+      write_plate_video(path, plate_centers, distractors=distractors)
+      pose_frames = [
+        pose_frame(index, x=(plate_center[0] - 42) / 320, y=0.43)
+        for index, plate_center in enumerate(plate_centers)
+      ]
+
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+      )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    self.assertEqual(result["diagnostics"]["selected_candidate_type"], "plate")
+    points = result["barbellPath"]["points"]
+    self.assertAlmostEqual(points[0]["x"], plate_centers[0][0] / 320, delta=0.07)
+    self.assertAlmostEqual(points[0]["y"], plate_centers[0][1] / 240, delta=0.08)
+    self.assertAlmostEqual(points[-1]["x"], plate_centers[-1][0] / 320, delta=0.07)
+    self.assertTrue(result["diagnostics"]["initialization_confirmed"])
+    self.assertEqual(result["diagnostics"]["initialization_frame_count"], 3)
+    self.assertLessEqual(result["diagnostics"]["hough_detection_count"], 4)
+    self.assertIn(
+      result["diagnostics"]["local_tracker_type"],
+      ("klt_optical_flow", "template_matching", "fresh_hough_validation"),
+    )
+
+  def test_hub_detection_accepts_compact_visible_hub(self) -> None:
+    frame = np.zeros((180, 240, 3), dtype=np.uint8)
+    plate = Candidate(x=120, y=90, radius=42, confidence=0.9)
+    cv2.circle(frame, (120, 90), 42, (72, 118, 108), -1, cv2.LINE_AA)
+    cv2.circle(frame, (120, 90), 42, (235, 235, 235), 3, cv2.LINE_AA)
+    cv2.circle(frame, (130, 90), 7, (245, 245, 245), 2, cv2.LINE_AA)
+    cv2.circle(frame, (130, 90), 3, (30, 30, 30), -1, cv2.LINE_AA)
+
+    result = _detect_hub_point(cv2, frame, plate=plate)
+
+    self.assertEqual(result["source"], "hough_hub")
+    self.assertIsNone(result["reason"])
+    self.assertIsNotNone(result["point"])
+    self.assertGreaterEqual(result["confidence"], 0.8)
+
+  def test_hub_detection_does_not_emit_plate_center_fallback(self) -> None:
+    frame = np.zeros((180, 240, 3), dtype=np.uint8)
+    plate = Candidate(x=120, y=90, radius=42, confidence=0.9)
+    cv2.circle(frame, (120, 90), 42, (72, 118, 108), -1, cv2.LINE_AA)
+    cv2.circle(frame, (120, 90), 42, (235, 235, 235), 3, cv2.LINE_AA)
+
+    result = _detect_hub_point(cv2, frame, plate=plate)
+
+    self.assertIsNone(result["point"])
+    self.assertEqual(result["source"], "no_hub")
+    self.assertIn(result["reason"], ("moments_fallback_uncertain", "no_hub_candidates"))
+
+  def test_detection_crop_is_anchored_to_shoulder(self) -> None:
+    shoulder = (136.0, 103.2)
+    wrist = (260.0, 200.0)
+    landmarks = {
+      "left_shoulder": landmark((shoulder[0] - 9.6) / 320, shoulder[1] / 240),
+      "right_shoulder": landmark((shoulder[0] + 9.6) / 320, shoulder[1] / 240),
+      "left_wrist": landmark(wrist[0] / 320, wrist[1] / 240),
+    }
+
+    diagnostics = _crop_bounds_from_landmarks(
+      landmarks,
+      width=320,
+      height=240,
+      fallback_bounds=(0.0, 0.0, 320.0, 240.0),
+    )
+
+    crop_x0, crop_y0, crop_x1, crop_y1 = diagnostics["crop_bounds"]
+    crop_center_x = (crop_x0 + crop_x1) / 2
+    self.assertEqual(diagnostics["anchor_landmark"], "shoulder")
+    self.assertAlmostEqual(crop_center_x, shoulder[0], delta=1.0)
+    self.assertLess(abs(crop_center_x - shoulder[0]), abs(crop_center_x - wrist[0]))
+
+  def test_detection_rejects_wrist_region_circle(self) -> None:
+    wrist = (166.0, 112.0)
+    landmarks = {"left_wrist": landmark(wrist[0] / 320, wrist[1] / 240)}
+    candidates = [
+      Candidate(x=166.0, y=112.0, radius=22.0, confidence=0.62),
+      Candidate(x=226.0, y=72.0, radius=28.0, confidence=0.62),
+    ]
+
+    filtered, wrist_rejected_count = _filter_wrist_candidates(candidates, landmarks, width=320, height=240)
+
+    self.assertEqual(wrist_rejected_count, 1)
+    self.assertEqual(filtered, [candidates[1]])
+
+  def test_tracker_bootstrap_diagnostics_are_inspectable_without_video(self) -> None:
+    tracker = BarbellTracker()
+
+    diagnostic = tracker._record_bootstrap_diagnostic(
+      frame_index=4,
+      tracking_mode="initializing",
+      detection_diagnostics={
+        "anchor_landmark": "shoulder",
+        "crop_bounds": (27.0, 45.0, 245.0, 152.0),
+        "wrist_rejected_count": 1,
+      },
+      shoulder=(136.0, 103.2),
+      wrist_points=[(166.0, 112.0)],
+      selected_plate=Candidate(x=226.0, y=72.0, radius=28.0, confidence=0.62),
+    )
+
+    self.assertIs(diagnostic, tracker.bootstrap_diagnostics["frames"][0])
+    self.assertEqual(tracker.bootstrap_diagnostics["frames"][0]["crop_anchor_landmark"], "shoulder")
+    self.assertEqual(tracker.bootstrap_diagnostics["frames"][0]["winning_candidate_x"], 226.0)
+    self.assertEqual(tracker.bootstrap_diagnostics["frames"][0]["winning_candidate_y"], 72.0)
+    self.assertEqual(tracker.bootstrap_diagnostics["frames"][0]["wrist_rejected_count"], 1)
+
+  def test_initialization_requires_multiple_frame_consistency(self) -> None:
+    plate_centers = [(178 + index * 2, 104) for index in range(2)]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-short-init.mp4"
+      write_plate_video(path, plate_centers)
+      pose_frames = [
+        pose_frame(index, x=(plate_center[0] - 42) / 320, y=0.43)
+        for index, plate_center in enumerate(plate_centers)
+      ]
+
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+      )
+
+    self.assertFalse(result["barbellPath"]["available"])
+    self.assertEqual(result["diagnostics"]["detected_point_count"], 0)
+    self.assertFalse(result["diagnostics"]["initialization_confirmed"])
+
+  def test_collar_geometry_rejects_backward_left_drift(self) -> None:
+    plate = Candidate(x=178, y=104, radius=42, confidence=0.9)
+
+    reason = _validate_collar_geometry(
+      (plate.x - 10, plate.y),
+      plate=plate,
+      sleeve_direction=(0.996, -0.09),
+    )
+
+    self.assertEqual(reason, "collar_behind_plate")
+
+  def test_collar_geometry_rejects_sudden_direction_flip(self) -> None:
+    plate = Candidate(x=178, y=104, radius=42, confidence=0.9)
+
+    reason = _validate_collar_geometry(
+      (plate.x + 2, plate.y - 14),
+      plate=plate,
+      sleeve_direction=(0.996, -0.09),
+      previous={"collar_dx": 12, "collar_dy": -1},
+    )
+
+    self.assertEqual(reason, "collar_direction_flip")
+
+  def test_collar_geometry_rejects_far_point_from_plate(self) -> None:
+    plate = Candidate(x=178, y=104, radius=42, confidence=0.9)
+
+    reason = _validate_collar_geometry(
+      (plate.x + 30, plate.y),
+      plate=plate,
+      sleeve_direction=(0.996, -0.09),
+    )
+
+    self.assertEqual(reason, "collar_too_far_from_plate")
+
+  def test_final_collar_stays_within_plate_scaled_distance(self) -> None:
+    plate_centers = [(178 + index * 2, 104) for index in range(8)]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-collar-distance.mp4"
+      write_plate_video(path, plate_centers)
+      pose_frames = [
+        pose_frame(index, x=(plate_center[0] - 42) / 320, y=0.43)
+        for index, plate_center in enumerate(plate_centers)
+      ]
+
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+      )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    diagnostics = result["diagnostics"]
+    distance = ((diagnostics["final_collar_x"] - diagnostics["plate_center_x"]) ** 2 + (diagnostics["final_collar_y"] - diagnostics["plate_center_y"]) ** 2) ** 0.5
+    self.assertLessEqual(distance, diagnostics["plate_radius"] * 0.35)
+    self.assertGreaterEqual(distance, diagnostics["plate_radius"] * 0.1)
+
+  def test_collar_refinement_rejects_edge_outside_sleeve_axis_window(self) -> None:
+    frame = np.zeros((220, 260, 3), dtype=np.uint8)
+    plate = Candidate(x=100, y=100, radius=160, confidence=0.9)
+    predicted = (145.0, 100.0)
+    cv2.circle(frame, (126, 120), 4, (255, 255, 255), 1, cv2.LINE_AA)
+
+    refined, penalty, reason = _refine_collar_point(
+      cv2,
+      frame,
+      predicted=predicted,
+      plate=plate,
+      sleeve_direction=(1.0, 0.0),
+    )
+
+    self.assertEqual(refined, predicted)
+    self.assertGreater(penalty, 0)
+    self.assertEqual(reason, "collar_refinement_outside_sleeve_axis")
+
+  def test_collar_refinement_rejects_edge_beyond_geometric_distance_cap(self) -> None:
+    frame = np.zeros((160, 200, 3), dtype=np.uint8)
+    plate = Candidate(x=100, y=80, radius=8, confidence=0.9)
+    predicted = (103.0, 80.0)
+    cv2.line(frame, (108, 80), (109, 80), (255, 255, 255), 1, cv2.LINE_AA)
+
+    refined, penalty, reason = _refine_collar_point(
+      cv2,
+      frame,
+      predicted=predicted,
+      plate=plate,
+      sleeve_direction=(1.0, 0.0),
+    )
+
+    self.assertEqual(refined, predicted)
+    self.assertGreater(penalty, 0)
+    self.assertEqual(reason, "collar_refinement_too_far_from_geometric_estimate")
+
+  def test_sudden_backward_drift_removed_as_outlier(self) -> None:
+    points = [
+      {"time": 0.0, "x": 0.62, "y": 0.43, "confidence": 1.0},
+      {"time": 0.1, "x": 0.63, "y": 0.42, "confidence": 1.0},
+      {"time": 0.2, "x": 0.34, "y": 0.44, "confidence": 1.0},
+      {"time": 0.3, "x": 0.64, "y": 0.41, "confidence": 1.0},
+    ]
+
+    filtered, removed_count = _remove_motion_outliers(points)
+
+    self.assertEqual(removed_count, 1)
+    self.assertNotIn(points[2], filtered)
+
+  def test_shoulder_motion_with_stationary_plate_marks_frames_missing(self) -> None:
+    plate_centers = [(178, 104) for _ in range(8)]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-stationary-plate-moving-shoulder.mp4"
+      write_plate_video(path, plate_centers)
+      pose_frames = [
+        pose_frame(index, x=(136 + index * 7) / 320, y=0.43)
+        for index in range(len(plate_centers))
+      ]
+
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+      )
+
+    self.assertLess(result["diagnostics"]["detected_point_count"], result["diagnostics"]["sampled_frame_count"])
+    self.assertGreater(result["diagnostics"]["rejection_reason_counts"].get("stationary_hardware_like", 0), 0)
+
+  def test_bootstrap_rejects_stationary_candidate_when_shoulder_moves(self) -> None:
+    centers = [None for _ in range(8)]
+    distractors = [[(178, 104, 42)] for _ in centers]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-stationary-bootstrap-hardware.mp4"
+      write_video(path, centers, distractors=distractors)
+      pose_frames = [
+        pose_frame(index, x=(136 + index * 7) / 320, y=0.43)
+        for index in range(len(centers))
+      ]
+
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+      )
+
+    self.assertFalse(result["barbellPath"]["available"])
+    self.assertFalse(result["diagnostics"]["initialization_confirmed"])
+    self.assertGreater(result["diagnostics"]["rejection_reason_counts"].get("stationary_hardware_like", 0), 0)
+
+  def test_rejects_high_large_j_cup_candidate(self) -> None:
+    centers = [(210, 104), (210, 104), (210, 108), (210, 112), (210, 116), (210, 120)]
+    distractors = [[(210, 56, 36)] for _ in centers]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-large-jcup.mp4"
+      write_video(path, centers, distractors=distractors)
+      pose_frames = [pose_frame(index, x=0.47, y=0.43) for index in range(len(centers))]
+
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+      )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    first_point = result["barbellPath"]["points"][0]
+    self.assertAlmostEqual(first_point["x"], 210 / 320, delta=0.07)
+    self.assertAlmostEqual(first_point["y"], 104 / 240, delta=0.08)
+
+  def test_plate_first_rejects_high_jcup_over_plate(self) -> None:
+    plate_centers = [(178, 104), (178, 104), (178, 108), (178, 112), (178, 116), (178, 120)]
+    distractors = [[(178, 56, 44)] for _ in plate_centers]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-high-jcup-plate.mp4"
+      write_plate_video(path, plate_centers, distractors=distractors)
+      pose_frames = [pose_frame(index, x=0.43, y=0.43) for index in range(len(plate_centers))]
+
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+      )
+
+    self.assertFalse(result["barbellPath"]["available"])
+    self.assertEqual(result["diagnostics"]["failure_reason"], "low_barbell_tracking_coverage")
+    self.assertEqual(result["diagnostics"]["detected_point_count"], 3)
+    tracking_frames = result["diagnostics"]["bootstrap_diagnostics"]["tracking_frames"]
+    emitted = [frame for frame in tracking_frames if frame["emitted_pixel_y"] is not None]
+    self.assertTrue(emitted)
+    for frame in emitted:
+      self.assertGreater(frame["emitted_pixel_y"], 95)
+    self.assertGreater(result["diagnostics"]["rejection_reason_counts"].get("too_high_above_shoulder", 0), 0)
+
+  def test_tracks_about_six_fps_on_sixty_fps_video(self) -> None:
+    centers = [(150, 78 + (index // 10)) for index in range(60)]
+
+    result = self._track(centers, fps=60.0, frame_step=3)
+
+    self.assertTrue(result["barbellPath"]["available"])
+    self.assertEqual(result["diagnostics"]["tracking_frame_step"], 9)
+    self.assertLessEqual(result["diagnostics"]["sampled_frame_count"], 8)
+    self.assertGreaterEqual(result["diagnostics"]["sampled_frame_count"], 6)
+
+  def test_returns_unavailable_without_pose_frames(self) -> None:
+    centers = [(150, 78) for _ in range(20)]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-no-pose.mp4"
+      write_video(path, centers, fps=60.0)
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=[],
+        frame_step=3,
+        processed_width=320,
+        processed_height=240,
+      )
+
+    self.assertFalse(result["barbellPath"]["available"])
+    self.assertEqual(result["diagnostics"]["failure_reason"], "no_pose_frames")
+    self.assertEqual(result["diagnostics"]["sampled_frame_count"], 0)
+
+  def test_tracks_synthetic_moving_plate_center(self) -> None:
+    centers = [(150, 78 + index * 5) for index in range(10)]
+
+    result = self._track(centers)
+
+    self.assertTrue(result["barbellPath"]["available"])
+    points = result["barbellPath"]["points"]
+    self.assertGreaterEqual(len(points), 8)
+    self.assertAlmostEqual(points[0]["x"], 150 / 320, delta=0.05)
+    self.assertLess(points[0]["y"], points[-1]["y"])
+    self.assertEqual(result["barbellPath"]["target"], "near_plate_collar_center")
+
+  def test_does_not_interpolate_across_target_switch(self) -> None:
+    centers: list[tuple[int, int] | None] = [
+      (150, 82),
+      (150, 88),
+      (150, 94),
+      (150, 100),
+      None,
+      None,
+      (150, 106),
+      (150, 112),
+      (150, 118),
+      (150, 124),
+    ]
+
+    result = self._track(centers)
+
+    self.assertGreaterEqual(result["diagnostics"]["detected_point_count"], 4)
+    self.assertGreater(result["diagnostics"]["local_tracking_failure_count"], 0)
+    self.assertEqual(result["diagnostics"]["interpolated_point_count"], 0)
+
+  def test_returns_unavailable_when_no_stable_circle_exists(self) -> None:
+    result = self._track([None for _ in range(10)])
+
+    self.assertFalse(result["barbellPath"]["available"])
+    self.assertEqual(result["diagnostics"]["failure_reason"], "low_barbell_tracking_coverage")
+
+
+if __name__ == "__main__":
+  unittest.main()

@@ -51,6 +51,10 @@ Optional variables:
 ```bash
 BACKEND_ENV=development
 VIDEO_BUCKET=videos
+CLEANUP_JOB_TOKEN=
+EXPORT_CACHE_TTL_HOURS=24
+ORPHAN_STORAGE_MIN_AGE_HOURS=24
+STALE_PROCESSING_HOURS=6
 MODEL_VERSION=mediapipe-rtmpose-v2-hip-crease-depth
 POSE_TARGET_FPS=18
 POSE_MAX_FRAME_DIMENSION=720
@@ -182,7 +186,19 @@ Returns a short-lived signed full-video URL for review playback. The backend sig
 
 ### `POST /videos/cleanup-expired`
 
-Dry-runs cleanup by default and logs every explicit storage path it would delete. Pass `confirm=true` to delete paths and mark rows discarded. This is a development-callable cleanup endpoint, not a scheduled job.
+Dry-runs cleanup by default and reports reclaimable storage without deleting anything. Pass `confirm=true` to delete unnecessary Supabase Storage data and mark eligible rows discarded. Cleanup removes expired pending uploads, stale pending analysis jobs, old analyzed export MP4s, and unreferenced app-owned upload objects. Saved source videos are never deleted.
+
+Outside local development, requests must include:
+
+```http
+X-Cleanup-Token: <CLEANUP_JOB_TOKEN>
+```
+
+Use `dry_run=true` to inspect reclaimable storage without deleting anything:
+
+```http
+POST /videos/cleanup-expired?dry_run=true
+```
 
 ### Saved thumbnail backfill
 
@@ -233,6 +249,7 @@ If pose detection fails completely, the result includes diagnostics explaining t
 - If thumbnail or playback generation fails, analysis still completes and the original storage path remains available for playback.
 - The analysis pipeline is built around `PoseEstimator` and `SquatAnalyzer`, with results written back through `VideoRepository`.
 - `model_version` is stored with each analysis result so future analysis passes can coexist with older ones.
+- Run storage cleanup from the backend environment with `python -m app.jobs.storage_cleanup --dry-run`, then `python -m app.jobs.storage_cleanup` when the report looks correct. Schedule the real cleanup command daily in production.
 
 ## Typical Local Flow
 

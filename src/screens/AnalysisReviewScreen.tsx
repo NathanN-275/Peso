@@ -14,12 +14,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
 import { discardAnalyzedVideo, saveAnalyzedVideo } from '../../lib/backendApi';
+import BarbellPathOverlay from '../components/BarbellPathOverlay';
 import PoseOverlay from '../components/PoseOverlay';
 import ReviewBottomSheet from '../components/ReviewBottomSheet';
 import TimelineScrubber from '../components/TimelineScrubber';
 import tokens from '../theme/tokens';
-import { VideoAnalysisResult } from '../types/videoAnalysis';
+import { BarbellPath, VideoAnalysisResult } from '../types/videoAnalysis';
 import {
+  calculateVideoRect,
   findInterpolatedPoseFrame,
   formatPercent,
   getRepDuration,
@@ -38,6 +40,15 @@ type AnalysisReviewScreenProps = {
   onDiscarded?: () => void;
   onSaved?: () => void;
   onDeleteSavedVideo?: (videoId: string) => Promise<void>;
+};
+
+type BarbellPathCarrier = VideoAnalysisResult & {
+  analysis?: {
+    barbellPath?: BarbellPath;
+  };
+  result?: {
+    barbellPath?: BarbellPath;
+  };
 };
 
 function formatFlagLabel(value: string) {
@@ -248,6 +259,10 @@ export default function AnalysisReviewScreen({
     width: result.videoWidth || 1080,
     height: result.videoHeight || 1920,
   };
+  const barbellPath = useMemo(() => {
+    const payload = result as BarbellPathCarrier;
+    return payload.barbellPath ?? payload.analysis?.barbellPath ?? payload.result?.barbellPath;
+  }, [result]);
   const summaryFlags = normalizeResultFlags(result);
   const coachingFeedback = normalizeCoachingFeedback(result);
   const videoQuality = normalizeVideoQuality(result);
@@ -295,6 +310,30 @@ export default function AnalysisReviewScreen({
   const fallbackUnavailableReason =
     result.fallback_unavailable_reason ?? result.diagnostics?.fallback_unavailable_reason;
   const landmarkModel = result.landmark_model ?? result.diagnostics?.landmark_model;
+
+  useEffect(() => {
+    const points = Array.isArray(barbellPath?.points) ? barbellPath.points : [];
+    const firstPoint = points[0] ?? null;
+    const lastPoint = points[points.length - 1] ?? null;
+    const rect = calculateVideoRect(videoLayout, videoSize, 'cover');
+    const firstMappedPoint = firstPoint
+      ? {
+        x: rect.x + (firstPoint.x * rect.width),
+        y: rect.y + (firstPoint.y * rect.height),
+      }
+      : null;
+
+    console.log('[BARBELL_PATH_DIAG]', {
+      exists: Boolean(barbellPath),
+      available: barbellPath?.available,
+      pointCount: points.length,
+      firstPoint,
+      lastPoint,
+      overlayWidth: videoLayout.width,
+      overlayHeight: videoLayout.height,
+      firstMappedPoint,
+    });
+  }, [barbellPath, videoLayout.width, videoLayout.height, videoSize.width, videoSize.height]);
 
   const handleVideoLayout = ({ nativeEvent }: LayoutChangeEvent) => {
     // The overlay needs the rendered video size to map pose points correctly.
@@ -449,7 +488,7 @@ export default function AnalysisReviewScreen({
               {deletingSavedVideo ? (
                 <ActivityIndicator color={tokens.colors.brand} />
               ) : (
-                <Ionicons name="trash-outline" size={26} color={tokens.colors.brand} />
+                <Ionicons name="trash-outline" size={24} color={tokens.colors.brand} />
               )}
             </Pressable>
           ) : (
@@ -484,6 +523,13 @@ export default function AnalysisReviewScreen({
               contentFit="cover"
               cameraView={cameraView}
               selectedSide={selectedPoseSide}
+            />
+            <BarbellPathOverlay
+              path={barbellPath}
+              currentTime={currentTime}
+              containerSize={videoLayout}
+              videoSize={videoSize}
+              contentFit="cover"
             />
 
             {status === 'loading' ? (
@@ -778,32 +824,32 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
   },
   topButton: {
-    minWidth: 76,
-    minHeight: 46,
+    minWidth: 68,
+    minHeight: 40,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 9,
+    borderRadius: 8,
     backgroundColor: tokens.colors.brand,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
   },
   savedTrashButton: {
-    minWidth: 76,
-    minHeight: 46,
+    minWidth: 68,
+    minHeight: 40,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 9,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#173B82',
     backgroundColor: '#07142C',
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
   },
   disabledButton: {
     opacity: 0.6,
   },
   topButtonText: {
     color: tokens.colors.textPrimary,
-    fontSize: 16,
-    lineHeight: 20,
+    fontSize: 15,
+    lineHeight: 19,
     fontWeight: '600',
   },
   title: {
