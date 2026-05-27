@@ -99,6 +99,25 @@ class VideoRepository:
     )
     return response.data or []
 
+  def list_stale_pending_in_progress_videos(self, cutoff_iso: str) -> list[dict[str, Any]]:
+    response = (
+      self.client.table("videos")
+      .select("*")
+      .eq("save_state", "pending")
+      .in_("status", ["queued", "processing"])
+      .lt("updated_at", cutoff_iso)
+      .execute()
+    )
+    return response.data or []
+
+  def list_storage_referenced_videos(self) -> list[dict[str, Any]]:
+    response = (
+      self.client.table("videos")
+      .select("*")
+      .execute()
+    )
+    return response.data or []
+
   def list_saved_videos(self, user_id: str) -> list[dict[str, Any]]:
     response = (
       self.client.table("videos")
