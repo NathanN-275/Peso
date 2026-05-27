@@ -279,6 +279,11 @@ export type VideoAnalysisDiagnostics = {
     failure_reason?: string | null;
     error?: string;
     processing_duration_ms?: number;
+    local_tracking_confidence?: number;
+    accepted_local_tracking_count?: number;
+    fresh_hough_correction_count?: number;
+    max_point_gap_seconds?: number;
+    effective_tracking_fps?: number;
   };
 };
 

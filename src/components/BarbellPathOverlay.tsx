@@ -1,8 +1,11 @@
 import { StyleSheet, View } from 'react-native';
 import { BarbellPath } from '../types/videoAnalysis';
-import { calculateVideoRect, ContentFit, Size } from '../utils/videoReview';
-
-const PLAYBACK_TOLERANCE_SECONDS = 0.075;
+import {
+  calculateVideoRect,
+  ContentFit,
+  findInterpolatedBarbellPathPoint,
+  Size,
+} from '../utils/videoReview';
 
 type BarbellPathOverlayProps = {
   path?: BarbellPath;
@@ -41,42 +44,22 @@ export default function BarbellPathOverlay({
   contentFit = 'cover',
 }: BarbellPathOverlayProps) {
   const pathPoints = Array.isArray(path?.points) ? path.points : [];
-  const visiblePoints = pathPoints.filter(
-    (point) => point.time <= currentTime + PLAYBACK_TOLERANCE_SECONDS
-  );
+  const elapsedPoints = pathPoints.filter((point) => point.time <= currentTime);
+  const currentPoint = findInterpolatedBarbellPathPoint(pathPoints, currentTime);
+  const visiblePoints = currentPoint
+    ? [
+      ...elapsedPoints.filter((point) => point.time < currentPoint.time),
+      currentPoint,
+    ]
+    : elapsedPoints;
   const rect = calculateVideoRect(containerSize, videoSize, contentFit);
-  const firstVisiblePoint = visiblePoints[0] ?? null;
-  const lastVisiblePoint = visiblePoints[visiblePoints.length - 1] ?? null;
-  const mapPointToPixels = (point: BarbellPath['points'][number] | null) => (
-    point
-      ? {
-        x: rect.x + (point.x * rect.width),
-        y: rect.y + (point.y * rect.height),
-      }
-      : null
-  );
-
-  console.log('[BARBELL_PATH_PLAYBACK_DIAG]', {
-    currentPlaybackTime: currentTime,
-    totalPointCount: pathPoints.length,
-    visiblePointCount: visiblePoints.length,
-    firstVisiblePoint,
-    lastVisiblePoint,
-    overlayBounds: {
-      width: containerSize.width,
-      height: containerSize.height,
-    },
-    videoContentBounds: rect,
-    firstVisiblePointPixels: mapPointToPixels(firstVisiblePoint),
-    lastVisiblePointPixels: mapPointToPixels(lastVisiblePoint),
-  });
 
   if (
     path?.available !== true
     || pathPoints.length < 2
     || containerSize.width <= 0
     || containerSize.height <= 0
-    || visiblePoints.length < 2
+    || visiblePoints.length < 1
   ) {
     return null;
   }
@@ -88,7 +71,7 @@ export default function BarbellPathOverlay({
       time: point.time,
     }));
 
-  if (mappedPoints.length < 2) {
+  if (mappedPoints.length < 1) {
     return null;
   }
 
