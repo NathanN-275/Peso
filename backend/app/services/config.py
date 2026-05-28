@@ -23,7 +23,9 @@ LOCAL_DEV_CORS_ORIGIN_REGEX = (
 )
 DEFAULT_MAX_VIDEO_UPLOAD_BYTES = 50 * 1024 * 1024
 DEFAULT_MODEL_VERSION = "mediapipe-rtmpose-v2-hip-crease-depth"
-DEFAULT_EXPORT_CACHE_TTL_HOURS = 24
+DEFAULT_SAVED_VIDEO_STORAGE_TTL_HOURS = 24
+DEFAULT_EXPORT_CACHE_TTL_HOURS = 6
+DEFAULT_EXPORT_STORAGE_TTL_HOURS = DEFAULT_EXPORT_CACHE_TTL_HOURS
 DEFAULT_ORPHAN_STORAGE_MIN_AGE_HOURS = 24
 DEFAULT_STALE_PROCESSING_HOURS = 6
 
@@ -35,10 +37,13 @@ class Settings:
   supabase_service_role_key: str
   supabase_jwt_secret: str
   cleanup_job_token: str | None = None
+  storage_cleanup_token: str = ""
   video_bucket: str = "videos"
   max_video_upload_bytes: int = 50 * 1024 * 1024
   model_version: str = DEFAULT_MODEL_VERSION
+  saved_video_storage_ttl_hours: int = DEFAULT_SAVED_VIDEO_STORAGE_TTL_HOURS
   export_cache_ttl_hours: int = DEFAULT_EXPORT_CACHE_TTL_HOURS
+  export_storage_ttl_hours: int = DEFAULT_EXPORT_STORAGE_TTL_HOURS
   orphan_storage_min_age_hours: int = DEFAULT_ORPHAN_STORAGE_MIN_AGE_HOURS
   stale_processing_hours: int = DEFAULT_STALE_PROCESSING_HOURS
   cors_origins: tuple[str, ...] = ()
@@ -46,8 +51,17 @@ class Settings:
   cors_allow_private_network: bool = False
 
 
-def _parse_positive_int_env(name: str, default: int) -> int:
-  raw_value = os.getenv(name, str(default)).strip()
+def _parse_positive_int_env(name: str, default: int, *aliases: str) -> int:
+  raw_value = ""
+
+  for env_name in (name, *aliases):
+    raw_value = os.getenv(env_name, "").strip()
+
+    if raw_value:
+      break
+
+  if not raw_value:
+    raw_value = str(default)
 
   try:
     parsed_value = int(raw_value)
@@ -66,15 +80,24 @@ def get_settings() -> Settings:
   supabase_url = os.getenv("SUPABASE_URL", "").strip()
   supabase_service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
   supabase_jwt_secret = os.getenv("SUPABASE_JWT_SECRET", "").strip()
-  cleanup_job_token = os.getenv("CLEANUP_JOB_TOKEN", "").strip() or None
+  cleanup_job_token = (
+    os.getenv("STORAGE_CLEANUP_TOKEN", "").strip()
+    or os.getenv("CLEANUP_JOB_TOKEN", "").strip()
+    or None
+  )
   video_bucket = os.getenv("VIDEO_BUCKET", "videos").strip() or "videos"
   max_video_upload_bytes = _parse_positive_int_env(
     "MAX_VIDEO_UPLOAD_BYTES",
     DEFAULT_MAX_VIDEO_UPLOAD_BYTES,
   )
+  saved_video_storage_ttl_hours = _parse_positive_int_env(
+    "SAVED_VIDEO_STORAGE_TTL_HOURS",
+    DEFAULT_SAVED_VIDEO_STORAGE_TTL_HOURS,
+  )
   export_cache_ttl_hours = _parse_positive_int_env(
     "EXPORT_CACHE_TTL_HOURS",
     DEFAULT_EXPORT_CACHE_TTL_HOURS,
+    "EXPORT_STORAGE_TTL_HOURS",
   )
   orphan_storage_min_age_hours = _parse_positive_int_env(
     "ORPHAN_STORAGE_MIN_AGE_HOURS",
@@ -124,10 +147,13 @@ def get_settings() -> Settings:
     supabase_service_role_key=supabase_service_role_key,
     supabase_jwt_secret=supabase_jwt_secret,
     cleanup_job_token=cleanup_job_token,
+    storage_cleanup_token=cleanup_job_token or "",
     video_bucket=video_bucket,
     max_video_upload_bytes=max_video_upload_bytes,
     model_version=model_version,
+    saved_video_storage_ttl_hours=saved_video_storage_ttl_hours,
     export_cache_ttl_hours=export_cache_ttl_hours,
+    export_storage_ttl_hours=export_cache_ttl_hours,
     orphan_storage_min_age_hours=orphan_storage_min_age_hours,
     stale_processing_hours=stale_processing_hours,
     cors_origins=cors_origins,

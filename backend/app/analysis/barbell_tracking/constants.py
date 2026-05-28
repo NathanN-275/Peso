@@ -2,7 +2,7 @@ from __future__ import annotations
 
 TRACKING_TARGET = "near_plate_collar_center"
 TRACKING_SOURCE = "opencv_circle_tracker"
-BARBELL_TRACK_TARGET_FPS = 6.0
+BARBELL_TRACK_TARGET_FPS = 18.0
 MAX_DETECTION_CROP_WIDTH = 240
 MAX_CANDIDATES_PER_FRAME = 12
 MIN_TRACK_COVERAGE = 0.2

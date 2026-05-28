@@ -466,6 +466,9 @@ class BarbellTracker:
     optical_flow_point_count = 0
     optical_flow_inlier_count = 0
     template_match_score: float | None = None
+    local_tracking_confidence = 0.0
+    accepted_local_tracking_count = 0
+    fresh_hough_correction_count = 0
     stationary_hardware_rejection_count = 0
     reacquisition_count = 0
     local_tracking_failure_count = 0
@@ -524,10 +527,12 @@ class BarbellTracker:
           optical_flow_point_count = local_stats["optical_flow_point_count"]
           optical_flow_inlier_count = local_stats["optical_flow_inlier_count"]
           template_match_score = local_stats["template_match_score"]
+          local_tracking_confidence = float(local_stats.get("local_tracking_confidence") or 0.0)
           local_tracker_type = local_stats["local_tracker_type"]
           fallback_used = bool(local_stats["fallback_used"])
           collar_rejection_reason = local_stats["collar_rejection_reason"]
           hub_result_for_debug: dict[str, Any] | None = None
+          used_fresh_hub_validation = False
 
           if next_lock:
             pose_predicted_point = self._pose_predicted_bar_point(tracking_lock, shoulder)
@@ -535,103 +540,114 @@ class BarbellTracker:
               next_lock["plate"].x,
               next_lock["plate"].y,
             )
-            local_final_rejection_reason = self._final_bar_point_is_motion_consistent(
+            motion_rejection_reason = self._final_bar_point_is_motion_consistent(
               local_final_bar_point,
               previous=tracking_lock,
               shoulder=shoulder,
               width=width,
               height=height,
             )
-            fresh_plate = self._fresh_plate_candidate(
-              cv2,
-              frame,
-              bounds=candidate_bounds,
-              landmarks=landmarks,
-              previous=tracking_lock,
-              shoulder=shoulder,
-              width=width,
-              height=height,
-            )
-            if fresh_plate:
-              fresh_hub_result = self._final_bar_point_from_plate(
+            if motion_rejection_reason:
+              next_lock = None
+              local_stats["collar_rejection_reason"] = motion_rejection_reason
+              collar_rejection_reason = motion_rejection_reason
+            else:
+              # Fresh Hough validation corrects drift, but local tracking can carry brief detection misses.
+              fresh_plate = self._fresh_plate_candidate(
                 cv2,
                 frame,
-                plate=fresh_plate,
+                bounds=candidate_bounds,
+                landmarks=landmarks,
                 previous=tracking_lock,
+                shoulder=shoulder,
+                width=width,
+                height=height,
               )
-              hub_result_for_debug = fresh_hub_result
-              fresh_final_bar_point = fresh_hub_result.get("point")
-              fresh_motion_reason = (
-                self._final_bar_point_is_motion_consistent(
-                  fresh_final_bar_point,
-                  previous=tracking_lock,
-                  shoulder=shoulder,
-                  width=width,
-                  height=height,
-                )
-                if fresh_final_bar_point
-                else None
-              )
-              if self._hub_result_is_emit_safe(fresh_hub_result) and fresh_motion_reason is None and fresh_final_bar_point:
-                fresh_predicted_collar, fresh_sleeve_direction = _estimate_collar_from_plate(
-                  fresh_plate,
-                  shoulder=shoulder,
-                  width=width,
-                  height=height,
-                  previous=tracking_lock,
-                )
-                fresh_refined_collar, _, fresh_refinement_reason = _refine_collar_point(
+              if fresh_plate:
+                fresh_hub_result = self._final_bar_point_from_plate(
                   cv2,
                   frame,
-                  predicted=fresh_predicted_collar,
                   plate=fresh_plate,
-                  sleeve_direction=fresh_sleeve_direction,
                   previous=tracking_lock,
                 )
-                fresh_geometry_reason = _validate_collar_geometry(
-                  fresh_refined_collar,
-                  plate=fresh_plate,
-                  sleeve_direction=fresh_sleeve_direction,
-                  previous=tracking_lock,
+                hub_result_for_debug = fresh_hub_result
+                fresh_final_bar_point = fresh_hub_result.get("point")
+                fresh_motion_reason = (
+                  self._final_bar_point_is_motion_consistent(
+                    fresh_final_bar_point,
+                    previous=tracking_lock,
+                    shoulder=shoulder,
+                    width=width,
+                    height=height,
+                  )
+                  if fresh_final_bar_point
+                  else None
                 )
-                if fresh_refinement_reason or fresh_geometry_reason:
-                  fresh_refined_collar = fresh_predicted_collar
-                next_lock = _make_tracking_lock(
-                  cv2,
-                  gray,
-                  plate=fresh_plate,
-                  collar=fresh_refined_collar,
-                  sleeve_direction=fresh_sleeve_direction,
-                  final_bar_point=fresh_final_bar_point,
-                  final_bar_confidence=float(fresh_hub_result.get("confidence") or 0.0),
-                  final_bar_reason=fresh_hub_result.get("reason"),
-                  shoulder=shoulder,
-                )
-                next_lock["predicted_collar"] = fresh_predicted_collar
-                next_lock["refined_collar"] = fresh_refined_collar
-                next_lock["collar_geometry_valid"] = fresh_geometry_reason is None
-                next_lock["fallback_used"] = bool(fresh_refinement_reason or fresh_geometry_reason)
-                next_lock["final_bar_source"] = fresh_hub_result.get("source")
-                local_tracker_type = "fresh_hough_validation"
-                local_stats["local_tracker_type"] = local_tracker_type
-                collar_rejection_reason = fresh_refinement_reason or fresh_geometry_reason
-                local_stats["collar_rejection_reason"] = collar_rejection_reason
-                local_final_rejection_reason = None
+                if self._hub_result_is_emit_safe(fresh_hub_result) and fresh_motion_reason is None and fresh_final_bar_point:
+                  fresh_predicted_collar, fresh_sleeve_direction = _estimate_collar_from_plate(
+                    fresh_plate,
+                    shoulder=shoulder,
+                    width=width,
+                    height=height,
+                    previous=tracking_lock,
+                  )
+                  fresh_refined_collar, _, fresh_refinement_reason = _refine_collar_point(
+                    cv2,
+                    frame,
+                    predicted=fresh_predicted_collar,
+                    plate=fresh_plate,
+                    sleeve_direction=fresh_sleeve_direction,
+                    previous=tracking_lock,
+                  )
+                  fresh_geometry_reason = _validate_collar_geometry(
+                    fresh_refined_collar,
+                    plate=fresh_plate,
+                    sleeve_direction=fresh_sleeve_direction,
+                    previous=tracking_lock,
+                  )
+                  if fresh_refinement_reason or fresh_geometry_reason:
+                    fresh_refined_collar = fresh_predicted_collar
+                  next_lock = _make_tracking_lock(
+                    cv2,
+                    gray,
+                    plate=fresh_plate,
+                    collar=fresh_refined_collar,
+                    sleeve_direction=fresh_sleeve_direction,
+                    final_bar_point=fresh_final_bar_point,
+                    final_bar_confidence=float(fresh_hub_result.get("confidence") or 0.0),
+                    final_bar_reason=fresh_hub_result.get("reason"),
+                    shoulder=shoulder,
+                  )
+                  next_lock["predicted_collar"] = fresh_predicted_collar
+                  next_lock["refined_collar"] = fresh_refined_collar
+                  next_lock["collar_geometry_valid"] = fresh_geometry_reason is None
+                  next_lock["fallback_used"] = bool(fresh_refinement_reason or fresh_geometry_reason)
+                  next_lock["final_bar_source"] = fresh_hub_result.get("source")
+                  local_tracker_type = "fresh_hough_validation"
+                  local_stats["local_tracker_type"] = local_tracker_type
+                  local_tracking_confidence = max(
+                    local_tracking_confidence,
+                    float(fresh_hub_result.get("confidence") or 0.0),
+                  )
+                  collar_rejection_reason = fresh_refinement_reason or fresh_geometry_reason
+                  local_stats["collar_rejection_reason"] = collar_rejection_reason
+                  used_fresh_hub_validation = True
+                else:
+                  local_validation_reason = fresh_motion_reason or fresh_hub_result.get("reason") or "low_confidence_hub"
+                  local_stats["collar_rejection_reason"] = local_validation_reason
+                  collar_rejection_reason = local_validation_reason
+                  hub_rejected_count += 1
+                  final_bar_reason_counts[local_validation_reason] = (
+                    final_bar_reason_counts.get(local_validation_reason, 0) + 1
+                  )
               else:
-                next_lock = None
-                local_final_rejection_reason = fresh_motion_reason or fresh_hub_result.get("reason") or "low_confidence_hub"
-                local_stats["collar_rejection_reason"] = local_final_rejection_reason
-                collar_rejection_reason = local_final_rejection_reason
-            else:
-              next_lock = None
-              local_final_rejection_reason = "fresh_hub_not_found"
-              local_stats["collar_rejection_reason"] = local_final_rejection_reason
-              collar_rejection_reason = local_final_rejection_reason
-
-            if local_final_rejection_reason:
-              next_lock = None
-              local_stats["collar_rejection_reason"] = local_final_rejection_reason
-              collar_rejection_reason = local_final_rejection_reason
+                local_validation_reason = "fresh_hub_not_found"
+                local_stats["collar_rejection_reason"] = local_validation_reason
+                collar_rejection_reason = local_validation_reason
+                hub_rejected_count += 1
+                final_bar_reason_counts[local_validation_reason] = (
+                  final_bar_reason_counts.get(local_validation_reason, 0) + 1
+                )
 
           if next_lock:
 
@@ -653,7 +669,11 @@ class BarbellTracker:
               "y": final_bar_point[1] / height,
               "confidence": min(float(selected_plate.confidence) + 0.2, 1.0),
             }
-            real_hub_detection_count += 1
+            if used_fresh_hub_validation:
+              real_hub_detection_count += 1
+              fresh_hough_correction_count += 1
+            else:
+              accepted_local_tracking_count += 1
             logger.info(
               "Barbell point emitted frame=%s plate=(%.2f, %.2f r=%.2f) final=(%.2f, %.2f) final_reason=%s final_conf=%.3f point_source=%s fallback_used=%s predicted=(%.2f, %.2f) refined=(%.2f, %.2f) normalized=(%.4f, %.4f) pending_confirmation_count=%s",
               frame_index,
@@ -1316,6 +1336,9 @@ class BarbellTracker:
         optical_flow_point_count=optical_flow_point_count,
         optical_flow_inlier_count=optical_flow_inlier_count,
         template_match_score=template_match_score,
+        local_tracking_confidence=local_tracking_confidence,
+        accepted_local_tracking_count=accepted_local_tracking_count,
+        fresh_hough_correction_count=fresh_hough_correction_count,
         stationary_hardware_rejection_count=stationary_hardware_rejection_count,
         reacquisition_count=reacquisition_count,
         local_tracking_failure_count=local_tracking_failure_count,
@@ -1365,6 +1388,9 @@ class BarbellTracker:
         optical_flow_point_count=optical_flow_point_count,
         optical_flow_inlier_count=optical_flow_inlier_count,
         template_match_score=template_match_score,
+        local_tracking_confidence=local_tracking_confidence,
+        accepted_local_tracking_count=accepted_local_tracking_count,
+        fresh_hough_correction_count=fresh_hough_correction_count,
         stationary_hardware_rejection_count=stationary_hardware_rejection_count,
         reacquisition_count=reacquisition_count,
         local_tracking_failure_count=local_tracking_failure_count,
@@ -1410,6 +1436,9 @@ class BarbellTracker:
         optical_flow_point_count=optical_flow_point_count,
         optical_flow_inlier_count=optical_flow_inlier_count,
         template_match_score=template_match_score,
+        local_tracking_confidence=local_tracking_confidence,
+        accepted_local_tracking_count=accepted_local_tracking_count,
+        fresh_hough_correction_count=fresh_hough_correction_count,
         stationary_hardware_rejection_count=stationary_hardware_rejection_count,
         reacquisition_count=reacquisition_count,
         local_tracking_failure_count=local_tracking_failure_count,
@@ -1429,6 +1458,17 @@ class BarbellTracker:
 
     smoothed_points = _smooth_points(points)
     coverage = round(coverage, 3)
+    point_times = [float(point["time"]) for point in smoothed_points]
+    max_point_gap_seconds = (
+      max(next_time - previous_time for previous_time, next_time in zip(point_times, point_times[1:]))
+      if len(point_times) >= 2
+      else 0.0
+    )
+    effective_tracking_fps = (
+      (len(point_times) - 1) / (point_times[-1] - point_times[0])
+      if len(point_times) >= 2 and point_times[-1] > point_times[0]
+      else 0.0
+    )
     return {
       "barbellPath": {
         "available": True,
@@ -1461,6 +1501,11 @@ class BarbellTracker:
         "optical_flow_point_count": optical_flow_point_count,
         "optical_flow_inlier_count": optical_flow_inlier_count,
         "template_match_score": template_match_score,
+        "local_tracking_confidence": round(local_tracking_confidence, 3),
+        "accepted_local_tracking_count": accepted_local_tracking_count,
+        "fresh_hough_correction_count": fresh_hough_correction_count,
+        "max_point_gap_seconds": round(max_point_gap_seconds, 4),
+        "effective_tracking_fps": round(effective_tracking_fps, 2),
         "stationary_hardware_rejection_count": stationary_hardware_rejection_count,
         "reacquisition_count": reacquisition_count,
         "local_tracking_failure_count": local_tracking_failure_count,

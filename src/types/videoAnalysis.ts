@@ -1,6 +1,7 @@
 export type VideoAnalysisStatus = 'uploaded' | 'queued' | 'processing' | 'completed' | 'failed';
 
 export type SaveState = 'pending' | 'saved';
+export type StorageState = 'available' | 'pruned';
 
 export type DepthStatus = 'hit_depth' | 'insufficient_depth' | 'uncertain_depth';
 
@@ -279,6 +280,11 @@ export type VideoAnalysisDiagnostics = {
     failure_reason?: string | null;
     error?: string;
     processing_duration_ms?: number;
+    local_tracking_confidence?: number;
+    accepted_local_tracking_count?: number;
+    fresh_hough_correction_count?: number;
+    max_point_gap_seconds?: number;
+    effective_tracking_fps?: number;
   };
 };
 
@@ -364,6 +370,7 @@ export type SavedVideo = {
   video_url: string | null;
   thumbnail_url: string | null;
   save_state: SaveState;
+  storage_state: StorageState;
   saved_at: string | null;
   created_at: string;
   analysis: SavedVideoAnalysis | null;

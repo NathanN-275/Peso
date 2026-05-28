@@ -130,6 +130,7 @@ def _track_local_patch(
     "optical_flow_point_count": 0,
     "optical_flow_inlier_count": 0,
     "template_match_score": None,
+    "local_tracking_confidence": 0.0,
     "fallback_used": False,
     "collar_rejection_reason": None,
   }
@@ -180,12 +181,22 @@ def _track_local_patch(
       (flow_motion[1] * 0.65) + (template_motion[1] * 0.35),
     )
     stats["local_tracker_type"] = "klt_optical_flow"
+    stats["local_tracking_confidence"] = min(
+      1.0,
+      (max(float(stats["optical_flow_inlier_count"]), 0.0) / 12.0 * 0.65)
+      + (max(float(stats["template_match_score"] or 0.0), 0.0) * 0.35),
+    )
   elif flow_motion is not None:
     motion = flow_motion
     stats["local_tracker_type"] = "klt_optical_flow"
+    stats["local_tracking_confidence"] = min(
+      1.0,
+      max(float(stats["optical_flow_inlier_count"]), 0.0) / 12.0,
+    )
   elif template_motion is not None:
     motion = template_motion
     stats["local_tracker_type"] = "template_matching"
+    stats["local_tracking_confidence"] = max(float(stats["template_match_score"] or 0.0), 0.0)
   else:
     stats["collar_rejection_reason"] = "local_tracking_failed"
     return None, stats

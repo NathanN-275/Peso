@@ -38,6 +38,81 @@ function getWebLoopbackFallbackUrl(requestUrl: string) {
   return requestUrl.replace('http://localhost:', 'http://127.0.0.1:');
 }
 
+function getHostname(value: string) {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function isLoopbackUrl(value: string) {
+  const hostname = getHostname(value);
+  return hostname === 'localhost' || hostname === '127.0.0.1';
+}
+
+function buildBackendUnreachableMessage({
+  backend,
+  diagnostics,
+  fallbackUrl,
+  message,
+  method,
+  requestUrl,
+}: {
+  backend: ReturnType<typeof resolveBackendApiConfig>;
+  diagnostics: ReturnType<typeof getBackendConnectionDiagnostics>;
+  fallbackUrl: string | null;
+  message: string;
+  method: string;
+  requestUrl: string;
+}) {
+  const hints = [
+    `No response came back from ${backend.url}. FastAPI may not be running or may still be starting.`,
+  ];
+
+  if (__DEV__) {
+    if (
+      Platform.OS !== 'web'
+      && diagnostics.target === 'physical-device'
+      && diagnostics.explicitUrlIsLoopback
+    ) {
+      hints.push(
+        'Loopback backend URLs point at the phone in physical-device mode. Use your Mac LAN IP, for example http://10.0.0.221:8000.'
+      );
+    }
+
+    if (Platform.OS === 'web' && isLoopbackUrl(backend.url)) {
+      hints.push('For Expo web, start the backend with npm start or run FastAPI on 127.0.0.1:8000.');
+    }
+
+    if (diagnostics.explicitUrl && diagnostics.explicitUrl !== diagnostics.url) {
+      hints.push(
+        `The configured backend URL (${diagnostics.explicitUrl}) was resolved to ${diagnostics.url} for this platform.`
+      );
+    }
+
+    if (backend.source === 'env override') {
+      hints.push(
+        'If this URL differs from your current .env, restart Expo with npm start so EXPO_PUBLIC_BACKEND_URL is rebuilt.'
+      );
+    }
+
+    hints.push(
+      'If /health works in a browser but the app still fails, check CORS, device network, and firewall access.'
+    );
+  }
+
+  return [
+    'Backend unreachable.',
+    `Current backend URL: ${backend.url}`,
+    `Backend URL source: ${backend.source}`,
+    `Request: ${method} ${requestUrl}`,
+    ...(fallbackUrl ? [`Fallback also failed: ${method} ${fallbackUrl}`] : []),
+    ...hints.map((hint) => `Hint: ${hint}`),
+    `Original error: ${message}`,
+  ].join('\n');
+}
+
 async function requestJson<T>(path: string, accessToken?: string, init?: RequestInit): Promise<T> {
   // Every backend call flows through this helper.
   const backend = ensureBackendApiUrl();
@@ -96,27 +171,24 @@ async function requestJson<T>(path: string, accessToken?: string, init?: Request
     // Expand network failures with the exact URL and environment details.
     const message = error instanceof Error ? error.message : 'Unknown network error.';
     const fallbackUrl = getWebLoopbackFallbackUrl(requestUrl);
+    const diagnostics = getBackendConnectionDiagnostics();
 
     console.error('[BackendAPI] fetch failed', {
       method,
       url: requestUrl,
       fallbackUrl,
       error,
-      backend: getBackendConnectionDiagnostics(),
+      backend: diagnostics,
     });
 
-    throw new Error(
-      [
-        'Backend unreachable.',
-        `Current backend URL: ${backend.url}`,
-        `Backend URL source: ${backend.source}`,
-        `Request: ${method} ${requestUrl}`,
-        ...(fallbackUrl ? [`Fallback also failed: ${method} ${fallbackUrl}`] : []),
-        'Check that FastAPI is running on 0.0.0.0:8000.',
-        'Check that your phone/simulator and computer are on the same network.',
-        `Original error: ${message}`,
-      ].join('\n')
-    );
+    throw new Error(buildBackendUnreachableMessage({
+      backend,
+      diagnostics,
+      fallbackUrl,
+      message,
+      method,
+      requestUrl,
+    }));
   }
 
   if (!response.ok) {
@@ -215,6 +287,13 @@ export async function exportAnalyzedVideo(videoId: string, accessToken: string) 
       method: 'POST',
     }
   );
+}
+
+export async function getSavedVideoPlaybackUrl(videoId: string, accessToken: string) {
+  return requestJson<{
+    video_id: string;
+    video_url: string;
+  }>(`/videos/${videoId}/playback-url`, accessToken);
 }
 
 export async function discardAnalyzedVideo(videoId: string, accessToken: string) {

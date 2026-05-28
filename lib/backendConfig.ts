@@ -11,6 +11,7 @@ const DEFAULT_BACKEND_PORT = '8000';
 
 export type BackendUrlSource =
   | 'env override'
+  | 'web local default'
   | 'expo-go lan auto'
   | 'expo-go lan fallback localhost'
   | 'web default localhost'
@@ -36,6 +37,10 @@ function getBackendPort() {
 
 function buildLocalUrl(hostname: string) {
   return `http://${hostname}:${getBackendPort()}`;
+}
+
+function getWebBackendHost() {
+  return process.env.EXPO_PUBLIC_WEB_BACKEND_HOST || 'localhost';
 }
 
 export function getBackendTarget(): BackendTarget {
@@ -172,6 +177,20 @@ export function resolveBackendApiConfig(): BackendApiConfig {
 
   const target = getBackendTarget();
 
+  if (Platform.OS === 'web') {
+    if (explicitUrl && isLoopbackBackendUrl(explicitUrl)) {
+      return {
+        url: explicitUrl,
+        source: 'env override',
+      };
+    }
+
+    return {
+      url: buildLocalUrl(getWebBackendHost()),
+      source: 'web local default',
+    };
+  }
+
   if (explicitUrl && !isLoopbackBackendUrl(explicitUrl)) {
     return {
       url: explicitUrl,
@@ -180,7 +199,7 @@ export function resolveBackendApiConfig(): BackendApiConfig {
   }
 
   if (explicitUrl && isLoopbackBackendUrl(explicitUrl)) {
-    if (Platform.OS === 'web' || isIosSimulatorTarget(target)) {
+    if (isIosSimulatorTarget(target)) {
       return {
         url: explicitUrl,
         source: 'env override',
@@ -199,15 +218,8 @@ export function resolveBackendApiConfig(): BackendApiConfig {
     }
   }
 
-  if (target === 'physical-device' && Platform.OS !== 'web') {
+  if (target === 'physical-device') {
     return resolveExpoGoLanBackendConfig();
-  }
-
-  if (Platform.OS === 'web') {
-    return {
-      url: buildLocalUrl('localhost'),
-      source: 'web default localhost',
-    };
   }
 
   if (Platform.OS === 'android') {

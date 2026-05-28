@@ -1,4 +1,5 @@
 import {
+  BarbellPathPoint,
   VideoAnalysisDiagnostics,
   VideoAnalysisRep,
   VideoAnalysisResult,
@@ -163,6 +164,70 @@ export function findInterpolatedPoseFrame(frames: VideoPoseFrame[] | undefined, 
         confidence: Math.min(previous.confidence, next.confidence),
       };
     }),
+  };
+}
+
+export function findInterpolatedBarbellPathPoint(
+  points: BarbellPathPoint[] | undefined,
+  currentTime: number
+) {
+  if (!points?.length) {
+    return null;
+  }
+
+  if (currentTime < points[0].time) {
+    return null;
+  }
+
+  if (points.length === 1) {
+    return points[0];
+  }
+
+  if (currentTime === points[0].time) {
+    return points[0];
+  }
+
+  const lastPoint = points[points.length - 1];
+
+  if (currentTime >= lastPoint.time) {
+    return lastPoint;
+  }
+
+  let low = 0;
+  let high = points.length - 1;
+
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+
+    if (points[mid].time < currentTime) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+
+  const nextPoint = points[low];
+  const previousPoint = points[low - 1];
+
+  if (!previousPoint) {
+    return nextPoint;
+  }
+
+  const pointGap = nextPoint.time - previousPoint.time;
+
+  if (pointGap <= 0 || pointGap > 0.5) {
+    return Math.abs(previousPoint.time - currentTime) <= Math.abs(nextPoint.time - currentTime)
+      ? previousPoint
+      : nextPoint;
+  }
+
+  const progress = Math.min(Math.max((currentTime - previousPoint.time) / pointGap, 0), 1);
+
+  return {
+    time: currentTime,
+    x: previousPoint.x + ((nextPoint.x - previousPoint.x) * progress),
+    y: previousPoint.y + ((nextPoint.y - previousPoint.y) * progress),
+    confidence: Math.min(previousPoint.confidence, nextPoint.confidence),
   };
 }
 

@@ -3,10 +3,12 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import cv2
 import numpy as np
 
+from app.analysis.barbell_tracking import tracker as tracker_module
 from app.analysis.barbell_tracker import (
   BarbellTracker,
   Candidate,
@@ -574,9 +576,7 @@ class BarbellTrackerTest(unittest.TestCase):
         processed_height=240,
       )
 
-    self.assertFalse(result["barbellPath"]["available"])
-    self.assertEqual(result["diagnostics"]["failure_reason"], "low_barbell_tracking_coverage")
-    self.assertEqual(result["diagnostics"]["detected_point_count"], 3)
+    self.assertTrue(result["barbellPath"]["available"])
     tracking_frames = result["diagnostics"]["bootstrap_diagnostics"]["tracking_frames"]
     emitted = [frame for frame in tracking_frames if frame["emitted_pixel_y"] is not None]
     self.assertTrue(emitted)
@@ -584,15 +584,61 @@ class BarbellTrackerTest(unittest.TestCase):
       self.assertGreater(frame["emitted_pixel_y"], 95)
     self.assertGreater(result["diagnostics"]["rejection_reason_counts"].get("too_high_above_shoulder", 0), 0)
 
-  def test_tracks_about_six_fps_on_sixty_fps_video(self) -> None:
+  def test_tracks_at_pose_cadence_on_sixty_fps_video(self) -> None:
     centers = [(150, 78 + (index // 10)) for index in range(60)]
 
     result = self._track(centers, fps=60.0, frame_step=3)
 
     self.assertTrue(result["barbellPath"]["available"])
-    self.assertEqual(result["diagnostics"]["tracking_frame_step"], 9)
-    self.assertLessEqual(result["diagnostics"]["sampled_frame_count"], 8)
-    self.assertGreaterEqual(result["diagnostics"]["sampled_frame_count"], 6)
+    self.assertEqual(result["diagnostics"]["tracking_frame_step"], 3)
+    self.assertLessEqual(result["diagnostics"]["sampled_frame_count"], 21)
+    self.assertGreaterEqual(result["diagnostics"]["sampled_frame_count"], 18)
+    self.assertGreaterEqual(result["diagnostics"]["effective_tracking_fps"], 15.0)
+
+  def test_local_tracking_continues_when_fresh_plate_detection_drops_out(self) -> None:
+    plate_centers = [(178 + index * 3, 104 + index) for index in range(12)]
+    original_detect = tracker_module._detect_crop_candidates
+    detection_call_count = 0
+
+    def detect_then_drop(*args, **kwargs):
+      nonlocal detection_call_count
+      detection_call_count += 1
+      if detection_call_count > 3:
+        frame = args[1]
+        height, width = frame.shape[:2]
+        return [], 0, 0, {
+          "anchor_landmark": "test_drop_out",
+          "crop_bounds": (0.0, 0.0, float(width), float(height)),
+          "wrist_rejected_count": 0,
+        }
+      return original_detect(*args, **kwargs)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-fresh-detection-dropout.mp4"
+      write_plate_video(path, plate_centers)
+      pose_frames = [
+        pose_frame(index, x=(plate_center[0] - 42) / 320, y=0.43)
+        for index, plate_center in enumerate(plate_centers)
+      ]
+
+      with patch.object(tracker_module, "_detect_crop_candidates", side_effect=detect_then_drop):
+        result = BarbellTracker().track(
+          str(path),
+          pose_frames=pose_frames,
+          frame_step=1,
+          processed_width=320,
+          processed_height=240,
+        )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    diagnostics = result["diagnostics"]
+    self.assertGreaterEqual(diagnostics["accepted_local_tracking_count"], 5)
+    self.assertEqual(diagnostics["local_tracking_failure_count"], 0)
+    self.assertLessEqual(diagnostics["max_point_gap_seconds"], 0.18)
+    points = result["barbellPath"]["points"]
+    expected_final_collar = collar_from_plate(plate_centers[-1])
+    self.assertAlmostEqual(points[-1]["x"], expected_final_collar[0] / 320, delta=0.06)
+    self.assertAlmostEqual(points[-1]["y"], expected_final_collar[1] / 240, delta=0.06)
 
   def test_returns_unavailable_without_pose_frames(self) -> None:
     centers = [(150, 78) for _ in range(20)]
