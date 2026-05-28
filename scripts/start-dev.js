@@ -8,7 +8,12 @@ const { createDevEnvironment } = require('./start-dev-env');
 
 const rootDir = path.resolve(__dirname, '..');
 const backendDir = path.join(rootDir, 'backend');
-const devEnvironment = createDevEnvironment({ rootDir, baseEnv: process.env });
+const startWeb = process.argv.includes('--web');
+const devEnvironment = createDevEnvironment({
+  rootDir,
+  baseEnv: process.env,
+  frontendTarget: startWeb ? 'web' : 'native',
+});
 const { backendPort, backendHealthUrl, expoEnv } = devEnvironment;
 const backendPython = path.join(backendDir, '.venv', 'bin', 'python');
 const pythonCommand = fs.existsSync(backendPython) ? backendPython : 'python3';
@@ -111,6 +116,12 @@ function shutdown(exitCode = 0) {
 }
 
 async function main() {
+  log('backend', `health URL ${backendHealthUrl}`);
+  log(
+    'expo',
+    `backend URL ${devEnvironment.expoBackendUrl} (${devEnvironment.expoBackendUrlSource})`
+  );
+
   const backendAlreadyRunning = await checkBackendHealth();
 
   if (backendAlreadyRunning) {
@@ -139,8 +150,8 @@ async function main() {
     log('backend', `healthy at ${backendHealthUrl}`);
   }
 
-  log('expo', `starting Expo with backend ${expoEnv.EXPO_PUBLIC_BACKEND_URL}`);
-  spawnProcess('expo', expoBinary, ['start', '--clear'], {
+  log('expo', `starting Expo ${startWeb ? 'web' : 'native'} with backend ${expoEnv.EXPO_PUBLIC_BACKEND_URL}`);
+  spawnProcess('expo', expoBinary, ['start', ...(startWeb ? ['--web'] : []), '--clear'], {
     cwd: rootDir,
     env: expoEnv,
   });

@@ -1,6 +1,7 @@
 export type VideoAnalysisStatus = 'uploaded' | 'queued' | 'processing' | 'completed' | 'failed';
 
 export type SaveState = 'pending' | 'saved';
+export type StorageState = 'available' | 'pruned';
 
 export type DepthStatus = 'hit_depth' | 'insufficient_depth' | 'uncertain_depth';
 
@@ -366,9 +367,10 @@ export type SavedVideo = {
   view_type: string;
   storage_path: string;
   thumbnail_path: string | null;
-  video_url: string;
+  video_url: string | null;
   thumbnail_url: string | null;
   save_state: SaveState;
+  storage_state: StorageState;
   saved_at: string | null;
   created_at: string;
   analysis: SavedVideoAnalysis | null;

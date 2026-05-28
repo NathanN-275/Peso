@@ -8,7 +8,8 @@
     "start:backend": "cd backend && .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --env-file .env",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web"
+    "web": "node scripts/start-dev.js --web",
+    "start:physical": "node scripts/start-dev.js"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",

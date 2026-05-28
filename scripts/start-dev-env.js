@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const DEFAULT_BACKEND_PORT = '8000';
+const DEFAULT_WEB_BACKEND_HOST = 'localhost';
 
 function parseDotenv(contents) {
   const values = {};
@@ -41,17 +42,28 @@ function parseDotenv(contents) {
 }
 
 function loadRootEnv(rootDir, baseEnv = process.env) {
-  const envPath = path.join(rootDir, '.env');
+  return loadRootEnvWithSources(rootDir, baseEnv).env;
+}
 
-  if (!fs.existsSync(envPath)) {
-    return { ...baseEnv };
+function loadRootEnvWithSources(rootDir, baseEnv = process.env) {
+  const envPath = path.join(rootDir, '.env');
+  const fileEnv = fs.existsSync(envPath) ? parseDotenv(fs.readFileSync(envPath, 'utf8')) : {};
+  const sources = {};
+
+  for (const key of Object.keys(fileEnv)) {
+    sources[key] = 'root .env';
   }
 
-  const fileEnv = parseDotenv(fs.readFileSync(envPath, 'utf8'));
+  for (const key of Object.keys(baseEnv)) {
+    sources[key] = 'shell env';
+  }
 
   return {
-    ...fileEnv,
-    ...baseEnv,
+    env: {
+      ...fileEnv,
+      ...baseEnv,
+    },
+    sources,
   };
 }
 
@@ -59,23 +71,82 @@ function resolveBackendPort(env) {
   return env.BACKEND_PORT || env.EXPO_PUBLIC_BACKEND_PORT || DEFAULT_BACKEND_PORT;
 }
 
-function buildExpoEnv(env, backendPort) {
+function isLoopbackBackendUrl(value) {
+  try {
+    const hostname = new URL(value).hostname;
+    return hostname === 'localhost' || hostname === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
+
+function resolveExpoBackendUrl(env, backendPort, options = {}) {
+  const frontendTarget = options.frontendTarget || 'native';
+  const configuredUrl = env.EXPO_PUBLIC_BACKEND_URL;
+
+  if (frontendTarget === 'web') {
+    if (configuredUrl && isLoopbackBackendUrl(configuredUrl)) {
+      return {
+        url: configuredUrl,
+        source: options.envSources?.EXPO_PUBLIC_BACKEND_URL || 'environment',
+      };
+    }
+
+    return {
+      url: `http://${env.EXPO_PUBLIC_WEB_BACKEND_HOST || DEFAULT_WEB_BACKEND_HOST}:${backendPort}`,
+      source: configuredUrl
+        ? `web loopback default; ignored ${options.envSources?.EXPO_PUBLIC_BACKEND_URL || 'environment'} LAN override`
+        : 'default',
+    };
+  }
+
+  if (configuredUrl) {
+    return {
+      url: configuredUrl,
+      source: options.envSources?.EXPO_PUBLIC_BACKEND_URL || 'environment',
+    };
+  }
+
   return {
-    ...env,
-    EXPO_PUBLIC_BACKEND_PORT: env.EXPO_PUBLIC_BACKEND_PORT || backendPort,
-    EXPO_PUBLIC_BACKEND_URL: env.EXPO_PUBLIC_BACKEND_URL || `http://localhost:${backendPort}`,
+    url: `http://localhost:${backendPort}`,
+    source: 'default',
   };
 }
 
-function createDevEnvironment({ rootDir, baseEnv = process.env }) {
-  const env = loadRootEnv(rootDir, baseEnv);
+function buildExpoEnv(env, backendPort, options = {}) {
+  const backendUrl = resolveExpoBackendUrl(env, backendPort, options);
+
+  return {
+    ...env,
+    EXPO_PUBLIC_BACKEND_PORT: env.EXPO_PUBLIC_BACKEND_PORT || backendPort,
+    EXPO_PUBLIC_BACKEND_URL: backendUrl.url,
+  };
+}
+
+function createDevEnvironment({ rootDir, baseEnv = process.env, frontendTarget = 'native' }) {
+  const loadedEnv = loadRootEnvWithSources(rootDir, baseEnv);
+  const env = loadedEnv.env;
   const backendPort = resolveBackendPort(env);
+  const expoBackendUrl = resolveExpoBackendUrl(
+    env,
+    backendPort,
+    {
+      envSources: loadedEnv.sources,
+      frontendTarget,
+    },
+  );
 
   return {
     env,
+    envSources: loadedEnv.sources,
     backendPort,
     backendHealthUrl: `http://127.0.0.1:${backendPort}/health`,
-    expoEnv: buildExpoEnv(env, backendPort),
+    expoBackendUrl: expoBackendUrl.url,
+    expoBackendUrlSource: expoBackendUrl.source,
+    expoEnv: buildExpoEnv(env, backendPort, {
+      envSources: loadedEnv.sources,
+      frontendTarget,
+    }),
   };
 }
 
@@ -84,6 +155,8 @@ module.exports = {
   buildExpoEnv,
   createDevEnvironment,
   loadRootEnv,
+  loadRootEnvWithSources,
   parseDotenv,
+  resolveExpoBackendUrl,
   resolveBackendPort,
 };

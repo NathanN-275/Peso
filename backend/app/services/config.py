@@ -23,6 +23,8 @@ LOCAL_DEV_CORS_ORIGIN_REGEX = (
 )
 DEFAULT_MAX_VIDEO_UPLOAD_BYTES = 50 * 1024 * 1024
 DEFAULT_MODEL_VERSION = "mediapipe-rtmpose-v2-hip-crease-depth"
+DEFAULT_SAVED_VIDEO_STORAGE_TTL_HOURS = 24
+DEFAULT_EXPORT_STORAGE_TTL_HOURS = 6
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,9 @@ class Settings:
   supabase_jwt_secret: str
   video_bucket: str = "videos"
   max_video_upload_bytes: int = 50 * 1024 * 1024
+  saved_video_storage_ttl_hours: int = DEFAULT_SAVED_VIDEO_STORAGE_TTL_HOURS
+  export_storage_ttl_hours: int = DEFAULT_EXPORT_STORAGE_TTL_HOURS
+  storage_cleanup_token: str = ""
   model_version: str = DEFAULT_MODEL_VERSION
   cors_origins: tuple[str, ...] = ()
   cors_origin_regex: str | None = None
@@ -50,6 +55,14 @@ def get_settings() -> Settings:
     "MAX_VIDEO_UPLOAD_BYTES",
     str(DEFAULT_MAX_VIDEO_UPLOAD_BYTES),
   ).strip()
+  saved_video_storage_ttl_hours_raw = os.getenv(
+    "SAVED_VIDEO_STORAGE_TTL_HOURS",
+    str(DEFAULT_SAVED_VIDEO_STORAGE_TTL_HOURS),
+  ).strip()
+  export_storage_ttl_hours_raw = os.getenv(
+    "EXPORT_STORAGE_TTL_HOURS",
+    str(DEFAULT_EXPORT_STORAGE_TTL_HOURS),
+  ).strip()
 
   try:
     max_video_upload_bytes = int(max_video_upload_bytes_raw)
@@ -59,10 +72,27 @@ def get_settings() -> Settings:
   if max_video_upload_bytes <= 0:
     raise RuntimeError("MAX_VIDEO_UPLOAD_BYTES must be a positive integer.")
 
+  try:
+    saved_video_storage_ttl_hours = int(saved_video_storage_ttl_hours_raw)
+  except ValueError as error:
+    raise RuntimeError("SAVED_VIDEO_STORAGE_TTL_HOURS must be a positive integer.") from error
+
+  if saved_video_storage_ttl_hours <= 0:
+    raise RuntimeError("SAVED_VIDEO_STORAGE_TTL_HOURS must be a positive integer.")
+
+  try:
+    export_storage_ttl_hours = int(export_storage_ttl_hours_raw)
+  except ValueError as error:
+    raise RuntimeError("EXPORT_STORAGE_TTL_HOURS must be a positive integer.") from error
+
+  if export_storage_ttl_hours <= 0:
+    raise RuntimeError("EXPORT_STORAGE_TTL_HOURS must be a positive integer.")
+
   model_version = (
     os.getenv("MODEL_VERSION", DEFAULT_MODEL_VERSION).strip()
     or DEFAULT_MODEL_VERSION
   )
+  storage_cleanup_token = os.getenv("STORAGE_CLEANUP_TOKEN", "").strip()
   cors_origins_raw = os.getenv(
     "BACKEND_CORS_ORIGINS",
     ",".join(DEFAULT_CORS_ORIGINS),
@@ -99,6 +129,9 @@ def get_settings() -> Settings:
     supabase_jwt_secret=supabase_jwt_secret,
     video_bucket=video_bucket,
     max_video_upload_bytes=max_video_upload_bytes,
+    saved_video_storage_ttl_hours=saved_video_storage_ttl_hours,
+    export_storage_ttl_hours=export_storage_ttl_hours,
+    storage_cleanup_token=storage_cleanup_token,
     model_version=model_version,
     cors_origins=cors_origins,
     cors_origin_regex=cors_origin_regex,

@@ -2,18 +2,19 @@ from __future__ import annotations
 
 import logging
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 
 from ..analysis.pipeline import analyze_video
 from ..analysis.versioning import annotate_analysis_freshness, analysis_is_current
 from ..services.analyzed_video_renderer import render_analyzed_video
 from ..services.auth import get_current_user_id
-from ..services.storage_service import StorageService
+from ..services.config import get_settings
+from ..services.storage_service import StorageService, object_size_bytes, object_updated_at
 from ..services.video_repository import VideoRepository
 
 
@@ -58,9 +59,10 @@ class SavedVideoResponse(BaseModel):
   view_type: str
   storage_path: str
   thumbnail_path: str | None = None
-  video_url: str
+  video_url: str | None = None
   thumbnail_url: str | None = None
   save_state: str
+  storage_state: str = "available"
   saved_at: str | None = None
   created_at: str
   analysis: SavedVideoAnalysisResponse | None = None
@@ -83,8 +85,21 @@ class AnalyzedVideoExportResponse(BaseModel):
   export_url: str
 
 
+class SavedVideoPlaybackUrlResponse(BaseModel):
+  video_id: UUID
+  video_url: str
+
+
 class CleanupExpiredVideosResponse(BaseModel):
   deleted_count: int
+
+
+class StorageCleanupResponse(BaseModel):
+  pending_deleted: int
+  saved_media_pruned: int
+  exports_deleted: int
+  orphans_deleted: int
+  bytes_deleted: int
 
 
 def _run_analysis_job(video_id: str) -> None:
@@ -186,6 +201,7 @@ def list_saved_videos(
       )
 
     thumbnail_path = video.get("thumbnail_path")
+    storage_state = video.get("storage_state") or "available"
     saved_videos.append(
       SavedVideoResponse(
         id=video["id"],
@@ -193,9 +209,10 @@ def list_saved_videos(
         view_type=video["view_type"],
         storage_path=video["storage_path"],
         thumbnail_path=thumbnail_path,
-        video_url=storage.create_signed_url(video["storage_path"]),
+        video_url=None,
         thumbnail_url=storage.create_signed_url(thumbnail_path) if thumbnail_path else None,
         save_state=video["save_state"],
+        storage_state=storage_state,
         saved_at=video.get("saved_at"),
         created_at=video["created_at"],
         analysis=normalized_analysis,
@@ -203,6 +220,33 @@ def list_saved_videos(
     )
 
   return saved_videos
+
+
+@router.get("/videos/{video_id}/playback-url", response_model=SavedVideoPlaybackUrlResponse)
+def get_saved_video_playback_url(
+  video_id: UUID,
+  user_id: str = Depends(get_current_user_id),
+) -> SavedVideoPlaybackUrlResponse:
+  repository = VideoRepository()
+  storage = StorageService()
+  video = repository.require_owned_video(str(video_id), user_id)
+
+  if video.get("save_state") != "saved":
+    raise HTTPException(
+      status_code=status.HTTP_409_CONFLICT,
+      detail="Only saved videos can be opened from the saved library.",
+    )
+
+  if (video.get("storage_state") or "available") != "available":
+    raise HTTPException(
+      status_code=status.HTTP_409_CONFLICT,
+      detail="The source video has expired. Analysis is still available, but playback is unavailable.",
+    )
+
+  return SavedVideoPlaybackUrlResponse(
+    video_id=video_id,
+    video_url=storage.create_signed_url(video["storage_path"]),
+  )
 
 
 @router.post("/videos/{video_id}/analyzed-export", response_model=AnalyzedVideoExportResponse)
@@ -219,6 +263,12 @@ def export_analyzed_video(
     raise HTTPException(
       status_code=status.HTTP_409_CONFLICT,
       detail="Only saved videos can be exported.",
+    )
+
+  if (video.get("storage_state") or "available") != "available":
+    raise HTTPException(
+      status_code=status.HTTP_409_CONFLICT,
+      detail="The source video has expired. Analysis is still available, but export is unavailable.",
     )
 
   analysis = repository.get_analysis_result(video_id_str)
@@ -280,8 +330,109 @@ def discard_video(
   return DiscardVideoResponse(video_id=video_id, discarded=True)
 
 
+def _delete_paths(storage: StorageService, paths: list[str | None]) -> int:
+  storage_paths = [path for path in paths if path]
+  bytes_deleted = 0
+
+  for path in storage_paths:
+    try:
+      bytes_deleted += object_size_bytes(storage.get_object_info(path))
+    except HTTPException:
+      continue
+
+  if storage_paths:
+    storage.delete_storage_paths(storage_paths)
+
+  return bytes_deleted
+
+
+def _cleanup_storage_objects(
+  repository: VideoRepository,
+  storage: StorageService,
+) -> StorageCleanupResponse:
+  settings = get_settings()
+  now = datetime.now(timezone.utc)
+  export_cutoff = now - timedelta(hours=settings.export_storage_ttl_hours)
+  pending_deleted = 0
+  saved_media_pruned = 0
+  exports_deleted = 0
+  orphans_deleted = 0
+  bytes_deleted = 0
+
+  for video in repository.list_expired_pending_videos():
+    bytes_deleted += _delete_paths(storage, [video.get("storage_path"), video.get("thumbnail_path")])
+    storage.delete_storage_prefix(f"{video['user_id']}/exports/{video['id']}-")
+    repository.delete_video_with_analysis(video["id"])
+    pending_deleted += 1
+
+  for video in repository.list_expired_saved_videos_with_media():
+    bytes_deleted += _delete_paths(storage, [video.get("storage_path")])
+    repository.update_video(
+      video["id"],
+      {
+        "storage_state": "pruned",
+        "storage_pruned_at": now.isoformat(),
+      },
+    )
+    saved_media_pruned += 1
+
+  objects = storage.list_objects_recursive()
+  export_paths = [
+    object_info["path"]
+    for object_info in objects
+    if "/exports/" in str(object_info.get("path") or "")
+    and (
+      object_updated_at(object_info) is None
+      or object_updated_at(object_info) < export_cutoff
+    )
+  ]
+  bytes_deleted += sum(
+    object_size_bytes(object_info)
+    for object_info in objects
+    if object_info.get("path") in set(export_paths)
+  )
+  if export_paths:
+    storage.delete_storage_paths(export_paths)
+  exports_deleted = len(export_paths)
+
+  referenced_paths = repository.list_storage_reference_paths()
+  orphan_paths = [
+    object_info["path"]
+    for object_info in objects
+    if object_info.get("path") not in referenced_paths
+    and "/exports/" not in str(object_info.get("path") or "")
+  ]
+  bytes_deleted += sum(
+    object_size_bytes(object_info)
+    for object_info in objects
+    if object_info.get("path") in set(orphan_paths)
+  )
+  if orphan_paths:
+    storage.delete_storage_paths(orphan_paths)
+  orphans_deleted = len(orphan_paths)
+
+  return StorageCleanupResponse(
+    pending_deleted=pending_deleted,
+    saved_media_pruned=saved_media_pruned,
+    exports_deleted=exports_deleted,
+    orphans_deleted=orphans_deleted,
+    bytes_deleted=bytes_deleted,
+  )
+
+
+def _is_missing_retention_migration_error(error: Exception) -> bool:
+  error_text = str(error).lower()
+  return (
+    "storage_state" in error_text
+    or "storage_pruned_at" in error_text
+    or "original_size_bytes" in error_text
+    or "uploaded_size_bytes" in error_text
+  ) and ("does not exist" in error_text or "could not find" in error_text)
+
+
 @router.post("/videos/cleanup-expired", response_model=CleanupExpiredVideosResponse)
 def cleanup_expired_videos() -> CleanupExpiredVideosResponse:
+  # Kept for local development; production cleanup uses /internal/storage/cleanup.
   repository = VideoRepository()
   storage = StorageService()
   expired_videos = repository.list_expired_pending_videos()
@@ -300,6 +451,42 @@ def cleanup_expired_videos() -> CleanupExpiredVideosResponse:
     datetime.now(timezone.utc).isoformat(),
   )
   return CleanupExpiredVideosResponse(deleted_count=deleted_count)
+
+
+@router.post("/internal/storage/cleanup", response_model=StorageCleanupResponse)
+def cleanup_storage(
+  x_cleanup_token: str | None = Header(default=None, alias="X-Cleanup-Token"),
+) -> StorageCleanupResponse:
+  settings = get_settings()
+
+  if not settings.storage_cleanup_token:
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Storage cleanup token is not configured.",
+    )
+
+  if x_cleanup_token != settings.storage_cleanup_token:
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Invalid cleanup token.",
+    )
+
+  try:
+    response = _cleanup_storage_objects(VideoRepository(), StorageService())
+  except Exception as error:
+    if _is_missing_retention_migration_error(error):
+      raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Apply supabase/migrations/202605270001_storage_retention_metadata.sql before running storage cleanup.",
+      ) from error
+
+    raise
+  logger.info(
+    "Storage cleanup completed at %s: %s",
+    datetime.now(timezone.utc).isoformat(),
+    response.dict(),
+  )
+  return response
 
 
 @router.get("/videos/{video_id}/status", response_model=VideoStatusResponse)

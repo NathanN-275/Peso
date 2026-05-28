@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ ALLOWED_VIDEO_MIME_TYPES = {
   "video/x-m4v",
   "video/m4v",
 }
+STORAGE_DELETE_BATCH_SIZE = 1000
 
 
 def _metadata_value(object_info: dict[str, Any], *keys: str) -> Any:
@@ -41,6 +43,27 @@ def _parse_size_bytes(value: Any) -> int | None:
     return int(value)
 
   return None
+
+
+def object_size_bytes(object_info: dict[str, Any]) -> int:
+  size_bytes = _parse_size_bytes(
+    _metadata_value(object_info, "size", "contentLength", "content_length")
+  )
+  return size_bytes or 0
+
+
+def object_updated_at(object_info: dict[str, Any]) -> datetime | None:
+  value = object_info.get("updated_at") or object_info.get("created_at")
+
+  if not isinstance(value, str):
+    return None
+
+  normalized_value = value.replace("Z", "+00:00")
+
+  try:
+    return datetime.fromisoformat(normalized_value)
+  except ValueError:
+    return None
 
 
 class StorageService:
@@ -129,6 +152,13 @@ class StorageService:
   def delete_storage_path(self, storage_path: str) -> None:
     self.client.storage.from_(self.bucket).remove([storage_path])
 
+  def delete_storage_paths(self, storage_paths: list[str]) -> None:
+    for index in range(0, len(storage_paths), STORAGE_DELETE_BATCH_SIZE):
+      batch = storage_paths[index:index + STORAGE_DELETE_BATCH_SIZE]
+
+      if batch:
+        self.client.storage.from_(self.bucket).remove(batch)
+
   def delete_storage_prefix(self, prefix: str) -> None:
     folder, _, name_prefix = prefix.rstrip("/").rpartition("/")
     try:
@@ -145,7 +175,44 @@ class StorageService:
     ]
 
     if paths:
-      self.client.storage.from_(self.bucket).remove(paths)
+      self.delete_storage_paths(paths)
+
+  def list_objects_recursive(self, prefix: str = "") -> list[dict[str, Any]]:
+    bucket = self.client.storage.from_(self.bucket)
+    objects: list[dict[str, Any]] = []
+
+    def walk(folder: str) -> None:
+      offset = 0
+
+      while True:
+        items = bucket.list(folder or None, {"limit": 1000, "offset": offset}) or []
+
+        if not items:
+          return
+
+        for item in items:
+          name = item.get("name") if isinstance(item, dict) else None
+
+          if not name:
+            continue
+
+          storage_path = f"{folder}/{name}" if folder else name
+
+          if item.get("id") is None and object_size_bytes(item) == 0:
+            walk(storage_path)
+            continue
+
+          normalized_item = dict(item)
+          normalized_item["path"] = storage_path
+          objects.append(normalized_item)
+
+        if len(items) < 1000:
+          return
+
+        offset += len(items)
+
+    walk(prefix.strip("/"))
+    return objects
 
   def storage_path_exists(self, storage_path: str) -> bool:
     try:

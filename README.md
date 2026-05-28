@@ -163,7 +163,26 @@ Deletes the video record and removes the underlying file from Supabase Storage.
 
 ### `POST /videos/cleanup-expired`
 
-Deletes expired pending videos and their analysis rows. This is a development-callable cleanup endpoint, not a scheduled job.
+Deletes expired pending videos and their analysis rows. This is retained for local development.
+
+### `POST /internal/storage/cleanup`
+
+Runs production storage retention. Requires `X-Cleanup-Token: <STORAGE_CLEANUP_TOKEN>`.
+
+The cleanup job:
+
+- deletes expired pending uploads and their rows
+- prunes expired saved source videos while preserving analysis rows and thumbnails
+- deletes temporary analyzed exports after `EXPORT_STORAGE_TTL_HOURS`
+- deletes unreferenced non-export objects from the videos bucket
+
+Schedule this endpoint hourly from Supabase Cron or another trusted scheduler. Set:
+
+```bash
+STORAGE_CLEANUP_TOKEN=long-random-token
+SAVED_VIDEO_STORAGE_TTL_HOURS=24
+EXPORT_STORAGE_TTL_HOURS=6
+```
 
 ### `GET /videos/{video_id}/status`
 

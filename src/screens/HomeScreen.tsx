@@ -96,10 +96,11 @@ function PreviewTile({ video }: { video: SavedVideo }) {
     }
 
     let active = true;
+    const videoUrl = video.video_url;
 
     const generateVideoPreview = async () => {
       try {
-        const thumbnail = await VideoThumbnails.getThumbnailAsync(video.video_url, {
+        const thumbnail = await VideoThumbnails.getThumbnailAsync(videoUrl, {
           time: 1000,
           quality: 0.65,
         });

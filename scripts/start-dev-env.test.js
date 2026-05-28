@@ -51,6 +51,30 @@ test('createDevEnvironment preserves root .env backend URL', () => {
     assert.equal(environment.backendPort, '8000');
     assert.equal(environment.backendHealthUrl, 'http://127.0.0.1:8000/health');
     assert.equal(environment.expoEnv.EXPO_PUBLIC_BACKEND_URL, 'http://10.0.0.221:8000');
+    assert.equal(environment.expoBackendUrlSource, 'root .env');
+  });
+});
+
+test('createDevEnvironment uses loopback for web even when root .env targets physical device', () => {
+  withTempDir((rootDir) => {
+    fs.writeFileSync(
+      path.join(rootDir, '.env'),
+      [
+        'EXPO_PUBLIC_BACKEND_URL=http://10.0.0.221:8000',
+        'EXPO_PUBLIC_BACKEND_TARGET=physical-device',
+        'EXPO_PUBLIC_WEB_BACKEND_HOST=127.0.0.1',
+        'EXPO_PUBLIC_BACKEND_PORT=8000',
+      ].join('\n')
+    );
+
+    const environment = createDevEnvironment({
+      rootDir,
+      baseEnv: {},
+      frontendTarget: 'web',
+    });
+
+    assert.equal(environment.expoEnv.EXPO_PUBLIC_BACKEND_URL, 'http://127.0.0.1:8000');
+    assert.match(environment.expoBackendUrlSource, /ignored root \.env LAN override/);
   });
 });
 

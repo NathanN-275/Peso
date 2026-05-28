@@ -90,10 +90,11 @@ function SavedVideoThumb({ video }: { video: SavedVideo }) {
     }
 
     let active = true;
+    const videoUrl = video.video_url;
 
     const generateVideoPreview = async () => {
       try {
-        const thumbnail = await VideoThumbnails.getThumbnailAsync(video.video_url, {
+        const thumbnail = await VideoThumbnails.getThumbnailAsync(videoUrl, {
           time: 1000,
           quality: 0.65,
         });
@@ -223,6 +224,10 @@ export default function SavedLiftVideosScreen({
     setActionMessage(null);
 
     try {
+      if (selectedVideos.some((video) => video.storage_state === 'pruned' || !video.video_url)) {
+        throw new Error('One or more selected videos have expired and can no longer be exported.');
+      }
+
       if (!session?.access_token) {
         throw new Error('You need to be signed in to export saved videos.');
       }
@@ -388,6 +393,9 @@ export default function SavedLiftVideosScreen({
                       <Text style={styles.videoTitle}>{formatExerciseLabel(video.exercise_type)}</Text>
                       <Text style={styles.videoMeta}>{formatViewLabel(video.view_type)} view</Text>
                       <Text style={styles.videoMeta}>{formatSavedDate(video.saved_at)}</Text>
+                      {video.storage_state === 'pruned' ? (
+                        <Text style={styles.videoMeta}>Analysis only</Text>
+                      ) : null}
                       <Text style={styles.videoSummary} numberOfLines={2}>
                         {getSavedVideoSummary(video)}
                       </Text>

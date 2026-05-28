@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException, status
 
+from .config import get_settings
 from .supabase_client import get_supabase_admin_client
 
 
@@ -70,12 +71,14 @@ class VideoRepository:
 
   def mark_saved(self, video_id: str) -> dict[str, Any]:
     # Saved videos stay visible in the home flow.
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
     return self.update_video(
       video_id,
       {
         "save_state": "saved",
-        "saved_at": datetime.now(timezone.utc).isoformat(),
-        "expires_at": None,
+        "saved_at": now.isoformat(),
+        "expires_at": (now + timedelta(hours=settings.saved_video_storage_ttl_hours)).isoformat(),
       },
     )
 
@@ -99,6 +102,18 @@ class VideoRepository:
     )
     return response.data or []
 
+  def list_expired_saved_videos_with_media(self) -> list[dict[str, Any]]:
+    now = datetime.now(timezone.utc).isoformat()
+    response = (
+      self.client.table("videos")
+      .select("*")
+      .eq("save_state", "saved")
+      .eq("storage_state", "available")
+      .lt("expires_at", now)
+      .execute()
+    )
+    return response.data or []
+
   def list_saved_videos(self, user_id: str) -> list[dict[str, Any]]:
     response = (
       self.client.table("videos")
@@ -110,6 +125,26 @@ class VideoRepository:
       .execute()
     )
     return response.data or []
+
+  def list_storage_reference_paths(self) -> set[str]:
+    response = (
+      self.client.table("videos")
+      .select("storage_path,thumbnail_path")
+      .execute()
+    )
+    paths: set[str] = set()
+
+    for video in response.data or []:
+      storage_path = video.get("storage_path")
+      thumbnail_path = video.get("thumbnail_path")
+
+      if storage_path:
+        paths.add(storage_path)
+
+      if thumbnail_path:
+        paths.add(thumbnail_path)
+
+    return paths
 
   def save_analysis_result(self, video_id: str, model_version: str, result_json: dict[str, Any]) -> dict[str, Any]:
     # Store the latest analysis result for this model version.

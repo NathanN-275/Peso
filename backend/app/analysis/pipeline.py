@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 import time
 import traceback
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from .barbell_tracker import BarbellTracker
@@ -17,10 +19,72 @@ from ..services.video_repository import VideoRepository
 
 
 logger = logging.getLogger(__name__)
+THUMBNAIL_MAX_WIDTH = 480
+THUMBNAIL_JPEG_QUALITY = 72
 
 
 def _is_squat_variation(exercise_type: str) -> bool:
   return exercise_type.strip().lower().endswith("squat")
+
+
+def _generate_thumbnail_file(source_path: Path) -> Path:
+  import cv2
+
+  capture = cv2.VideoCapture(str(source_path))
+
+  try:
+    success, frame = capture.read()
+
+    if not success or frame is None:
+      raise RuntimeError("Unable to read a video frame for thumbnail generation.")
+
+    height, width = frame.shape[:2]
+
+    if width > THUMBNAIL_MAX_WIDTH:
+      scale = THUMBNAIL_MAX_WIDTH / width
+      next_size = (THUMBNAIL_MAX_WIDTH, max(int(round(height * scale)), 1))
+      frame = cv2.resize(frame, next_size, interpolation=cv2.INTER_AREA)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as thumbnail_file:
+      thumbnail_path = Path(thumbnail_file.name)
+
+    encoded = cv2.imwrite(
+      str(thumbnail_path),
+      frame,
+      [int(cv2.IMWRITE_JPEG_QUALITY), THUMBNAIL_JPEG_QUALITY],
+    )
+
+    if not encoded:
+      raise RuntimeError("Unable to encode video thumbnail.")
+
+    return thumbnail_path
+  finally:
+    capture.release()
+
+
+def _ensure_video_thumbnail(
+  *,
+  video_id: str,
+  video: dict[str, Any],
+  source_path: Path,
+  repository: VideoRepository,
+  storage: StorageService,
+) -> None:
+  if video.get("thumbnail_path"):
+    return
+
+  thumbnail_file: Path | None = None
+
+  try:
+    thumbnail_file = _generate_thumbnail_file(source_path)
+    thumbnail_path = f"{video['user_id']}/thumbnails/{video_id}.jpg"
+    storage.upload_file(thumbnail_path, thumbnail_file, "image/jpeg")
+    repository.update_video(video_id, {"thumbnail_path": thumbnail_path})
+  except Exception as error:
+    logger.warning("Unable to generate thumbnail for video %s: %s", video_id, error)
+  finally:
+    if thumbnail_file:
+      storage.remove_tempfile(thumbnail_file)
 
 
 def build_limited_result(
@@ -383,6 +447,13 @@ def analyze_video(video_id: str) -> None:
       "Downloaded video %s in %sms.",
       video_id,
       int((time.perf_counter() - stage_started) * 1000),
+    )
+    _ensure_video_thumbnail(
+      video_id=video_id,
+      video=video,
+      source_path=temp_file,
+      repository=repository,
+      storage=storage,
     )
 
     # Pose estimation is the first stage of the backend analysis flow.

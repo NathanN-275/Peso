@@ -715,6 +715,10 @@ export async function uploadVideoForAnalysis({
       duration_ms: durationMs,
       save_state: 'pending',
       expires_at: expiresAt,
+      original_size_bytes: preparedVideo.originalSizeBytes,
+      uploaded_size_bytes: uploadSource.sizeBytes,
+      was_compressed: preparedVideo.wasCompressed,
+      storage_state: 'available',
     })
     ;
 

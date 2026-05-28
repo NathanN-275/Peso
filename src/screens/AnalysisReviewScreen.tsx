@@ -33,7 +33,7 @@ import {
 } from '../utils/videoReview';
 
 type AnalysisReviewScreenProps = {
-  videoUri: string;
+  videoUri: string | null;
   result: VideoAnalysisResult;
   mode?: 'pending' | 'saved';
   onBack?: () => void;
@@ -205,6 +205,7 @@ export default function AnalysisReviewScreen({
   const [showDiscardSheet, setShowDiscardSheet] = useState(false);
   const [showSavedDeleteSheet, setShowSavedDeleteSheet] = useState(false);
   const [wasPlayingBeforeScrub, setWasPlayingBeforeScrub] = useState(false);
+  const mediaAvailable = Boolean(videoUri);
 
   const player = useVideoPlayer(videoUri, (videoPlayer) => {
     // Configure playback for review mode instead of normal video controls.
@@ -344,6 +345,10 @@ export default function AnalysisReviewScreen({
   };
 
   const handleSeek = (time: number) => {
+    if (!mediaAvailable) {
+      return;
+    }
+
     // Clamp seeks so the scrubber cannot leave the clip bounds.
     const boundedTime = Math.min(Math.max(time, 0), duration || time);
     player.currentTime = boundedTime;
@@ -351,6 +356,10 @@ export default function AnalysisReviewScreen({
   };
 
   const handleScrubStart = () => {
+    if (!mediaAvailable) {
+      return;
+    }
+
     setWasPlayingBeforeScrub(isPlaying);
     player.pause();
   };
@@ -358,12 +367,16 @@ export default function AnalysisReviewScreen({
   const handleScrubEnd = (time: number) => {
     handleSeek(time);
 
-    if (wasPlayingBeforeScrub) {
+    if (mediaAvailable && wasPlayingBeforeScrub) {
       player.play();
     }
   };
 
   const handleTogglePlayback = () => {
+    if (!mediaAvailable) {
+      return;
+    }
+
     if (isPlaying) {
       player.pause();
       return;
@@ -384,7 +397,9 @@ export default function AnalysisReviewScreen({
     try {
       await saveAnalyzedVideo(result.video_id, session.access_token);
       setSaved(true);
-      player.pause();
+      if (mediaAvailable) {
+        player.pause();
+      }
       onSaved?.();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to save this video.');
@@ -405,7 +420,9 @@ export default function AnalysisReviewScreen({
     try {
       await discardAnalyzedVideo(result.video_id, session.access_token);
       setShowDiscardSheet(false);
-      player.pause();
+      if (mediaAvailable) {
+        player.pause();
+      }
       onDiscarded?.();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to discard this video.');
@@ -433,7 +450,9 @@ export default function AnalysisReviewScreen({
     try {
       await onDeleteSavedVideo(result.video_id);
       setShowSavedDeleteSheet(false);
-      player.pause();
+      if (mediaAvailable) {
+        player.pause();
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to delete this video.');
     } finally {
@@ -451,7 +470,9 @@ export default function AnalysisReviewScreen({
 
   const handleBack = () => {
     if (isSavedMode) {
-      player.pause();
+      if (mediaAvailable) {
+        player.pause();
+      }
       onBack?.();
       return;
     }
@@ -507,44 +528,56 @@ export default function AnalysisReviewScreen({
 
         <View style={styles.videoArea} onLayout={handleVideoLayout}>
           <Pressable style={styles.videoPressable} onPress={handleTogglePlayback}>
-            <VideoView
-              player={player}
-              style={styles.video}
-              nativeControls={false}
-              contentFit="cover"
-              allowsPictureInPicture={false}
-              onFirstFrameRender={() => setErrorMessage(null)}
-            />
-            {/* Pose markers are drawn on top of the rendered video. */}
-            <PoseOverlay
-              frame={poseFrame}
-              containerSize={videoLayout}
-              videoSize={videoSize}
-              contentFit="cover"
-              cameraView={cameraView}
-              selectedSide={selectedPoseSide}
-            />
-            <BarbellPathOverlay
-              path={barbellPath}
-              currentTime={currentTime}
-              containerSize={videoLayout}
-              videoSize={videoSize}
-              contentFit="cover"
-            />
+            {mediaAvailable ? (
+              <>
+                <VideoView
+                  player={player}
+                  style={styles.video}
+                  nativeControls={false}
+                  contentFit="cover"
+                  allowsPictureInPicture={false}
+                  onFirstFrameRender={() => setErrorMessage(null)}
+                />
+                {/* Pose markers are drawn on top of the rendered video. */}
+                <PoseOverlay
+                  frame={poseFrame}
+                  containerSize={videoLayout}
+                  videoSize={videoSize}
+                  contentFit="cover"
+                  cameraView={cameraView}
+                  selectedSide={selectedPoseSide}
+                />
+                <BarbellPathOverlay
+                  path={barbellPath}
+                  currentTime={currentTime}
+                  containerSize={videoLayout}
+                  videoSize={videoSize}
+                  contentFit="cover"
+                />
+              </>
+            ) : (
+              <View style={styles.mediaUnavailable}>
+                <Ionicons name="analytics-outline" size={46} color={tokens.colors.brand} />
+                <Text style={styles.mediaUnavailableTitle}>Analysis saved</Text>
+                <Text style={styles.mediaUnavailableText}>
+                  The source video has expired to reduce storage usage.
+                </Text>
+              </View>
+            )}
 
-            {status === 'loading' ? (
+            {mediaAvailable && status === 'loading' ? (
               <View style={styles.centerOverlay}>
                 <ActivityIndicator color={tokens.colors.textPrimary} />
               </View>
             ) : null}
 
-            {!isPlaying ? (
+            {mediaAvailable && !isPlaying ? (
               <View style={styles.playButton}>
                 <Ionicons name="play" size={26} color={tokens.colors.textPrimary} />
               </View>
             ) : null}
 
-            {!hasPoseTimeline ? (
+            {mediaAvailable && !hasPoseTimeline ? (
               <View style={styles.poseNotice}>
                 <Text style={styles.poseNoticeText}>Pose overlay unavailable for this result.</Text>
               </View>
@@ -553,13 +586,15 @@ export default function AnalysisReviewScreen({
         </View>
 
         <View style={styles.bottomPanel}>
-          <TimelineScrubber
-            currentTime={currentTime}
-            duration={duration}
-            onSeek={handleSeek}
-            onScrubStart={handleScrubStart}
-            onScrubEnd={handleScrubEnd}
-          />
+          {mediaAvailable ? (
+            <TimelineScrubber
+              currentTime={currentTime}
+              duration={duration}
+              onSeek={handleSeek}
+              onScrubStart={handleScrubStart}
+              onScrubEnd={handleScrubEnd}
+            />
+          ) : null}
 
           {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 
@@ -874,6 +909,27 @@ const styles = StyleSheet.create({
   video: {
     width: '100%',
     height: '100%',
+  },
+  mediaUnavailable: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+    gap: 10,
+    backgroundColor: '#050505',
+  },
+  mediaUnavailableTitle: {
+    color: tokens.colors.textPrimary,
+    fontSize: 20,
+    lineHeight: 25,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  mediaUnavailableText: {
+    color: tokens.colors.textMuted,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
   },
   centerOverlay: {
     ...StyleSheet.absoluteFillObject,

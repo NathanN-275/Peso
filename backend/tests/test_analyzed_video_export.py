@@ -81,6 +81,23 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
     self.assertEqual(raised.exception.status_code, status.HTTP_409_CONFLICT)
     self.assertEqual(raised.exception.detail, "Only saved videos can be exported.")
 
+  def test_export_rejects_pruned_source_video(self) -> None:
+    repository = self._repository()
+    repository.require_owned_video.return_value["storage_state"] = "pruned"
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService"),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      export_analyzed_video(VIDEO_ID, USER_ID)
+
+    self.assertEqual(raised.exception.status_code, status.HTTP_409_CONFLICT)
+    self.assertEqual(
+      raised.exception.detail,
+      "The source video has expired. Analysis is still available, but export is unavailable.",
+    )
+
   def test_export_reuses_existing_rendered_object(self) -> None:
     repository = self._repository()
     storage = MagicMock()
@@ -90,6 +107,7 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
     with (
       patch("app.routes.videos.VideoRepository", return_value=repository),
       patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.annotate_analysis_freshness", side_effect=lambda result, analysis: result),
       patch("app.routes.videos.render_analyzed_video") as renderer,
     ):
       response = export_analyzed_video(VIDEO_ID, USER_ID)
@@ -101,6 +119,27 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
     storage.create_signed_url.assert_called_once_with(expected_path)
     self.assertEqual(response.storage_path, expected_path)
     self.assertEqual(response.export_url, "https://example.test/signed-export")
+
+  def test_export_recreates_rendered_object_after_cleanup(self) -> None:
+    repository = self._repository()
+    storage = MagicMock()
+    storage.storage_path_exists.return_value = False
+    storage.download_to_tempfile.return_value = Path("/tmp/source.mp4")
+    storage.create_signed_url.return_value = "https://example.test/signed-export"
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.annotate_analysis_freshness", side_effect=lambda result, analysis: result),
+      patch("app.routes.videos.render_analyzed_video") as renderer,
+    ):
+      response = export_analyzed_video(VIDEO_ID, USER_ID)
+
+    expected_path = f"{USER_ID}/exports/{VIDEO_ID}-{ANALYSIS_ID}-h264-v1.mp4"
+    renderer.assert_called_once()
+    storage.upload_file.assert_called_once()
+    storage.create_signed_url.assert_called_once_with(expected_path)
+    self.assertEqual(response.storage_path, expected_path)
 
 
 class AnalyzedVideoRendererTest(unittest.TestCase):
