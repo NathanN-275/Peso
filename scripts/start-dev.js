@@ -4,11 +4,12 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
+const { createDevEnvironment } = require('./start-dev-env');
 
 const rootDir = path.resolve(__dirname, '..');
 const backendDir = path.join(rootDir, 'backend');
-const backendPort = process.env.BACKEND_PORT || '8000';
-const backendHealthUrl = `http://127.0.0.1:${backendPort}/health`;
+const devEnvironment = createDevEnvironment({ rootDir, baseEnv: process.env });
+const { backendPort, backendHealthUrl, expoEnv } = devEnvironment;
 const backendPython = path.join(backendDir, '.venv', 'bin', 'python');
 const pythonCommand = fs.existsSync(backendPython) ? backendPython : 'python3';
 const expoBinary = path.join(
@@ -20,14 +21,15 @@ const expoBinary = path.join(
 
 const children = new Set();
 let shuttingDown = false;
+const backendStartupTimeoutMs = Number(devEnvironment.env.BACKEND_STARTUP_TIMEOUT_MS || 30000);
 
 function log(scope, message) {
   process.stdout.write(`[${scope}] ${message}\n`);
 }
 
-function checkBackendHealth() {
+function checkBackendHealth(url = backendHealthUrl) {
   return new Promise((resolve) => {
-    const request = http.get(backendHealthUrl, (response) => {
+    const request = http.get(url, (response) => {
       response.resume();
       resolve(response.statusCode === 200);
     });
@@ -41,6 +43,29 @@ function checkBackendHealth() {
       resolve(false);
     });
   });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function waitForBackendHealth(timeoutMs = backendStartupTimeoutMs) {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await checkBackendHealth()) {
+      return;
+    }
+
+    await sleep(500);
+  }
+
+  throw new Error(
+    `FastAPI did not become healthy at ${backendHealthUrl} within ${timeoutMs}ms. `
+    + 'Check backend/.env, port conflicts, and backend startup logs above.'
+  );
 }
 
 function spawnProcess(scope, command, args, options) {
@@ -110,16 +135,14 @@ async function main() {
         cwd: backendDir,
       }
     );
+    await waitForBackendHealth();
+    log('backend', `healthy at ${backendHealthUrl}`);
   }
 
-  log('expo', 'starting Expo');
-  spawnProcess('expo', expoBinary, ['start'], {
+  log('expo', `starting Expo with backend ${expoEnv.EXPO_PUBLIC_BACKEND_URL}`);
+  spawnProcess('expo', expoBinary, ['start', '--clear'], {
     cwd: rootDir,
-    env: {
-      ...process.env,
-      EXPO_PUBLIC_BACKEND_URL:
-        process.env.EXPO_PUBLIC_BACKEND_URL || `http://localhost:${backendPort}`,
-    },
+    env: expoEnv,
   });
 }
 
