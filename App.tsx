@@ -15,7 +15,7 @@ import SavedLiftVideosScreen from './src/screens/SavedLiftVideosScreen';
 import UploadVideoScreen from './src/screens/UploadVideoScreen';
 import WelcomeScreen from './src/screens/WelcomeScreen';
 import { supabase } from './lib/supabase';
-import { deleteSavedVideo } from './lib/backendApi';
+import { deleteSavedVideo, getSavedVideoPlaybackUrl } from './lib/backendApi';
 import type { SavedVideo } from './lib/backendApi';
 import { buildSavedVideoAnalysisResult } from './src/utils/savedVideos';
 
@@ -529,8 +529,22 @@ function AppContent() {
     setSelectedSavedVideo(null);
     navigateToAuthRoute(AUTH_ROUTES.savedLiftVideos);
   };
-  const handleOpenSavedVideo = (video: SavedVideo) => {
-    setSelectedSavedVideo(video);
+  const handleOpenSavedVideo = async (video: SavedVideo) => {
+    let videoWithPlaybackUrl = video;
+
+    if (video.storage_state !== 'pruned' && session?.access_token) {
+      try {
+        const playback = await getSavedVideoPlaybackUrl(video.id, session.access_token);
+        videoWithPlaybackUrl = {
+          ...video,
+          video_url: playback.video_url,
+        };
+      } catch (error) {
+        console.warn('Unable to sign saved video playback URL.', error);
+      }
+    }
+
+    setSelectedSavedVideo(videoWithPlaybackUrl);
     setSelectedSavedExerciseType(video.exercise_type);
     navigateToAuthRoute(AUTH_ROUTES.savedVideoReview);
   };

@@ -6,7 +6,12 @@ from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException, status
 
-from app.routes.videos import _cleanup_storage_objects, cleanup_storage, list_saved_videos
+from app.routes.videos import (
+  _cleanup_storage_objects,
+  cleanup_storage,
+  get_saved_video_playback_url,
+  list_saved_videos,
+)
 from app.services.storage_service import StorageService
 
 
@@ -154,21 +159,22 @@ class StorageCleanupTest(unittest.TestCase):
 
 
 class SavedVideoListRetentionTest(unittest.TestCase):
+  def _saved_video(self, storage_state: str = "available") -> dict:
+    return {
+      "id": VIDEO_ID,
+      "exercise_type": "squat",
+      "view_type": "side",
+      "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mp4",
+      "thumbnail_path": f"{USER_ID}/thumbnails/{VIDEO_ID}.jpg",
+      "save_state": "saved",
+      "storage_state": storage_state,
+      "saved_at": "2026-05-27T00:00:00+00:00",
+      "created_at": "2026-05-27T00:00:00+00:00",
+    }
+
   def test_saved_list_returns_thumbnail_but_no_video_url_for_pruned_media(self) -> None:
     repository = MagicMock()
-    repository.list_saved_videos.return_value = [
-      {
-        "id": VIDEO_ID,
-        "exercise_type": "squat",
-        "view_type": "side",
-        "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mp4",
-        "thumbnail_path": f"{USER_ID}/thumbnails/{VIDEO_ID}.jpg",
-        "save_state": "saved",
-        "storage_state": "pruned",
-        "saved_at": "2026-05-27T00:00:00+00:00",
-        "created_at": "2026-05-27T00:00:00+00:00",
-      }
-    ]
+    repository.list_saved_videos.return_value = [self._saved_video("pruned")]
     repository.get_analysis_result.return_value = None
     storage = MagicMock()
     storage.create_signed_url.return_value = "https://example.test/thumb.jpg"
@@ -183,6 +189,50 @@ class SavedVideoListRetentionTest(unittest.TestCase):
     self.assertEqual(response[0].thumbnail_url, "https://example.test/thumb.jpg")
     self.assertEqual(response[0].storage_state, "pruned")
     storage.create_signed_url.assert_called_once_with(f"{USER_ID}/thumbnails/{VIDEO_ID}.jpg")
+
+  def test_saved_list_does_not_sign_available_playback_video(self) -> None:
+    repository = MagicMock()
+    repository.list_saved_videos.return_value = [self._saved_video("available")]
+    repository.get_analysis_result.return_value = None
+    storage = MagicMock()
+    storage.create_signed_url.return_value = "https://example.test/thumb.jpg"
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+    ):
+      response = list_saved_videos(USER_ID)
+
+    self.assertIsNone(response[0].video_url)
+    storage.create_signed_url.assert_called_once_with(f"{USER_ID}/thumbnails/{VIDEO_ID}.jpg")
+
+  def test_playback_url_signs_available_saved_video_on_demand(self) -> None:
+    repository = MagicMock()
+    repository.require_owned_video.return_value = self._saved_video("available")
+    storage = MagicMock()
+    storage.create_signed_url.return_value = "https://example.test/video.mp4"
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+    ):
+      response = get_saved_video_playback_url(VIDEO_ID, USER_ID)
+
+    self.assertEqual(response.video_url, "https://example.test/video.mp4")
+    storage.create_signed_url.assert_called_once_with(f"{USER_ID}/uploads/{VIDEO_ID}.mp4")
+
+  def test_playback_url_rejects_pruned_saved_video(self) -> None:
+    repository = MagicMock()
+    repository.require_owned_video.return_value = self._saved_video("pruned")
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService"),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      get_saved_video_playback_url(VIDEO_ID, USER_ID)
+
+    self.assertEqual(raised.exception.status_code, status.HTTP_409_CONFLICT)
 
 
 if __name__ == "__main__":

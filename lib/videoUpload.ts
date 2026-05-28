@@ -510,6 +510,19 @@ function formatSupabaseError(error: unknown) {
   return segments.join(' | ') || 'Unknown Supabase error';
 }
 
+function isMissingStorageRetentionMigrationError(error: unknown) {
+  const message = formatSupabaseError(error).toLowerCase();
+  return (
+    message.includes('storage_state') ||
+    message.includes('original_size_bytes') ||
+    message.includes('uploaded_size_bytes') ||
+    message.includes('was_compressed')
+  ) && (
+    message.includes('does not exist') ||
+    message.includes('could not find')
+  );
+}
+
 async function resolveUploadSource(asset: UploadableVideoAsset): Promise<UploadSource> {
   // Convert the selected asset into the blob or file Supabase expects.
   const webAsset = asset as UploadableVideoAsset & WebImagePickerAsset;
@@ -702,27 +715,59 @@ export async function uploadVideoForAnalysis({
   const normalizedViewType = normalizeViewType(angle);
   const expiresAt = new Date(Date.now() + PENDING_VIDEO_TTL_MS).toISOString();
 
+  const insertPayload = {
+    id: videoId,
+    user_id: user.id,
+    storage_path: storagePath,
+    source_type: 'camera_roll',
+    exercise_type: normalizedExerciseType,
+    view_type: normalizedViewType,
+    status: 'uploaded',
+    duration_ms: durationMs,
+    save_state: 'pending',
+    expires_at: expiresAt,
+    original_size_bytes: preparedVideo.originalSizeBytes,
+    uploaded_size_bytes: uploadSource.sizeBytes,
+    was_compressed: preparedVideo.wasCompressed,
+    storage_state: 'available',
+  };
+
   const { error: insertError } = await supabase
     .from('videos')
-    .insert({
-      id: videoId,
-      user_id: user.id,
-      storage_path: storagePath,
-      source_type: 'camera_roll',
-      exercise_type: normalizedExerciseType,
-      view_type: normalizedViewType,
-      status: 'uploaded',
-      duration_ms: durationMs,
-      save_state: 'pending',
-      expires_at: expiresAt,
-      original_size_bytes: preparedVideo.originalSizeBytes,
-      uploaded_size_bytes: uploadSource.sizeBytes,
-      was_compressed: preparedVideo.wasCompressed,
-      storage_state: 'available',
-    })
+    .insert(insertPayload)
     ;
 
   if (insertError) {
+    if (isMissingStorageRetentionMigrationError(insertError)) {
+      const {
+        original_size_bytes: _originalSizeBytes,
+        uploaded_size_bytes: _uploadedSizeBytes,
+        was_compressed: _wasCompressed,
+        storage_state: _storageState,
+        ...legacyInsertPayload
+      } = insertPayload;
+      const { error: legacyInsertError } = await supabase
+        .from('videos')
+        .insert(legacyInsertPayload);
+
+      if (!legacyInsertError) {
+        logVideoUploadWarning('Inserted upload without storage retention metadata. Apply the retention migration.', {
+          videoId,
+          storagePath,
+          migration: 'supabase/migrations/202605270001_storage_retention_metadata.sql',
+        });
+
+        return {
+          videoId,
+          status: 'uploaded',
+          storagePath,
+          originalFileSizeBytes: preparedVideo.originalSizeBytes,
+          uploadedFileSizeBytes: uploadSource.sizeBytes,
+          wasCompressed: preparedVideo.wasCompressed,
+        };
+      }
+    }
+
     console.error('[Supabase] uploadVideoForAnalysis insert failed', {
       authUserId: user.id,
       insertedUserId: user.id,

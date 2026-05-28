@@ -99,11 +99,16 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --env-file .env
 For Expo web on the same Mac as the backend:
 
 ```bash
-EXPO_PUBLIC_BACKEND_URL=http://localhost:8000
-npx expo start -c
+npm run web
 ```
 
-For Expo Go on a physical phone, keep FastAPI bound to `0.0.0.0:8000`. If `EXPO_PUBLIC_BACKEND_URL` is accidentally set to `http://localhost:8000`, the frontend ignores that loopback value on-device and auto-detects the Expo dev server LAN IP for backend requests.
+`npm run web` starts Expo web with a loopback backend URL even if root `.env` is configured for physical-device testing. For Expo Go on a physical phone, keep FastAPI bound to `0.0.0.0:8000` and run:
+
+```bash
+npm run start:physical
+```
+
+If `EXPO_PUBLIC_BACKEND_URL` is accidentally set to `http://localhost:8000`, the native frontend ignores that loopback value on-device and auto-detects the Expo dev server LAN IP for backend requests.
 
 From the project root, `npm start` starts both the local FastAPI backend and Expo. If a backend is already responding on `http://127.0.0.1:8000/health`, the script reuses it instead of starting another copy.
 

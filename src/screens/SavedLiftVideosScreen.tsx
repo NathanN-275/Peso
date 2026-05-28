@@ -33,7 +33,7 @@ type SavedLiftVideosScreenProps = {
   exerciseType: string;
   videos: SavedVideo[];
   onBack: () => void;
-  onOpenSavedVideo: (video: SavedVideo) => void;
+  onOpenSavedVideo: (video: SavedVideo) => void | Promise<void>;
   onDeleteSavedVideos: (videoIds: string[]) => Promise<void>;
 };
 
@@ -212,7 +212,7 @@ export default function SavedLiftVideosScreen({
       return;
     }
 
-    onOpenSavedVideo(video);
+    void onOpenSavedVideo(video);
   };
 
   const handleExportSelected = async () => {

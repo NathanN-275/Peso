@@ -261,6 +261,13 @@ export async function exportAnalyzedVideo(videoId: string, accessToken: string) 
   );
 }
 
+export async function getSavedVideoPlaybackUrl(videoId: string, accessToken: string) {
+  return requestJson<{
+    video_id: string;
+    video_url: string;
+  }>(`/videos/${videoId}/playback-url`, accessToken);
+}
+
 export async function discardAnalyzedVideo(videoId: string, accessToken: string) {
   // Delete the upload and its analysis result from the backend.
   return requestJson<{ video_id: string; discarded: boolean }>(

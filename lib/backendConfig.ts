@@ -199,7 +199,7 @@ export function resolveBackendApiConfig(): BackendApiConfig {
   }
 
   if (explicitUrl && isLoopbackBackendUrl(explicitUrl)) {
-    if (Platform.OS === 'web' || isIosSimulatorTarget(target)) {
+    if (isIosSimulatorTarget(target)) {
       return {
         url: explicitUrl,
         source: 'env override',
@@ -218,7 +218,7 @@ export function resolveBackendApiConfig(): BackendApiConfig {
     }
   }
 
-  if (target === 'physical-device' && Platform.OS !== 'web') {
+  if (target === 'physical-device') {
     return resolveExpoGoLanBackendConfig();
   }
 
