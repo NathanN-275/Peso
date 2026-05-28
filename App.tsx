@@ -1,7 +1,15 @@
 import './global.css';
 
 import { useEffect, useRef, useState } from 'react';
-import { Linking, LogBox, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  Linking,
+  LogBox,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import CreateAccountScreen from './src/screens/CreateAccountScreen';
@@ -15,9 +23,9 @@ import SavedLiftVideosScreen from './src/screens/SavedLiftVideosScreen';
 import UploadVideoScreen from './src/screens/UploadVideoScreen';
 import WelcomeScreen from './src/screens/WelcomeScreen';
 import { supabase } from './lib/supabase';
-import { deleteSavedVideo, getSavedVideoPlaybackUrl } from './lib/backendApi';
+import { deleteSavedVideo, fetchAnalysisResult, getVideoPlaybackUrl } from './lib/backendApi';
 import type { SavedVideo } from './lib/backendApi';
-import { buildSavedVideoAnalysisResult } from './src/utils/savedVideos';
+import type { VideoAnalysisResult } from './src/types/videoAnalysis';
 
 LogBox.ignoreLogs([
   "SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead.",
@@ -378,6 +386,9 @@ function AppContent() {
   const [savedVideos, setSavedVideos] = useState<SavedVideo[]>([]);
   const [selectedSavedExerciseType, setSelectedSavedExerciseType] = useState<string | null>(null);
   const [selectedSavedVideo, setSelectedSavedVideo] = useState<SavedVideo | null>(null);
+  const [selectedSavedVideoPlaybackUri, setSelectedSavedVideoPlaybackUri] = useState<string | null>(null);
+  const [selectedSavedVideoAnalysisResult, setSelectedSavedVideoAnalysisResult] =
+    useState<VideoAnalysisResult | null>(null);
   const routeRef = useRef(route);
   const hadSessionRef = useRef(false);
 
@@ -527,25 +538,24 @@ function AppContent() {
   const handleOpenSavedLiftFolder = (exerciseType: string) => {
     setSelectedSavedExerciseType(exerciseType);
     setSelectedSavedVideo(null);
+    setSelectedSavedVideoPlaybackUri(null);
+    setSelectedSavedVideoAnalysisResult(null);
     navigateToAuthRoute(AUTH_ROUTES.savedLiftVideos);
   };
   const handleOpenSavedVideo = async (video: SavedVideo) => {
-    let videoWithPlaybackUrl = video;
-
-    if (video.storage_state !== 'pruned' && session?.access_token) {
-      try {
-        const playback = await getSavedVideoPlaybackUrl(video.id, session.access_token);
-        videoWithPlaybackUrl = {
-          ...video,
-          video_url: playback.video_url,
-        };
-      } catch (error) {
-        console.warn('Unable to sign saved video playback URL.', error);
-      }
+    if (!session?.access_token) {
+      throw new Error('You need to be signed in to open saved videos.');
     }
 
-    setSelectedSavedVideo(videoWithPlaybackUrl);
+    const [playbackResponse, analysisResponse] = await Promise.all([
+      getVideoPlaybackUrl(video.id, session.access_token),
+      fetchAnalysisResult(video.id, session.access_token),
+    ]);
+
+    setSelectedSavedVideo(video);
     setSelectedSavedExerciseType(video.exercise_type);
+    setSelectedSavedVideoPlaybackUri(playbackResponse.video_url);
+    setSelectedSavedVideoAnalysisResult(analysisResponse.result_json);
     navigateToAuthRoute(AUTH_ROUTES.savedVideoReview);
   };
   const handleSavedVideoReviewBack = () => {
@@ -571,6 +581,10 @@ function AppContent() {
     if (deletedIds.size > 0) {
       setSavedVideos((currentVideos) => currentVideos.filter((video) => !deletedIds.has(video.id)));
       setSelectedSavedVideo((currentVideo) => currentVideo && deletedIds.has(currentVideo.id) ? null : currentVideo);
+      setSelectedSavedVideoPlaybackUri((currentUri) => deletedIds.has(selectedSavedVideo?.id ?? '') ? null : currentUri);
+      setSelectedSavedVideoAnalysisResult((currentResult) =>
+        deletedIds.has(selectedSavedVideo?.id ?? '') ? null : currentResult
+      );
       setHomeRefreshKey((key) => key + 1);
     }
 
@@ -585,6 +599,8 @@ function AppContent() {
   const handleHomeRoute = () => {
     setSelectedSavedExerciseType(null);
     setSelectedSavedVideo(null);
+    setSelectedSavedVideoPlaybackUri(null);
+    setSelectedSavedVideoAnalysisResult(null);
     authNavigation.toHome();
   };
   const handleWelcomeLoginPress = authNavigation.toLogin;
@@ -808,12 +824,17 @@ function AppContent() {
         return <UploadVideoScreen onBack={authNavigation.toAddVideo} onAnalysisSaved={handleAnalysisSaved} />;
       }
 
-      if (route === AUTH_ROUTES.savedVideoReview && selectedSavedVideo) {
+      if (
+        route === AUTH_ROUTES.savedVideoReview
+        && selectedSavedVideo
+        && selectedSavedVideoPlaybackUri
+        && selectedSavedVideoAnalysisResult
+      ) {
         return (
           <AnalysisReviewScreen
             mode="saved"
-            videoUri={selectedSavedVideo.video_url}
-            result={buildSavedVideoAnalysisResult(selectedSavedVideo)}
+            videoUri={selectedSavedVideoPlaybackUri}
+            result={selectedSavedVideoAnalysisResult}
             onBack={handleSavedVideoReviewBack}
             onDeleteSavedVideo={handleDeleteSavedVideoFromReview}
           />

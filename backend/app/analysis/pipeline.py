@@ -5,6 +5,7 @@ import tempfile
 import time
 import traceback
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,77 +15,21 @@ from .exercises.squat import SquatAnalyzer
 from .pose_fallback import analysis_needs_pose_fallback
 from .pose_estimator import PoseEstimator
 from ..services.config import get_settings
-from ..services.storage_service import StorageService
+from ..services.storage_service import IMMUTABLE_CACHE_CONTROL_SECONDS, StorageService
+from ..services.video_assets import (
+  build_playback_storage_path,
+  build_thumbnail_storage_path,
+  compress_video_for_playback,
+  create_video_thumbnail,
+)
 from ..services.video_repository import VideoRepository
 
 
 logger = logging.getLogger(__name__)
-THUMBNAIL_MAX_WIDTH = 480
-THUMBNAIL_JPEG_QUALITY = 72
 
 
 def _is_squat_variation(exercise_type: str) -> bool:
   return exercise_type.strip().lower().endswith("squat")
-
-
-def _generate_thumbnail_file(source_path: Path) -> Path:
-  import cv2
-
-  capture = cv2.VideoCapture(str(source_path))
-
-  try:
-    success, frame = capture.read()
-
-    if not success or frame is None:
-      raise RuntimeError("Unable to read a video frame for thumbnail generation.")
-
-    height, width = frame.shape[:2]
-
-    if width > THUMBNAIL_MAX_WIDTH:
-      scale = THUMBNAIL_MAX_WIDTH / width
-      next_size = (THUMBNAIL_MAX_WIDTH, max(int(round(height * scale)), 1))
-      frame = cv2.resize(frame, next_size, interpolation=cv2.INTER_AREA)
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as thumbnail_file:
-      thumbnail_path = Path(thumbnail_file.name)
-
-    encoded = cv2.imwrite(
-      str(thumbnail_path),
-      frame,
-      [int(cv2.IMWRITE_JPEG_QUALITY), THUMBNAIL_JPEG_QUALITY],
-    )
-
-    if not encoded:
-      raise RuntimeError("Unable to encode video thumbnail.")
-
-    return thumbnail_path
-  finally:
-    capture.release()
-
-
-def _ensure_video_thumbnail(
-  *,
-  video_id: str,
-  video: dict[str, Any],
-  source_path: Path,
-  repository: VideoRepository,
-  storage: StorageService,
-) -> None:
-  if video.get("thumbnail_path"):
-    return
-
-  thumbnail_file: Path | None = None
-
-  try:
-    thumbnail_file = _generate_thumbnail_file(source_path)
-    thumbnail_path = f"{video['user_id']}/thumbnails/{video_id}.jpg"
-    storage.upload_file(thumbnail_path, thumbnail_file, "image/jpeg")
-    repository.update_video(video_id, {"thumbnail_path": thumbnail_path})
-  except Exception as error:
-    logger.warning("Unable to generate thumbnail for video %s: %s", video_id, error)
-  finally:
-    if thumbnail_file:
-      storage.remove_tempfile(thumbnail_file)
 
 
 def build_limited_result(
@@ -384,6 +329,109 @@ def _analyze_squat_result(
     sampled_frame_count=estimation.get("sampled_frame_count"),
   )
 
+def _finalize_storage_assets(
+  *,
+  video: dict[str, Any],
+  video_id: str,
+  source_path: Path,
+  repository: VideoRepository,
+  storage: StorageService,
+) -> None:
+  user_id = str(video.get("user_id") or "")
+  if not user_id:
+    logger.warning("Skipping storage asset finalization for video %s because user_id is missing.", video_id)
+    return
+
+  thumbnail_temp: Path | None = None
+  compressed_temp: Path | None = None
+  thumbnail_path: str | None = None
+  original_path = str(video["storage_path"])
+
+  try:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_thumbnail:
+      thumbnail_temp = Path(temp_thumbnail.name)
+
+    thumbnail_path = build_thumbnail_storage_path(user_id, video_id)
+    create_video_thumbnail(source_path, thumbnail_temp)
+    storage.upload_file(
+      thumbnail_path,
+      thumbnail_temp,
+      "image/jpeg",
+      cache_control=IMMUTABLE_CACHE_CONTROL_SECONDS,
+    )
+    try:
+      repository.update_video(video_id, {"thumbnail_path": thumbnail_path})
+    except Exception:
+      logger.exception(
+        "Failed to save thumbnail metadata for video %s; deleting uploaded thumbnail %s.",
+        video_id,
+        thumbnail_path,
+      )
+      storage.delete_storage_path(thumbnail_path)
+      raise
+    logger.info(
+      "Uploaded thumbnail for video %s to %s size_bytes=%s.",
+      video_id,
+      thumbnail_path,
+      thumbnail_temp.stat().st_size,
+    )
+  except Exception as error:
+    logger.warning("Unable to create thumbnail for video %s: %s", video_id, error)
+    return
+  finally:
+    if thumbnail_temp:
+      storage.remove_tempfile(thumbnail_temp)
+
+  try:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_compressed:
+      compressed_temp = Path(temp_compressed.name)
+
+    playback_path = build_playback_storage_path(user_id, video_id)
+    compress_video_for_playback(source_path, compressed_temp)
+    storage.upload_file(
+      playback_path,
+      compressed_temp,
+      "video/mp4",
+      cache_control=IMMUTABLE_CACHE_CONTROL_SECONDS,
+    )
+    try:
+      repository.update_video(
+        video_id,
+        {
+          "playback_path": playback_path,
+          "original_storage_path": original_path,
+          "storage_optimized_at": datetime.now(timezone.utc).isoformat(),
+          "storage_optimization_error": None,
+        },
+      )
+    except Exception:
+      logger.exception(
+        "Failed to save playback metadata for video %s; deleting uploaded playback %s.",
+        video_id,
+        playback_path,
+      )
+      storage.delete_storage_path(playback_path)
+      raise
+
+    if original_path != playback_path:
+      try:
+        storage.delete_storage_path(original_path)
+        logger.info("Deleted original uploaded video for %s at %s.", video_id, original_path)
+      except Exception as error:
+        logger.warning("Unable to delete original uploaded video for %s at %s: %s", video_id, original_path, error)
+
+    logger.info(
+      "Uploaded compressed playback video for %s to %s size_bytes=%s.",
+      video_id,
+      playback_path,
+      compressed_temp.stat().st_size,
+    )
+  except Exception as error:
+    logger.warning("Unable to create compressed playback video for %s: %s", video_id, error)
+  finally:
+    if compressed_temp:
+      storage.remove_tempfile(compressed_temp)
+
 
 def _attach_barbell_tracking(
   *,
@@ -442,18 +490,13 @@ def analyze_video(video_id: str) -> None:
     repository.update_video(video_id, {"status": "processing"})
     # Download the clip into a temporary file for local processing.
     stage_started = time.perf_counter()
-    temp_file = storage.download_to_tempfile(video["storage_path"])
+    source_storage_path = video.get("playback_path") or video["storage_path"]
+    temp_file = storage.download_to_tempfile(source_storage_path)
     logger.info(
-      "Downloaded video %s in %sms.",
+      "Downloaded video %s from %s in %sms.",
       video_id,
+      source_storage_path,
       int((time.perf_counter() - stage_started) * 1000),
-    )
-    _ensure_video_thumbnail(
-      video_id=video_id,
-      video=video,
-      source_path=temp_file,
-      repository=repository,
-      storage=storage,
     )
 
     # Pose estimation is the first stage of the backend analysis flow.
@@ -649,6 +692,19 @@ def analyze_video(video_id: str) -> None:
     repository.save_analysis_result(video_id, settings.model_version, result)
     logger.info(
       "Saved analysis for video %s in %sms.",
+      video_id,
+      int((time.perf_counter() - stage_started) * 1000),
+    )
+    stage_started = time.perf_counter()
+    _finalize_storage_assets(
+      video=video,
+      video_id=video_id,
+      source_path=temp_file,
+      repository=repository,
+      storage=storage,
+    )
+    logger.info(
+      "Finalized storage assets for video %s in %sms.",
       video_id,
       int((time.perf_counter() - stage_started) * 1000),
     )

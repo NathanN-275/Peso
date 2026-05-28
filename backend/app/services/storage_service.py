@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from datetime import datetime
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +19,11 @@ ALLOWED_VIDEO_MIME_TYPES = {
   "video/x-m4v",
   "video/m4v",
 }
-STORAGE_DELETE_BATCH_SIZE = 1000
+DEFAULT_CACHE_CONTROL_SECONDS = "3600"
+IMMUTABLE_CACHE_CONTROL_SECONDS = "31536000"
+
+
+logger = logging.getLogger(__name__)
 
 
 def _metadata_value(object_info: dict[str, Any], *keys: str) -> Any:
@@ -45,25 +49,19 @@ def _parse_size_bytes(value: Any) -> int | None:
   return None
 
 
-def object_size_bytes(object_info: dict[str, Any]) -> int:
-  size_bytes = _parse_size_bytes(
-    _metadata_value(object_info, "size", "contentLength", "content_length")
-  )
-  return size_bytes or 0
+def _storage_item_is_folder(item: dict[str, Any]) -> bool:
+  metadata = item.get("metadata")
+  name = item.get("name")
 
+  if item.get("id"):
+    return False
 
-def object_updated_at(object_info: dict[str, Any]) -> datetime | None:
-  value = object_info.get("updated_at") or object_info.get("created_at")
+  if isinstance(metadata, dict) and any(
+    key in metadata for key in ("size", "mimetype", "mimeType", "contentType", "content_length")
+  ):
+    return False
 
-  if not isinstance(value, str):
-    return None
-
-  normalized_value = value.replace("Z", "+00:00")
-
-  try:
-    return datetime.fromisoformat(normalized_value)
-  except ValueError:
-    return None
+  return isinstance(name, str) and not Path(name).suffix
 
 
 class StorageService:
@@ -137,6 +135,7 @@ class StorageService:
   def download_to_tempfile(self, storage_path: str) -> Path:
     self.validate_video_object(storage_path)
     file_bytes = self.client.storage.from_(self.bucket).download(storage_path)
+    logger.info("Downloaded storage object path=%s size_bytes=%s", storage_path, len(file_bytes))
     suffix = Path(storage_path).suffix or ".mp4"
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
@@ -150,23 +149,56 @@ class StorageService:
       return
 
   def delete_storage_path(self, storage_path: str) -> None:
+    if not storage_path:
+      return
+
     self.client.storage.from_(self.bucket).remove([storage_path])
 
-  def delete_storage_paths(self, storage_paths: list[str]) -> None:
-    for index in range(0, len(storage_paths), STORAGE_DELETE_BATCH_SIZE):
-      batch = storage_paths[index:index + STORAGE_DELETE_BATCH_SIZE]
+  def list_storage_objects(self, folder: str = "") -> list[dict[str, Any]]:
+    objects = self.client.storage.from_(self.bucket).list(folder.strip("/"))
+    return objects if isinstance(objects, list) else []
 
-      if batch:
-        self.client.storage.from_(self.bucket).remove(batch)
+  def list_storage_objects_recursive(
+    self,
+    folder: str = "",
+    *,
+    max_depth: int = 4,
+  ) -> list[dict[str, Any]]:
+    storage_objects: list[dict[str, Any]] = []
+    normalized_folder = folder.strip("/")
 
-  def delete_storage_prefix(self, prefix: str) -> None:
+    def walk(current_folder: str, depth: int) -> None:
+      if depth > max_depth:
+        return
+
+      for item in self.list_storage_objects(current_folder):
+        if not isinstance(item, dict):
+          continue
+
+        name = item.get("name")
+
+        if not isinstance(name, str) or not name:
+          continue
+
+        path = f"{current_folder}/{name}" if current_folder else name
+
+        if _storage_item_is_folder(item):
+          walk(path, depth + 1)
+          continue
+
+        storage_objects.append({**item, "path": path})
+
+    walk(normalized_folder, 0)
+    return storage_objects
+
+  def list_storage_prefix(self, prefix: str) -> list[str]:
     folder, _, name_prefix = prefix.rstrip("/").rpartition("/")
     try:
       objects = self.client.storage.from_(self.bucket).list(folder)
     except Exception:
-      return
+      return []
 
-    paths = [
+    return [
       f"{folder}/{item['name']}" if folder else item["name"]
       for item in objects
       if isinstance(item, dict)
@@ -174,45 +206,17 @@ class StorageService:
       and str(item["name"]).startswith(name_prefix)
     ]
 
+  def delete_storage_prefix(self, prefix: str) -> None:
+    paths = self.list_storage_prefix(prefix)
+
     if paths:
-      self.delete_storage_paths(paths)
+      self.client.storage.from_(self.bucket).remove(paths)
 
-  def list_objects_recursive(self, prefix: str = "") -> list[dict[str, Any]]:
-    bucket = self.client.storage.from_(self.bucket)
-    objects: list[dict[str, Any]] = []
+  def delete_storage_paths(self, storage_paths: list[str]) -> None:
+    paths = [path for path in dict.fromkeys(storage_paths) if path]
 
-    def walk(folder: str) -> None:
-      offset = 0
-
-      while True:
-        items = bucket.list(folder or None, {"limit": 1000, "offset": offset}) or []
-
-        if not items:
-          return
-
-        for item in items:
-          name = item.get("name") if isinstance(item, dict) else None
-
-          if not name:
-            continue
-
-          storage_path = f"{folder}/{name}" if folder else name
-
-          if item.get("id") is None and object_size_bytes(item) == 0:
-            walk(storage_path)
-            continue
-
-          normalized_item = dict(item)
-          normalized_item["path"] = storage_path
-          objects.append(normalized_item)
-
-        if len(items) < 1000:
-          return
-
-        offset += len(items)
-
-    walk(prefix.strip("/"))
-    return objects
+    if paths:
+      self.client.storage.from_(self.bucket).remove(paths)
 
   def storage_path_exists(self, storage_path: str) -> bool:
     try:
@@ -220,13 +224,27 @@ class StorageService:
     except Exception:
       return False
 
-  def upload_file(self, storage_path: str, local_path: Path, content_type: str) -> None:
+  def upload_file(
+    self,
+    storage_path: str,
+    local_path: Path,
+    content_type: str,
+    cache_control: str = DEFAULT_CACHE_CONTROL_SECONDS,
+  ) -> None:
+    size_bytes = local_path.stat().st_size
+    logger.info(
+      "Uploading storage object path=%s content_type=%s cache_control=%s size_bytes=%s",
+      storage_path,
+      content_type,
+      cache_control,
+      size_bytes,
+    )
     self.client.storage.from_(self.bucket).upload(
       storage_path,
       local_path,
       {
         "content-type": content_type,
-        "cache-control": "3600",
+        "cache-control": cache_control,
         "upsert": "true",
       },
     )

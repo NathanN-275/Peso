@@ -1,7 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
-import * as VideoThumbnails from 'expo-video-thumbnails';
 import Constants, { AppOwnership } from 'expo-constants';
 import { useEffect, useRef, useState } from 'react';
 import { LayoutChangeEvent } from 'react-native';
@@ -26,6 +24,7 @@ import { VideoSetupSelection } from '../constants/videoSetup';
 import AnalysisReviewScreen from './AnalysisReviewScreen';
 import { VideoAnalysisResult, VideoAnalysisStatus } from '../types/videoAnalysis';
 import tokens from '../theme/tokens';
+import { createLocalVideoThumbnail, getUriScheme } from '../utils/localVideoThumbnail';
 
 type UploadVideoScreenProps = {
   onBack?: () => void;
@@ -78,45 +77,6 @@ function formatPercent(value?: number | null) {
   return `${Math.round(value * 100)}%`;
 }
 
-function sanitizeCacheSegment(value: string) {
-  return value.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
-}
-
-function videoCacheExtension(asset: ImagePicker.ImagePickerAsset) {
-  const source = asset.fileName || asset.uri;
-  const match = source.match(/\.(mov|mp4|m4v)(?:[?#].*)?$/i);
-  return match ? `.${match[1].toLowerCase()}` : '.mov';
-}
-
-async function cachedVideoUriForThumbnail(asset: ImagePicker.ImagePickerAsset) {
-  if (!FileSystem.cacheDirectory) {
-    throw new Error('FileSystem.cacheDirectory is unavailable.');
-  }
-
-  const key = sanitizeCacheSegment(
-    [
-      asset.assetId,
-      asset.fileName,
-      asset.fileSize,
-      asset.duration,
-      asset.uri,
-    ]
-      .filter((value) => value !== undefined && value !== null)
-      .join('_')
-  );
-  const destination = `${FileSystem.cacheDirectory}selected-video-thumbnail-source-${key}${videoCacheExtension(asset)}`;
-  const info = await FileSystem.getInfoAsync(destination);
-
-  if (!info.exists) {
-    await FileSystem.copyAsync({
-      from: asset.uri,
-      to: destination,
-    });
-  }
-
-  return destination;
-}
-
 export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVideoScreenProps) {
   // This screen handles selection, upload, queueing, and polling.
   const { user, session } = useAuth();
@@ -133,9 +93,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   const [analysisResult, setAnalysisResult] = useState<VideoAnalysisResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [selectedVideoThumbnailUri, setSelectedVideoThumbnailUri] = useState<string | null>(null);
-  const [thumbnailLoading, setThumbnailLoading] = useState(false);
-  const [thumbnailError, setThumbnailError] = useState<string | null>(null);
+  const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
   const [displayedVideoSizeBytes, setDisplayedVideoSizeBytes] = useState<number | null>(null);
   const analysisStartInFlightRef = useRef(false);
   const analysisQueuedForVideoRef = useRef<string | null>(null);
@@ -150,9 +108,6 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     setAnalysisResult(null);
     setErrorMessage(null);
     setStatusMessage(null);
-    setSelectedVideoThumbnailUri(null);
-    setThumbnailError(null);
-    setThumbnailLoading(Boolean(asset.uri));
     setDisplayedVideoSizeBytes(
       typeof asset.fileSize === 'number' && !Number.isNaN(asset.fileSize) ? asset.fileSize : null
     );
@@ -361,96 +316,39 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   useEffect(() => {
     // Generate a thumbnail for the selected clip when possible.
     if (!selectedVideo?.uri) {
-      setSelectedVideoThumbnailUri(null);
-      setThumbnailLoading(false);
-      setThumbnailError(null);
-      return;
-    }
-
-    if (isWeb) {
-      setSelectedVideoThumbnailUri(null);
-      setThumbnailLoading(false);
-      setThumbnailError('thumbnail_generation_unavailable_on_web');
+      setThumbnailUri(null);
       return;
     }
 
     let active = true;
-    const selectedVideoUri = selectedVideo.uri;
-    const shouldCopyBeforeGeneration = selectedVideoUri.startsWith('content://');
-    const canRetryWithCache =
-      Platform.OS === 'ios' && /\.(mov|m4v)(?:[?#].*)?$/i.test(selectedVideo.fileName || selectedVideoUri);
-    setSelectedVideoThumbnailUri(null);
-    setThumbnailError(null);
-    setThumbnailLoading(true);
-    if (__DEV__) {
-      console.log('[UPLOAD_THUMB] selectedVideoUri=', selectedVideoUri);
-      console.log('[UPLOAD_THUMB] selectedVideo object=', selectedVideo);
-      console.log('[UPLOAD_THUMB] starting thumbnail generation');
-    }
+    setThumbnailUri(null);
 
-    const generateThumbnailFromUri = async (uri: string) => {
+    const generateThumbnail = async () => {
+      try {
         const time = typeof selectedVideo.duration === 'number'
           ? Math.max(0, Math.min(selectedVideo.duration / 3, 1500))
           : 1000;
-      return VideoThumbnails.getThumbnailAsync(uri, {
-          time,
+        const thumbnail = await createLocalVideoThumbnail(selectedVideo.uri, {
+          timeMs: time,
           quality: 0.7,
         });
-    };
-
-    const generateThumbnail = async () => {
-      let sourceUri = selectedVideoUri;
-      let copiedUri: string | null = null;
-
-      try {
-        if (shouldCopyBeforeGeneration) {
-          copiedUri = await cachedVideoUriForThumbnail(selectedVideo);
-          sourceUri = copiedUri;
-          if (__DEV__) {
-            console.log('[UPLOAD_THUMB] cached video uri if copied=', copiedUri);
-          }
-        } else if (__DEV__) {
-          console.log('[UPLOAD_THUMB] cached video uri if copied=', null);
-        }
-
-        let thumbnail: VideoThumbnails.VideoThumbnailsResult;
-        try {
-          thumbnail = await generateThumbnailFromUri(sourceUri);
-        } catch (initialError) {
-          if (!copiedUri && canRetryWithCache) {
-            copiedUri = await cachedVideoUriForThumbnail(selectedVideo);
-            sourceUri = copiedUri;
-            if (__DEV__) {
-              console.log('[UPLOAD_THUMB] cached video uri if copied=', copiedUri);
-            }
-            thumbnail = await generateThumbnailFromUri(sourceUri);
-          } else {
-            throw initialError;
-          }
-        }
 
         if (!active) {
           return;
         }
 
-        if (__DEV__) {
-          console.log('[UPLOAD_THUMB] generated thumbnailUri=', thumbnail.uri);
-        }
-        setSelectedVideoThumbnailUri(thumbnail.uri);
-        if (__DEV__) {
-          console.log('[UPLOAD_THUMB] setSelectedVideoThumbnailUri=', thumbnail.uri);
-        }
-        setThumbnailLoading(false);
+        setThumbnailUri(thumbnail);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
         if (__DEV__) {
-          console.warn('[UPLOAD_THUMB] thumbnail generation error=', message);
+          console.warn('Unable to generate selected video thumbnail.', {
+            platform: Platform.OS,
+            uriScheme: getUriScheme(selectedVideo.uri),
+            error,
+          });
         }
 
         if (active) {
-          setSelectedVideoThumbnailUri(null);
-          setThumbnailError(message);
-          setThumbnailLoading(false);
+          setThumbnailUri(null);
         }
       }
     };
@@ -460,24 +358,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     return () => {
       active = false;
     };
-  }, [isWeb, selectedVideo?.duration, selectedVideo?.uri]);
-
-  useEffect(() => {
-    if (__DEV__ && selectedVideo?.uri) {
-      console.log('[UploadVideoScreen] selected video thumbnail state', {
-        selectedVideoUri: selectedVideo.uri,
-        thumbnailUri: selectedVideoThumbnailUri,
-        thumbnailLoading,
-        thumbnailError,
-      });
-    }
-  }, [selectedVideo?.uri, selectedVideoThumbnailUri, thumbnailLoading, thumbnailError]);
-
-  useEffect(() => {
-    if (__DEV__) {
-      console.log('[UPLOAD_THUMB] passing thumbnailUri to SelectedVideoPreview=', selectedVideoThumbnailUri);
-    }
-  }, [selectedVideoThumbnailUri]);
+  }, [selectedVideo]);
 
   useEffect(() => {
     // Poll until the backend reports a final analysis state.
@@ -628,9 +509,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     setAnalysisResult(null);
     setErrorMessage(null);
     setStatusMessage(null);
-    setSelectedVideoThumbnailUri(null);
-    setThumbnailLoading(false);
-    setThumbnailError(null);
+    setThumbnailUri(null);
     setDisplayedVideoSizeBytes(null);
   };
 
@@ -701,8 +580,8 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
 
                 <View style={styles.thumbnailFrame}>
                   <SelectedVideoPreview
-                    thumbnailUri={selectedVideoThumbnailUri}
-                    thumbnailLoading={thumbnailLoading}
+                    videoUri={selectedVideo.uri}
+                    thumbnailUri={thumbnailUri}
                   />
                 </View>
               </View>

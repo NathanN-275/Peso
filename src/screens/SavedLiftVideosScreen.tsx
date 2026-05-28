@@ -1,8 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { File, Paths } from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
-import { VideoView, useVideoPlayer } from 'expo-video';
-import * as VideoThumbnails from 'expo-video-thumbnails';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -33,7 +31,7 @@ type SavedLiftVideosScreenProps = {
   exerciseType: string;
   videos: SavedVideo[];
   onBack: () => void;
-  onOpenSavedVideo: (video: SavedVideo) => void | Promise<void>;
+  onOpenSavedVideo: (video: SavedVideo) => Promise<void>;
   onDeleteSavedVideos: (videoIds: string[]) => Promise<void>;
 };
 
@@ -51,74 +49,12 @@ function getExportFileName(video: SavedVideo, index: number) {
   return `peso-${exercise || 'video'}-${video.id.slice(0, 8)}-${index + 1}.mp4`;
 }
 
-function SavedVideoFramePreview({ videoUrl }: { videoUrl: string }) {
-  const player = useVideoPlayer(videoUrl, (videoPlayer) => {
-    videoPlayer.muted = true;
-    videoPlayer.loop = false;
-    videoPlayer.currentTime = 0;
-    videoPlayer.pause();
-  });
-
-  useEffect(() => {
-    player.pause();
-    player.currentTime = 0;
-  }, [player, videoUrl]);
-
-  return (
-    <VideoView
-      style={styles.thumbnailImage}
-      player={player}
-      nativeControls={false}
-      allowsPictureInPicture={false}
-      contentFit="cover"
-    />
-  );
-}
-
 function SavedVideoThumb({ video }: { video: SavedVideo }) {
-  const [generatedThumbnailUri, setGeneratedThumbnailUri] = useState<string | null>(null);
   const [thumbnailLoadFailed, setThumbnailLoadFailed] = useState(false);
 
   useEffect(() => {
     setThumbnailLoadFailed(false);
   }, [video.thumbnail_url]);
-
-  useEffect(() => {
-    if (video.thumbnail_url || !video.video_url || Platform.OS === 'web') {
-      setGeneratedThumbnailUri(null);
-      return;
-    }
-
-    let active = true;
-    const videoUrl = video.video_url;
-
-    const generateVideoPreview = async () => {
-      try {
-        const thumbnail = await VideoThumbnails.getThumbnailAsync(videoUrl, {
-          time: 1000,
-          quality: 0.65,
-        });
-
-        if (active) {
-          setGeneratedThumbnailUri(thumbnail.uri);
-        }
-      } catch (error) {
-        if (__DEV__) {
-          console.warn('Unable to generate saved list video preview thumbnail.', error);
-        }
-
-        if (active) {
-          setGeneratedThumbnailUri(null);
-        }
-      }
-    };
-
-    void generateVideoPreview();
-
-    return () => {
-      active = false;
-    };
-  }, [video.thumbnail_url, video.video_url]);
 
   if (video.thumbnail_url && !thumbnailLoadFailed) {
     return (
@@ -129,20 +65,6 @@ function SavedVideoThumb({ video }: { video: SavedVideo }) {
         onError={() => setThumbnailLoadFailed(true)}
       />
     );
-  }
-
-  if (generatedThumbnailUri) {
-    return (
-      <Image
-        source={{ uri: generatedThumbnailUri }}
-        style={styles.thumbnailImage}
-        resizeMode="cover"
-      />
-    );
-  }
-
-  if (video.video_url) {
-    return <SavedVideoFramePreview videoUrl={video.video_url} />;
   }
 
   return <View style={styles.thumbnailPlaceholder} />;
@@ -206,13 +128,19 @@ export default function SavedLiftVideosScreen({
     });
   };
 
-  const handleVideoPress = (video: SavedVideo) => {
+  const handleVideoPress = async (video: SavedVideo) => {
     if (selecting) {
       toggleSelected(video.id);
       return;
     }
 
-    void onOpenSavedVideo(video);
+    setActionMessage(null);
+
+    try {
+      await onOpenSavedVideo(video);
+    } catch (error) {
+      setActionMessage(error instanceof Error ? error.message : 'Unable to open this saved video.');
+    }
   };
 
   const handleExportSelected = async () => {
@@ -224,10 +152,6 @@ export default function SavedLiftVideosScreen({
     setActionMessage(null);
 
     try {
-      if (selectedVideos.some((video) => video.storage_state === 'pruned' || !video.video_url)) {
-        throw new Error('One or more selected videos have expired and can no longer be exported.');
-      }
-
       if (!session?.access_token) {
         throw new Error('You need to be signed in to export saved videos.');
       }
@@ -376,7 +300,9 @@ export default function SavedLiftVideosScreen({
                   <Pressable
                     key={video.id}
                     accessibilityRole="button"
-                    onPress={() => handleVideoPress(video)}
+                    onPress={() => {
+                      void handleVideoPress(video);
+                    }}
                     style={[styles.videoCard, selected && styles.selectedVideoCard]}
                   >
                     <View style={styles.thumbnailWrap}>
@@ -393,9 +319,6 @@ export default function SavedLiftVideosScreen({
                       <Text style={styles.videoTitle}>{formatExerciseLabel(video.exercise_type)}</Text>
                       <Text style={styles.videoMeta}>{formatViewLabel(video.view_type)} view</Text>
                       <Text style={styles.videoMeta}>{formatSavedDate(video.saved_at)}</Text>
-                      {video.storage_state === 'pruned' ? (
-                        <Text style={styles.videoMeta}>Analysis only</Text>
-                      ) : null}
                       <Text style={styles.videoSummary} numberOfLines={2}>
                         {getSavedVideoSummary(video)}
                       </Text>

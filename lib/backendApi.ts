@@ -13,6 +13,8 @@ import {
 } from './backendConfig';
 
 let loggedBackendConfig = false;
+const PLAYBACK_URL_CACHE_TTL_MS = 2 * 60 * 1000;
+const playbackUrlCache = new Map<string, { url: string; expiresAt: number }>();
 
 function ensureBackendApiUrl() {
   // Fail fast when the backend URL is missing.
@@ -230,8 +232,34 @@ export async function fetchAnalysisResult(videoId: string, accessToken: string) 
 }
 
 export async function getSavedVideos(accessToken: string) {
-  // Saved videos include signed URLs for private storage playback.
+  // Saved video lists include thumbnail URLs only; playback URLs are fetched on demand.
   return requestJson<SavedVideo[]>('/videos/saved', accessToken);
+}
+
+export async function getVideoPlaybackUrl(videoId: string, accessToken: string) {
+  const cacheKey = `${accessToken}:${videoId}`;
+  const cached = playbackUrlCache.get(cacheKey);
+
+  if (cached && cached.expiresAt > Date.now()) {
+    return {
+      video_id: videoId,
+      video_url: cached.url,
+      expires_in: Math.floor((cached.expiresAt - Date.now()) / 1000),
+    };
+  }
+
+  const response = await requestJson<{
+    video_id: string;
+    video_url: string;
+    expires_in: number;
+  }>(`/videos/${videoId}/playback-url`, accessToken);
+
+  playbackUrlCache.set(cacheKey, {
+    url: response.video_url,
+    expiresAt: Date.now() + PLAYBACK_URL_CACHE_TTL_MS,
+  });
+
+  return response;
 }
 
 export async function saveAnalyzedVideo(videoId: string, accessToken: string) {

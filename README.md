@@ -27,6 +27,7 @@ The current backend implementation is focused on squat analysis. Side-view squat
 ## Requirements
 
 - Python 3.11 or newer
+- FFmpeg with `libx264` available on `PATH`, or `FFMPEG_BINARY` pointing to the binary. The backend requires FFmpeg for analyzed exports and for the compressed saved-video playback asset.
 - Supabase project with:
   - `SUPABASE_URL`
   - `SUPABASE_SERVICE_ROLE_KEY`
@@ -50,6 +51,10 @@ Optional variables:
 ```bash
 BACKEND_ENV=development
 VIDEO_BUCKET=videos
+CLEANUP_JOB_TOKEN=
+EXPORT_CACHE_TTL_HOURS=24
+ORPHAN_STORAGE_MIN_AGE_HOURS=24
+STALE_PROCESSING_HOURS=6
 MODEL_VERSION=mediapipe-rtmpose-v2-hip-crease-depth
 POSE_TARGET_FPS=18
 POSE_MAX_FRAME_DIMENSION=720
@@ -62,6 +67,7 @@ POSE_FALLBACK_DEVICE=auto
 POSE_FALLBACK_DET_FREQUENCY=3
 POSE_FALLBACK_MODE=balanced
 POSE_DEBUG_LANDMARK_EXPORT_DIR=
+FFMPEG_BINARY=
 BACKEND_CORS_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhost:8082,http://127.0.0.1:8082,http://localhost:19006,http://127.0.0.1:19006,http://localhost:3000,http://127.0.0.1:3000
 BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true
 ```
@@ -79,6 +85,15 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+Install FFmpeg for local development:
+
+```bash
+brew install ffmpeg
+ffmpeg -version
+```
+
+For production, install an OS FFmpeg package in the runtime image or set `FFMPEG_BINARY` to the deployed binary path. The binary must support H.264 encoding through `libx264`.
 
 ## Running the API
 
@@ -99,16 +114,11 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --env-file .env
 For Expo web on the same Mac as the backend:
 
 ```bash
-npm run web
+EXPO_PUBLIC_BACKEND_URL=http://localhost:8000
+npx expo start -c
 ```
 
-`npm run web` starts Expo web with a loopback backend URL even if root `.env` is configured for physical-device testing. For Expo Go on a physical phone, keep FastAPI bound to `0.0.0.0:8000` and run:
-
-```bash
-npm run start:physical
-```
-
-If `EXPO_PUBLIC_BACKEND_URL` is accidentally set to `http://localhost:8000`, the native frontend ignores that loopback value on-device and auto-detects the Expo dev server LAN IP for backend requests.
+For Expo Go on a physical phone, keep FastAPI bound to `0.0.0.0:8000`. If `EXPO_PUBLIC_BACKEND_URL` is accidentally set to `http://localhost:8000`, the frontend ignores that loopback value on-device and auto-detects the Expo dev server LAN IP for backend requests.
 
 From the project root, `npm start` starts both the local FastAPI backend and Expo. If a backend is already responding on `http://127.0.0.1:8000/health`, the script reuses it instead of starting another copy.
 
@@ -160,34 +170,49 @@ Response:
 
 ### `POST /videos/{video_id}/save`
 
-Marks the video as saved.
+Marks the video as saved by updating metadata only. It does not copy or duplicate the storage object.
 
 ### `POST /videos/{video_id}/discard`
 
-Deletes the video record and removes the underlying file from Supabase Storage.
+Deletes explicit storage objects for the video and marks the row discarded.
+
+### `GET /videos/saved`
+
+Returns saved video metadata, a small analysis summary for card text, and signed thumbnail URLs. It does not return signed full-video URLs or full pose/analysis payloads.
+
+### `GET /videos/{video_id}/playback-url`
+
+Returns a short-lived signed full-video URL for review playback. The backend signs `playback_path` when available and falls back to `storage_path` only when a compressed playback file has not been created yet. The mobile client requests this only after the user opens the playback screen.
 
 ### `POST /videos/cleanup-expired`
 
-Deletes expired pending videos and their analysis rows. This is retained for local development.
+Dry-runs cleanup by default and reports reclaimable storage without deleting anything. Pass `confirm=true` to delete unnecessary Supabase Storage data and mark eligible rows discarded. Cleanup removes expired pending uploads, stale pending analysis jobs, old analyzed export MP4s, and unreferenced app-owned upload objects. Saved source videos are never deleted.
 
-### `POST /internal/storage/cleanup`
+Outside local development, requests must include:
 
-Runs production storage retention. Requires `X-Cleanup-Token: <STORAGE_CLEANUP_TOKEN>`.
+```http
+X-Cleanup-Token: <CLEANUP_JOB_TOKEN>
+```
 
-The cleanup job:
+Use `dry_run=true` to inspect reclaimable storage without deleting anything:
 
-- deletes expired pending uploads and their rows
-- prunes expired saved source videos while preserving analysis rows and thumbnails
-- deletes temporary analyzed exports after `EXPORT_STORAGE_TTL_HOURS`
-- deletes unreferenced non-export objects from the videos bucket
+```http
+POST /videos/cleanup-expired?dry_run=true
+```
 
-Schedule this endpoint hourly from Supabase Cron or another trusted scheduler. Set:
+### Saved thumbnail backfill
+
+Existing saved videos that predate `thumbnail_path` can be backfilled without copying videos or deleting originals:
 
 ```bash
-STORAGE_CLEANUP_TOKEN=long-random-token
-SAVED_VIDEO_STORAGE_TTL_HOURS=24
-EXPORT_STORAGE_TTL_HOURS=6
+backend/.venv/bin/python scripts/backfill_saved_video_thumbnails.py
+backend/.venv/bin/python scripts/backfill_saved_video_thumbnails.py --confirm
+backend/.venv/bin/python scripts/backfill_saved_video_thumbnails.py --force --confirm
 ```
+
+The script loads `backend/.env` automatically and is dry-run by default. With `--confirm`, it downloads only saved videos missing the current thumbnail version, writes one JPEG thumbnail to `thumbnails/`, updates the row, and logs each source and thumbnail path. Add `--force` to regenerate saved thumbnails that already have the current thumbnail path.
+
+Apply `supabase/migrations/202605240001_storage_egress_cleanup.sql` before running confirmed backfill or production optimization. It adds `thumbnail_path`, `playback_path`, `original_storage_path`, saved/discard metadata, and cleanup indexes.
 
 ### `GET /videos/{video_id}/status`
 
@@ -220,8 +245,11 @@ If pose detection fails completely, the result includes diagnostics explaining t
 - CORS defaults to common Expo and local web development origins.
 - The backend uses Supabase service-role credentials server-side only.
 - Temporary video files are downloaded to the local filesystem during analysis and removed after processing.
+- After analysis results are saved, the backend creates one JPEG thumbnail and a 720p H.264 playback copy with long cache-control. The original upload is deleted only after the thumbnail path and playback path are written successfully.
+- If thumbnail or playback generation fails, analysis still completes and the original storage path remains available for playback.
 - The analysis pipeline is built around `PoseEstimator` and `SquatAnalyzer`, with results written back through `VideoRepository`.
 - `model_version` is stored with each analysis result so future analysis passes can coexist with older ones.
+- Run storage cleanup from the backend environment with `python -m app.jobs.storage_cleanup --dry-run`, then `python -m app.jobs.storage_cleanup` when the report looks correct. Schedule the real cleanup command daily in production.
 
 ## Typical Local Flow
 

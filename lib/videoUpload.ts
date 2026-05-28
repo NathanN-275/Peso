@@ -698,6 +698,7 @@ export async function uploadVideoForAnalysis({
   const storagePath = buildStoragePath(user.id, uploadSource.fileName);
 
   const { error: uploadError } = await supabase.storage.from('videos').upload(storagePath, uploadSource.body, {
+    cacheControl: '3600',
     contentType: uploadSource.contentType,
     upsert: false,
   });
