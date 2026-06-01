@@ -346,6 +346,12 @@ def export_analyzed_video(
       detail="Only saved videos can be exported.",
     )
 
+  if video.get("storage_state") == "pruned":
+    raise HTTPException(
+      status_code=status.HTTP_409_CONFLICT,
+      detail="The source video has expired. Analysis is still available, but export is unavailable.",
+    )
+
   analysis = repository.get_analysis_result(video_id_str)
 
   if not analysis:

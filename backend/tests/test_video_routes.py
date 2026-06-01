@@ -5,8 +5,16 @@ import unittest
 from unittest.mock import MagicMock, patch
 from uuid import UUID
 
+from fastapi import BackgroundTasks, HTTPException
+
 from app.analysis.versioning import annotate_analysis_freshness, analysis_is_current
-from app.routes.videos import discard_video, get_video_playback_url, list_saved_videos, save_video
+from app.routes.videos import (
+  discard_video,
+  get_video_playback_url,
+  list_saved_videos,
+  queue_analysis,
+  save_video,
+)
 from app.services.config import DEFAULT_MODEL_VERSION, get_settings
 
 
@@ -17,6 +25,91 @@ USER_ID = "33333333-3333-3333-3333-333333333333"
 class VideoRoutesTest(unittest.TestCase):
   def tearDown(self) -> None:
     get_settings.cache_clear()
+
+  def test_queue_analysis_queues_uploaded_owned_video(self) -> None:
+    repository = MagicMock()
+    repository.require_owned_video.return_value = {
+      "id": str(VIDEO_ID),
+      "user_id": USER_ID,
+      "status": "uploaded",
+      "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+    }
+    repository.queue_owned_video_if_status.return_value = {"status": "queued"}
+    storage = MagicMock()
+    background_tasks = BackgroundTasks()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+    ):
+      response = queue_analysis(VIDEO_ID, background_tasks, USER_ID)
+
+    storage.validate_video_object.assert_called_once_with(f"{USER_ID}/uploads/{VIDEO_ID}.mov")
+    repository.queue_owned_video_if_status.assert_called_once_with(
+      str(VIDEO_ID),
+      USER_ID,
+      ("uploaded", "failed"),
+    )
+    self.assertEqual(response.status, "queued")
+    self.assertEqual(len(background_tasks.tasks), 1)
+
+  def test_queue_analysis_returns_idempotent_in_progress_status(self) -> None:
+    repository = MagicMock()
+    repository.require_owned_video.return_value = {
+      "id": str(VIDEO_ID),
+      "user_id": USER_ID,
+      "status": "processing",
+      "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+    }
+    storage = MagicMock()
+    background_tasks = BackgroundTasks()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+    ):
+      response = queue_analysis(VIDEO_ID, background_tasks, USER_ID)
+
+    storage.validate_video_object.assert_not_called()
+    repository.queue_owned_video_if_status.assert_not_called()
+    self.assertEqual(response.status, "processing")
+    self.assertEqual(len(background_tasks.tasks), 0)
+
+  def test_queue_analysis_rejects_unqueueable_status(self) -> None:
+    repository = MagicMock()
+    repository.require_owned_video.return_value = {
+      "id": str(VIDEO_ID),
+      "user_id": USER_ID,
+      "status": "discarded",
+      "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+    }
+    storage = MagicMock()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      queue_analysis(VIDEO_ID, BackgroundTasks(), USER_ID)
+
+    storage.validate_video_object.assert_not_called()
+    repository.queue_owned_video_if_status.assert_not_called()
+    self.assertEqual(raised.exception.status_code, 409)
+
+  def test_queue_analysis_propagates_ownership_errors(self) -> None:
+    repository = MagicMock()
+    repository.require_owned_video.side_effect = HTTPException(
+      status_code=403,
+      detail="Video does not belong to this user.",
+    )
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      queue_analysis(VIDEO_ID, BackgroundTasks(), USER_ID)
+
+    self.assertEqual(raised.exception.status_code, 403)
 
   def test_list_saved_videos_does_not_sign_full_video_urls(self) -> None:
     repository = MagicMock()
