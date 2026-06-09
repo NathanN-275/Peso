@@ -4,6 +4,11 @@ import math
 from typing import Any
 
 from .candidate import Candidate
+from .constants import (
+  LOCAL_FLOW_TEMPLATE_MAX_DISAGREEMENT_RATIO,
+  LOCAL_TEMPLATE_MIN_SCORE,
+  MIN_LOCAL_FLOW_INLIERS,
+)
 from .geometry import _estimate_collar_from_plate, _point_inside_plate, _validate_collar_geometry
 from .selection import _shoulder_relative_offset
 
@@ -64,6 +69,21 @@ def _feature_points(cv2: Any, gray: Any, center: tuple[float, float], *, plate_r
   points[:, 0, 0] += x0
   points[:, 0, 1] += y0
   return points
+
+
+def _median_motion(motions: Any) -> tuple[float, float]:
+  values = motions.reshape(-1, 2).tolist()
+  x_values = sorted(float(item[0]) for item in values)
+  y_values = sorted(float(item[1]) for item in values)
+  middle = len(values) // 2
+
+  if len(values) % 2 == 1:
+    return x_values[middle], y_values[middle]
+
+  return (
+    (x_values[middle - 1] + x_values[middle]) / 2,
+    (y_values[middle - 1] + y_values[middle]) / 2,
+  )
 
 
 def _make_tracking_lock(
@@ -147,10 +167,9 @@ def _track_local_patch(
       good_new = next_points[status.flatten() == 1]
       stats["optical_flow_point_count"] = int(len(points))
       stats["optical_flow_inlier_count"] = int(len(good_new))
-      if len(good_new) >= 4:
+      if len(good_new) >= MIN_LOCAL_FLOW_INLIERS:
         motions = good_new.reshape(-1, 2) - good_old.reshape(-1, 2)
-        median_motion = motions[len(motions) // 2] if len(motions) == 1 else sorted(motions.tolist(), key=lambda item: item[0])[len(motions) // 2]
-        flow_motion = (float(median_motion[0]), float(median_motion[1]))
+        flow_motion = _median_motion(motions)
 
   template_motion: tuple[float, float] | None = None
   template = lock.get("template")
@@ -165,7 +184,7 @@ def _track_local_patch(
       result = cv2.matchTemplate(search, template, cv2.TM_CCOEFF_NORMED)
       _, max_score, _, max_loc = cv2.minMaxLoc(result)
       stats["template_match_score"] = float(max_score)
-      if max_score >= 0.48:
+      if max_score >= LOCAL_TEMPLATE_MIN_SCORE:
         template_center = (
           x0 + max_loc[0] + (template.shape[1] / 2),
           y0 + max_loc[1] + (template.shape[0] / 2),
@@ -176,6 +195,11 @@ def _track_local_patch(
         )
 
   if flow_motion is not None and template_motion is not None:
+    disagreement = math.hypot(flow_motion[0] - template_motion[0], flow_motion[1] - template_motion[1])
+    if disagreement > max(3.0, old_plate.radius * LOCAL_FLOW_TEMPLATE_MAX_DISAGREEMENT_RATIO):
+      stats["collar_rejection_reason"] = "local_motion_disagreement"
+      return None, stats
+
     motion = (
       (flow_motion[0] * 0.65) + (template_motion[0] * 0.35),
       (flow_motion[1] * 0.65) + (template_motion[1] * 0.35),

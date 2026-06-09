@@ -33,10 +33,13 @@ def _score_plate_candidate(
 
   if shoulder:
     horizontal_offset = candidate.x - shoulder[0]
-    if horizontal_offset > width * 0.18:
-      score -= min((horizontal_offset - (width * 0.18)) / max(width * 0.12, 1.0), 1.0) * (
-        1.05 if bootstrapping else 0.65
-      )
+    expected_offset_ratio = 0.11 if bootstrapping else 0.18
+    offset_tolerance_ratio = 0.11 if bootstrapping else 0.12
+    if horizontal_offset > width * expected_offset_ratio:
+      score -= min(
+        (horizontal_offset - (width * expected_offset_ratio)) / max(width * offset_tolerance_ratio, 1.0),
+        1.0,
+      ) * (1.25 if bootstrapping else 0.65)
 
     shoulder_distance = math.hypot(candidate.x - shoulder[0], candidate.y - shoulder[1])
     score += max(0.0, 0.38 * (1.0 - shoulder_distance / (max(width, height) * 0.42)))
@@ -123,6 +126,9 @@ def _select_candidate(
     ]
     if preferred:
       candidates = preferred
+    plate_sized = [candidate for candidate in candidates if candidate.radius >= max(min(width, height) * 0.07, 1.0)]
+    if plate_sized:
+      candidates = plate_sized
 
   return max(
     candidates,

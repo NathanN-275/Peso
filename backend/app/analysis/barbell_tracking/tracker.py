@@ -13,6 +13,9 @@ from .constants import (
   MAX_LOCAL_TRACKING_FAILURES,
   MIN_TRACK_COVERAGE,
   MIN_TRACK_POINTS,
+  PATH_PRIOR_MAX_RESIDUAL_PX,
+  PATH_PRIOR_MIN_POINTS,
+  PATH_PRIOR_WINDOW_POINTS,
   TRACKING_SOURCE,
   TRACKING_TARGET,
 )
@@ -143,6 +146,7 @@ class BarbellTracker:
     final_bar_confidence: float = 0.0,
     final_bar_source: str | None = None,
     fallback_used: bool = False,
+    path_residual_px: float | None = None,
   ) -> dict[str, Any] | None:
     frames = self.bootstrap_diagnostics.setdefault("tracking_frames", [])
     if len(frames) >= 20:
@@ -178,10 +182,11 @@ class BarbellTracker:
       "final_bar_confidence": round(final_bar_confidence, 3),
       "final_bar_source": final_bar_source,
       "fallback_used": fallback_used,
+      "path_residual_px": round(path_residual_px, 2) if path_residual_px is not None else None,
     }
     frames.append(diagnostic)
     logger.info(
-      "[BARBELL_TRACK_DIAG] frame=%s time=%.4f mode=%s source=%s plate=(%s, %s r=%s) final=(%s, %s) final_reason=%s final_conf=%s final_source=%s fallback=%s pose_pred=(%s, %s) predicted=(%s, %s) refined=(%s, %s) emitted_norm=(%s, %s) emitted_px=(%s, %s) local=%s flow_inliers=%s template=%s collar_reason=%s",
+      "[BARBELL_TRACK_DIAG] frame=%s time=%.4f mode=%s source=%s plate=(%s, %s r=%s) final=(%s, %s) final_reason=%s final_conf=%s final_source=%s fallback=%s pose_pred=(%s, %s) predicted=(%s, %s) refined=(%s, %s) emitted_norm=(%s, %s) emitted_px=(%s, %s) local=%s flow_inliers=%s template=%s collar_reason=%s path_residual=%s",
       diagnostic["frame_index"],
       diagnostic["timestamp"],
       diagnostic["tracking_mode"],
@@ -209,6 +214,7 @@ class BarbellTracker:
       diagnostic["optical_flow_inlier_count"],
       diagnostic["template_match_score"],
       diagnostic["collar_rejection_reason"],
+      diagnostic["path_residual_px"],
     )
     return diagnostic
 
@@ -309,6 +315,65 @@ class BarbellTracker:
         return "stationary_hardware_like"
 
     return None
+
+  def _fit_recent_path(self, points: list[tuple[float, float]]) -> dict[str, Any] | None:
+    recent_points = points[-PATH_PRIOR_WINDOW_POINTS:]
+    if len(recent_points) < PATH_PRIOR_MIN_POINTS:
+      return None
+
+    mean_x = sum(point[0] for point in recent_points) / len(recent_points)
+    mean_y = sum(point[1] for point in recent_points) / len(recent_points)
+    centered = [(point[0] - mean_x, point[1] - mean_y) for point in recent_points]
+    xx = sum(point[0] * point[0] for point in centered) / len(centered)
+    yy = sum(point[1] * point[1] for point in centered) / len(centered)
+    xy = sum(point[0] * point[1] for point in centered) / len(centered)
+    total_variance = xx + yy
+    if total_variance < 1.0:
+      return None
+
+    angle = 0.5 * math.atan2(2 * xy, xx - yy)
+    direction = (math.cos(angle), math.sin(angle))
+    normal = (-direction[1], direction[0])
+    along_values = [(point[0] * direction[0]) + (point[1] * direction[1]) for point in centered]
+    along_span = max(along_values) - min(along_values)
+    if along_span < 6.0:
+      return None
+
+    residuals = [abs((point[0] * normal[0]) + (point[1] * normal[1])) for point in centered]
+    return {
+      "center": (mean_x, mean_y),
+      "normal": normal,
+      "mean_residual": sum(residuals) / len(residuals),
+      "max_residual": max(residuals),
+    }
+
+  def _path_prior_residual(
+    self,
+    point: tuple[float, float],
+    accepted_points: list[tuple[float, float]],
+  ) -> tuple[float | None, dict[str, Any] | None]:
+    model = self._fit_recent_path(accepted_points)
+    if not model:
+      return None, None
+
+    center = model["center"]
+    normal = model["normal"]
+    residual = abs(((point[0] - center[0]) * normal[0]) + ((point[1] - center[1]) * normal[1]))
+    return residual, model
+
+  def _path_prior_rejection_reason(
+    self,
+    point: tuple[float, float],
+    accepted_points: list[tuple[float, float]],
+  ) -> tuple[str | None, float | None, dict[str, Any] | None]:
+    residual, model = self._path_prior_residual(point, accepted_points)
+    if residual is None:
+      return None, None, model
+
+    if residual > PATH_PRIOR_MAX_RESIDUAL_PX:
+      return "path_residual_drift", residual, model
+
+    return None, residual, model
 
   def _fresh_plate_candidate(
     self,
@@ -473,6 +538,10 @@ class BarbellTracker:
     reacquisition_count = 0
     local_tracking_failure_count = 0
     consecutive_local_failures = 0
+    accepted_points_px: list[tuple[float, float]] = []
+    path_prior_rejection_count = 0
+    path_prior_residuals: list[float] = []
+    last_path_residual_px: float | None = None
     frame_index = 0
     debug_writer = None
     sampled_shoulder_y_values: list[float] = []
@@ -552,102 +621,145 @@ class BarbellTracker:
               local_stats["collar_rejection_reason"] = motion_rejection_reason
               collar_rejection_reason = motion_rejection_reason
             else:
-              # Fresh Hough validation corrects drift, but local tracking can carry brief detection misses.
-              fresh_plate = self._fresh_plate_candidate(
-                cv2,
-                frame,
-                bounds=candidate_bounds,
-                landmarks=landmarks,
-                previous=tracking_lock,
-                shoulder=shoulder,
-                width=width,
-                height=height,
+              path_reason, path_residual, path_model = self._path_prior_rejection_reason(
+                local_final_bar_point,
+                accepted_points_px,
               )
-              if fresh_plate:
-                fresh_hub_result = self._final_bar_point_from_plate(
+              last_path_residual_px = path_residual
+              if path_residual is not None:
+                path_prior_residuals.append(path_residual)
+              if path_model:
+                local_stats["path_mean_residual_px"] = float(path_model["mean_residual"])
+                local_stats["path_max_residual_px"] = float(path_model["max_residual"])
+              if path_reason:
+                path_prior_rejection_count += 1
+                next_lock = None
+                local_stats["collar_rejection_reason"] = path_reason
+                collar_rejection_reason = path_reason
+
+              if next_lock is not None:
+                # Fresh Hough validation corrects drift, but local tracking can carry brief detection misses.
+                fresh_plate = self._fresh_plate_candidate(
                   cv2,
                   frame,
-                  plate=fresh_plate,
+                  bounds=candidate_bounds,
+                  landmarks=landmarks,
                   previous=tracking_lock,
+                  shoulder=shoulder,
+                  width=width,
+                  height=height,
                 )
-                hub_result_for_debug = fresh_hub_result
-                fresh_final_bar_point = fresh_hub_result.get("point")
-                fresh_motion_reason = (
-                  self._final_bar_point_is_motion_consistent(
-                    fresh_final_bar_point,
-                    previous=tracking_lock,
-                    shoulder=shoulder,
-                    width=width,
-                    height=height,
-                  )
-                  if fresh_final_bar_point
-                  else None
-                )
-                if self._hub_result_is_emit_safe(fresh_hub_result) and fresh_motion_reason is None and fresh_final_bar_point:
-                  fresh_predicted_collar, fresh_sleeve_direction = _estimate_collar_from_plate(
-                    fresh_plate,
-                    shoulder=shoulder,
-                    width=width,
-                    height=height,
-                    previous=tracking_lock,
-                  )
-                  fresh_refined_collar, _, fresh_refinement_reason = _refine_collar_point(
+                if fresh_plate:
+                  fresh_hub_result = self._final_bar_point_from_plate(
                     cv2,
                     frame,
-                    predicted=fresh_predicted_collar,
                     plate=fresh_plate,
-                    sleeve_direction=fresh_sleeve_direction,
                     previous=tracking_lock,
                   )
-                  fresh_geometry_reason = _validate_collar_geometry(
-                    fresh_refined_collar,
-                    plate=fresh_plate,
-                    sleeve_direction=fresh_sleeve_direction,
-                    previous=tracking_lock,
+                  hub_result_for_debug = fresh_hub_result
+                  fresh_final_bar_point = fresh_hub_result.get("point")
+                  fresh_motion_reason = (
+                    self._final_bar_point_is_motion_consistent(
+                      fresh_final_bar_point,
+                      previous=tracking_lock,
+                      shoulder=shoulder,
+                      width=width,
+                      height=height,
+                    )
+                    if fresh_final_bar_point
+                    else None
                   )
-                  if fresh_refinement_reason or fresh_geometry_reason:
-                    fresh_refined_collar = fresh_predicted_collar
-                  next_lock = _make_tracking_lock(
-                    cv2,
-                    gray,
-                    plate=fresh_plate,
-                    collar=fresh_refined_collar,
-                    sleeve_direction=fresh_sleeve_direction,
-                    final_bar_point=fresh_final_bar_point,
-                    final_bar_confidence=float(fresh_hub_result.get("confidence") or 0.0),
-                    final_bar_reason=fresh_hub_result.get("reason"),
-                    shoulder=shoulder,
-                  )
-                  next_lock["predicted_collar"] = fresh_predicted_collar
-                  next_lock["refined_collar"] = fresh_refined_collar
-                  next_lock["collar_geometry_valid"] = fresh_geometry_reason is None
-                  next_lock["fallback_used"] = bool(fresh_refinement_reason or fresh_geometry_reason)
-                  next_lock["final_bar_source"] = fresh_hub_result.get("source")
-                  local_tracker_type = "fresh_hough_validation"
-                  local_stats["local_tracker_type"] = local_tracker_type
-                  local_tracking_confidence = max(
-                    local_tracking_confidence,
-                    float(fresh_hub_result.get("confidence") or 0.0),
-                  )
-                  collar_rejection_reason = fresh_refinement_reason or fresh_geometry_reason
-                  local_stats["collar_rejection_reason"] = collar_rejection_reason
-                  used_fresh_hub_validation = True
+                  fresh_path_reason = None
+                  fresh_path_residual = None
+                  if fresh_final_bar_point:
+                    fresh_path_reason, fresh_path_residual, fresh_path_model = self._path_prior_rejection_reason(
+                      fresh_final_bar_point,
+                      accepted_points_px,
+                    )
+                    last_path_residual_px = fresh_path_residual
+                    if fresh_path_residual is not None:
+                      path_prior_residuals.append(fresh_path_residual)
+                    if fresh_path_model:
+                      local_stats["path_mean_residual_px"] = float(fresh_path_model["mean_residual"])
+                      local_stats["path_max_residual_px"] = float(fresh_path_model["max_residual"])
+                  if (
+                    self._hub_result_is_emit_safe(fresh_hub_result)
+                    and fresh_motion_reason is None
+                    and fresh_path_reason is None
+                    and fresh_final_bar_point
+                  ):
+                    fresh_predicted_collar, fresh_sleeve_direction = _estimate_collar_from_plate(
+                      fresh_plate,
+                      shoulder=shoulder,
+                      width=width,
+                      height=height,
+                      previous=tracking_lock,
+                    )
+                    fresh_refined_collar, _, fresh_refinement_reason = _refine_collar_point(
+                      cv2,
+                      frame,
+                      predicted=fresh_predicted_collar,
+                      plate=fresh_plate,
+                      sleeve_direction=fresh_sleeve_direction,
+                      previous=tracking_lock,
+                    )
+                    fresh_geometry_reason = _validate_collar_geometry(
+                      fresh_refined_collar,
+                      plate=fresh_plate,
+                      sleeve_direction=fresh_sleeve_direction,
+                      previous=tracking_lock,
+                    )
+                    if fresh_refinement_reason or fresh_geometry_reason:
+                      fresh_refined_collar = fresh_predicted_collar
+                    next_lock = _make_tracking_lock(
+                      cv2,
+                      gray,
+                      plate=fresh_plate,
+                      collar=fresh_refined_collar,
+                      sleeve_direction=fresh_sleeve_direction,
+                      final_bar_point=fresh_final_bar_point,
+                      final_bar_confidence=float(fresh_hub_result.get("confidence") or 0.0),
+                      final_bar_reason=fresh_hub_result.get("reason"),
+                      shoulder=shoulder,
+                    )
+                    next_lock["predicted_collar"] = fresh_predicted_collar
+                    next_lock["refined_collar"] = fresh_refined_collar
+                    next_lock["collar_geometry_valid"] = fresh_geometry_reason is None
+                    next_lock["fallback_used"] = bool(fresh_refinement_reason or fresh_geometry_reason)
+                    next_lock["final_bar_source"] = fresh_hub_result.get("source")
+                    local_tracker_type = "fresh_hough_validation"
+                    local_stats["local_tracker_type"] = local_tracker_type
+                    local_tracking_confidence = max(
+                      local_tracking_confidence,
+                      float(fresh_hub_result.get("confidence") or 0.0),
+                    )
+                    collar_rejection_reason = fresh_refinement_reason or fresh_geometry_reason
+                    local_stats["collar_rejection_reason"] = collar_rejection_reason
+                    used_fresh_hub_validation = True
+                  else:
+                    local_validation_reason = (
+                      fresh_motion_reason
+                      or fresh_path_reason
+                      or fresh_hub_result.get("reason")
+                      or "low_confidence_hub"
+                    )
+                    if fresh_path_reason:
+                      path_prior_rejection_count += 1
+                    local_stats["collar_rejection_reason"] = local_validation_reason
+                    collar_rejection_reason = local_validation_reason
+                    next_lock = None
+                    hub_rejected_count += 1
+                    final_bar_reason_counts[local_validation_reason] = (
+                      final_bar_reason_counts.get(local_validation_reason, 0) + 1
+                    )
                 else:
-                  local_validation_reason = fresh_motion_reason or fresh_hub_result.get("reason") or "low_confidence_hub"
+                  local_validation_reason = "fresh_hub_not_found"
                   local_stats["collar_rejection_reason"] = local_validation_reason
                   collar_rejection_reason = local_validation_reason
                   hub_rejected_count += 1
                   final_bar_reason_counts[local_validation_reason] = (
                     final_bar_reason_counts.get(local_validation_reason, 0) + 1
                   )
-              else:
-                local_validation_reason = "fresh_hub_not_found"
-                local_stats["collar_rejection_reason"] = local_validation_reason
-                collar_rejection_reason = local_validation_reason
-                hub_rejected_count += 1
-                final_bar_reason_counts[local_validation_reason] = (
-                  final_bar_reason_counts.get(local_validation_reason, 0) + 1
-                )
 
           if next_lock:
 
@@ -669,6 +781,7 @@ class BarbellTracker:
               "y": final_bar_point[1] / height,
               "confidence": min(float(selected_plate.confidence) + 0.2, 1.0),
             }
+            accepted_points_px.append(final_bar_point)
             if used_fresh_hub_validation:
               real_hub_detection_count += 1
               fresh_hough_correction_count += 1
@@ -715,6 +828,7 @@ class BarbellTracker:
               final_bar_confidence=final_bar_confidence,
               final_bar_source=final_bar_source,
               fallback_used=fallback_used,
+              path_residual_px=last_path_residual_px,
             )
             samples.append(point)
             detected_count += 1
@@ -771,6 +885,7 @@ class BarbellTracker:
               final_bar_confidence=0.0,
               final_bar_source=(hub_result_for_debug or {}).get("source"),
               fallback_used=fallback_used,
+              path_residual_px=last_path_residual_px,
             )
             samples.append(None)
             # Keep previous_gray aligned with tracking_lock/features after a failed local update.
@@ -1190,6 +1305,63 @@ class BarbellTracker:
           frame_index += 1
           continue
 
+        path_reason, path_residual, path_model = self._path_prior_rejection_reason(
+          final_bar_point,
+          accepted_points_px,
+        )
+        last_path_residual_px = path_residual
+        if path_residual is not None:
+          path_prior_residuals.append(path_residual)
+        if path_reason:
+          path_prior_rejection_count += 1
+          final_bar_reason_counts[path_reason] = final_bar_reason_counts.get(path_reason, 0) + 1
+          self._record_tracking_frame_diagnostic(
+            frame_index=frame_index,
+            timestamp=timestamp,
+            tracking_mode=tracking_mode,
+            selected_plate=selected_plate,
+            final_bar_point=final_bar_point,
+            pose_predicted_point=None,
+            predicted_collar=predicted_collar,
+            refined_collar=refined_collar,
+            point=None,
+            width=width,
+            height=height,
+            local_tracker_type=local_tracker_type,
+            optical_flow_inlier_count=optical_flow_inlier_count,
+            template_match_score=template_match_score,
+            collar_rejection_reason=path_reason,
+            point_source="no_emission",
+            final_bar_reason=path_reason,
+            final_bar_confidence=final_bar_confidence,
+            final_bar_source=final_bar_source,
+            fallback_used=fallback_used,
+            path_residual_px=path_residual,
+          )
+          samples.append(None)
+          if debug_writer:
+            debug_writer.write(
+              _draw_debug_frame(
+                cv2,
+                frame,
+                bounds=debug_bounds,
+                candidates=candidates,
+                rejected=rejected,
+                selected_plate=selected_plate,
+                hub_candidates=list(hub_result.get("candidates") or []),
+                rejected_hub_candidates=list(hub_result.get("rejected_candidates") or []),
+                final_bar_point=final_bar_point,
+                pose_predicted_point=None,
+                predicted_collar=predicted_collar,
+                refined_collar=refined_collar,
+                rejection_reason=path_reason,
+                mode=tracking_mode,
+              )
+            )
+          previous_gray = gray
+          frame_index += 1
+          continue
+
         confidence = max(
           min(
             _score_plate_candidate(
@@ -1212,6 +1384,7 @@ class BarbellTracker:
           "confidence": confidence,
         }
         real_hub_detection_count += 1
+        accepted_points_px.append(final_bar_point)
         logger.info(
           "Barbell point emitted frame=%s plate=(%.2f, %.2f r=%.2f) final=(%.2f, %.2f) final_reason=%s final_conf=%.3f point_source=%s fallback_used=%s predicted=(%.2f, %.2f) refined=(%.2f, %.2f) normalized=(%.4f, %.4f) pending_confirmation_count=%s",
           frame_index,
@@ -1253,6 +1426,7 @@ class BarbellTracker:
           final_bar_confidence=final_bar_confidence,
           final_bar_source=final_bar_source,
           fallback_used=fallback_used,
+          path_residual_px=last_path_residual_px,
         )
         relative_offset = _shoulder_relative_offset(selected_plate, shoulder)
         tracking_lock = _make_tracking_lock(
@@ -1359,6 +1533,13 @@ class BarbellTracker:
       if sampled_shoulder_y_values
       else 0.0
     )
+    path_prior_last_residual_px = round(last_path_residual_px, 2) if last_path_residual_px is not None else None
+    path_prior_max_residual_px = round(max(path_prior_residuals), 2) if path_prior_residuals else None
+    path_prior_mean_residual_px = (
+      round(sum(path_prior_residuals) / len(path_prior_residuals), 2)
+      if path_prior_residuals
+      else None
+    )
 
     if len(points) < MIN_TRACK_POINTS or coverage < MIN_TRACK_COVERAGE:
       result = _empty_result(
@@ -1404,6 +1585,10 @@ class BarbellTracker:
         final_bar_reason_counts=final_bar_reason_counts,
         real_hub_detection_count=real_hub_detection_count,
         hub_rejected_count=hub_rejected_count,
+        path_prior_rejection_count=path_prior_rejection_count,
+        path_prior_last_residual_px=path_prior_last_residual_px,
+        path_prior_max_residual_px=path_prior_max_residual_px,
+        path_prior_mean_residual_px=path_prior_mean_residual_px,
       )
       result["diagnostics"]["bootstrap_diagnostics"] = self.bootstrap_diagnostics
       return result
@@ -1452,6 +1637,10 @@ class BarbellTracker:
         final_bar_reason_counts=final_bar_reason_counts,
         real_hub_detection_count=real_hub_detection_count,
         hub_rejected_count=hub_rejected_count,
+        path_prior_rejection_count=path_prior_rejection_count,
+        path_prior_last_residual_px=path_prior_last_residual_px,
+        path_prior_max_residual_px=path_prior_max_residual_px,
+        path_prior_mean_residual_px=path_prior_mean_residual_px,
       )
       result["diagnostics"]["bootstrap_diagnostics"] = self.bootstrap_diagnostics
       return result
@@ -1527,6 +1716,10 @@ class BarbellTracker:
         "final_bar_reason_counts": final_bar_reason_counts,
         "real_hub_detection_count": real_hub_detection_count,
         "hub_rejected_count": hub_rejected_count,
+        "path_prior_rejection_count": path_prior_rejection_count,
+        "path_prior_last_residual_px": path_prior_last_residual_px,
+        "path_prior_max_residual_px": path_prior_max_residual_px,
+        "path_prior_mean_residual_px": path_prior_mean_residual_px,
         "sleeve_direction_x": round(sleeve_direction[0], 4) if sleeve_direction else None,
         "sleeve_direction_y": round(sleeve_direction[1], 4) if sleeve_direction else None,
         "predicted_collar_x": round(predicted_collar[0], 2) if predicted_collar else None,

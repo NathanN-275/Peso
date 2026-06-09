@@ -50,6 +50,10 @@ def _empty_result(
   final_bar_reason_counts: dict[str, int] | None = None,
   real_hub_detection_count: int = 0,
   hub_rejected_count: int = 0,
+  path_prior_rejection_count: int = 0,
+  path_prior_last_residual_px: float | None = None,
+  path_prior_max_residual_px: float | None = None,
+  path_prior_mean_residual_px: float | None = None,
 ) -> dict[str, Any]:
   return {
     "barbellPath": {
@@ -107,6 +111,10 @@ def _empty_result(
       "final_bar_reason_counts": final_bar_reason_counts or {},
       "real_hub_detection_count": real_hub_detection_count,
       "hub_rejected_count": hub_rejected_count,
+      "path_prior_rejection_count": path_prior_rejection_count,
+      "path_prior_last_residual_px": path_prior_last_residual_px,
+      "path_prior_max_residual_px": path_prior_max_residual_px,
+      "path_prior_mean_residual_px": path_prior_mean_residual_px,
       "sleeve_direction_x": round(sleeve_direction[0], 4) if sleeve_direction else None,
       "sleeve_direction_y": round(sleeve_direction[1], 4) if sleeve_direction else None,
       "predicted_collar_x": round(predicted_collar[0], 2) if predicted_collar else None,
