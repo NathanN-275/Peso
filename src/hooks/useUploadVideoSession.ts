@@ -11,6 +11,11 @@ import {
   triggerVideoAnalysis,
 } from '../../lib/backendApi';
 import {
+  backendAuthRecoveryMessage,
+  getFreshBackendAccessToken,
+  isBackendAuthError,
+} from '../../lib/backendAuth';
+import {
   cleanupUploadedVideoForAnalysis,
   uploadVideoForAnalysis,
 } from '../../lib/videoUpload';
@@ -23,7 +28,7 @@ export function isAnalysisInProgress(status: VideoAnalysisStatus | null) {
 }
 
 export function useUploadVideoSession() {
-  const { user, session } = useAuth();
+  const { user } = useAuth();
   const isWeb = Platform.select<boolean>({ web: true, default: false }) ?? false;
   const [permissionStatus, setPermissionStatus] = useState<ImagePicker.PermissionStatus | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -83,7 +88,7 @@ export function useUploadVideoSession() {
       return;
     }
 
-    if (!user || !session?.access_token) {
+    if (!user) {
       setStatusMessage(null);
       setErrorMessage('You must be logged in to upload and analyze a video.');
       return;
@@ -108,18 +113,26 @@ export function useUploadVideoSession() {
       uploadedVideo = uploadResult;
 
       setDisplayedVideoSizeBytes(uploadResult.uploadedFileSizeBytes);
-      setAnalysisVideoId(uploadResult.videoId);
-      setAnalysisStatus(uploadResult.status);
 
       setStatusMessage('Starting analysis...');
       console.log('[analysis] starting backend analysis', uploadResult.videoId);
-      const queuedResponse = await triggerVideoAnalysis(uploadResult.videoId, session.access_token);
+      const accessToken = await getFreshBackendAccessToken();
+      const queuedResponse = await triggerVideoAnalysis(uploadResult.videoId, accessToken);
       analysisQueuedForVideoRef.current = uploadResult.videoId;
+      setAnalysisVideoId(uploadResult.videoId);
       setAnalysisStatus(queuedResponse.status);
       setStatusMessage(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to upload and analyze this video.';
       const triggerFailedAfterUpload = Boolean(uploadedVideo);
+
+      if (__DEV__) {
+        console.warn('[analysis] upload or queue failed', {
+          phase: uploadedVideo ? 'queue_analysis' : 'upload',
+          videoId: uploadedVideo?.videoId ?? null,
+          error,
+        });
+      }
 
       if (uploadedVideo) {
         setStatusMessage('Cleaning up upload...');
@@ -134,7 +147,9 @@ export function useUploadVideoSession() {
       setStatusMessage(null);
       setErrorMessage(
         triggerFailedAfterUpload
-          ? 'Upload succeeded, but analysis could not start. The upload was cleaned up; please try again.'
+          ? isBackendAuthError(error)
+            ? backendAuthRecoveryMessage()
+            : 'Upload succeeded, but analysis could not start. The upload was cleaned up; please try again.'
           : message.includes('row-level security policy')
           ? `${message}. Apply the latest videos RLS migration to your Supabase project.`
           : message
@@ -293,7 +308,7 @@ export function useUploadVideoSession() {
   }, [isWeb, selectedVideo]);
 
   useEffect(() => {
-    if (!analysisVideoId || !session?.access_token) {
+    if (!analysisVideoId || !user) {
       return;
     }
 
@@ -309,7 +324,8 @@ export function useUploadVideoSession() {
 
     const poll = async () => {
       try {
-        const statusResponse = await fetchVideoStatus(analysisVideoId, session.access_token);
+        const accessToken = await getFreshBackendAccessToken();
+        const statusResponse = await fetchVideoStatus(analysisVideoId, accessToken);
 
         if (!active) {
           return;
@@ -327,7 +343,8 @@ export function useUploadVideoSession() {
 
         if (statusResponse.status === 'completed') {
           try {
-            const analysisResponse = await fetchAnalysisResult(analysisVideoId, session.access_token);
+            const analysisAccessToken = await getFreshBackendAccessToken();
+            const analysisResponse = await fetchAnalysisResult(analysisVideoId, analysisAccessToken);
 
             if (!active) {
               return;
@@ -344,6 +361,12 @@ export function useUploadVideoSession() {
         if (__DEV__) {
           console.warn('Polling video analysis status failed.', error);
         }
+
+        if (active && isBackendAuthError(error)) {
+          analysisStartInFlightRef.current = false;
+          setStatusMessage(null);
+          setErrorMessage('Your sign-in session expired while checking analysis status. Sign in again and reopen the upload.');
+        }
       }
     };
 
@@ -356,7 +379,7 @@ export function useUploadVideoSession() {
       active = false;
       clearInterval(intervalId);
     };
-  }, [analysisResult, analysisStatus, analysisVideoId, session?.access_token]);
+  }, [analysisResult, analysisStatus, analysisVideoId, user]);
 
   const handleModalContinue = async (selection: VideoSetupSelection) => {
     setVideoSetup(selection);
