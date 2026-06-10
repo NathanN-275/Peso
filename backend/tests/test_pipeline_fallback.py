@@ -113,6 +113,10 @@ class PipelineFallbackTest(unittest.TestCase):
           "insufficient_depth_count": 1 if status == "insufficient_depth" else 0,
           "uncertain_depth_count": 0,
         },
+        "selected_side": "left",
+        "pose_validation": {
+          "selected_side": "left",
+        },
         "quality_flags": [],
         "quality_score": 0.8,
       },
@@ -412,6 +416,7 @@ class PipelineFallbackTest(unittest.TestCase):
     self.assertTrue(saved_result["barbellPath"]["available"])
     self.assertEqual(saved_result["diagnostics"]["barbell_tracking"]["source"], "opencv_circle_tracker")
     tracker.track.assert_called_once()
+    self.assertEqual(tracker.track.call_args.kwargs["selected_side"], "left")
 
   def test_analyze_skips_barbell_path_for_non_side_video(self) -> None:
     pipeline = self._import_pipeline()

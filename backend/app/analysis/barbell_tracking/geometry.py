@@ -93,6 +93,56 @@ def _validate_collar_geometry(
   return None
 
 
+def _score_collar_patch(
+  cv2: Any,
+  frame: Any,
+  *,
+  collar: tuple[float, float],
+  plate: Candidate,
+  sleeve_direction: tuple[float, float],
+) -> float:
+  height, width = frame.shape[:2]
+  radius = max(int(round(plate.radius * 0.16)), 8)
+  x0 = max(int(round(collar[0])) - radius, 0)
+  y0 = max(int(round(collar[1])) - radius, 0)
+  x1 = min(int(round(collar[0])) + radius + 1, width)
+  y1 = min(int(round(collar[1])) + radius + 1, height)
+  if x1 <= x0 or y1 <= y0:
+    return 0.0
+
+  crop = frame[y0:y1, x0:x1]
+  gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+  gray = cv2.GaussianBlur(gray, (3, 3), 0)
+  edges = cv2.Canny(gray, 55, 145)
+  edge_density = float(cv2.countNonZero(edges)) / max(edges.shape[0] * edges.shape[1], 1)
+  edge_score = min(edge_density / 0.12, 1.0)
+
+  lines = cv2.HoughLinesP(
+    edges,
+    1,
+    math.pi / 180,
+    threshold=max(6, int(radius * 0.55)),
+    minLineLength=max(5, int(radius * 0.55)),
+    maxLineGap=max(2, int(radius * 0.25)),
+  )
+  axis_score = 0.0
+  if lines is not None:
+    sleeve_magnitude = max(math.hypot(sleeve_direction[0], sleeve_direction[1]), 0.01)
+    sleeve_axis = (
+      sleeve_direction[0] / sleeve_magnitude,
+      sleeve_direction[1] / sleeve_magnitude,
+    )
+    for line in lines[:, 0]:
+      dx = float(line[2] - line[0])
+      dy = float(line[3] - line[1])
+      magnitude = max(math.hypot(dx, dy), 0.01)
+      axis_dot = abs(((dx / magnitude) * sleeve_axis[0]) + ((dy / magnitude) * sleeve_axis[1]))
+      axis_score = max(axis_score, axis_dot)
+
+  local_contrast = float(gray.max() - gray.min()) / 255.0
+  return round(min((edge_score * 0.45) + (axis_score * 0.35) + (local_contrast * 0.2), 1.0), 3)
+
+
 def _point_inside_plate(
   point: tuple[float, float],
   *,

@@ -1,0 +1,31 @@
+{
+  "video": "IMG_0013.MOV",
+  "coordinate_space": {
+    "width": 1080,
+    "height": 1920,
+    "source": "processed_frame"
+  },
+  "selected_side": "left",
+  "frame_step": 3,
+  "tolerance_px": 12,
+  "pose": {
+    "left_shoulder": [450, 905],
+    "right_shoulder": [510, 905],
+    "left_wrist": [315, 960],
+    "right_wrist": [390, 970],
+    "left_hip": [445, 1200],
+    "right_hip": [510, 1200],
+    "left_knee": [430, 1440],
+    "right_knee": [500, 1440],
+    "left_ankle": [420, 1700],
+    "right_ankle": [500, 1700]
+  },
+  "labels": [
+    { "source_frame_index": 6, "target": [560, 733], "allowed_missing": false },
+    { "source_frame_index": 21, "target": [568, 735], "allowed_missing": false },
+    { "source_frame_index": 102, "target": null, "allowed_missing": true },
+    { "source_frame_index": 183, "target": null, "allowed_missing": true },
+    { "source_frame_index": 240, "target": [577, 712], "allowed_missing": false },
+    { "source_frame_index": 300, "target": [588, 699], "allowed_missing": false }
+  ]
+}

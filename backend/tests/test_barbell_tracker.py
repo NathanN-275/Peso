@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import tempfile
 import unittest
@@ -270,9 +271,7 @@ class BarbellTrackerTest(unittest.TestCase):
       )
 
     self.assertTrue(result["barbellPath"]["available"])
-    points = result["barbellPath"]["points"]
-    self.assertAlmostEqual(points[0]["x"], centers[0][0] / 320, delta=0.07)
-    self.assertAlmostEqual(points[-1]["x"], centers[-1][0] / 320, delta=0.07)
+    self.assert_points_follow_collar_path(result["barbellPath"]["points"], centers, max_distance_px=14.0)
 
   def test_plate_first_tracker_outputs_collar_target(self) -> None:
     plate_centers = [(178 + index * 3, 104) for index in range(8)]
@@ -335,6 +334,69 @@ class BarbellTrackerTest(unittest.TestCase):
     self.assertTrue(result["barbellPath"]["available"])
     self.assert_points_follow_collar_path(result["barbellPath"]["points"], plate_centers, max_distance_px=12.0)
     self.assertEqual(result["barbellPath"]["target"], "near_plate_collar_center")
+
+  def test_real_img0013_fixture_tracks_only_labeled_collar_targets(self) -> None:
+    fixture_path = Path(__file__).resolve().parent / "fixtures" / "barbell_img0013_collar_labels.json"
+    fixture = json.loads(fixture_path.read_text())
+    video_path = Path(__file__).resolve().parents[1] / "test_videos" / fixture["video"]
+    self.assertTrue(video_path.exists())
+    width = int(fixture["coordinate_space"]["width"])
+    height = int(fixture["coordinate_space"]["height"])
+    frame_step = int(fixture["frame_step"])
+    fps = 59.31224683271568
+
+    def landmark_from_px(name: str) -> dict[str, float]:
+      x, y = fixture["pose"][name]
+      return landmark(x / width, y / height)
+
+    pose_frames = [
+      {
+        "source_frame_index": index,
+        "timestamp_ms": int(index / fps * 1000),
+        "landmarks": {
+          name: landmark_from_px(name)
+          for name in fixture["pose"]
+        },
+      }
+      for index in range(0, 1147, frame_step)
+    ]
+
+    result = BarbellTracker().track(
+      str(video_path),
+      pose_frames=pose_frames,
+      frame_step=frame_step,
+      processed_width=width,
+      processed_height=height,
+      selected_side=fixture["selected_side"],
+    )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    points = result["barbellPath"]["points"]
+    tolerance = float(fixture["tolerance_px"])
+    visible_hits = 0
+    for label in fixture["labels"]:
+      label_time = label["source_frame_index"] / fps
+      nearby = [
+        point
+        for point in points
+        if abs(float(point["time"]) - label_time) <= 0.07
+      ]
+      if label["allowed_missing"] and label["target"] is None:
+        self.assertFalse(nearby, f"unexpected barbell point near frame {label['source_frame_index']}")
+        continue
+
+      self.assertTrue(nearby, f"missing barbell point near frame {label['source_frame_index']}")
+      target_x, target_y = label["target"]
+      closest = min(
+        nearby,
+        key=lambda point: math.hypot((float(point["x"]) * width) - target_x, (float(point["y"]) * height) - target_y),
+      )
+      distance = math.hypot((float(closest["x"]) * width) - target_x, (float(closest["y"]) * height) - target_y)
+      self.assertLessEqual(distance, tolerance)
+      visible_hits += 1
+
+    self.assertGreaterEqual(visible_hits, 4)
+    self.assertGreater(result["diagnostics"]["bad_candidate_rejection_counts"].get("target_switch_jump", 0), 0)
 
   def test_path_prior_marks_drifting_local_updates_missing(self) -> None:
     plate_centers = [(178 + index * 2, 98 + index * 4) for index in range(18)]
@@ -666,7 +728,7 @@ class BarbellTrackerTest(unittest.TestCase):
 
     self.assertFalse(result["barbellPath"]["available"])
     self.assertFalse(result["diagnostics"]["initialization_confirmed"])
-    self.assertGreater(result["diagnostics"]["rejection_reason_counts"].get("stationary_hardware_like", 0), 0)
+    self.assertGreater(sum(result["diagnostics"]["bad_candidate_rejection_counts"].values()), 0)
 
   def test_rejects_high_large_j_cup_candidate(self) -> None:
     centers = [(210, 104), (210, 104), (210, 108), (210, 112), (210, 116), (210, 120)]

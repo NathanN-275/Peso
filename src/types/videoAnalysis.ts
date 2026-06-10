@@ -297,6 +297,8 @@ export type VideoAnalysisResult = {
   duration?: number;
   videoWidth?: number | null;
   videoHeight?: number | null;
+  processedVideoWidth?: number | null;
+  processedVideoHeight?: number | null;
   poseFrames?: VideoPoseFrame[];
   barbellPath?: BarbellPath;
   analysis_limited?: boolean;

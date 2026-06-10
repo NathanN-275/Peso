@@ -54,6 +54,12 @@ def _empty_result(
   path_prior_last_residual_px: float | None = None,
   path_prior_max_residual_px: float | None = None,
   path_prior_mean_residual_px: float | None = None,
+  selected_side: str | None = None,
+  coordinate_space: dict[str, int | str] | None = None,
+  collar_candidate_count: int = 0,
+  collar_descriptor_score: float | None = None,
+  tracklet_confirmation_count: int = 0,
+  bad_candidate_rejection_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
   return {
     "barbellPath": {
@@ -115,6 +121,12 @@ def _empty_result(
       "path_prior_last_residual_px": path_prior_last_residual_px,
       "path_prior_max_residual_px": path_prior_max_residual_px,
       "path_prior_mean_residual_px": path_prior_mean_residual_px,
+      "selected_side": selected_side,
+      "coordinate_space": coordinate_space,
+      "collar_candidate_count": collar_candidate_count,
+      "collar_descriptor_score": collar_descriptor_score,
+      "tracklet_confirmation_count": tracklet_confirmation_count,
+      "bad_candidate_rejection_counts": bad_candidate_rejection_counts or {},
       "sleeve_direction_x": round(sleeve_direction[0], 4) if sleeve_direction else None,
       "sleeve_direction_y": round(sleeve_direction[1], 4) if sleeve_direction else None,
       "predicted_collar_x": round(predicted_collar[0], 2) if predicted_collar else None,

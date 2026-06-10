@@ -444,6 +444,10 @@ def _attach_barbell_tracking(
     return
 
   diagnostics = result.setdefault("diagnostics", {})
+  selected_side = (
+    (diagnostics.get("pose_validation") or {}).get("selected_side")
+    or diagnostics.get("selected_side")
+  )
   try:
     tracking = BarbellTracker().track(
       file_path,
@@ -451,6 +455,7 @@ def _attach_barbell_tracking(
       frame_step=int(estimation.get("frame_step") or 1),
       processed_width=estimation.get("processed_frame_width") or estimation.get("frame_width"),
       processed_height=estimation.get("processed_frame_height") or estimation.get("frame_height"),
+      selected_side=selected_side,
     )
     result["barbellPath"] = tracking["barbellPath"]
     diagnostics["barbell_tracking"] = tracking["diagnostics"]

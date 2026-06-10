@@ -51,7 +51,7 @@ export default function BarbellPathOverlay({
       ...elapsedPoints.filter((point) => point.time < currentPoint.time),
       currentPoint,
     ]
-    : elapsedPoints;
+    : [];
   const rect = calculateVideoRect(containerSize, videoSize, contentFit);
 
   if (
