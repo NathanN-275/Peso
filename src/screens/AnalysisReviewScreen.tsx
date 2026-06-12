@@ -18,6 +18,7 @@ import BarbellPathOverlay from '../components/BarbellPathOverlay';
 import PoseOverlay from '../components/PoseOverlay';
 import ReviewBottomSheet from '../components/ReviewBottomSheet';
 import TimelineScrubber from '../components/TimelineScrubber';
+import TrackingDisplaySheet from '../components/TrackingDisplaySheet';
 import tokens from '../theme/tokens';
 import { BarbellPath, VideoAnalysisResult } from '../types/videoAnalysis';
 import {
@@ -196,7 +197,9 @@ export default function AnalysisReviewScreen({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(result.duration ?? 0);
   const [videoLayout, setVideoLayout] = useState({ width: 0, height: 0 });
-  const [activeSheet, setActiveSheet] = useState<'summary' | 'coaching' | null>(null);
+  const [activeSheet, setActiveSheet] = useState<'summary' | 'coaching' | 'tracking' | null>(null);
+  const [poseOverlayEnabled, setPoseOverlayEnabled] = useState(true);
+  const [barbellPathEnabled, setBarbellPathEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
   const [discarding, setDiscarding] = useState(false);
   const [deletingSavedVideo, setDeletingSavedVideo] = useState(false);
@@ -268,6 +271,11 @@ export default function AnalysisReviewScreen({
   const coachingFeedback = normalizeCoachingFeedback(result);
   const videoQuality = normalizeVideoQuality(result);
   const hasPoseTimeline = Boolean(result.poseFrames?.length);
+  const hasBarbellPath = barbellPath?.available === true
+    && Array.isArray(barbellPath.points)
+    && barbellPath.points.length >= 2;
+  const showPoseOverlay = hasPoseTimeline && poseOverlayEnabled;
+  const showBarbellPath = hasBarbellPath && barbellPathEnabled;
   const cameraView = result.cameraView ?? result.view;
   const selectedPoseSide = result.diagnostics?.pose_validation?.selected_side
     ?? result.diagnostics?.selected_side
@@ -311,6 +319,17 @@ export default function AnalysisReviewScreen({
   const fallbackUnavailableReason =
     result.fallback_unavailable_reason ?? result.diagnostics?.fallback_unavailable_reason;
   const landmarkModel = result.landmark_model ?? result.diagnostics?.landmark_model;
+
+  useEffect(() => {
+    setPoseOverlayEnabled(true);
+    setBarbellPathEnabled(true);
+  }, [result.video_id]);
+
+  useEffect(() => {
+    if (!mediaAvailable && activeSheet === 'tracking') {
+      setActiveSheet(null);
+    }
+  }, [activeSheet, mediaAvailable]);
 
   useEffect(() => {
     const points = Array.isArray(barbellPath?.points) ? barbellPath.points : [];
@@ -538,22 +557,25 @@ export default function AnalysisReviewScreen({
                   allowsPictureInPicture={false}
                   onFirstFrameRender={() => setErrorMessage(null)}
                 />
-                {/* Pose markers are drawn on top of the rendered video. */}
-                <PoseOverlay
-                  frame={poseFrame}
-                  containerSize={videoLayout}
-                  videoSize={videoSize}
-                  contentFit="cover"
-                  cameraView={cameraView}
-                  selectedSide={selectedPoseSide}
-                />
-                <BarbellPathOverlay
-                  path={barbellPath}
-                  currentTime={currentTime}
-                  containerSize={videoLayout}
-                  videoSize={videoSize}
-                  contentFit="cover"
-                />
+                {showPoseOverlay ? (
+                  <PoseOverlay
+                    frame={poseFrame}
+                    containerSize={videoLayout}
+                    videoSize={videoSize}
+                    contentFit="cover"
+                    cameraView={cameraView}
+                    selectedSide={selectedPoseSide}
+                  />
+                ) : null}
+                {showBarbellPath ? (
+                  <BarbellPathOverlay
+                    path={barbellPath}
+                    currentTime={currentTime}
+                    containerSize={videoLayout}
+                    videoSize={videoSize}
+                    contentFit="cover"
+                  />
+                ) : null}
               </>
             ) : (
               <View style={styles.mediaUnavailable}>
@@ -574,12 +596,6 @@ export default function AnalysisReviewScreen({
             {mediaAvailable && !isPlaying ? (
               <View style={styles.playButton}>
                 <Ionicons name="play" size={26} color={tokens.colors.textPrimary} />
-              </View>
-            ) : null}
-
-            {mediaAvailable && !hasPoseTimeline ? (
-              <View style={styles.poseNotice}>
-                <Text style={styles.poseNoticeText}>Pose overlay unavailable for this result.</Text>
               </View>
             ) : null}
           </Pressable>
@@ -615,8 +631,28 @@ export default function AnalysisReviewScreen({
               <Ionicons name="document-text-outline" size={24} color={tokens.colors.brand} />
               <Text style={styles.toolButtonText}>Coaching</Text>
             </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !mediaAvailable }}
+              onPress={() => setActiveSheet('tracking')}
+              disabled={!mediaAvailable}
+              style={[styles.toolButton, !mediaAvailable && styles.disabledButton]}
+            >
+              <Ionicons name="eye-outline" size={24} color={tokens.colors.brand} />
+              <Text style={styles.toolButtonText}>Tracking</Text>
+            </Pressable>
           </View>
         </View>
+        <TrackingDisplaySheet
+          visible={activeSheet === 'tracking'}
+          poseAvailable={hasPoseTimeline}
+          poseEnabled={poseOverlayEnabled}
+          barbellAvailable={hasBarbellPath}
+          barbellEnabled={barbellPathEnabled}
+          onPoseEnabledChange={setPoseOverlayEnabled}
+          onBarbellEnabledChange={setBarbellPathEnabled}
+          onClose={() => setActiveSheet(null)}
+        />
         <ReviewBottomSheet
           visible={activeSheet === 'summary'}
           title="Summary"
@@ -949,22 +985,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 29,
     backgroundColor: 'rgba(0, 0, 0, 0.48)',
-  },
-  poseNotice: {
-    position: 'absolute',
-    left: 14,
-    right: 14,
-    bottom: 14,
-    borderRadius: 8,
-    backgroundColor: 'rgba(0, 0, 0, 0.58)',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  poseNoticeText: {
-    color: tokens.colors.textMuted,
-    fontSize: 13,
-    lineHeight: 18,
-    textAlign: 'center',
   },
   bottomPanel: {
     minHeight: 164,
