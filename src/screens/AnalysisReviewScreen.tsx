@@ -617,6 +617,16 @@ export default function AnalysisReviewScreen({
           <View style={styles.bottomActions}>
             <Pressable
               accessibilityRole="button"
+              accessibilityState={{ disabled: !mediaAvailable }}
+              onPress={() => setActiveSheet('tracking')}
+              disabled={!mediaAvailable}
+              style={[styles.toolButton, !mediaAvailable && styles.disabledButton]}
+            >
+              <Ionicons name="eye-outline" size={24} color={tokens.colors.brand} />
+              <Text style={styles.toolButtonText}>Tracking</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
               onPress={() => setActiveSheet('summary')}
               style={styles.toolButton}
             >
@@ -630,16 +640,6 @@ export default function AnalysisReviewScreen({
             >
               <Ionicons name="document-text-outline" size={24} color={tokens.colors.brand} />
               <Text style={styles.toolButtonText}>Coaching</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ disabled: !mediaAvailable }}
-              onPress={() => setActiveSheet('tracking')}
-              disabled={!mediaAvailable}
-              style={[styles.toolButton, !mediaAvailable && styles.disabledButton]}
-            >
-              <Ionicons name="eye-outline" size={24} color={tokens.colors.brand} />
-              <Text style={styles.toolButtonText}>Tracking</Text>
             </Pressable>
           </View>
         </View>
@@ -987,14 +987,14 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.48)',
   },
   bottomPanel: {
-    minHeight: 164,
+    minHeight: 144,
     borderTopWidth: 1,
     borderTopColor: '#343434',
     backgroundColor: '#202020',
     paddingHorizontal: 22,
-    paddingTop: 18,
-    paddingBottom: 18,
-    gap: 14,
+    paddingTop: 12,
+    paddingBottom: 12,
+    gap: 10,
   },
   bottomActions: {
     flexDirection: 'row',
@@ -1007,8 +1007,8 @@ const styles = StyleSheet.create({
     minWidth: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 8,
+    gap: 6,
+    paddingVertical: 6,
   },
   toolButtonText: {
     color: tokens.colors.textMuted,
