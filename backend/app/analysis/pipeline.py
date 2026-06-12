@@ -12,6 +12,12 @@ from typing import Any
 from .barbell_tracker import BarbellTracker
 from .feedback_engine import build_depth_summary_debug, build_feedback
 from .exercises.squat import SquatAnalyzer
+from .manual_tracking import (
+  barbell_track_priors,
+  fuse_manual_body_tracks,
+  track_manual_anchors,
+  validate_tracking_setup,
+)
 from .pose_fallback import analysis_needs_pose_fallback
 from .pose_estimator import PoseEstimator
 from ..services.config import get_settings
@@ -30,6 +36,80 @@ logger = logging.getLogger(__name__)
 
 def _is_squat_variation(exercise_type: str) -> bool:
   return exercise_type.strip().lower().endswith("squat")
+
+
+def _apply_tracking_assistance(
+  *,
+  file_path: str,
+  video: dict[str, Any],
+  estimation: dict[str, Any],
+) -> dict[str, Any]:
+  requested_setup = video.get("tracking_setup")
+  validated_setup, validation_error = validate_tracking_setup(
+    requested_setup,
+    duration_ms=estimation.get("duration_ms"),
+  )
+  assistance: dict[str, Any] = {
+    "requestedMode": "pins" if requested_setup is not None else "automatic",
+    "actualMode": "automatic",
+    "used": False,
+    "fallbackReason": validation_error,
+    "selectedSide": None,
+    "fusedLandmarkCount": 0,
+    "rejectedTrackCount": 0,
+    "coverage": {},
+    "barbellSeedUsed": False,
+  }
+  assisted_estimation = dict(estimation)
+  assisted_estimation["tracking_assistance"] = assistance
+  assisted_estimation["manual_tracking"] = {"tracks": {}}
+
+  if validated_setup is None:
+    if requested_setup is not None:
+      assistance["actualMode"] = "automatic_fallback"
+    return assisted_estimation
+
+  try:
+    width = int(estimation.get("processed_frame_width") or estimation.get("frame_width") or 0)
+    height = int(estimation.get("processed_frame_height") or estimation.get("frame_height") or 0)
+    tracking = track_manual_anchors(
+      file_path,
+      setup=validated_setup,
+      pose_frames=estimation.get("frames") or [],
+      fps=estimation.get("fps"),
+      width=width,
+      height=height,
+    )
+    fused_frames, fusion = fuse_manual_body_tracks(
+      estimation.get("frames") or [],
+      setup=validated_setup,
+      tracking=tracking,
+    )
+    assisted_estimation["frames"] = fused_frames
+    assisted_estimation["manual_tracking"] = tracking
+    assistance.update(
+      {
+        "actualMode": "pin_assisted" if fusion["used"] else "automatic_fallback",
+        "used": bool(fusion["used"]),
+        "fallbackReason": None if fusion["used"] else "manual_tracks_unavailable",
+        "selectedSide": fusion.get("selected_side"),
+        "fusedLandmarkCount": int(fusion.get("fused_landmark_count") or 0),
+        "rejectedTrackCount": int(fusion.get("rejected_track_count") or 0),
+        "coverage": fusion.get("coverage") or {},
+      }
+    )
+  except Exception as error:
+    logger.warning("Pin-assisted tracking fell back to automatic analysis for video %s: %s", video.get("id"), error)
+    assistance["actualMode"] = "automatic_fallback"
+    assistance["fallbackReason"] = "manual_tracking_error"
+    assistance["error"] = str(error)
+  return assisted_estimation
+
+
+def _attach_tracking_assistance(result: dict[str, Any], estimation: dict[str, Any]) -> None:
+  assistance = dict(estimation.get("tracking_assistance") or {})
+  result["trackingAssistance"] = assistance
+  result.setdefault("diagnostics", {})["tracking_assistance"] = assistance
 
 
 def build_limited_result(
@@ -461,7 +541,8 @@ def _attach_barbell_tracking(
     and (rep.get("bottomTimestampMs") is not None or rep.get("bottom_timestamp_ms") is not None)
   ]
   try:
-    tracking = BarbellTracker().track(
+    tracker = BarbellTracker()
+    tracking = tracker.track(
       file_path,
       pose_frames=estimation.get("frames") or [],
       frame_step=int(estimation.get("frame_step") or 1),
@@ -469,8 +550,15 @@ def _attach_barbell_tracking(
       processed_height=estimation.get("processed_frame_height") or estimation.get("frame_height"),
       selected_side=selected_side,
       rep_windows=rep_windows,
+      manual_barbell_priors=barbell_track_priors(estimation.get("manual_tracking") or {}),
     )
+    manual_seed_count = tracker.manual_seed_count if isinstance(tracker.manual_seed_count, int) else 0
+    assistance = result.get("trackingAssistance") or {}
+    assistance["barbellSeedUsed"] = manual_seed_count > 0
+    result["trackingAssistance"] = assistance
+    diagnostics["tracking_assistance"] = assistance
     result["barbellPath"] = tracking["barbellPath"]
+    tracking["diagnostics"]["manual_seed_count"] = manual_seed_count
     diagnostics["barbell_tracking"] = tracking["diagnostics"]
   except Exception as error:
     logger.warning("Barbell tracking failed for video %s: %s", video.get("id"), error)
@@ -520,7 +608,11 @@ def analyze_video(video_id: str) -> None:
     # Pose estimation is the first stage of the backend analysis flow.
     estimator = PoseEstimator()
     stage_started = time.perf_counter()
-    estimation = estimator.run(str(temp_file))
+    estimation = _apply_tracking_assistance(
+      file_path=str(temp_file),
+      video=video,
+      estimation=estimator.run(str(temp_file)),
+    )
     logger.info(
       "Estimated pose for video %s in %sms.",
       video_id,
@@ -536,6 +628,7 @@ def analyze_video(video_id: str) -> None:
 
     stage_started = time.perf_counter()
     result = _analyze_squat_result(video_id=video_id, video=video, estimation=estimation)
+    _attach_tracking_assistance(result, estimation)
     _annotate_pose_backend(
       result,
       estimation,
@@ -573,13 +666,18 @@ def analyze_video(video_id: str) -> None:
       fallback_config = replace(estimator.config, pose_backend="rtmpose")
       fallback_attempted = True
       try:
-        fallback_estimation = PoseEstimator(config=fallback_config).run(str(temp_file))
+        fallback_estimation = _apply_tracking_assistance(
+          file_path=str(temp_file),
+          video=video,
+          estimation=PoseEstimator(config=fallback_config).run(str(temp_file)),
+        )
         if fallback_estimation["frames"]:
           fallback_result = _analyze_squat_result(
             video_id=video_id,
             video=video,
             estimation=fallback_estimation,
           )
+          _attach_tracking_assistance(fallback_result, fallback_estimation)
           fallback_selected = _should_select_fallback_result(
             primary_result=result,
             fallback_result=fallback_result,

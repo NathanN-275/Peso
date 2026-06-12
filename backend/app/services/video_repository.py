@@ -14,10 +14,11 @@ VIDEO_BASE_COLUMNS = (
   "id,user_id,storage_path,source_type,exercise_type,view_type,status,duration_ms,"
   "save_state,saved_at,expires_at,created_at,updated_at"
 )
-VIDEO_STORAGE_COLUMNS = (
+VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING = (
   f"{VIDEO_BASE_COLUMNS},is_saved,discarded_at,thumbnail_path,playback_path,original_storage_path,"
   "storage_optimized_at,storage_optimization_error"
 )
+VIDEO_STORAGE_COLUMNS = f"{VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING},tracking_setup"
 ANALYSIS_RESULT_COLUMNS = "id,video_id,model_version,result_json,created_at"
 
 
@@ -37,14 +38,24 @@ class VideoRepository:
         .execute()
       )
     except Exception as error:
-      logger.warning("Falling back to legacy video query for video %s: %s", video_id, error)
-      response = (
-        self.client.table("videos")
-        .select(VIDEO_BASE_COLUMNS)
-        .eq("id", video_id)
-        .limit(1)
-        .execute()
-      )
+      logger.warning("Falling back to video query without tracking setup for video %s: %s", video_id, error)
+      try:
+        response = (
+          self.client.table("videos")
+          .select(VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING)
+          .eq("id", video_id)
+          .limit(1)
+          .execute()
+        )
+      except Exception as legacy_error:
+        logger.warning("Falling back to legacy video query for video %s: %s", video_id, legacy_error)
+        response = (
+          self.client.table("videos")
+          .select(VIDEO_BASE_COLUMNS)
+          .eq("id", video_id)
+          .limit(1)
+          .execute()
+        )
 
     return response.data[0] if response.data else None
 

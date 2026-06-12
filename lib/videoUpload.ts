@@ -3,6 +3,7 @@ import type { ImagePickerAsset } from 'expo-image-picker';
 import { Platform } from 'react-native';
 import type { VideoCompressorType } from 'react-native-compressor';
 import { CameraAngle, ExerciseOption } from '../src/constants/videoSetup';
+import type { TrackingSetup } from '../src/types/trackingSetup';
 import { supabase, supabaseConfigError } from './supabase';
 
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
@@ -27,6 +28,7 @@ type UploadVideoForAnalysisArgs = {
   asset: ImagePickerAsset;
   exercise: ExerciseOption;
   angle: CameraAngle;
+  trackingSetup?: TrackingSetup | null;
   onStatusChange?: (message: string | null) => void;
 };
 
@@ -523,6 +525,13 @@ function isMissingStorageRetentionMigrationError(error: unknown) {
   );
 }
 
+function isMissingTrackingSetupMigrationError(error: unknown) {
+  const message = formatSupabaseError(error).toLowerCase();
+  return message.includes('tracking_setup') && (
+    message.includes('does not exist') || message.includes('could not find')
+  );
+}
+
 async function resolveUploadSource(asset: UploadableVideoAsset): Promise<UploadSource> {
   // Convert the selected asset into the blob or file Supabase expects.
   const webAsset = asset as UploadableVideoAsset & WebImagePickerAsset;
@@ -652,6 +661,7 @@ export async function uploadVideoForAnalysis({
   asset,
   exercise,
   angle,
+  trackingSetup,
   onStatusChange,
 }: UploadVideoForAnalysisArgs): Promise<UploadVideoForAnalysisResult> {
   // Upload the video and create the DB row that analysis consumes.
@@ -731,6 +741,7 @@ export async function uploadVideoForAnalysis({
     uploaded_size_bytes: uploadSource.sizeBytes,
     was_compressed: preparedVideo.wasCompressed,
     storage_state: 'available',
+    ...(trackingSetup ? { tracking_setup: trackingSetup } : {}),
   };
 
   const { error: insertError } = await supabase
@@ -739,12 +750,13 @@ export async function uploadVideoForAnalysis({
     ;
 
   if (insertError) {
-    if (isMissingStorageRetentionMigrationError(insertError)) {
+    if (isMissingStorageRetentionMigrationError(insertError) || isMissingTrackingSetupMigrationError(insertError)) {
       const {
         original_size_bytes: _originalSizeBytes,
         uploaded_size_bytes: _uploadedSizeBytes,
         was_compressed: _wasCompressed,
         storage_state: _storageState,
+        tracking_setup: _trackingSetup,
         ...legacyInsertPayload
       } = insertPayload;
       const { error: legacyInsertError } = await supabase

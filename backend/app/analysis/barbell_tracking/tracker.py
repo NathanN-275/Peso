@@ -22,6 +22,7 @@ from .constants import (
   PATH_PRIOR_WINDOW_POINTS,
   RECENT_POINT_MAX_JUMP_PX,
   STALE_PATH_RESET_SECONDS,
+  SLEEVE_END_TRACKING_TARGET,
   TRACKING_SOURCE,
   TRACKING_TARGET,
 )
@@ -65,6 +66,28 @@ UNSAFE_HUB_REASONS = {
 class BarbellTracker:
   def __init__(self) -> None:
     self.bootstrap_diagnostics: dict[str, Any] = {"frames": []}
+    self.manual_seed_count = 0
+
+  @staticmethod
+  def _manual_prior_is_plausible(
+    prior: dict[str, float] | None,
+    *,
+    bounds: tuple[float, float, float, float],
+    shoulder: tuple[float, float] | None,
+    width: int,
+    height: int,
+  ) -> bool:
+    if not prior or float(prior.get("confidence") or 0.0) < 0.42:
+      return False
+    x = float(prior.get("x") or 0.0) * width
+    y = float(prior.get("y") or 0.0) * height
+    x0, y0, x1, y1 = bounds
+    margin = max(width, height) * 0.04
+    if not (x0 - margin <= x <= x1 + margin and y0 - margin <= y <= y1 + margin):
+      return False
+    if shoulder and math.hypot(x - shoulder[0], y - shoulder[1]) > max(width, height) * 0.34:
+      return False
+    return True
 
   def _plate_color_signature(
     self,
@@ -663,11 +686,14 @@ class BarbellTracker:
     processed_height: int | None,
     selected_side: str | None = None,
     rep_windows: list[dict[str, Any]] | None = None,
+    manual_barbell_priors: dict[int, dict[str, float]] | None = None,
     debug_output_path: str | None = None,
   ) -> dict[str, Any]:
     import cv2
 
     self.bootstrap_diagnostics = {"frames": []}
+    self.manual_seed_count = 0
+    normalized_manual_priors = manual_barbell_priors or {}
     started = time.perf_counter()
     if not Path(file_path).is_file():
       return _empty_result("video_unavailable")
@@ -920,6 +946,76 @@ class BarbellTracker:
           else _wrist_points_from_landmarks(landmarks, width=width, height=height)
         )
         candidate_bounds = bounds[:4]
+
+        manual_prior = normalized_manual_priors.get(frame_index)
+        if tracking_lock is None and self._manual_prior_is_plausible(
+          manual_prior,
+          bounds=candidate_bounds,
+          shoulder=shoulder,
+          width=width,
+          height=height,
+        ):
+          manual_point = (
+            float(manual_prior["x"]) * width,
+            float(manual_prior["y"]) * height,
+          )
+          manual_radius = max(height * 0.035, 12.0)
+          selected_plate = Candidate(
+            x=manual_point[0],
+            y=manual_point[1],
+            radius=manual_radius,
+            confidence=float(manual_prior["confidence"]),
+          )
+          sleeve_direction = (1.0, 0.0)
+          tracking_lock = _make_tracking_lock(
+            cv2,
+            gray,
+            plate=selected_plate,
+            collar=manual_point,
+            sleeve_direction=sleeve_direction,
+            final_bar_point=manual_point,
+            display_target_point=manual_point,
+            final_bar_confidence=float(manual_prior["confidence"]),
+            final_bar_reason=None,
+            shoulder=shoulder,
+            target_kind=SLEEVE_END_TRACKING_TARGET,
+          )
+          tracking_lock.update(
+            {
+              "predicted_collar": manual_point,
+              "refined_collar": manual_point,
+              "collar_geometry_valid": True,
+              "fallback_used": False,
+              "final_bar_source": "manual_collar_prior",
+              "collar_descriptor_score": float(manual_prior["confidence"]),
+            }
+          )
+          tracking_mode = "manual_seed"
+          has_ever_locked = True
+          self.manual_seed_count += 1
+          final_bar_point = manual_point
+          final_bar_confidence = float(manual_prior["confidence"])
+          final_bar_reason = None
+          final_bar_source = "manual_collar_prior"
+          predicted_collar = manual_point
+          refined_collar = manual_point
+          collar_geometry_valid = True
+          point = {
+            "time": timestamp,
+            "x": manual_point[0] / width,
+            "y": manual_point[1] / height,
+            "confidence": final_bar_confidence,
+          }
+          samples.append(point)
+          accepted_points_px.append(manual_point)
+          historical_target_point = manual_point
+          last_accepted_timestamp = timestamp
+          detected_count += 1
+          if current_rep_index is not None:
+            rep_detected_counts[current_rep_index] = rep_detected_counts.get(current_rep_index, 0) + 1
+          previous_gray = gray
+          frame_index += 1
+          continue
 
         if tracking_lock and previous_gray is not None and consecutive_local_failures <= MAX_LOCAL_TRACKING_FAILURES:
           local_shoulder = shoulder

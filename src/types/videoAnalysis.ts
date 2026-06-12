@@ -1,3 +1,5 @@
+import type { TrackingAssistance } from './trackingSetup';
+
 export type VideoAnalysisStatus = 'uploaded' | 'queued' | 'processing' | 'completed' | 'failed';
 
 export type SaveState = 'pending' | 'saved';
@@ -285,7 +287,9 @@ export type VideoAnalysisDiagnostics = {
     fresh_hough_correction_count?: number;
     max_point_gap_seconds?: number;
     effective_tracking_fps?: number;
+    manual_seed_count?: number;
   };
+  tracking_assistance?: TrackingAssistance;
 };
 
 export type VideoAnalysisResult = {
@@ -301,6 +305,7 @@ export type VideoAnalysisResult = {
   processedVideoHeight?: number | null;
   poseFrames?: VideoPoseFrame[];
   barbellPath?: BarbellPath;
+  trackingAssistance?: TrackingAssistance;
   analysis_limited?: boolean;
   rep_count: number;
   reps: VideoAnalysisRep[];

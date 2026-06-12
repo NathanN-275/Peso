@@ -319,6 +319,13 @@ export default function AnalysisReviewScreen({
   const fallbackUnavailableReason =
     result.fallback_unavailable_reason ?? result.diagnostics?.fallback_unavailable_reason;
   const landmarkModel = result.landmark_model ?? result.diagnostics?.landmark_model;
+  const trackingAssistance = result.trackingAssistance ?? result.diagnostics?.tracking_assistance;
+  const trackingAssistanceLabel = trackingAssistance?.actualMode === 'pin_assisted'
+    ? 'Pin-assisted'
+    : trackingAssistance?.requestedMode === 'pins'
+      && trackingAssistance.actualMode === 'automatic_fallback'
+      ? 'Automatic fallback'
+      : null;
 
   useEffect(() => {
     setPoseOverlayEnabled(true);
@@ -576,6 +583,23 @@ export default function AnalysisReviewScreen({
                     contentFit="cover"
                   />
                 ) : null}
+                {trackingAssistanceLabel ? (
+                  <View style={styles.trackingAssistanceBadge} pointerEvents="none">
+                    <Ionicons
+                      name={trackingAssistance?.used ? 'locate' : 'warning-outline'}
+                      size={14}
+                      color={trackingAssistance?.used ? '#8CC0FF' : '#FFD080'}
+                    />
+                    <Text
+                      style={[
+                        styles.trackingAssistanceText,
+                        !trackingAssistance?.used && styles.trackingFallbackText,
+                      ]}
+                    >
+                      {trackingAssistanceLabel}
+                    </Text>
+                  </View>
+                ) : null}
               </>
             ) : (
               <View style={styles.mediaUnavailable}>
@@ -680,6 +704,10 @@ export default function AnalysisReviewScreen({
               <Text style={styles.debugText}>Stale analysis: {analysisStale ? 'yes' : 'no'}</Text>
               <Text style={styles.debugText}>Analysis incomplete: {analysisIncomplete ? 'yes' : 'no'}</Text>
               <Text style={styles.debugText}>Pose backend: {poseBackend ?? 'n/a'}</Text>
+              <Text style={styles.debugText}>Tracking assistance: {trackingAssistance?.actualMode ?? 'automatic'}</Text>
+              {trackingAssistance?.fallbackReason ? (
+                <Text style={styles.debugText}>Tracking fallback: {trackingAssistance.fallbackReason}</Text>
+              ) : null}
               <Text style={styles.debugText}>Fallback model: {fallbackModel === 'rtmpose' ? 'RTMPose' : 'n/a'}</Text>
               <Text style={styles.debugText}>Fallback recommended: {fallbackRecommended ? 'yes' : 'no'}</Text>
               <Text style={styles.debugText}>Fallback attempted: {fallbackAttempted ? 'yes' : 'no'}</Text>
@@ -986,6 +1014,27 @@ const styles = StyleSheet.create({
     borderRadius: 29,
     backgroundColor: 'rgba(0, 0, 0, 0.48)',
   },
+  trackingAssistanceBadge: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#315A88',
+    backgroundColor: 'rgba(8, 20, 35, 0.88)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  trackingAssistanceText: {
+    color: '#8CC0FF',
+    fontSize: 12,
+    lineHeight: 15,
+    fontWeight: '700',
+  },
+  trackingFallbackText: { color: '#FFD080' },
   bottomPanel: {
     minHeight: 144,
     borderTopWidth: 1,
