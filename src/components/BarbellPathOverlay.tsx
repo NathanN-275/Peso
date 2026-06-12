@@ -89,7 +89,9 @@ export default function BarbellPathOverlay({
         return <Line key={`${previous.time}-${point.time}`} from={previous} to={point} />;
       })}
       <View style={[styles.startPoint, { left: firstPoint.x - 3, top: firstPoint.y - 3 }]} />
-      <View style={[styles.currentPoint, { left: lastPoint.x - 7, top: lastPoint.y - 7 }]} />
+      {currentPoint ? (
+        <View style={[styles.currentPoint, { left: lastPoint.x - 7, top: lastPoint.y - 7 }]} />
+      ) : null}
     </View>
   );
 }

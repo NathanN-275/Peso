@@ -33,16 +33,17 @@ def _score_plate_candidate(
 
   if shoulder:
     horizontal_offset = candidate.x - shoulder[0]
-    if horizontal_offset > width * 0.18:
-      score -= min((horizontal_offset - (width * 0.18)) / max(width * 0.12, 1.0), 1.0) * (
-        1.05 if bootstrapping else 0.65
-      )
+    horizontal_distance_ratio = abs(horizontal_offset) / max(width, 1.0)
+    horizontal_band_score = max(0.0, 1.0 - abs(horizontal_distance_ratio - 0.06) / 0.22)
+    score += horizontal_band_score * (0.42 if bootstrapping else 0.2)
+    if horizontal_distance_ratio > 0.44:
+      score -= min((horizontal_distance_ratio - 0.44) / 0.08, 1.0) * 0.8
 
     shoulder_distance = math.hypot(candidate.x - shoulder[0], candidate.y - shoulder[1])
     score += max(0.0, 0.38 * (1.0 - shoulder_distance / (max(width, height) * 0.42)))
     vertical_offset = (shoulder[1] - candidate.y) / height
-    ideal_offset = 0.06
-    tolerance = 0.16
+    ideal_offset = 0.11
+    tolerance = 0.13
     band_score = max(0.0, 1.0 - (abs(vertical_offset - ideal_offset) / tolerance))
     score += band_score * (1.0 if bootstrapping else 0.5)
 
@@ -123,6 +124,9 @@ def _select_candidate(
     ]
     if preferred:
       candidates = preferred
+    plate_sized = [candidate for candidate in candidates if candidate.radius >= max(min(width, height) * 0.07, 1.0)]
+    if plate_sized:
+      candidates = plate_sized
 
   return max(
     candidates,
@@ -145,10 +149,14 @@ def _plate_rejection_reason(
   height: int,
   bootstrapping: bool,
 ) -> str | None:
+  max_bootstrap_radius_ratio = 0.29 if width <= 300 and height > width else 0.23
+  if bootstrapping and candidate.radius > min(width, height) * max_bootstrap_radius_ratio:
+    return "generic_circle_too_large"
+
   if shoulder:
     offset = _shoulder_relative_offset(candidate, shoulder)
     if offset:
-      if abs(offset[0]) > width * 0.34:
+      if abs(offset[0]) > width * 0.46:
         return "outside_plate_zone"
       if offset[1] < -height * 0.19:
         return "too_high_above_shoulder"

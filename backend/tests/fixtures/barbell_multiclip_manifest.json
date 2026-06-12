@@ -1,0 +1,63 @@
+{
+  "coordinate_space": "processed_frame",
+  "tolerance_px": 12,
+  "maximum_visible_gap_seconds": 0.5,
+  "clips": [
+    {
+      "video": "IMG_0012.MOV",
+      "processed_width": 270,
+      "processed_height": 480,
+      "rep_count": 3,
+      "target": "near_plate_collar_center",
+      "camera_case": "side"
+    },
+    {
+      "video": "IMG_0013.MOV",
+      "processed_width": 405,
+      "processed_height": 720,
+      "rep_count": 3,
+      "target": "near_plate_collar_center",
+      "camera_case": "side"
+    },
+    {
+      "video": "IMG_0054.MOV",
+      "processed_width": 270,
+      "processed_height": 480,
+      "rep_count": 1,
+      "target": "near_plate_collar_center",
+      "camera_case": "wide_side"
+    },
+    {
+      "video": "IMG_2721.mov",
+      "processed_width": 405,
+      "processed_height": 720,
+      "rep_count": 3,
+      "target": "near_plate_collar_center",
+      "camera_case": "oblique"
+    },
+    {
+      "video": "IMG_2722.mov",
+      "processed_width": 270,
+      "processed_height": 480,
+      "rep_count": 1,
+      "target": "near_plate_collar_center",
+      "camera_case": "front_oblique"
+    },
+    {
+      "video": "IMG_2723.mov",
+      "processed_width": 405,
+      "processed_height": 720,
+      "rep_count": 2,
+      "target": "near_sleeve_end_center",
+      "camera_case": "unloaded_side"
+    },
+    {
+      "video": "IMG_7569.MOV",
+      "processed_width": 270,
+      "processed_height": 480,
+      "rep_count": 1,
+      "target": "near_plate_collar_center",
+      "camera_case": "low_oblique"
+    }
+  ]
+}

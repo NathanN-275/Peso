@@ -5,6 +5,8 @@ from typing import Any
 
 from .constants import MAX_OUTLIER_VELOCITY
 
+MAX_SMOOTHING_TIME_GAP_SECONDS = 0.5
+
 
 def _interpolate_missing(samples: list[dict[str, Any] | None]) -> tuple[list[dict[str, Any]], int]:
   # Strict hub tracking treats missing samples as uncertainty. Do not create
@@ -21,6 +23,10 @@ def _remove_motion_outliers(points: list[dict[str, Any]]) -> tuple[list[dict[str
 
   for point in points[1:]:
     previous = filtered[-1]
+    if float(point["time"]) - float(previous["time"]) > MAX_SMOOTHING_TIME_GAP_SECONDS:
+      filtered.append(point)
+      continue
+
     distance = math.hypot(float(point["x"]) - float(previous["x"]), float(point["y"]) - float(previous["y"]))
     if distance > MAX_OUTLIER_VELOCITY:
       removed_count += 1
@@ -35,7 +41,12 @@ def _smooth_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
   smoothed: list[dict[str, Any]] = []
 
   for index, point in enumerate(points):
-    window = points[max(index - 1, 0):min(index + 2, len(points))]
+    point_time = float(point["time"])
+    window = [
+      item
+      for item in points[max(index - 1, 0):min(index + 2, len(points))]
+      if abs(float(item["time"]) - point_time) <= MAX_SMOOTHING_TIME_GAP_SECONDS
+    ]
     confidence_sum = sum(max(float(item["confidence"]), 0.01) for item in window)
     smoothed.append(
       {

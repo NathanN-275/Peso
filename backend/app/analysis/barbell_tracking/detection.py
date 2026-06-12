@@ -4,7 +4,11 @@ import math
 from typing import Any
 
 from .candidate import Candidate
-from .constants import MAX_CANDIDATES_PER_FRAME, MAX_DETECTION_CROP_WIDTH
+from .constants import (
+  MAX_CANDIDATES_PER_FRAME,
+  MAX_DETECTION_CROP_WIDTH,
+  MIN_SLEEVE_END_DESCRIPTOR_SCORE,
+)
 
 WRIST_REJECTION_RADIUS_PX = 40.0
 VISIBLE_LANDMARK_THRESHOLD = 0.35
@@ -37,19 +41,62 @@ def _detect_circle_candidates(
     minRadius=max(8, int(min_dimension * 0.025)),
     maxRadius=max(12, int(min_dimension * 0.34)),
   )
-
-  if circles is None:
-    return []
-
-  return [
+  candidates = [
     Candidate(
       x=float(circle[0]) + offset_x,
       y=float(circle[1]) + offset_y,
       radius=float(circle[2]),
       confidence=0.62,
     )
-    for circle in circles[0]
+    for circle in (circles[0] if circles is not None else [])
   ]
+
+  hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+  kernel_size = max(5, int(round(min_dimension * 0.025)))
+  if kernel_size % 2 == 0:
+    kernel_size += 1
+  kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+  hue_bands = ((0, 18), (18, 36), (36, 100), (100, 138), (138, 179))
+  for hue_min, hue_max in hue_bands:
+    color_mask = cv2.inRange(hsv, (hue_min, 22, 20), (hue_max, 255, 240))
+    color_mask = cv2.morphologyEx(color_mask, cv2.MORPH_CLOSE, kernel)
+    contours = cv2.findContours(color_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
+    for contour in contours:
+      area = float(cv2.contourArea(contour))
+      perimeter = float(cv2.arcLength(contour, True))
+      if area <= 0.0 or perimeter <= 0.0:
+        continue
+      (center_x, center_y), radius = cv2.minEnclosingCircle(contour)
+      if radius < min_dimension * 0.055 or radius > min_dimension * 0.34:
+        continue
+      _, _, box_width, box_height = cv2.boundingRect(contour)
+      aspect_ratio = box_width / max(box_height, 1)
+      circularity = (4.0 * math.pi * area) / max(perimeter * perimeter, 1.0)
+      fill_ratio = area / max(math.pi * radius * radius, 1.0)
+      if not 0.55 <= aspect_ratio <= 1.55 or circularity < 0.34 or fill_ratio < 0.28:
+        continue
+      confidence = min(0.58 + (circularity * 0.2) + (fill_ratio * 0.18), 0.92)
+      contour_candidate = Candidate(
+        x=float(center_x) + offset_x,
+        y=float(center_y) + offset_y,
+        radius=float(radius),
+        confidence=confidence,
+      )
+      duplicate_index = next(
+        (
+          index
+          for index, candidate in enumerate(candidates)
+          if math.hypot(candidate.x - contour_candidate.x, candidate.y - contour_candidate.y)
+          <= max(min(candidate.radius, contour_candidate.radius) * 0.24, 6.0)
+        ),
+        None,
+      )
+      if duplicate_index is None:
+        candidates.append(contour_candidate)
+      elif contour_candidate.confidence > candidates[duplicate_index].confidence:
+        candidates[duplicate_index] = contour_candidate
+
+  return candidates
 
 
 def _visible_landmark_point(
@@ -122,7 +169,7 @@ def _crop_bounds_from_anchor(
   anchor_label = "shoulder" if shoulder else "pose_bounds"
   if shoulder:
     shoulder_x, shoulder_y = shoulder
-    x_margin = width * 0.34
+    x_margin = width * 0.46
     y_margin_above = height * 0.24
     y_margin_below = height * 0.2
     crop_min_x = shoulder_x - x_margin
@@ -179,8 +226,12 @@ def _detection_crop(
 
 
 def _near_wrist(candidate: Candidate, wrist_points: list[tuple[float, float]]) -> bool:
+  rejection_radius = min(
+    WRIST_REJECTION_RADIUS_PX,
+    max(12.0, candidate.radius * 0.28),
+  )
   return any(
-    math.hypot(candidate.x - wrist_x, candidate.y - wrist_y) <= WRIST_REJECTION_RADIUS_PX
+    math.hypot(candidate.x - wrist_x, candidate.y - wrist_y) <= rejection_radius
     for wrist_x, wrist_y in wrist_points
   )
 
@@ -258,3 +309,173 @@ def _detect_crop_candidates(
       "wrist_rejected_count": wrist_rejected_count,
     },
   )
+
+
+def _point_to_axis_distance(
+  point: tuple[float, float],
+  origin: tuple[float, float],
+  direction: tuple[float, float],
+) -> tuple[float, float]:
+  offset_x = point[0] - origin[0]
+  offset_y = point[1] - origin[1]
+  projection = (offset_x * direction[0]) + (offset_y * direction[1])
+  perpendicular = abs((offset_x * -direction[1]) + (offset_y * direction[0]))
+  return perpendicular, projection
+
+
+def _detect_sleeve_end_candidates(
+  cv2: Any,
+  frame: Any,
+  *,
+  shoulder: tuple[float, float] | None,
+  wrist_points: list[tuple[float, float]],
+) -> list[Candidate]:
+  """Detect the exposed free end of an unloaded sleeve.
+
+  A valid end cap must terminate a long edge that runs back toward the selected
+  shoulder and passes near the selected wrist. This deliberately excludes
+  generic rack holes and other small circles.
+  """
+  if shoulder is None or not wrist_points:
+    return []
+
+  height, width = frame.shape[:2]
+  max_dimension = max(width, height)
+  min_dimension = min(width, height)
+  x0 = max(int(round(shoulder[0] - (width * 0.45))), 0)
+  x1 = min(int(round(shoulder[0] + (width * 0.45))), width)
+  y0 = max(int(round(shoulder[1] - (height * 0.52))), 0)
+  y1 = min(int(round(shoulder[1] + (height * 0.1))), height)
+  if x1 <= x0 or y1 <= y0:
+    return []
+
+  crop = frame[y0:y1, x0:x1]
+  local_shoulder = (shoulder[0] - x0, shoulder[1] - y0)
+  local_wrists = [(wrist[0] - x0, wrist[1] - y0) for wrist in wrist_points]
+  gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+  blurred = cv2.GaussianBlur(gray, (5, 5), 1.2)
+  edges = cv2.Canny(blurred, 45, 130)
+  lines = cv2.HoughLinesP(
+    edges,
+    1,
+    math.pi / 180,
+    threshold=max(16, int(min_dimension * 0.04)),
+    minLineLength=max(22, int(min_dimension * 0.065)),
+    maxLineGap=max(6, int(min_dimension * 0.02)),
+  )
+  if lines is None:
+    return []
+
+  proposals: list[dict[str, Any]] = []
+  for raw_line in lines[:, 0]:
+    line_x1, line_y1, line_x2, line_y2 = (float(value) for value in raw_line)
+    line_length = math.hypot(line_x2 - line_x1, line_y2 - line_y1)
+    if line_length <= 0:
+      continue
+    endpoint_1 = (line_x1, line_y1)
+    endpoint_2 = (line_x2, line_y2)
+    distance_1 = math.hypot(local_shoulder[0] - line_x1, local_shoulder[1] - line_y1)
+    distance_2 = math.hypot(local_shoulder[0] - line_x2, local_shoulder[1] - line_y2)
+    outer_endpoint, inner_endpoint = (
+      (endpoint_1, endpoint_2)
+      if distance_1 >= distance_2
+      else (endpoint_2, endpoint_1)
+    )
+    direction = (
+      (inner_endpoint[0] - outer_endpoint[0]) / line_length,
+      (inner_endpoint[1] - outer_endpoint[1]) / line_length,
+    )
+    outer_shoulder_distance = math.hypot(
+      local_shoulder[0] - outer_endpoint[0],
+      local_shoulder[1] - outer_endpoint[1],
+    )
+    if outer_shoulder_distance < max_dimension * 0.1 or outer_shoulder_distance > max_dimension * 0.52:
+      continue
+    shoulder_direction = (
+      (local_shoulder[0] - outer_endpoint[0]) / outer_shoulder_distance,
+      (local_shoulder[1] - outer_endpoint[1]) / outer_shoulder_distance,
+    )
+    alignment = (direction[0] * shoulder_direction[0]) + (direction[1] * shoulder_direction[1])
+    if alignment < 0.9:
+      continue
+    wrist_measurements = [
+      _point_to_axis_distance(wrist, outer_endpoint, direction)
+      for wrist in local_wrists
+    ]
+    wrist_axis_distance, wrist_projection = min(wrist_measurements, key=lambda item: item[0])
+    if wrist_axis_distance > max(30.0, min_dimension * 0.08):
+      continue
+    if wrist_projection < line_length * 0.45 or wrist_projection > outer_shoulder_distance + 35.0:
+      continue
+    proposals.append(
+      {
+        "outer": outer_endpoint,
+        "direction": direction,
+        "length": line_length,
+        "score": (
+          (alignment * 0.5)
+          + (min(line_length / max(min_dimension * 0.24, 1.0), 1.0) * 0.3)
+          + (max(0.0, 1.0 - (wrist_axis_distance / max(30.0, min_dimension * 0.08))) * 0.2)
+        ),
+      }
+    )
+
+  output: list[Candidate] = []
+  cluster_distance = max(24.0, min_dimension * 0.07)
+  for proposal in proposals:
+    group = [
+      other
+      for other in proposals
+      if math.hypot(
+        proposal["outer"][0] - other["outer"][0],
+        proposal["outer"][1] - other["outer"][1],
+      ) <= cluster_distance
+      and abs(
+        (proposal["direction"][0] * other["direction"][0])
+        + (proposal["direction"][1] * other["direction"][1])
+      ) >= 0.94
+    ]
+    if len(group) < 2:
+      continue
+    weight_sum = sum(max(float(item["score"]), 0.01) for item in group)
+    outer_x = sum(item["outer"][0] * item["score"] for item in group) / weight_sum
+    outer_y = sum(item["outer"][1] * item["score"] for item in group) / weight_sum
+    direction_x = sum(item["direction"][0] * item["score"] for item in group) / weight_sum
+    direction_y = sum(item["direction"][1] * item["score"] for item in group) / weight_sum
+    direction_length = max(math.hypot(direction_x, direction_y), 1e-6)
+    direction_x /= direction_length
+    direction_y /= direction_length
+    refinement_distance = min(max(sum(item["length"] for item in group) / len(group) * 0.25, 12.0), 28.0)
+    confidence = min(
+      0.45
+      + (min(len(group), 4) * 0.08)
+      + ((sum(item["score"] for item in group) / len(group)) * 0.18),
+      1.0,
+    )
+    if confidence < MIN_SLEEVE_END_DESCRIPTOR_SCORE:
+      continue
+    target_x = outer_x - (direction_x * refinement_distance)
+    target_y = outer_y - (direction_y * refinement_distance)
+    patch_x0 = max(int(round(target_x)) - 6, 0)
+    patch_y0 = max(int(round(target_y)) - 6, 0)
+    patch_x1 = min(int(round(target_x)) + 7, gray.shape[1])
+    patch_y1 = min(int(round(target_y)) + 7, gray.shape[0])
+    target_patch = gray[patch_y0:patch_y1, patch_x0:patch_x1]
+    if target_patch.size == 0 or float(cv2.mean(target_patch)[0]) < 110.0:
+      continue
+    output.append(
+      Candidate(
+        x=target_x + x0,
+        y=target_y + y0,
+        radius=28.0,
+        confidence=confidence,
+      )
+    )
+
+  output.sort(key=lambda candidate: candidate.confidence, reverse=True)
+  deduplicated: list[Candidate] = []
+  for candidate in output:
+    if any(math.hypot(candidate.x - kept.x, candidate.y - kept.y) < 20.0 for kept in deduplicated):
+      continue
+    deduplicated.append(candidate)
+  return deduplicated[:4]

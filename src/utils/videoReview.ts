@@ -53,6 +53,7 @@ export type SquatLandmarkName = (typeof SQUAT_LANDMARK_NAMES)[number];
 const SQUAT_LANDMARK_SET = new Set<string>(SQUAT_LANDMARK_NAMES);
 const CONFIDENCE_THRESHOLD = 0.35;
 const ESTIMATED_CONFIDENCE_THRESHOLD = 0.15;
+const MAX_BARBELL_POINT_GAP_SECONDS = 0.5;
 const SQUAT_LABELS: Record<SquatLandmarkName, string> = {
   left_shoulder: 'Shoulder',
   right_shoulder: 'Shoulder',
@@ -190,7 +191,7 @@ export function findInterpolatedBarbellPathPoint(
   const lastPoint = points[points.length - 1];
 
   if (currentTime >= lastPoint.time) {
-    return lastPoint;
+    return currentTime - lastPoint.time <= MAX_BARBELL_POINT_GAP_SECONDS ? lastPoint : null;
   }
 
   let low = 0;
@@ -215,10 +216,8 @@ export function findInterpolatedBarbellPathPoint(
 
   const pointGap = nextPoint.time - previousPoint.time;
 
-  if (pointGap <= 0 || pointGap > 0.5) {
-    return Math.abs(previousPoint.time - currentTime) <= Math.abs(nextPoint.time - currentTime)
-      ? previousPoint
-      : nextPoint;
+  if (pointGap <= 0 || pointGap > MAX_BARBELL_POINT_GAP_SECONDS) {
+    return null;
   }
 
   const progress = Math.min(Math.max((currentTime - previousPoint.time) / pointGap, 0), 1);

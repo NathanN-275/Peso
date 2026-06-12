@@ -257,8 +257,8 @@ export default function AnalysisReviewScreen({
     [currentTime, result.poseFrames]
   );
   const videoSize = {
-    width: result.videoWidth || 1080,
-    height: result.videoHeight || 1920,
+    width: result.processedVideoWidth || result.videoWidth || 1080,
+    height: result.processedVideoHeight || result.videoHeight || 1920,
   };
   const barbellPath = useMemo(() => {
     const payload = result as BarbellPathCarrier;

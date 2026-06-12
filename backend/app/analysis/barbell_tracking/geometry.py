@@ -15,7 +15,7 @@ from .constants import (
 )
 
 MIN_HUB_CONFIDENCE = 0.80
-HUB_CENTRAL_REGION_RATIO = 0.36
+HUB_CENTRAL_REGION_RATIO = 0.58
 
 
 def _estimate_collar_from_plate(
@@ -27,7 +27,10 @@ def _estimate_collar_from_plate(
   previous: dict[str, float] | None = None,
 ) -> tuple[tuple[float, float], tuple[float, float]]:
   direction_x, direction_y = DEFAULT_SLEEVE_DIRECTION
-  if previous and previous.get("collar_direction_x", 0.0) > 0:
+  if shoulder and plate.x < shoulder[0]:
+    direction_x, direction_y = -DEFAULT_SLEEVE_DIRECTION[0], -DEFAULT_SLEEVE_DIRECTION[1]
+
+  if previous and abs(previous.get("collar_direction_x", 0.0)) > 0.01:
     previous_direction_x = previous["collar_direction_x"]
     previous_direction_y = previous.get("collar_direction_y", DEFAULT_SLEEVE_DIRECTION[1])
     previous_magnitude = max(math.hypot(previous_direction_x, previous_direction_y), 0.01)
@@ -35,19 +38,14 @@ def _estimate_collar_from_plate(
       previous_direction_x / previous_magnitude,
       previous_direction_y / previous_magnitude,
     )
-    default_magnitude = max(math.hypot(*DEFAULT_SLEEVE_DIRECTION), 0.01)
-    default_direction = (
-      DEFAULT_SLEEVE_DIRECTION[0] / default_magnitude,
-      DEFAULT_SLEEVE_DIRECTION[1] / default_magnitude,
-    )
-    if (previous_direction[0] * default_direction[0]) + (previous_direction[1] * default_direction[1]) >= 0.5:
+    current_magnitude = max(math.hypot(direction_x, direction_y), 0.01)
+    current_direction = (direction_x / current_magnitude, direction_y / current_magnitude)
+    if (previous_direction[0] * current_direction[0]) + (previous_direction[1] * current_direction[1]) >= 0.5:
       direction_x, direction_y = previous_direction
 
   magnitude = max(math.hypot(direction_x, direction_y), 0.01)
   direction_x /= magnitude
   direction_y /= magnitude
-  if direction_x < 0.82:
-    direction_x, direction_y = DEFAULT_SLEEVE_DIRECTION
   offset = min(
     max(plate.radius * COLLAR_OFFSET_RATIO, plate.radius * MIN_COLLAR_OFFSET_RATIO),
     plate.radius * MAX_COLLAR_OFFSET_RATIO,
@@ -75,7 +73,8 @@ def _validate_collar_geometry(
   if distance < min_distance or distance > max_distance:
     return "collar_too_far_from_plate"
 
-  if vector_x < plate.radius * 0.04:
+  sleeve_projection = (vector_x * sleeve_direction[0]) + (vector_y * sleeve_direction[1])
+  if sleeve_projection < plate.radius * 0.04:
     return "collar_behind_plate"
 
   magnitude = max(distance, 0.01)
@@ -91,6 +90,56 @@ def _validate_collar_geometry(
       return "collar_plate_relative_jump"
 
   return None
+
+
+def _score_collar_patch(
+  cv2: Any,
+  frame: Any,
+  *,
+  collar: tuple[float, float],
+  plate: Candidate,
+  sleeve_direction: tuple[float, float],
+) -> float:
+  height, width = frame.shape[:2]
+  radius = max(int(round(plate.radius * 0.16)), 8)
+  x0 = max(int(round(collar[0])) - radius, 0)
+  y0 = max(int(round(collar[1])) - radius, 0)
+  x1 = min(int(round(collar[0])) + radius + 1, width)
+  y1 = min(int(round(collar[1])) + radius + 1, height)
+  if x1 <= x0 or y1 <= y0:
+    return 0.0
+
+  crop = frame[y0:y1, x0:x1]
+  gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+  gray = cv2.GaussianBlur(gray, (3, 3), 0)
+  edges = cv2.Canny(gray, 55, 145)
+  edge_density = float(cv2.countNonZero(edges)) / max(edges.shape[0] * edges.shape[1], 1)
+  edge_score = min(edge_density / 0.12, 1.0)
+
+  lines = cv2.HoughLinesP(
+    edges,
+    1,
+    math.pi / 180,
+    threshold=max(6, int(radius * 0.55)),
+    minLineLength=max(5, int(radius * 0.55)),
+    maxLineGap=max(2, int(radius * 0.25)),
+  )
+  axis_score = 0.0
+  if lines is not None:
+    sleeve_magnitude = max(math.hypot(sleeve_direction[0], sleeve_direction[1]), 0.01)
+    sleeve_axis = (
+      sleeve_direction[0] / sleeve_magnitude,
+      sleeve_direction[1] / sleeve_magnitude,
+    )
+    for line in lines[:, 0]:
+      dx = float(line[2] - line[0])
+      dy = float(line[3] - line[1])
+      magnitude = max(math.hypot(dx, dy), 0.01)
+      axis_dot = abs(((dx / magnitude) * sleeve_axis[0]) + ((dy / magnitude) * sleeve_axis[1]))
+      axis_score = max(axis_score, axis_dot)
+
+  local_contrast = float(gray.max() - gray.min()) / 255.0
+  return round(min((edge_score * 0.45) + (axis_score * 0.35) + (local_contrast * 0.2), 1.0), 3)
 
 
 def _point_inside_plate(
@@ -170,9 +219,9 @@ def _detect_hub_point(
         continue
       center_distance = math.hypot(hub[0] - plate.x, hub[1] - plate.y)
       radius_ratio = float(circle[2]) / max(plate.radius, 1.0)
-      score = 0.78
-      score += max(0.0, 0.24 * (1.0 - center_distance / max(plate.radius * 0.28, 1.0)))
-      score += max(0.0, 0.06 * (1.0 - abs(radius_ratio - 0.12) / 0.16))
+      score = 0.68
+      score += max(0.0, 0.12 * (1.0 - center_distance / max(plate.radius * 0.42, 1.0)))
+      score += max(0.0, 0.22 * (1.0 - abs(radius_ratio - 0.11) / 0.12))
       if previous and "final_bar_x" in previous and "final_bar_y" in previous:
         previous_distance = math.hypot(hub[0] - previous["final_bar_x"], hub[1] - previous["final_bar_y"])
         score += max(0.0, 0.08 * (1.0 - previous_distance / max(plate.radius * 0.45, 1.0)))

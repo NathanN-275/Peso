@@ -32,28 +32,94 @@ def _mean_point(
   )
 
 
+def _point_for_landmark(
+  landmarks: dict[str, dict[str, float]],
+  name: str,
+  *,
+  width: int,
+  height: int,
+) -> tuple[float, float] | None:
+  point = landmarks.get(name)
+  if not point:
+    return None
+
+  return (
+    float(point.get("x", 0.0)) * width,
+    float(point.get("y", 0.0)) * height,
+  )
+
+
+def _side_point(
+  landmarks: dict[str, dict[str, float]],
+  selected_side: str | None,
+  joint: str,
+  *,
+  width: int,
+  height: int,
+) -> tuple[float, float] | None:
+  if selected_side not in {"left", "right"}:
+    return None
+
+  return _point_for_landmark(landmarks, f"{selected_side}_{joint}", width=width, height=height)
+
+
+def _side_wrist_points(
+  pose_frame: dict[str, Any] | None,
+  *,
+  selected_side: str | None,
+  width: int,
+  height: int,
+) -> list[tuple[float, float]]:
+  landmarks = _visible_landmarks(pose_frame)
+  point = _side_point(landmarks, selected_side, "wrist", width=width, height=height)
+  if point:
+    return [point]
+
+  points: list[tuple[float, float]] = []
+  for name in ("left_wrist", "right_wrist"):
+    point = _point_for_landmark(landmarks, name, width=width, height=height)
+    if point is not None:
+      points.append(point)
+  return points
+
+
 def _pose_bounds(
   pose_frame: dict[str, Any] | None,
   *,
   width: int,
   height: int,
+  selected_side: str | None = None,
 ) -> tuple[float, float, float, float, tuple[float, float] | None]:
   landmarks = _visible_landmarks(pose_frame)
   if not landmarks:
     return 0.0, 0.0, float(width), float(height), None
 
-  shoulder = _mean_point(landmarks, ("left_shoulder", "right_shoulder"), width=width, height=height)
-  hip = _mean_point(landmarks, ("left_hip", "right_hip"), width=width, height=height)
-  upper_names = (
-    "left_shoulder",
-    "right_shoulder",
-    "left_elbow",
-    "right_elbow",
-    "left_wrist",
-    "right_wrist",
-    "left_hip",
-    "right_hip",
+  shoulder = (
+    _side_point(landmarks, selected_side, "shoulder", width=width, height=height)
+    or _mean_point(landmarks, ("left_shoulder", "right_shoulder"), width=width, height=height)
   )
+  hip = (
+    _side_point(landmarks, selected_side, "hip", width=width, height=height)
+    or _mean_point(landmarks, ("left_hip", "right_hip"), width=width, height=height)
+  )
+  if selected_side in {"left", "right"}:
+    upper_names = (
+      f"{selected_side}_shoulder",
+      f"{selected_side}_elbow",
+      f"{selected_side}_wrist",
+      f"{selected_side}_hip",
+    )
+  else:
+    upper_names = (
+      "left_shoulder",
+      "right_shoulder",
+      "left_elbow",
+      "right_elbow",
+      "left_wrist",
+      "right_wrist",
+      "left_hip",
+      "right_hip",
+    )
   upper_points = [landmarks[name] for name in upper_names if name in landmarks]
 
   if not upper_points:
