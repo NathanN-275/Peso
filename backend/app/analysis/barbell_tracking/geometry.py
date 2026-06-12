@@ -15,7 +15,7 @@ from .constants import (
 )
 
 MIN_HUB_CONFIDENCE = 0.80
-HUB_CENTRAL_REGION_RATIO = 0.36
+HUB_CENTRAL_REGION_RATIO = 0.58
 
 
 def _estimate_collar_from_plate(
@@ -27,7 +27,10 @@ def _estimate_collar_from_plate(
   previous: dict[str, float] | None = None,
 ) -> tuple[tuple[float, float], tuple[float, float]]:
   direction_x, direction_y = DEFAULT_SLEEVE_DIRECTION
-  if previous and previous.get("collar_direction_x", 0.0) > 0:
+  if shoulder and plate.x < shoulder[0]:
+    direction_x, direction_y = -DEFAULT_SLEEVE_DIRECTION[0], -DEFAULT_SLEEVE_DIRECTION[1]
+
+  if previous and abs(previous.get("collar_direction_x", 0.0)) > 0.01:
     previous_direction_x = previous["collar_direction_x"]
     previous_direction_y = previous.get("collar_direction_y", DEFAULT_SLEEVE_DIRECTION[1])
     previous_magnitude = max(math.hypot(previous_direction_x, previous_direction_y), 0.01)
@@ -35,19 +38,14 @@ def _estimate_collar_from_plate(
       previous_direction_x / previous_magnitude,
       previous_direction_y / previous_magnitude,
     )
-    default_magnitude = max(math.hypot(*DEFAULT_SLEEVE_DIRECTION), 0.01)
-    default_direction = (
-      DEFAULT_SLEEVE_DIRECTION[0] / default_magnitude,
-      DEFAULT_SLEEVE_DIRECTION[1] / default_magnitude,
-    )
-    if (previous_direction[0] * default_direction[0]) + (previous_direction[1] * default_direction[1]) >= 0.5:
+    current_magnitude = max(math.hypot(direction_x, direction_y), 0.01)
+    current_direction = (direction_x / current_magnitude, direction_y / current_magnitude)
+    if (previous_direction[0] * current_direction[0]) + (previous_direction[1] * current_direction[1]) >= 0.5:
       direction_x, direction_y = previous_direction
 
   magnitude = max(math.hypot(direction_x, direction_y), 0.01)
   direction_x /= magnitude
   direction_y /= magnitude
-  if direction_x < 0.82:
-    direction_x, direction_y = DEFAULT_SLEEVE_DIRECTION
   offset = min(
     max(plate.radius * COLLAR_OFFSET_RATIO, plate.radius * MIN_COLLAR_OFFSET_RATIO),
     plate.radius * MAX_COLLAR_OFFSET_RATIO,
@@ -75,7 +73,8 @@ def _validate_collar_geometry(
   if distance < min_distance or distance > max_distance:
     return "collar_too_far_from_plate"
 
-  if vector_x < plate.radius * 0.04:
+  sleeve_projection = (vector_x * sleeve_direction[0]) + (vector_y * sleeve_direction[1])
+  if sleeve_projection < plate.radius * 0.04:
     return "collar_behind_plate"
 
   magnitude = max(distance, 0.01)
@@ -220,9 +219,9 @@ def _detect_hub_point(
         continue
       center_distance = math.hypot(hub[0] - plate.x, hub[1] - plate.y)
       radius_ratio = float(circle[2]) / max(plate.radius, 1.0)
-      score = 0.78
-      score += max(0.0, 0.24 * (1.0 - center_distance / max(plate.radius * 0.28, 1.0)))
-      score += max(0.0, 0.06 * (1.0 - abs(radius_ratio - 0.12) / 0.16))
+      score = 0.68
+      score += max(0.0, 0.12 * (1.0 - center_distance / max(plate.radius * 0.42, 1.0)))
+      score += max(0.0, 0.22 * (1.0 - abs(radius_ratio - 0.11) / 0.12))
       if previous and "final_bar_x" in previous and "final_bar_y" in previous:
         previous_distance = math.hypot(hub[0] - previous["final_bar_x"], hub[1] - previous["final_bar_y"])
         score += max(0.0, 0.08 * (1.0 - previous_distance / max(plate.radius * 0.45, 1.0)))

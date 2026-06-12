@@ -8,6 +8,8 @@ from .constants import (
   LOCAL_FLOW_TEMPLATE_MAX_DISAGREEMENT_RATIO,
   LOCAL_TEMPLATE_MIN_SCORE,
   MIN_LOCAL_FLOW_INLIERS,
+  SLEEVE_END_TRACKING_TARGET,
+  TRACKING_TARGET,
 )
 from .geometry import _estimate_collar_from_plate, _point_inside_plate, _validate_collar_geometry
 from .selection import _shoulder_relative_offset
@@ -95,10 +97,13 @@ def _make_tracking_lock(
   sleeve_direction: tuple[float, float],
   shoulder: tuple[float, float] | None,
   final_bar_point: tuple[float, float] | None = None,
+  display_target_point: tuple[float, float] | None = None,
   final_bar_confidence: float = 0.65,
   final_bar_reason: str | None = None,
+  target_kind: str = TRACKING_TARGET,
 ) -> dict[str, Any]:
   tracking_point = final_bar_point or (plate.x, plate.y)
+  display_point = display_target_point or tracking_point
   template, template_bounds = _extract_template(gray, tracking_point, plate_radius=plate.radius)
   features = _feature_points(cv2, gray, tracking_point, plate_radius=plate.radius)
   plate_relative_offset = _shoulder_relative_offset(plate, shoulder)
@@ -114,6 +119,7 @@ def _make_tracking_lock(
     "final_bar_confidence": final_bar_confidence,
     "final_bar_reason": final_bar_reason,
     "tracking_point": tracking_point,
+    "display_target_point": display_point,
     "x": plate.x,
     "y": plate.y,
     "collar_dx": collar[0] - plate.x,
@@ -132,6 +138,7 @@ def _make_tracking_lock(
     "template": template,
     "template_bounds": template_bounds,
     "features": features,
+    "target_kind": target_kind,
   }
 
 
@@ -157,6 +164,7 @@ def _track_local_patch(
   old_collar = lock["collar"]
   old_plate = lock["plate"]
   old_tracking_point = lock.get("final_bar_point") or lock.get("tracking_point", (old_plate.x, old_plate.y))
+  old_display_point = lock.get("display_target_point", old_tracking_point)
   flow_motion: tuple[float, float] | None = None
   points = lock.get("features")
 
@@ -239,36 +247,57 @@ def _track_local_patch(
     old_tracking_point[0] + motion[0],
     old_tracking_point[1] + motion[1],
   )
-  if not _point_inside_plate(tracked_final_bar_point, plate=tracked_plate, max_radius_ratio=0.58):
+  tracked_display_point = (
+    old_display_point[0] + motion[0],
+    old_display_point[1] + motion[1],
+  )
+  target_kind = lock.get("target_kind", TRACKING_TARGET)
+  if (
+    target_kind != SLEEVE_END_TRACKING_TARGET
+    and not _point_inside_plate(tracked_final_bar_point, plate=tracked_plate, max_radius_ratio=0.58)
+  ):
     stats["collar_rejection_reason"] = "hub_left_plate_region"
     return None, stats
 
-  predicted_collar, sleeve_direction = _estimate_collar_from_plate(
-    tracked_plate,
-    shoulder=shoulder,
-    width=width,
-    height=height,
-    previous=lock,
-  )
-  tracked_collar = (old_collar[0] + motion[0], old_collar[1] + motion[1])
-  reason = _validate_collar_geometry(tracked_collar, plate=tracked_plate, sleeve_direction=sleeve_direction, previous=lock)
-  stats["fallback_used"] = reason is not None
-  final_collar = predicted_collar if reason else (
-    (predicted_collar[0] * 0.7) + (tracked_collar[0] * 0.3),
-    (predicted_collar[1] * 0.7) + (tracked_collar[1] * 0.3),
-  )
-  final_reason = _validate_collar_geometry(final_collar, plate=tracked_plate, sleeve_direction=sleeve_direction, previous=lock)
-  if final_reason:
-    stats["collar_rejection_reason"] = final_reason
-    return None, stats
+  if target_kind == SLEEVE_END_TRACKING_TARGET:
+    sleeve_direction = (
+      float(lock.get("collar_direction_x", 1.0)),
+      float(lock.get("collar_direction_y", 0.0)),
+    )
+    tracked_collar = tracked_final_bar_point
+    predicted_collar = tracked_final_bar_point
+    final_collar = tracked_final_bar_point
+    stats["fallback_used"] = False
+  else:
+    predicted_collar, sleeve_direction = _estimate_collar_from_plate(
+      tracked_plate,
+      shoulder=shoulder,
+      width=width,
+      height=height,
+      previous=lock,
+    )
+    tracked_collar = (old_collar[0] + motion[0], old_collar[1] + motion[1])
+    reason = _validate_collar_geometry(tracked_collar, plate=tracked_plate, sleeve_direction=sleeve_direction, previous=lock)
+    stats["fallback_used"] = reason is not None
+    final_collar = predicted_collar if reason else (
+      (predicted_collar[0] * 0.7) + (tracked_collar[0] * 0.3),
+      (predicted_collar[1] * 0.7) + (tracked_collar[1] * 0.3),
+    )
+    final_reason = _validate_collar_geometry(final_collar, plate=tracked_plate, sleeve_direction=sleeve_direction, previous=lock)
+    if final_reason:
+      stats["collar_rejection_reason"] = final_reason
+      return None, stats
 
   if shoulder:
     previous_shoulder_x = lock.get("shoulder_x")
     previous_shoulder_y = lock.get("shoulder_y")
     if previous_shoulder_x is not None and previous_shoulder_y is not None:
       shoulder_motion = math.hypot(shoulder[0] - previous_shoulder_x, shoulder[1] - previous_shoulder_y)
-      plate_motion = math.hypot(tracked_plate.x - old_plate.x, tracked_plate.y - old_plate.y)
-      if shoulder_motion >= 4.0 and plate_motion <= max(1.5, shoulder_motion * 0.35):
+      point_motion = math.hypot(
+        tracked_final_bar_point[0] - old_tracking_point[0],
+        tracked_final_bar_point[1] - old_tracking_point[1],
+      )
+      if shoulder_motion >= 6.0 and point_motion <= 1.0:
         stats["collar_rejection_reason"] = "stationary_hardware_like"
         return None, stats
 
@@ -279,9 +308,11 @@ def _track_local_patch(
     collar=final_collar,
     sleeve_direction=sleeve_direction,
     final_bar_point=tracked_final_bar_point,
+    display_target_point=tracked_display_point,
     final_bar_confidence=float(lock.get("final_bar_confidence", 0.65)),
     final_bar_reason=lock.get("final_bar_reason"),
     shoulder=shoulder,
+    target_kind=target_kind,
   )
   new_lock["predicted_collar"] = predicted_collar
   new_lock["refined_collar"] = final_collar

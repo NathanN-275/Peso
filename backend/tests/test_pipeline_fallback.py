@@ -83,6 +83,9 @@ class PipelineFallbackTest(unittest.TestCase):
       "reps": [
         {
           "rep_index": 1,
+          "startTime": 0.5,
+          "bottomTimestampMs": 1200,
+          "endTime": 2.0,
           "depth_score": 0.9 if status == "hit_depth" else 0.2,
           "depth_confidence": confidence,
           "depth_status": status,
@@ -417,6 +420,10 @@ class PipelineFallbackTest(unittest.TestCase):
     self.assertEqual(saved_result["diagnostics"]["barbell_tracking"]["source"], "opencv_circle_tracker")
     tracker.track.assert_called_once()
     self.assertEqual(tracker.track.call_args.kwargs["selected_side"], "left")
+    self.assertEqual(
+      tracker.track.call_args.kwargs["rep_windows"],
+      [{"rep_index": 1, "start": 0.5, "bottom": 1.2, "end": 2.0}],
+    )
 
   def test_analyze_skips_barbell_path_for_non_side_video(self) -> None:
     pipeline = self._import_pipeline()

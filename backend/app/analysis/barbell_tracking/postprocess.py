@@ -23,6 +23,10 @@ def _remove_motion_outliers(points: list[dict[str, Any]]) -> tuple[list[dict[str
 
   for point in points[1:]:
     previous = filtered[-1]
+    if float(point["time"]) - float(previous["time"]) > MAX_SMOOTHING_TIME_GAP_SECONDS:
+      filtered.append(point)
+      continue
+
     distance = math.hypot(float(point["x"]) - float(previous["x"]), float(point["y"]) - float(previous["y"]))
     if distance > MAX_OUTLIER_VELOCITY:
       removed_count += 1

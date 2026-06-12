@@ -60,6 +60,10 @@ def _empty_result(
   collar_descriptor_score: float | None = None,
   tracklet_confirmation_count: int = 0,
   bad_candidate_rejection_counts: dict[str, int] | None = None,
+  path_reset_count: int = 0,
+  stale_prior_expiration_count: int = 0,
+  reacquisition_success_count: int = 0,
+  per_rep_coverage: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
   return {
     "barbellPath": {
@@ -127,6 +131,10 @@ def _empty_result(
       "collar_descriptor_score": collar_descriptor_score,
       "tracklet_confirmation_count": tracklet_confirmation_count,
       "bad_candidate_rejection_counts": bad_candidate_rejection_counts or {},
+      "path_reset_count": path_reset_count,
+      "stale_prior_expiration_count": stale_prior_expiration_count,
+      "reacquisition_success_count": reacquisition_success_count,
+      "per_rep_coverage": per_rep_coverage or [],
       "sleeve_direction_x": round(sleeve_direction[0], 4) if sleeve_direction else None,
       "sleeve_direction_y": round(sleeve_direction[1], 4) if sleeve_direction else None,
       "predicted_collar_x": round(predicted_collar[0], 2) if predicted_collar else None,
