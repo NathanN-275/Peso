@@ -6,6 +6,7 @@ import {
   Alert,
   LayoutChangeEvent,
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -190,9 +191,12 @@ export default function TrackingPinSetupModal({
     });
   };
 
-  return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onCancel} presentationStyle="fullScreen">
-      <SafeAreaView style={styles.safeArea}>
+  if (!visible) {
+    return null;
+  }
+
+  const placementScreen = (
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
         <View style={styles.header}>
           <Pressable onPress={onCancel} style={styles.headerButton}>
             <Text style={styles.headerButtonText}>Cancel</Text>
@@ -294,12 +298,35 @@ export default function TrackingPinSetupModal({
           </View>
         </View>
       </SafeAreaView>
+  );
+
+  if (Platform.OS === 'web') {
+    return <View style={styles.webOverlay}>{placementScreen}</View>;
+  }
+
+  return (
+    <Modal visible animationType="slide" onRequestClose={onCancel} presentationStyle="fullScreen">
+      {placementScreen}
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#05070A' },
+  safeArea: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#05070A',
+    overflow: 'hidden',
+  },
+  webOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#05070A',
+    overflow: 'hidden',
+    zIndex: 40,
+  },
   header: {
     minHeight: 54,
     flexDirection: 'row',
@@ -315,7 +342,13 @@ const styles = StyleSheet.create({
   instructionTitle: { color: tokens.colors.textPrimary, fontSize: 20, fontWeight: '700' },
   instructionText: { color: tokens.colors.textMuted, fontSize: 14, lineHeight: 20 },
   progressText: { color: tokens.colors.brand, fontSize: 13, fontWeight: '700' },
-  videoArea: { flex: 1, position: 'relative', backgroundColor: '#000', overflow: 'hidden' },
+  videoArea: {
+    flex: 1,
+    minHeight: 0,
+    position: 'relative',
+    backgroundColor: '#000',
+    overflow: 'hidden',
+  },
   video: { ...StyleSheet.absoluteFillObject },
   pinContainer: { position: 'absolute', alignItems: 'center' },
   pin: {
@@ -336,7 +369,13 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
-  controls: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 12, gap: 12 },
+  controls: {
+    flexShrink: 0,
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 12,
+    gap: 12,
+  },
   helperText: { color: tokens.colors.textMuted, fontSize: 12, lineHeight: 17, textAlign: 'center' },
   linkButton: { alignSelf: 'center', paddingVertical: 4 },
   linkText: { color: tokens.colors.brand, fontSize: 13, fontWeight: '600' },
