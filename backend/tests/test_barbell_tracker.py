@@ -531,6 +531,80 @@ class BarbellTrackerTest(unittest.TestCase):
     self.assertTrue(result["barbellPath"]["available"])
     self.assert_points_follow_target_path(result["barbellPath"]["points"], centers, max_distance_px=14.0)
 
+  def test_reliable_manual_collar_priors_drive_the_reported_path(self) -> None:
+    frame_count = 8
+    stationary_rack = [(252, 102) for _ in range(frame_count)]
+    manual_centers = [(184 + (index * 3), 92 + (index * 2)) for index in range(frame_count)]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "manual-collar-priors.mp4"
+      write_video(path, stationary_rack, fps=6.0)
+      pose_frames = [
+        pose_frame(index, x=0.55, y=0.40)
+        for index in range(frame_count)
+      ]
+      manual_priors = {
+        index: {
+          "x": center[0] / 320,
+          "y": center[1] / 240,
+          "confidence": 0.95,
+        }
+        for index, center in enumerate(manual_centers)
+      }
+
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+        manual_barbell_priors=manual_priors,
+      )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    self.assertEqual(result["diagnostics"]["manual_point_count"], frame_count)
+    self.assertEqual(result["diagnostics"]["automatic_point_count"], 0)
+    self.assertEqual(len(result["barbellPath"]["points"]), frame_count)
+    for point, expected in zip(result["barbellPath"]["points"], manual_centers):
+      self.assertAlmostEqual(float(point["x"]) * 320, expected[0], delta=1.0)
+      self.assertAlmostEqual(float(point["y"]) * 240, expected[1], delta=1.0)
+
+  def test_manual_collar_reentry_requires_two_consecutive_valid_frames(self) -> None:
+    frame_count = 6
+    centers = [(184 + (index * 3), 92 + index) for index in range(frame_count)]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "manual-collar-reentry.mp4"
+      write_video(path, centers, fps=6.0)
+      pose_frames = [pose_frame(index, x=0.55, y=0.40) for index in range(frame_count)]
+      manual_priors = {
+        index: {
+          "x": centers[index][0] / 320,
+          "y": centers[index][1] / 240,
+          "confidence": 0.95,
+        }
+        for index in (0, 1, 3, 4, 5)
+      }
+
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+        manual_barbell_priors=manual_priors,
+      )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    self.assertEqual(result["diagnostics"]["manual_point_count"], 4)
+    manual_times = [
+      round(float(point["time"]), 3)
+      for point in result["barbellPath"]["points"]
+      if point.get("manual_assisted")
+    ]
+    self.assertNotIn(round(3 / 6, 3), manual_times)
+    self.assertIn(round(4 / 6, 3), manual_times)
+
   def test_plate_first_tracker_outputs_collar_target(self) -> None:
     plate_centers = [(178 + index * 3, 104) for index in range(8)]
     distractors = [[(238, 104, 34)] for _ in plate_centers]

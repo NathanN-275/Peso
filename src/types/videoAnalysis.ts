@@ -288,6 +288,8 @@ export type VideoAnalysisDiagnostics = {
     max_point_gap_seconds?: number;
     effective_tracking_fps?: number;
     manual_seed_count?: number;
+    manual_point_count?: number;
+    automatic_point_count?: number;
   };
   tracking_assistance?: TrackingAssistance;
 };

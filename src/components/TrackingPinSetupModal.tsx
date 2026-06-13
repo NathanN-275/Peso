@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEvent } from 'expo';
 import { VideoView, useVideoPlayer } from 'expo-video';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   LayoutChangeEvent,
@@ -28,6 +28,7 @@ type TrackingPinSetupModalProps = {
   visible: boolean;
   videoUri: string;
   videoSize: { width: number; height: number };
+  videoDurationMs?: number | null;
   initialSetup?: TrackingSetup | null;
   onSave: (setup: TrackingSetup) => void;
   onCancel: () => void;
@@ -49,21 +50,42 @@ const PIN_COLORS: Record<TrackingPinName, string> = {
   barbell: '#FF6577',
 };
 
+function orientationCorrectedVideoSize(
+  size: { width: number; height: number },
+  expected: { width: number; height: number }
+) {
+  const sizeIsPortrait = size.height > size.width;
+  const expectedIsPortrait = expected.height > expected.width;
+  return sizeIsPortrait === expectedIsPortrait
+    ? size
+    : { width: size.height, height: size.width };
+}
+
 export default function TrackingPinSetupModal({
   visible,
   videoUri,
   videoSize,
+  videoDurationMs,
   initialSetup,
   onSave,
   onCancel,
 }: TrackingPinSetupModalProps) {
   const [currentTime, setCurrentTime] = useState((initialSetup?.reference_time_ms ?? 0) / 1000);
-  const [duration, setDuration] = useState(0);
+  const [duration, setDuration] = useState(
+    typeof videoDurationMs === 'number' && Number.isFinite(videoDurationMs)
+      ? videoDurationMs / 1000
+      : 0
+  );
   const [videoLayout, setVideoLayout] = useState({ width: 0, height: 0 });
+  const [displayVideoSize, setDisplayVideoSize] = useState(videoSize);
   const [pins, setPins] = useState<Partial<Record<TrackingPinName, NormalizedTrackingPoint>>>(
     initialSetup?.anchors ?? {}
   );
+  const [placementOrder, setPlacementOrder] = useState<TrackingPinName[]>(
+    initialSetup ? [...TRACKING_PIN_NAMES] : []
+  );
   const [draggingPin, setDraggingPin] = useState<TrackingPinName | null>(null);
+  const videoViewRef = useRef<VideoView | null>(null);
   const player = useVideoPlayer(videoUri, (videoPlayer) => {
     videoPlayer.loop = false;
     videoPlayer.muted = true;
@@ -82,6 +104,11 @@ export default function TrackingPinSetupModal({
     currentOffsetFromLive: null,
     bufferedPosition: 0,
   });
+  const statusChange = useEvent(player, 'statusChange', {
+    status: player.status,
+    oldStatus: undefined,
+    error: undefined,
+  });
 
   useEffect(() => {
     if (!visible) {
@@ -89,16 +116,42 @@ export default function TrackingPinSetupModal({
     }
     const referenceTime = (initialSetup?.reference_time_ms ?? 0) / 1000;
     setPins(initialSetup?.anchors ?? {});
+    setPlacementOrder(initialSetup ? [...TRACKING_PIN_NAMES] : []);
     setCurrentTime(referenceTime);
+    setDisplayVideoSize({ width: videoSize.width, height: videoSize.height });
+    if (typeof videoDurationMs === 'number' && Number.isFinite(videoDurationMs)) {
+      setDuration(videoDurationMs / 1000);
+    }
     player.pause();
     player.currentTime = referenceTime;
-  }, [initialSetup, player, visible]);
+  }, [initialSetup, player, videoDurationMs, videoSize.height, videoSize.width, visible]);
 
   useEffect(() => {
-    if (sourceLoad.duration > 0) {
-      setDuration(sourceLoad.duration);
+    const loadedTrack = sourceLoad.availableVideoTracks[0];
+    if (loadedTrack?.size?.width > 0 && loadedTrack.size.height > 0) {
+      setDisplayVideoSize(orientationCorrectedVideoSize(loadedTrack.size, videoSize));
     }
-  }, [sourceLoad.duration]);
+    const nextDuration = sourceLoad.duration || player.duration || 0;
+    if (nextDuration > 0) {
+      setDuration(nextDuration);
+    }
+  }, [
+    player.duration,
+    sourceLoad.availableVideoTracks,
+    sourceLoad.duration,
+    videoSize.height,
+    videoSize.width,
+  ]);
+
+  useEffect(() => {
+    if (statusChange.status !== 'readyToPlay') {
+      return;
+    }
+    const nextDuration = player.duration || 0;
+    if (nextDuration > 0) {
+      setDuration(nextDuration);
+    }
+  }, [player.duration, statusChange.status]);
 
   useEffect(() => {
     if (visible) {
@@ -107,8 +160,8 @@ export default function TrackingPinSetupModal({
   }, [timeUpdate.currentTime, visible]);
 
   const videoRect = useMemo(
-    () => calculateVideoRect(videoLayout, videoSize, 'contain'),
-    [videoLayout, videoSize]
+    () => calculateVideoRect(videoLayout, displayVideoSize, 'contain'),
+    [displayVideoSize, videoLayout]
   );
   const nextPin = TRACKING_PIN_NAMES.find((name) => !pins[name]) ?? null;
   const pinCount = TRACKING_PIN_NAMES.filter((name) => pins[name]).length;
@@ -168,15 +221,69 @@ export default function TrackingPinSetupModal({
     setCurrentTime(boundedTime);
   };
 
-  const resetForAnotherFrame = () => {
+  const clearPins = () => {
+    setPins({});
+    setPlacementOrder([]);
+  };
+
+  const handleScrubEnd = (time: number) => {
+    const boundedTime = Math.min(Math.max(time, 0), duration || time);
+    if (pinCount === 0) {
+      handleSeek(boundedTime);
+      return;
+    }
+
     Alert.alert(
       'Choose another frame?',
       'Changing the reference frame will clear all placed pins.',
       [
         { text: 'Keep Pins', style: 'cancel' },
-        { text: 'Clear Pins', style: 'destructive', onPress: () => setPins({}) },
+        {
+          text: 'Clear Pins',
+          style: 'destructive',
+          onPress: () => {
+            clearPins();
+            player.pause();
+            player.currentTime = boundedTime;
+            setCurrentTime(boundedTime);
+          },
+        },
       ]
     );
+  };
+
+  const undoLatestPin = () => {
+    const latestPin = placementOrder[placementOrder.length - 1];
+    if (!latestPin) {
+      return;
+    }
+    setPins((current) => {
+      const nextPins = { ...current };
+      delete nextPins[latestPin];
+      return nextPins;
+    });
+    setPlacementOrder((current) => current.slice(0, -1));
+  };
+
+  const syncRenderedVideoMetadata = () => {
+    const nativeVideo = videoViewRef.current?.nativeRef?.current as
+      | { duration?: number; videoWidth?: number; videoHeight?: number }
+      | undefined;
+    const nextDuration = nativeVideo?.duration || player.duration || 0;
+    if (nextDuration > 0 && Number.isFinite(nextDuration)) {
+      setDuration(nextDuration);
+    }
+    if (
+      nativeVideo?.videoWidth
+      && nativeVideo.videoHeight
+      && nativeVideo.videoWidth > 0
+      && nativeVideo.videoHeight > 0
+    ) {
+      setDisplayVideoSize(orientationCorrectedVideoSize({
+        width: nativeVideo.videoWidth,
+        height: nativeVideo.videoHeight,
+      }, videoSize));
+    }
   };
 
   const savePins = () => {
@@ -196,7 +303,7 @@ export default function TrackingPinSetupModal({
   }
 
   const placementScreen = (
-      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
         <View style={styles.header}>
           <Pressable onPress={onCancel} style={styles.headerButton}>
             <Text style={styles.headerButtonText}>Cancel</Text>
@@ -225,11 +332,21 @@ export default function TrackingPinSetupModal({
           }}
         >
           <VideoView
+            ref={videoViewRef}
             player={player}
-            style={styles.video}
+            style={videoRect.width > 0 && videoRect.height > 0
+              ? {
+                  position: 'absolute',
+                  left: videoRect.x,
+                  top: videoRect.y,
+                  width: videoRect.width,
+                  height: videoRect.height,
+                }
+              : styles.video}
             nativeControls={false}
-            contentFit="contain"
+            contentFit={videoRect.width > 0 && videoRect.height > 0 ? 'fill' : 'contain'}
             allowsPictureInPicture={false}
+            onFirstFrameRender={syncRenderedVideoMetadata}
           />
           <View
             style={StyleSheet.absoluteFill}
@@ -240,6 +357,11 @@ export default function TrackingPinSetupModal({
               const existingPin = closestPin(locationX, locationY);
               const selectedPin = existingPin ?? nextPin;
               if (selectedPin) {
+                if (!pins[selectedPin]) {
+                  setPlacementOrder((current) => (
+                    current.includes(selectedPin) ? current : [...current, selectedPin]
+                  ));
+                }
                 setDraggingPin(selectedPin);
                 updatePin(selectedPin, locationX, locationY);
               }
@@ -281,23 +403,21 @@ export default function TrackingPinSetupModal({
             duration={duration}
             onSeek={handleSeek}
             onScrubStart={() => player.pause()}
-            onScrubEnd={handleSeek}
+            onScrubEnd={handleScrubEnd}
           />
-          {pinCount > 0 ? (
-            <Pressable onPress={resetForAnotherFrame} style={styles.linkButton}>
-              <Text style={styles.linkText}>Choose another frame</Text>
-            </Pressable>
-          ) : (
-            <Text style={styles.helperText}>Scrub to a frame where all landmarks and the collar are visible.</Text>
-          )}
+          <Text style={styles.helperText}>
+            {pinCount > 0
+              ? 'Scrubbing to another frame will clear the placed pins after confirmation.'
+              : 'Scrub to a frame where all landmarks and the collar are visible.'}
+          </Text>
           <View style={styles.actions}>
-            <Pressable onPress={() => setPins({})} disabled={pinCount === 0} style={styles.resetButton}>
-              <Text style={[styles.resetText, pinCount === 0 && styles.disabledText]}>Reset pins</Text>
+            <Pressable onPress={undoLatestPin} disabled={pinCount === 0} style={styles.resetButton}>
+              <Text style={[styles.resetText, pinCount === 0 && styles.disabledText]}>Undo</Text>
             </Pressable>
             <Button label="Use These Pins" onPress={savePins} disabled={!allPinsPlaced} style={styles.saveButton} />
           </View>
         </View>
-      </SafeAreaView>
+    </SafeAreaView>
   );
 
   if (Platform.OS === 'web') {
@@ -338,7 +458,7 @@ const styles = StyleSheet.create({
   headerButtonText: { color: tokens.colors.brand, fontSize: 15, fontWeight: '600' },
   headerSpacer: { width: 72 },
   title: { color: tokens.colors.textPrimary, fontSize: 18, fontWeight: '700' },
-  instructions: { paddingHorizontal: 20, paddingVertical: 14, gap: 5 },
+  instructions: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12, gap: 5 },
   instructionTitle: { color: tokens.colors.textPrimary, fontSize: 20, fontWeight: '700' },
   instructionText: { color: tokens.colors.textMuted, fontSize: 14, lineHeight: 20 },
   progressText: { color: tokens.colors.brand, fontSize: 13, fontWeight: '700' },
@@ -377,8 +497,6 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   helperText: { color: tokens.colors.textMuted, fontSize: 12, lineHeight: 17, textAlign: 'center' },
-  linkButton: { alignSelf: 'center', paddingVertical: 4 },
-  linkText: { color: tokens.colors.brand, fontSize: 13, fontWeight: '600' },
   actions: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   resetButton: { paddingHorizontal: 10, paddingVertical: 12 },
   resetText: { color: tokens.colors.textPrimary, fontSize: 14, fontWeight: '600' },

@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import tokens from '../theme/tokens';
+import type { TrackingAssistance, TrackingPinName } from '../types/trackingSetup';
 import ReviewBottomSheet from './ReviewBottomSheet';
 
 type TrackingDisplaySheetProps = {
@@ -8,6 +9,7 @@ type TrackingDisplaySheetProps = {
   poseEnabled: boolean;
   barbellAvailable: boolean;
   barbellEnabled: boolean;
+  trackingAssistance?: TrackingAssistance | null;
   onPoseEnabledChange: (enabled: boolean) => void;
   onBarbellEnabledChange: (enabled: boolean) => void;
   onClose: () => void;
@@ -74,10 +76,20 @@ export default function TrackingDisplaySheet({
   poseEnabled,
   barbellAvailable,
   barbellEnabled,
+  trackingAssistance,
   onPoseEnabledChange,
   onBarbellEnabledChange,
   onClose,
 }: TrackingDisplaySheetProps) {
+  const assistanceMode = trackingAssistance?.actualMode === 'pin_assisted'
+    ? 'Pin-assisted'
+    : trackingAssistance?.requestedMode === 'pins'
+      ? 'Automatic fallback'
+      : 'Automatic';
+  const coverageEntries = Object.entries(trackingAssistance?.coverage ?? {}) as Array<
+    [TrackingPinName, number]
+  >;
+
   return (
     <ReviewBottomSheet visible={visible} title="Tracking display" onClose={onClose}>
       <View style={styles.content}>
@@ -100,6 +112,48 @@ export default function TrackingDisplaySheet({
             onEnabledChange={onBarbellEnabledChange}
           />
         </View>
+        {trackingAssistance?.requestedMode === 'pins' ? (
+          <View style={styles.assistancePanel}>
+            <View style={styles.assistanceHeadingRow}>
+              <Text style={styles.assistanceHeading}>Tracking assistance</Text>
+              <Text
+                style={[
+                  styles.assistanceMode,
+                  trackingAssistance.used ? styles.assistanceModeUsed : styles.assistanceModeFallback,
+                ]}
+              >
+                {assistanceMode}
+              </Text>
+            </View>
+            <Text style={styles.assistanceDetail}>
+              Body points used: {trackingAssistance.directlyAnchoredLandmarkCount ?? 0}
+            </Text>
+            <Text style={styles.assistanceDetail}>
+              Barbell points: {trackingAssistance.manualBarbellPointCount ?? 0} pin-assisted,{' '}
+              {trackingAssistance.automaticBarbellPointCount ?? 0} automatic
+            </Text>
+            <Text style={styles.assistanceDetail}>
+              Rejected body points: {trackingAssistance.rejectedTrackCount ?? 0}
+            </Text>
+            {trackingAssistance.selectedSide ? (
+              <Text style={styles.assistanceDetail}>
+                Body side: {trackingAssistance.selectedSide}
+              </Text>
+            ) : null}
+            {coverageEntries.length > 0 ? (
+              <Text style={styles.assistanceDetail}>
+                Coverage: {coverageEntries.map(([name, coverage]) => (
+                  `${name} ${Math.round(coverage * 100)}%`
+                )).join(', ')}
+              </Text>
+            ) : null}
+            {trackingAssistance.fallbackReason ? (
+              <Text style={styles.assistanceFallbackReason}>
+                Fallback reason: {trackingAssistance.fallbackReason.split('_').join(' ')}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
       </View>
     </ReviewBottomSheet>
   );
@@ -116,6 +170,46 @@ const styles = StyleSheet.create({
   },
   options: {
     gap: 10,
+  },
+  assistancePanel: {
+    gap: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: tokens.colors.inputBorder,
+    backgroundColor: '#0C1016',
+    padding: 14,
+  },
+  assistanceHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  assistanceHeading: {
+    color: tokens.colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  assistanceMode: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  assistanceModeUsed: {
+    color: '#8CC0FF',
+  },
+  assistanceModeFallback: {
+    color: '#FFD080',
+  },
+  assistanceDetail: {
+    color: tokens.colors.textMuted,
+    fontSize: 13,
+    lineHeight: 18,
+    textTransform: 'capitalize',
+  },
+  assistanceFallbackReason: {
+    color: '#FFD080',
+    fontSize: 13,
+    lineHeight: 18,
   },
   option: {
     minHeight: 64,

@@ -5,6 +5,7 @@ import type { VideoCompressorType } from 'react-native-compressor';
 import { CameraAngle, ExerciseOption } from '../src/constants/videoSetup';
 import type { TrackingSetup } from '../src/types/trackingSetup';
 import { supabase, supabaseConfigError } from './supabase';
+import { getVideoInsertRetryMode } from './videoUploadInsertPolicy';
 
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = resolveFrontendMaxUploadBytes();
@@ -512,26 +513,6 @@ function formatSupabaseError(error: unknown) {
   return segments.join(' | ') || 'Unknown Supabase error';
 }
 
-function isMissingStorageRetentionMigrationError(error: unknown) {
-  const message = formatSupabaseError(error).toLowerCase();
-  return (
-    message.includes('storage_state') ||
-    message.includes('original_size_bytes') ||
-    message.includes('uploaded_size_bytes') ||
-    message.includes('was_compressed')
-  ) && (
-    message.includes('does not exist') ||
-    message.includes('could not find')
-  );
-}
-
-function isMissingTrackingSetupMigrationError(error: unknown) {
-  const message = formatSupabaseError(error).toLowerCase();
-  return message.includes('tracking_setup') && (
-    message.includes('does not exist') || message.includes('could not find')
-  );
-}
-
 async function resolveUploadSource(asset: UploadableVideoAsset): Promise<UploadSource> {
   // Convert the selected asset into the blob or file Supabase expects.
   const webAsset = asset as UploadableVideoAsset & WebImagePickerAsset;
@@ -750,13 +731,17 @@ export async function uploadVideoForAnalysis({
     ;
 
   if (insertError) {
-    if (isMissingStorageRetentionMigrationError(insertError) || isMissingTrackingSetupMigrationError(insertError)) {
+    const retryMode = getVideoInsertRetryMode(
+      formatSupabaseError(insertError),
+      Boolean(trackingSetup)
+    );
+
+    if (retryMode === 'retry_without_storage_metadata') {
       const {
         original_size_bytes: _originalSizeBytes,
         uploaded_size_bytes: _uploadedSizeBytes,
         was_compressed: _wasCompressed,
         storage_state: _storageState,
-        tracking_setup: _trackingSetup,
         ...legacyInsertPayload
       } = insertPayload;
       const { error: legacyInsertError } = await supabase
@@ -779,6 +764,23 @@ export async function uploadVideoForAnalysis({
           wasCompressed: preparedVideo.wasCompressed,
         };
       }
+
+      if (
+        getVideoInsertRetryMode(formatSupabaseError(legacyInsertError), Boolean(trackingSetup))
+        === 'tracking_unavailable'
+      ) {
+        await supabase.storage.from('videos').remove([storagePath]);
+        throw new Error(
+          'Pin-assisted tracking is unavailable because the tracking database migration has not been applied. Your pins were not submitted.'
+        );
+      }
+    }
+
+    if (retryMode === 'tracking_unavailable') {
+      await supabase.storage.from('videos').remove([storagePath]);
+      throw new Error(
+        'Pin-assisted tracking is unavailable because the tracking database migration has not been applied. Your pins were not submitted.'
+      );
     }
 
     console.error('[Supabase] uploadVideoForAnalysis insert failed', {

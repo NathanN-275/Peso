@@ -205,6 +205,31 @@ def _track_direction(
   return tracks
 
 
+def _smooth_anchor_track(
+  tracks: dict[int, dict[str, float]],
+  *,
+  reference_index: int,
+) -> dict[int, dict[str, float]]:
+  ordered_indices = sorted(tracks)
+  if len(ordered_indices) < 3:
+    return tracks
+
+  smoothed: dict[int, dict[str, float]] = {}
+  for position, source_index in enumerate(ordered_indices):
+    point = tracks[source_index]
+    if source_index == reference_index:
+      smoothed[source_index] = dict(point)
+      continue
+    neighbor_indices = ordered_indices[max(position - 1, 0):min(position + 2, len(ordered_indices))]
+    neighbors = [tracks[index] for index in neighbor_indices]
+    smoothed[source_index] = {
+      "x": float(median(float(item["x"]) for item in neighbors)),
+      "y": float(median(float(item["y"]) for item in neighbors)),
+      "confidence": float(point["confidence"]),
+    }
+  return smoothed
+
+
 def track_manual_anchors(
   file_path: str,
   *,
@@ -240,7 +265,7 @@ def track_manual_anchors(
     forward = _track_direction(cv2, gray_frames, available_indices[reference_position:], initial_point)
     backward = _track_direction(cv2, gray_frames, list(reversed(available_indices[:reference_position + 1])), initial_point)
     combined = {**backward, **forward}
-    tracks[name] = {
+    normalized_tracks = {
       index: {
         "x": point["x"] / width,
         "y": point["y"] / height,
@@ -248,6 +273,10 @@ def track_manual_anchors(
       }
       for index, point in combined.items()
     }
+    tracks[name] = _smooth_anchor_track(
+      normalized_tracks,
+      reference_index=reference_index,
+    )
 
   coverage = {
     name: round(len(anchor_tracks) / max(len(available_indices), 1), 3)
@@ -271,6 +300,7 @@ def fuse_manual_body_tracks(
       "used": False,
       "selected_side": None,
       "fused_landmark_count": 0,
+      "directly_anchored_landmark_count": 0,
       "rejected_track_count": 0,
       "coverage": tracking.get("coverage") or {},
     }
@@ -284,6 +314,9 @@ def fuse_manual_body_tracks(
   fused_frames = copy.deepcopy(pose_frames)
   fused_count = 0
   rejected_count = 0
+  manual_active = {joint: False for joint in BODY_ANCHORS}
+  manual_has_activated = {joint: False for joint in BODY_ANCHORS}
+  manual_reentry_streak = {joint: 0 for joint in BODY_ANCHORS}
 
   for frame in fused_frames:
     source_index = int(frame.get("source_frame_index", -1))
@@ -301,25 +334,49 @@ def fuse_manual_body_tracks(
         and available_points["knee"]["y"] < available_points["ankle"]["y"] + 0.04
       ):
         rejected_count += len(available_points)
+        for joint in available_points:
+          manual_active[joint] = False
+          manual_reentry_streak[joint] = 0
         continue
 
-    for joint, track in available_points.items():
+    for joint in BODY_ANCHORS:
+      track = available_points.get(joint)
+      if not track:
+        manual_active[joint] = False
+        manual_reentry_streak[joint] = 0
+        continue
+
+      force_reference_anchor = (
+        reference_source_index is not None
+        and source_index == int(reference_source_index)
+      )
+      use_manual_track = force_reference_anchor or not manual_has_activated[joint] or manual_active[joint]
+      if not use_manual_track:
+        manual_reentry_streak[joint] += 1
+        use_manual_track = manual_reentry_streak[joint] >= 2
+      if not use_manual_track:
+        continue
+
+      manual_active[joint] = True
+      manual_has_activated[joint] = True
+      manual_reentry_streak[joint] = 0
       landmark = landmarks.get(f"{selected_side}_{joint}")
       if not landmark:
         rejected_count += 1
         continue
       model_visibility = float(landmark.get("visibility") or 0.0)
-      manual_weight = 0.68 if model_visibility < 0.45 else 0.48
-      landmark["x"] = (float(landmark["x"]) * (1.0 - manual_weight)) + (float(track["x"]) * manual_weight)
-      landmark["y"] = (float(landmark["y"]) * (1.0 - manual_weight)) + (float(track["y"]) * manual_weight)
+      landmark["x"] = float(track["x"])
+      landmark["y"] = float(track["y"])
       landmark["visibility"] = max(model_visibility, min(float(track["confidence"]), 0.92))
       landmark["manual_assisted"] = True
+      landmark["manual_source"] = "optical_flow"
       fused_count += 1
 
   return fused_frames, {
     "used": fused_count > 0,
     "selected_side": selected_side,
     "fused_landmark_count": fused_count,
+    "directly_anchored_landmark_count": fused_count,
     "rejected_track_count": rejected_count,
     "coverage": tracking.get("coverage") or {},
   }

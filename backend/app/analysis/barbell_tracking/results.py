@@ -64,6 +64,8 @@ def _empty_result(
   stale_prior_expiration_count: int = 0,
   reacquisition_success_count: int = 0,
   per_rep_coverage: list[dict[str, Any]] | None = None,
+  manual_point_count: int = 0,
+  automatic_point_count: int = 0,
 ) -> dict[str, Any]:
   return {
     "barbellPath": {
@@ -80,6 +82,8 @@ def _empty_result(
       "coverage": 0.0,
       "sampled_frame_count": sampled_frame_count,
       "detected_point_count": detected_point_count,
+      "manual_point_count": manual_point_count,
+      "automatic_point_count": automatic_point_count,
       "interpolated_point_count": interpolated_point_count,
       "rejected_frame_count": max(sampled_frame_count - detected_point_count, 0),
       "rejected_candidate_count": rejected_candidate_count,

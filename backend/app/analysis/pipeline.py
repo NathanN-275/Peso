@@ -56,9 +56,12 @@ def _apply_tracking_assistance(
     "fallbackReason": validation_error,
     "selectedSide": None,
     "fusedLandmarkCount": 0,
+    "directlyAnchoredLandmarkCount": 0,
     "rejectedTrackCount": 0,
     "coverage": {},
     "barbellSeedUsed": False,
+    "manualBarbellPointCount": 0,
+    "automaticBarbellPointCount": 0,
   }
   assisted_estimation = dict(estimation)
   assisted_estimation["tracking_assistance"] = assistance
@@ -94,6 +97,9 @@ def _apply_tracking_assistance(
         "fallbackReason": None if fusion["used"] else "manual_tracks_unavailable",
         "selectedSide": fusion.get("selected_side"),
         "fusedLandmarkCount": int(fusion.get("fused_landmark_count") or 0),
+        "directlyAnchoredLandmarkCount": int(
+          fusion.get("directly_anchored_landmark_count") or 0
+        ),
         "rejectedTrackCount": int(fusion.get("rejected_track_count") or 0),
         "coverage": fusion.get("coverage") or {},
       }
@@ -553,13 +559,36 @@ def _attach_barbell_tracking(
       manual_barbell_priors=barbell_track_priors(estimation.get("manual_tracking") or {}),
     )
     manual_seed_count = tracker.manual_seed_count if isinstance(tracker.manual_seed_count, int) else 0
+    tracking_diagnostics = tracking.get("diagnostics") or {}
+    manual_point_count = int(
+      tracking_diagnostics.get("manual_point_count")
+      or getattr(tracker, "manual_point_count", 0)
+      or 0
+    )
+    automatic_point_count = int(
+      tracking_diagnostics.get("automatic_point_count")
+      or getattr(tracker, "automatic_point_count", 0)
+      or 0
+    )
+    manual_barbell_used = bool(
+      manual_point_count > 0
+      and (tracking.get("barbellPath") or {}).get("available")
+    )
     assistance = result.get("trackingAssistance") or {}
-    assistance["barbellSeedUsed"] = manual_seed_count > 0
+    assistance["barbellSeedUsed"] = manual_barbell_used
+    assistance["manualBarbellPointCount"] = manual_point_count
+    assistance["automaticBarbellPointCount"] = automatic_point_count
+    if manual_barbell_used:
+      assistance["used"] = True
+      assistance["actualMode"] = "pin_assisted"
+      assistance["fallbackReason"] = None
     result["trackingAssistance"] = assistance
     diagnostics["tracking_assistance"] = assistance
     result["barbellPath"] = tracking["barbellPath"]
-    tracking["diagnostics"]["manual_seed_count"] = manual_seed_count
-    diagnostics["barbell_tracking"] = tracking["diagnostics"]
+    tracking_diagnostics["manual_seed_count"] = manual_seed_count
+    tracking_diagnostics["manual_point_count"] = manual_point_count
+    tracking_diagnostics["automatic_point_count"] = automatic_point_count
+    diagnostics["barbell_tracking"] = tracking_diagnostics
   except Exception as error:
     logger.warning("Barbell tracking failed for video %s: %s", video.get("id"), error)
     result["barbellPath"] = {

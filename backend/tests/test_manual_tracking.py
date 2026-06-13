@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,7 +16,7 @@ from app.analysis.manual_tracking import (
   track_manual_anchors,
   validate_tracking_setup,
 )
-from app.analysis.pipeline import _apply_tracking_assistance
+from app.analysis.pipeline import _apply_tracking_assistance, _attach_barbell_tracking
 from app.analysis.barbell_tracking.tracker import BarbellTracker
 from app.services.video_repository import VIDEO_STORAGE_COLUMNS
 
@@ -55,6 +56,27 @@ def pose_frame(source_index: int = 1) -> dict:
 
 
 class ManualTrackingTest(unittest.TestCase):
+  def test_img0012_regression_fixture_has_complete_ordered_labels(self) -> None:
+    fixture_path = Path(__file__).resolve().parent / "fixtures" / "manual_tracking_img0012_reference.json"
+    fixture = json.loads(fixture_path.read_text())
+
+    self.assertEqual(fixture["video"], "IMG_0012.MOV")
+    self.assertEqual(len(fixture["labels"]), 4)
+    self.assertEqual(fixture["reference_time_ms"], fixture["labels"][0]["time_ms"])
+    width = fixture["coordinate_space"]["width"]
+    height = fixture["coordinate_space"]["height"]
+    for label in fixture["labels"]:
+      anchors = label["anchors"]
+      self.assertEqual(set(anchors), {*BODY_ANCHORS, "barbell"})
+      self.assertLess(anchors["shoulder"][1], anchors["hip"][1])
+      self.assertLess(anchors["hip"][1], anchors["knee"][1])
+      self.assertLess(anchors["knee"][1], anchors["ankle"][1])
+      for x, y in anchors.values():
+        self.assertGreaterEqual(x, 0)
+        self.assertLessEqual(x, width)
+        self.assertGreaterEqual(y, 0)
+        self.assertLessEqual(y, height)
+
   def test_validate_tracking_setup_accepts_complete_payload(self) -> None:
     validated, error = validate_tracking_setup(tracking_setup(), duration_ms=1000)
 
@@ -100,7 +122,39 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertEqual(diagnostics["selected_side"], "left")
     self.assertEqual(diagnostics["fused_landmark_count"], 4)
     self.assertTrue(fused[0]["landmarks"]["left_hip"]["manual_assisted"])
+    self.assertEqual(
+      fused[0]["landmarks"]["left_hip"]["x"],
+      tracks["hip"][1]["x"],
+    )
+    self.assertEqual(diagnostics["directly_anchored_landmark_count"], 4)
     self.assertEqual(fused[0]["landmarks"]["right_hip"]["x"], original_right_hip)
+
+  def test_fusion_requires_two_valid_frames_before_manual_reentry(self) -> None:
+    frames = [pose_frame(index) for index in (1, 2, 3, 4)]
+    tracks = {
+      joint: {
+        index: {
+          "x": tracking_setup()["anchors"][joint]["x"] + (index * 0.01),
+          "y": tracking_setup()["anchors"][joint]["y"],
+          "confidence": 0.9,
+        }
+        for index in (1, 3, 4)
+      }
+      for joint in BODY_ANCHORS
+    }
+    automatic_frame_three_hip = frames[2]["landmarks"]["left_hip"]["x"]
+
+    fused, _ = fuse_manual_body_tracks(
+      frames,
+      setup=tracking_setup(),
+      tracking={"tracks": tracks, "reference_source_index": 1, "coverage": {}},
+    )
+
+    self.assertTrue(fused[0]["landmarks"]["left_hip"]["manual_assisted"])
+    self.assertNotIn("manual_assisted", fused[1]["landmarks"]["left_hip"])
+    self.assertEqual(fused[2]["landmarks"]["left_hip"]["x"], automatic_frame_three_hip)
+    self.assertNotIn("manual_assisted", fused[2]["landmarks"]["left_hip"])
+    self.assertTrue(fused[3]["landmarks"]["left_hip"]["manual_assisted"])
 
   def test_tracks_anchors_forward_and_backward_from_reference_frame(self) -> None:
     width, height, fps = 160, 120, 10.0
@@ -196,6 +250,40 @@ class ManualTrackingTest(unittest.TestCase):
 
     self.assertEqual(assisted["tracking_assistance"]["actualMode"], "pin_assisted")
     self.assertTrue(assisted["tracking_assistance"]["used"])
+
+  def test_pipeline_marks_manual_collar_points_as_pin_assisted(self) -> None:
+    tracker = BarbellTracker()
+    tracker.manual_seed_count = 3
+    tracker.manual_point_count = 3
+    tracker.automatic_point_count = 2
+    tracker.track = lambda *args, **kwargs: {
+      "barbellPath": {"available": True, "coverage": 1.0, "points": []},
+      "diagnostics": {"manual_point_count": 3, "automatic_point_count": 2},
+    }
+    result = {
+      "reps": [],
+      "trackingAssistance": {
+        "requestedMode": "pins",
+        "actualMode": "automatic_fallback",
+        "used": False,
+        "fallbackReason": "manual_tracks_unavailable",
+      },
+    }
+
+    with patch("app.analysis.pipeline.BarbellTracker", return_value=tracker):
+      _attach_barbell_tracking(
+        result=result,
+        video={"id": "video-1", "exercise_type": "squat", "view_type": "side"},
+        file_path="unused.mov",
+        estimation={"frames": [], "frame_step": 1, "manual_tracking": {"tracks": {}}},
+      )
+
+    assistance = result["trackingAssistance"]
+    self.assertEqual(assistance["actualMode"], "pin_assisted")
+    self.assertTrue(assistance["used"])
+    self.assertEqual(assistance["manualBarbellPointCount"], 3)
+    self.assertEqual(assistance["automaticBarbellPointCount"], 2)
+    self.assertIsNone(assistance["fallbackReason"])
 
   def test_barbell_prior_must_be_confident_and_inside_pose_region(self) -> None:
     self.assertTrue(BarbellTracker._manual_prior_is_plausible(

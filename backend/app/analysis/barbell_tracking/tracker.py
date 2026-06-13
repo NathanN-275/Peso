@@ -67,6 +67,8 @@ class BarbellTracker:
   def __init__(self) -> None:
     self.bootstrap_diagnostics: dict[str, Any] = {"frames": []}
     self.manual_seed_count = 0
+    self.manual_point_count = 0
+    self.automatic_point_count = 0
 
   @staticmethod
   def _manual_prior_is_plausible(
@@ -693,6 +695,8 @@ class BarbellTracker:
 
     self.bootstrap_diagnostics = {"frames": []}
     self.manual_seed_count = 0
+    self.manual_point_count = 0
+    self.automatic_point_count = 0
     normalized_manual_priors = manual_barbell_priors or {}
     started = time.perf_counter()
     if not Path(file_path).is_file():
@@ -764,7 +768,10 @@ class BarbellTracker:
         selected_side=normalized_selected_side,
         rep_windows=normalized_rep_windows,
       )
-      if normalized_rep_windows and width <= 720 and height <= 1280
+      if not normalized_manual_priors
+      and normalized_rep_windows
+      and width <= 720
+      and height <= 1280
       else None
     )
     if (
@@ -843,6 +850,9 @@ class BarbellTracker:
     frame_index = 0
     debug_writer = None
     sampled_shoulder_y_values: list[float] = []
+    manual_mode_active = False
+    manual_has_activated = False
+    manual_reentry_streak = 0
 
     if debug_output_path:
       debug_writer = cv2.VideoWriter(
@@ -895,6 +905,8 @@ class BarbellTracker:
           stale_prior_expiration_count += 1
         if normalized_rep_windows and current_rep is None:
           tracking_lock = None
+          manual_mode_active = False
+          manual_reentry_streak = 0
           pending_plate = None
           pending_confirmation_count = 0
           pending_miss_count = 0
@@ -948,13 +960,28 @@ class BarbellTracker:
         candidate_bounds = bounds[:4]
 
         manual_prior = normalized_manual_priors.get(frame_index)
-        if tracking_lock is None and self._manual_prior_is_plausible(
+        manual_prior_is_plausible = self._manual_prior_is_plausible(
           manual_prior,
           bounds=candidate_bounds,
           shoulder=shoulder,
           width=width,
           height=height,
-        ):
+        )
+        use_manual_prior = False
+        if manual_prior_is_plausible:
+          if not manual_has_activated or manual_mode_active:
+            use_manual_prior = True
+          else:
+            manual_reentry_streak += 1
+            use_manual_prior = manual_reentry_streak >= 2
+        else:
+          manual_reentry_streak = 0
+          manual_mode_active = False
+
+        if use_manual_prior:
+          manual_mode_active = True
+          manual_has_activated = True
+          manual_reentry_streak = 0
           manual_point = (
             float(manual_prior["x"]) * width,
             float(manual_prior["y"]) * height,
@@ -990,9 +1017,10 @@ class BarbellTracker:
               "collar_descriptor_score": float(manual_prior["confidence"]),
             }
           )
-          tracking_mode = "manual_seed"
+          tracking_mode = "manual_collar"
           has_ever_locked = True
           self.manual_seed_count += 1
+          self.manual_point_count += 1
           final_bar_point = manual_point
           final_bar_confidence = float(manual_prior["confidence"])
           final_bar_reason = None
@@ -1005,6 +1033,7 @@ class BarbellTracker:
             "x": manual_point[0] / width,
             "y": manual_point[1] / height,
             "confidence": final_bar_confidence,
+            "manual_assisted": True,
           }
           samples.append(point)
           accepted_points_px.append(manual_point)
@@ -2074,6 +2103,8 @@ class BarbellTracker:
           for window in normalized_rep_windows
         )
       ]
+    self.manual_point_count = sum(bool(point.get("manual_assisted")) for point in points)
+    self.automatic_point_count = len(points) - self.manual_point_count
     coverage = len(points) / sampled_count if sampled_count else 0.0
     bar_vertical_range_px = (
       (max(float(point["y"]) for point in points) - min(float(point["y"]) for point in points)) * height
@@ -2151,6 +2182,8 @@ class BarbellTracker:
         stale_prior_expiration_count=stale_prior_expiration_count,
         reacquisition_success_count=reacquisition_success_count,
         per_rep_coverage=per_rep_coverage,
+        manual_point_count=self.manual_point_count,
+        automatic_point_count=self.automatic_point_count,
       )
       result["diagnostics"]["bootstrap_diagnostics"] = self.bootstrap_diagnostics
       return result
@@ -2213,6 +2246,8 @@ class BarbellTracker:
         stale_prior_expiration_count=stale_prior_expiration_count,
         reacquisition_success_count=reacquisition_success_count,
         per_rep_coverage=per_rep_coverage,
+        manual_point_count=self.manual_point_count,
+        automatic_point_count=self.automatic_point_count,
       )
       result["diagnostics"]["bootstrap_diagnostics"] = self.bootstrap_diagnostics
       return result
@@ -2266,6 +2301,8 @@ class BarbellTracker:
         "coverage": coverage,
         "sampled_frame_count": sampled_count,
         "detected_point_count": detected_count,
+        "manual_point_count": self.manual_point_count,
+        "automatic_point_count": self.automatic_point_count,
         "interpolated_point_count": interpolated_count,
         "rejected_frame_count": max(sampled_count - detected_count - interpolated_count, 0),
         "rejected_candidate_count": rejected_candidate_count,

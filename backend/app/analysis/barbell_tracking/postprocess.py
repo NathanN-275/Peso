@@ -41,6 +41,18 @@ def _smooth_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
   smoothed: list[dict[str, Any]] = []
 
   for index, point in enumerate(points):
+    if point.get("manual_assisted"):
+      smoothed.append(
+        {
+          **point,
+          "time": round(float(point["time"]), 4),
+          "x": round(float(point["x"]), 4),
+          "y": round(float(point["y"]), 4),
+          "confidence": round(float(point["confidence"]), 3),
+          "manual_assisted": True,
+        }
+      )
+      continue
     point_time = float(point["time"])
     window = [
       item
@@ -50,6 +62,7 @@ def _smooth_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
     confidence_sum = sum(max(float(item["confidence"]), 0.01) for item in window)
     smoothed.append(
       {
+        **point,
         "time": round(float(point["time"]), 4),
         "x": round(
           sum(float(item["x"]) * max(float(item["confidence"]), 0.01) for item in window)

@@ -93,8 +93,8 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   const [setupModalVisible, setSetupModalVisible] = useState(true);
   const [videoSetup, setVideoSetup] = useState<VideoSetupSelection | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<ImagePicker.ImagePickerAsset | null>(null);
-  const [trackingChoice, setTrackingChoice] = useState<'pins' | 'automatic' | null>(null);
   const [trackingSetup, setTrackingSetup] = useState<TrackingSetup | null>(null);
+  const [trackingDetailsExpanded, setTrackingDetailsExpanded] = useState(false);
   const [trackingPinModalVisible, setTrackingPinModalVisible] = useState(false);
   const [screenLayout, setScreenLayout] = useState({ width: 0, height: 0 });
   const [uploading, setUploading] = useState(false);
@@ -113,8 +113,8 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     analysisStartInFlightRef.current = false;
     analysisQueuedForVideoRef.current = null;
     setSelectedVideo(asset);
-    setTrackingChoice(null);
     setTrackingSetup(null);
+    setTrackingDetailsExpanded(false);
     setTrackingPinModalVisible(false);
     setAnalysisVideoId(null);
     setAnalysisStatus(null);
@@ -176,7 +176,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
         asset: selectedVideo,
         exercise: videoSetup.exercise,
         angle: videoSetup.angle,
-        trackingSetup: trackingChoice === 'pins' ? trackingSetup : null,
+        trackingSetup,
         onStatusChange: setStatusMessage,
       });
       uploadedVideo = uploadResult;
@@ -464,8 +464,8 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     const setupChanged = videoSetup?.exercise !== selection.exercise || videoSetup?.angle !== selection.angle;
     setVideoSetup(selection);
     if (setupChanged) {
-      setTrackingChoice(null);
       setTrackingSetup(null);
+      setTrackingDetailsExpanded(false);
     }
     setSetupModalVisible(false);
     setErrorMessage(null);
@@ -520,15 +520,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     : [];
   const canStartAnalysis =
     // Only a fully configured, idle upload can be sent to analysis.
-    Boolean(
-      selectedVideo
-      && videoSetup
-      && (
-        !supportsPinAssistedTracking(videoSetup)
-        || trackingChoice === 'automatic'
-        || (trackingChoice === 'pins' && trackingSetup)
-      )
-    ) &&
+    Boolean(selectedVideo && videoSetup) &&
     !uploading &&
     !isAnalysisInProgress(analysisStatus) &&
     analysisStatus !== 'completed';
@@ -549,8 +541,8 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     analysisStartInFlightRef.current = false;
     analysisQueuedForVideoRef.current = null;
     setSelectedVideo(null);
-    setTrackingChoice(null);
     setTrackingSetup(null);
+    setTrackingDetailsExpanded(false);
     setTrackingPinModalVisible(false);
     setAnalysisVideoId(null);
     setAnalysisStatus(null);
@@ -592,10 +584,10 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
             width: selectedVideo.width || 1080,
             height: selectedVideo.height || 1920,
           }}
+          videoDurationMs={selectedVideo.duration ?? undefined}
           initialSetup={trackingSetup}
           onSave={(setup) => {
             setTrackingSetup(setup);
-            setTrackingChoice('pins');
             setTrackingPinModalVisible(false);
           }}
           onCancel={() => setTrackingPinModalVisible(false)}
@@ -654,43 +646,71 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
           ) : null}
 
           {selectedVideo && supportsPinAssistedTracking(videoSetup) ? (
-            <View style={styles.trackingSetupCard}>
-              <View style={styles.trackingSetupHeader}>
-                <View style={styles.trackingSetupCopy}>
-                  <Text style={styles.trackingSetupTitle}>Tracking assistance</Text>
+            <View style={styles.trackingSetupSection}>
+              <View style={[styles.trackingSplitButton, uploading && styles.trackingSplitButtonDisabled]}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={trackingSetup ? 'Edit Pins' : 'Place Pins, optional'}
+                  onPress={() => setTrackingPinModalVisible(true)}
+                  disabled={uploading}
+                  style={styles.trackingSplitMain}
+                >
+                  {trackingSetup ? (
+                    <Ionicons name="checkmark-circle" size={20} color={tokens.colors.textPrimary} />
+                  ) : null}
+                  <Text style={styles.trackingSplitLabel}>
+                    {trackingSetup ? 'Edit Pins' : 'Place Pins (Optional)'}
+                  </Text>
+                </Pressable>
+                <View style={styles.trackingSplitDivider} />
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={trackingDetailsExpanded ? 'Hide pin details' : 'Show pin details'}
+                  accessibilityState={{ expanded: trackingDetailsExpanded }}
+                  onPress={() => setTrackingDetailsExpanded((value) => !value)}
+                  disabled={uploading}
+                  style={styles.trackingSplitToggle}
+                >
+                  <Ionicons
+                    name={trackingDetailsExpanded ? 'chevron-up' : 'chevron-down'}
+                    size={22}
+                    color={tokens.colors.textPrimary}
+                  />
+                </Pressable>
+              </View>
+              {trackingDetailsExpanded ? (
+                <View style={styles.trackingDetails}>
                   <Text style={styles.trackingSetupDescription}>
                     Place five pins on one clear frame to help the pose and barbell trackers stay locked on you.
                   </Text>
+                  <Text style={styles.accuracyDisclaimer}>
+                    Automatic tracking may be less accurate when joints or the barbell are obscured.
+                  </Text>
+                  {trackingSetup ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => {
+                        Alert.alert(
+                          'Remove saved pins?',
+                          'This video will use automatic tracking unless you place the pins again.',
+                          [
+                            { text: 'Keep Pins', style: 'cancel' },
+                            {
+                              text: 'Remove Pins',
+                              style: 'destructive',
+                              onPress: () => setTrackingSetup(null),
+                            },
+                          ]
+                        );
+                      }}
+                      disabled={uploading}
+                      style={styles.removePinsButton}
+                    >
+                      <Text style={styles.removePinsText}>Remove saved pins</Text>
+                    </Pressable>
+                  ) : null}
                 </View>
-                {trackingChoice ? (
-                  <View style={styles.trackingChoiceBadge}>
-                    <Text style={styles.trackingChoiceBadgeText}>
-                      {trackingChoice === 'pins' ? 'Pins ready' : 'Automatic'}
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
-
-              <Button
-                label={trackingSetup ? 'Edit Pins' : 'Place Pins'}
-                onPress={() => setTrackingPinModalVisible(true)}
-                disabled={uploading}
-                style={styles.trackingPinButton}
-              />
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => {
-                  setTrackingChoice('automatic');
-                  setTrackingSetup(null);
-                }}
-                disabled={uploading}
-                style={styles.automaticButton}
-              >
-                <Text style={styles.automaticButtonText}>Continue Without Pins</Text>
-              </Pressable>
-              <Text style={styles.accuracyDisclaimer}>
-                Automatic tracking may be less accurate when joints or the barbell are obscured.
-              </Text>
+              ) : null}
             </View>
           ) : null}
 
@@ -937,55 +957,76 @@ const styles = StyleSheet.create({
     maxWidth: 320,
     marginTop: 12,
   },
-  trackingSetupCard: {
+  trackingSetupSection: {
     width: '100%',
     marginTop: 16,
-    borderRadius: 16,
+    gap: 10,
+  },
+  trackingSplitButton: {
+    width: '100%',
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    borderRadius: tokens.radii.button,
+    backgroundColor: tokens.colors.brand,
+    overflow: 'hidden',
+  },
+  trackingSplitButtonDisabled: { opacity: 0.6 },
+  trackingSplitMain: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  trackingSplitLabel: {
+    color: tokens.colors.textPrimary,
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  trackingSplitDivider: {
+    width: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(255, 255, 255, 0.42)',
+    marginVertical: 9,
+  },
+  trackingSplitToggle: {
+    width: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  trackingDetails: {
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: tokens.colors.inputBorder,
     backgroundColor: '#12161D',
-    paddingHorizontal: 18,
-    paddingVertical: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     gap: 10,
-  },
-  trackingSetupHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  trackingSetupCopy: { flex: 1, gap: 5 },
-  trackingSetupTitle: {
-    color: tokens.colors.textPrimary,
-    fontSize: 16,
-    lineHeight: 21,
-    fontWeight: '700',
   },
   trackingSetupDescription: {
     color: tokens.colors.textMuted,
     fontSize: 13,
     lineHeight: 19,
   },
-  trackingChoiceBadge: {
-    borderRadius: 999,
-    backgroundColor: '#1A2D47',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  trackingChoiceBadgeText: {
-    color: '#8CC0FF',
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: '700',
-  },
-  trackingPinButton: { width: '100%', marginTop: 4 },
-  automaticButton: { alignSelf: 'center', paddingHorizontal: 12, paddingVertical: 7 },
-  automaticButtonText: { color: tokens.colors.textPrimary, fontSize: 14, fontWeight: '600' },
   accuracyDisclaimer: {
     color: tokens.colors.textMuted,
     fontSize: 12,
     lineHeight: 17,
-    textAlign: 'center',
+  },
+  removePinsButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+  },
+  removePinsText: {
+    color: '#FF9A9A',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
   },
   errorText: {
     width: '100%',
