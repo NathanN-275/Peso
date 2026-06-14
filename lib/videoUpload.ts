@@ -5,7 +5,7 @@ import type { VideoCompressorType } from 'react-native-compressor';
 import { CameraAngle, ExerciseOption } from '../src/constants/videoSetup';
 import type { TrackingSetup } from '../src/types/trackingSetup';
 import { supabase, supabaseConfigError } from './supabase';
-import { getVideoInsertRetryMode } from './videoUploadInsertPolicy';
+import { getVideoInsertRetryMode, omitLegacyStorageMetadata } from './videoUploadInsertPolicy';
 
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = resolveFrontendMaxUploadBytes();
@@ -731,19 +731,14 @@ export async function uploadVideoForAnalysis({
     ;
 
   if (insertError) {
+    let finalInsertError = insertError;
     const retryMode = getVideoInsertRetryMode(
       formatSupabaseError(insertError),
       Boolean(trackingSetup)
     );
 
     if (retryMode === 'retry_without_storage_metadata') {
-      const {
-        original_size_bytes: _originalSizeBytes,
-        uploaded_size_bytes: _uploadedSizeBytes,
-        was_compressed: _wasCompressed,
-        storage_state: _storageState,
-        ...legacyInsertPayload
-      } = insertPayload;
+      const legacyInsertPayload = omitLegacyStorageMetadata(insertPayload);
       const { error: legacyInsertError } = await supabase
         .from('videos')
         .insert(legacyInsertPayload);
@@ -764,6 +759,7 @@ export async function uploadVideoForAnalysis({
           wasCompressed: preparedVideo.wasCompressed,
         };
       }
+      finalInsertError = legacyInsertError;
 
       if (
         getVideoInsertRetryMode(formatSupabaseError(legacyInsertError), Boolean(trackingSetup))
@@ -791,14 +787,14 @@ export async function uploadVideoForAnalysis({
       exerciseType: normalizedExerciseType,
       viewType: normalizedViewType,
       error: {
-        message: insertError.message,
-        code: insertError.code,
-        details: insertError.details,
-        hint: insertError.hint,
+        message: finalInsertError.message,
+        code: finalInsertError.code,
+        details: finalInsertError.details,
+        hint: finalInsertError.hint,
       },
     });
     await supabase.storage.from('videos').remove([storagePath]);
-    throw new Error(formatSupabaseError(insertError));
+    throw new Error(formatSupabaseError(finalInsertError));
   }
 
   return {
