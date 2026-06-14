@@ -186,6 +186,22 @@ Returns saved video metadata, a small analysis summary for card text, and signed
 
 Returns a short-lived signed full-video URL for review playback. The backend signs `playback_path` when available and falls back to `storage_path` only when a compressed playback file has not been created yet. The mobile client requests this only after the user opens the playback screen.
 
+### `GET /videos/storage-usage`
+
+Returns the current object-storage inventory and a conservative peak estimate for a proposed upload. Pass `upload_size_bytes` as a query parameter. The estimate includes the source upload, a temporary compressed-playback allowance, and a thumbnail allowance. Uploads warn at 80% projected usage and block at 95%; quota handling never deletes saved videos.
+
+The defaults match the current Supabase plan and can be overridden in the backend environment:
+
+```dotenv
+OBJECT_STORAGE_LIMIT_BYTES=1073741824
+DATABASE_LIMIT_BYTES=536870912
+MONTHLY_EGRESS_LIMIT_BYTES=5368709120
+STORAGE_WARNING_RATIO=0.80
+STORAGE_BLOCK_RATIO=0.95
+PLAYBACK_STORAGE_ESTIMATE_RATIO=1.0
+THUMBNAIL_STORAGE_ALLOWANCE_BYTES=1048576
+```
+
 ### `POST /videos/cleanup-expired`
 
 Dry-runs cleanup by default and reports reclaimable storage without deleting anything. Pass `confirm=true` to delete unnecessary Supabase Storage data and mark eligible rows discarded. Cleanup removes expired pending uploads, stale pending analysis jobs, old analyzed export MP4s, and unreferenced app-owned upload objects. Saved source videos are never deleted.
@@ -200,6 +216,12 @@ Use `dry_run=true` to inspect reclaimable storage without deleting anything:
 
 ```http
 POST /videos/cleanup-expired?dry_run=true
+```
+
+The local cleanup script also loads `backend/.env` automatically and is dry-run by default:
+
+```bash
+backend/.venv/bin/python scripts/cleanup_supabase_storage.py --dry-run
 ```
 
 ### Saved thumbnail backfill

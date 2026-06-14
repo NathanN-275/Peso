@@ -10,6 +10,7 @@ from fastapi import BackgroundTasks, HTTPException
 from app.analysis.versioning import annotate_analysis_freshness, analysis_is_current
 from app.routes.videos import (
   discard_video,
+  get_storage_usage,
   get_video_playback_url,
   list_saved_videos,
   queue_analysis,
@@ -52,6 +53,31 @@ class VideoRoutesTest(unittest.TestCase):
     )
     self.assertEqual(response.status, "queued")
     self.assertEqual(len(background_tasks.tasks), 1)
+
+  def test_storage_usage_endpoint_returns_quota_report_without_mutation(self) -> None:
+    quota_service = MagicMock()
+    quota_service.get_usage.return_value.to_dict.return_value = {
+      "storage_limit_bytes": 1024,
+      "database_limit_bytes": 512,
+      "monthly_egress_limit_bytes": 5120,
+      "current_storage_bytes": 100,
+      "upload_size_bytes": 50,
+      "playback_allowance_bytes": 50,
+      "thumbnail_allowance_bytes": 1,
+      "projected_peak_bytes": 201,
+      "warning_threshold_bytes": 819,
+      "block_threshold_bytes": 972,
+      "status": "ok",
+      "blocked": False,
+      "message": "Storage capacity is available for this upload.",
+    }
+
+    with patch("app.routes.videos.StorageQuotaService", return_value=quota_service):
+      response = get_storage_usage(50, USER_ID)
+
+    quota_service.get_usage.assert_called_once_with(50)
+    self.assertEqual(response.projected_peak_bytes, 201)
+    self.assertFalse(response.blocked)
 
   def test_queue_analysis_returns_idempotent_in_progress_status(self) -> None:
     repository = MagicMock()

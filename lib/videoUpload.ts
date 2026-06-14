@@ -4,6 +4,8 @@ import { Platform } from 'react-native';
 import type { VideoCompressorType } from 'react-native-compressor';
 import { CameraAngle, ExerciseOption } from '../src/constants/videoSetup';
 import type { TrackingSetup } from '../src/types/trackingSetup';
+import { fetchStorageUsage } from './backendApi';
+import { getFreshBackendAccessToken } from './backendAuth';
 import { supabase, supabaseConfigError } from './supabase';
 import { getVideoInsertRetryMode, omitLegacyStorageMetadata } from './videoUploadInsertPolicy';
 
@@ -31,6 +33,7 @@ type UploadVideoForAnalysisArgs = {
   angle: CameraAngle;
   trackingSetup?: TrackingSetup | null;
   onStatusChange?: (message: string | null) => void;
+  onQuotaWarning?: (message: string) => void;
 };
 
 export type UploadVideoForAnalysisResult = {
@@ -644,6 +647,7 @@ export async function uploadVideoForAnalysis({
   angle,
   trackingSetup,
   onStatusChange,
+  onQuotaWarning,
 }: UploadVideoForAnalysisArgs): Promise<UploadVideoForAnalysisResult> {
   // Upload the video and create the DB row that analysis consumes.
   if (!supabase) {
@@ -678,14 +682,25 @@ export async function uploadVideoForAnalysis({
     );
   }
 
-  onStatusChange?.('Uploading video...');
-
   const uploadSource = await resolveUploadSource(preparedVideo.asset);
   logVideoUploadDebug('Uploading prepared video file.', {
     originalSizeBytes: preparedVideo.originalSizeBytes,
     uploadedFileSizeBytes: uploadSource.sizeBytes,
     wasCompressed: preparedVideo.wasCompressed,
   });
+  onStatusChange?.('Checking storage capacity...');
+  const accessToken = await getFreshBackendAccessToken();
+  const storageUsage = await fetchStorageUsage(uploadSource.sizeBytes, accessToken);
+
+  if (storageUsage.blocked || storageUsage.status === 'blocked') {
+    throw new Error(storageUsage.message);
+  }
+
+  if (storageUsage.status === 'warning') {
+    onQuotaWarning?.(storageUsage.message);
+  }
+
+  onStatusChange?.('Uploading video...');
   const storagePath = buildStoragePath(user.id, uploadSource.fileName);
 
   const { error: uploadError } = await supabase.storage.from('videos').upload(storagePath, uploadSource.body, {

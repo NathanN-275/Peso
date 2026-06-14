@@ -23,6 +23,7 @@ import {
 } from '../../lib/videoUpload';
 import type { UploadVideoForAnalysisResult } from '../../lib/videoUpload';
 import Button from '../components/Button';
+import ConfirmationDialog from '../components/ConfirmationDialog';
 import SelectedVideoPreview from '../components/SelectedVideoPreview';
 import TrackingPinSetupModal from '../components/TrackingPinSetupModal';
 import VideoSetupModal from '../components/VideoSetupModal';
@@ -96,6 +97,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   const [trackingSetup, setTrackingSetup] = useState<TrackingSetup | null>(null);
   const [trackingDetailsExpanded, setTrackingDetailsExpanded] = useState(false);
   const [trackingPinModalVisible, setTrackingPinModalVisible] = useState(false);
+  const [removePinsDialogVisible, setRemovePinsDialogVisible] = useState(false);
   const [screenLayout, setScreenLayout] = useState({ width: 0, height: 0 });
   const [uploading, setUploading] = useState(false);
   const [analysisVideoId, setAnalysisVideoId] = useState<string | null>(null);
@@ -103,6 +105,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   const [analysisResult, setAnalysisResult] = useState<VideoAnalysisResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [quotaWarningMessage, setQuotaWarningMessage] = useState<string | null>(null);
   const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
   const [displayedVideoSizeBytes, setDisplayedVideoSizeBytes] = useState<number | null>(null);
   const analysisStartInFlightRef = useRef(false);
@@ -116,11 +119,13 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     setTrackingSetup(null);
     setTrackingDetailsExpanded(false);
     setTrackingPinModalVisible(false);
+    setRemovePinsDialogVisible(false);
     setAnalysisVideoId(null);
     setAnalysisStatus(null);
     setAnalysisResult(null);
     setErrorMessage(null);
     setStatusMessage(null);
+    setQuotaWarningMessage(null);
     setDisplayedVideoSizeBytes(
       typeof asset.fileSize === 'number' && !Number.isNaN(asset.fileSize) ? asset.fileSize : null
     );
@@ -163,6 +168,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
 
     setErrorMessage(null);
     setStatusMessage(null);
+    setQuotaWarningMessage(null);
     setUploading(true);
     analysisStartInFlightRef.current = true;
     let uploadedVideo: UploadVideoForAnalysisResult | null = null;
@@ -178,6 +184,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
         angle: videoSetup.angle,
         trackingSetup,
         onStatusChange: setStatusMessage,
+        onQuotaWarning: setQuotaWarningMessage,
       });
       uploadedVideo = uploadResult;
 
@@ -466,6 +473,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     if (setupChanged) {
       setTrackingSetup(null);
       setTrackingDetailsExpanded(false);
+      setRemovePinsDialogVisible(false);
     }
     setSetupModalVisible(false);
     setErrorMessage(null);
@@ -544,11 +552,13 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     setTrackingSetup(null);
     setTrackingDetailsExpanded(false);
     setTrackingPinModalVisible(false);
+    setRemovePinsDialogVisible(false);
     setAnalysisVideoId(null);
     setAnalysisStatus(null);
     setAnalysisResult(null);
     setErrorMessage(null);
     setStatusMessage(null);
+    setQuotaWarningMessage(null);
     setThumbnailUri(null);
     setDisplayedVideoSizeBytes(null);
   };
@@ -575,6 +585,20 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
           void handleModalContinue(selection);
         }}
         onCancel={handleModalCancel}
+      />
+      <ConfirmationDialog
+        visible={removePinsDialogVisible}
+        title="Remove saved pins?"
+        message="This video will use automatic tracking unless you place the pins again."
+        confirmLabel="Remove Pins"
+        destructive
+        onConfirm={() => {
+          setTrackingSetup(null);
+          setRemovePinsDialogVisible(false);
+          setErrorMessage(null);
+          setStatusMessage(null);
+        }}
+        onCancel={() => setRemovePinsDialogVisible(false)}
       />
       {selectedVideo ? (
         <TrackingPinSetupModal
@@ -689,20 +713,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
                   {trackingSetup ? (
                     <Pressable
                       accessibilityRole="button"
-                      onPress={() => {
-                        Alert.alert(
-                          'Remove saved pins?',
-                          'This video will use automatic tracking unless you place the pins again.',
-                          [
-                            { text: 'Keep Pins', style: 'cancel' },
-                            {
-                              text: 'Remove Pins',
-                              style: 'destructive',
-                              onPress: () => setTrackingSetup(null),
-                            },
-                          ]
-                        );
-                      }}
+                      onPress={() => setRemovePinsDialogVisible(true)}
                       disabled={uploading}
                       style={styles.removePinsButton}
                     >
@@ -714,14 +725,34 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
             </View>
           ) : null}
 
-          {canStartAnalysis ? (
-            <Button
-              label="Start Analysis"
-              onPress={() => {
-                void handleStartAnalysis();
-              }}
-              style={styles.startAnalysisButton}
-            />
+          {selectedVideo ? (
+            <View style={styles.actions}>
+              <Button
+                label="Choose Another Video"
+                onPress={handlePickVideoPress}
+                disabled={uploading}
+                style={styles.primaryAction}
+              />
+              <Button
+                label="Edit Video Setup"
+                onPress={() => setSetupModalVisible(true)}
+                disabled={uploading}
+                style={styles.primaryAction}
+              />
+              {canStartAnalysis ? (
+                <Button
+                  label="Start Analysis"
+                  onPress={() => {
+                    void handleStartAnalysis();
+                  }}
+                  style={styles.primaryAction}
+                />
+              ) : null}
+            </View>
+          ) : null}
+
+          {quotaWarningMessage ? (
+            <Text style={styles.quotaWarningText}>{quotaWarningMessage}</Text>
           ) : null}
 
           {inlineMessage ? (
@@ -788,24 +819,22 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
             </View>
           ) : null}
 
-          <View style={styles.actions}>
-            {/* The main action switches between picking and re-picking a clip. */}
-            <Button
-              label={selectedVideo ? 'Choose Another Video' : 'Choose Video'}
-              onPress={handlePickVideoPress}
-              disabled={uploading}
-              style={styles.primaryAction}
-            />
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setSetupModalVisible(true)}
-              style={styles.secondaryAction}
-            >
-              <Text style={styles.secondaryActionText}>
-                {videoSetup ? 'Edit Video Setup' : 'Open Video Setup'}
-              </Text>
-            </Pressable>
-          </View>
+          {!selectedVideo ? (
+            <View style={styles.actions}>
+              <Button
+                label="Choose Video"
+                onPress={handlePickVideoPress}
+                disabled={uploading}
+                style={styles.primaryAction}
+              />
+              <Button
+                label={videoSetup ? 'Edit Video Setup' : 'Open Video Setup'}
+                onPress={() => setSetupModalVisible(true)}
+                disabled={uploading}
+                style={styles.primaryAction}
+              />
+            </View>
+          ) : null}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -952,11 +981,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#151A22',
     flexShrink: 0,
   },
-  startAnalysisButton: {
-    width: '100%',
-    maxWidth: 320,
-    marginTop: 12,
-  },
   trackingSetupSection: {
     width: '100%',
     marginTop: 16,
@@ -1042,6 +1066,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
+  quotaWarningText: {
+    width: '100%',
+    marginTop: 16,
+    color: '#F4C66A',
+    fontSize: 14,
+    lineHeight: 20,
+  },
   resultCard: {
     width: '100%',
     marginTop: 18,
@@ -1086,16 +1117,5 @@ const styles = StyleSheet.create({
   },
   primaryAction: {
     width: '100%',
-    maxWidth: 320,
-  },
-  secondaryAction: {
-    alignSelf: 'center',
-    paddingVertical: 8,
-  },
-  secondaryActionText: {
-    color: tokens.colors.textMuted,
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '600',
   },
 });

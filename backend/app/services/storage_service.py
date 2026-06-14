@@ -191,6 +191,13 @@ class StorageService:
     walk(normalized_folder, 0)
     return storage_objects
 
+  @staticmethod
+  def storage_object_size_bytes(object_info: dict[str, Any]) -> int:
+    size_bytes = _parse_size_bytes(
+      _metadata_value(object_info, "size", "contentLength", "content_length")
+    )
+    return size_bytes if size_bytes is not None else 0
+
   def list_storage_prefix(self, prefix: str) -> list[str]:
     folder, _, name_prefix = prefix.rstrip("/").rpartition("/")
     try:

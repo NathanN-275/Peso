@@ -203,9 +203,33 @@ export { getBackendApiUrl, getBackendConnectionDiagnostics };
 
 export type { SaveState, SavedVideo };
 
+export type StorageUsageResponse = {
+  storage_limit_bytes: number;
+  database_limit_bytes: number;
+  monthly_egress_limit_bytes: number;
+  current_storage_bytes: number;
+  upload_size_bytes: number;
+  playback_allowance_bytes: number;
+  thumbnail_allowance_bytes: number;
+  projected_peak_bytes: number;
+  warning_threshold_bytes: number;
+  block_threshold_bytes: number;
+  status: 'ok' | 'warning' | 'blocked';
+  blocked: boolean;
+  message: string;
+};
+
 export async function testBackendConnection() {
   // Health checks confirm the backend is reachable before upload starts.
   return requestJson<{ status: string }>('/health');
+}
+
+export async function fetchStorageUsage(uploadSizeBytes: number, accessToken: string) {
+  const normalizedSize = Math.max(0, Math.floor(uploadSizeBytes));
+  return requestJson<StorageUsageResponse>(
+    `/videos/storage-usage?upload_size_bytes=${normalizedSize}`,
+    accessToken
+  );
 }
 
 export async function triggerVideoAnalysis(videoId: string, accessToken: string) {

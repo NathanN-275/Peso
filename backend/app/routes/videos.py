@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel
 
 from ..analysis.pipeline import analyze_video
@@ -15,6 +15,7 @@ from ..services.analyzed_video_renderer import render_analyzed_video
 from ..services.auth import get_current_user_id
 from ..services.config import get_settings
 from ..services.storage_cleanup import StorageCleanupService, cleanup_requires_token
+from ..services.storage_quota import StorageQuotaService
 from ..services.storage_service import StorageService
 from ..services.video_repository import VideoRepository
 
@@ -108,6 +109,22 @@ class CleanupExpiredVideosResponse(BaseModel):
   details: CleanupDetailsResponse
 
 
+class StorageUsageResponse(BaseModel):
+  storage_limit_bytes: int
+  database_limit_bytes: int
+  monthly_egress_limit_bytes: int
+  current_storage_bytes: int
+  upload_size_bytes: int
+  playback_allowance_bytes: int
+  thumbnail_allowance_bytes: int
+  projected_peak_bytes: int
+  warning_threshold_bytes: int
+  block_threshold_bytes: int
+  status: str
+  blocked: bool
+  message: str
+
+
 def _authorize_cleanup(cleanup_token: str | None) -> None:
   settings = get_settings()
 
@@ -190,6 +207,15 @@ def _run_analysis_job(video_id: str) -> None:
     analyze_video(video_id)
   except Exception:
     logger.exception("Background analysis failed for video %s", video_id)
+
+
+@router.get("/videos/storage-usage", response_model=StorageUsageResponse)
+def get_storage_usage(
+  upload_size_bytes: int = Query(default=0, ge=0),
+  _user_id: str = Depends(get_current_user_id),
+) -> StorageUsageResponse:
+  report = StorageQuotaService().get_usage(upload_size_bytes)
+  return StorageUsageResponse(**report.to_dict())
 
 
 @router.post("/analyze/{video_id}", response_model=AnalyzeResponse)

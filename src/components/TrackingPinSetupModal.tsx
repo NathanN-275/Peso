@@ -1,9 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEvent } from 'expo';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   LayoutChangeEvent,
   Modal,
   Platform,
@@ -21,8 +21,12 @@ import {
   TrackingSetup,
 } from '../types/trackingSetup';
 import { calculateVideoRect } from '../utils/videoReview';
+import { getPinnedFrameChangeAction } from '../../lib/trackingPinFramePolicy';
 import Button from './Button';
+import ConfirmationDialog from './ConfirmationDialog';
 import TimelineScrubber from './TimelineScrubber';
+
+const FRAME_CHANGE_WARNING_PREFERENCE_KEY = 'trackingPins.skipFrameChangeWarning.v1';
 
 type TrackingPinSetupModalProps = {
   visible: boolean;
@@ -85,6 +89,13 @@ export default function TrackingPinSetupModal({
     initialSetup ? [...TRACKING_PIN_NAMES] : []
   );
   const [draggingPin, setDraggingPin] = useState<TrackingPinName | null>(null);
+  const [pinnedFrameTime, setPinnedFrameTime] = useState<number | null>(
+    initialSetup ? initialSetup.reference_time_ms / 1000 : null
+  );
+  const [pendingFrameTime, setPendingFrameTime] = useState<number | null>(null);
+  const [frameChangeDialogVisible, setFrameChangeDialogVisible] = useState(false);
+  const [suppressFrameChangeWarning, setSuppressFrameChangeWarning] = useState(false);
+  const [dontShowFrameChangeWarningAgain, setDontShowFrameChangeWarningAgain] = useState(false);
   const videoViewRef = useRef<VideoView | null>(null);
   const player = useVideoPlayer(videoUri, (videoPlayer) => {
     videoPlayer.loop = false;
@@ -118,6 +129,10 @@ export default function TrackingPinSetupModal({
     setPins(initialSetup?.anchors ?? {});
     setPlacementOrder(initialSetup ? [...TRACKING_PIN_NAMES] : []);
     setCurrentTime(referenceTime);
+    setPinnedFrameTime(initialSetup ? referenceTime : null);
+    setPendingFrameTime(null);
+    setFrameChangeDialogVisible(false);
+    setDontShowFrameChangeWarningAgain(false);
     setDisplayVideoSize({ width: videoSize.width, height: videoSize.height });
     if (typeof videoDurationMs === 'number' && Number.isFinite(videoDurationMs)) {
       setDuration(videoDurationMs / 1000);
@@ -125,6 +140,20 @@ export default function TrackingPinSetupModal({
     player.pause();
     player.currentTime = referenceTime;
   }, [initialSetup, player, videoDurationMs, videoSize.height, videoSize.width, visible]);
+
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+
+    void AsyncStorage.getItem(FRAME_CHANGE_WARNING_PREFERENCE_KEY)
+      .then((value) => {
+        setSuppressFrameChangeWarning(value === 'true');
+      })
+      .catch(() => {
+        setSuppressFrameChangeWarning(false);
+      });
+  }, [visible]);
 
   useEffect(() => {
     const loadedTrack = sourceLoad.availableVideoTracks[0];
@@ -212,9 +241,6 @@ export default function TrackingPinSetupModal({
   };
 
   const handleSeek = (time: number) => {
-    if (pinCount > 0) {
-      return;
-    }
     const boundedTime = Math.min(Math.max(time, 0), duration || time);
     player.pause();
     player.currentTime = boundedTime;
@@ -224,32 +250,58 @@ export default function TrackingPinSetupModal({
   const clearPins = () => {
     setPins({});
     setPlacementOrder([]);
+    setPinnedFrameTime(null);
+  };
+
+  const restorePinnedFrame = () => {
+    if (pinnedFrameTime === null) {
+      return;
+    }
+    player.pause();
+    player.currentTime = pinnedFrameTime;
+    setCurrentTime(pinnedFrameTime);
   };
 
   const handleScrubEnd = (time: number) => {
     const boundedTime = Math.min(Math.max(time, 0), duration || time);
-    if (pinCount === 0) {
-      handleSeek(boundedTime);
-      return;
-    }
+    const action = getPinnedFrameChangeAction({
+      pinCount,
+      pinnedFrameTime,
+      targetTime: boundedTime,
+      suppressWarning: suppressFrameChangeWarning,
+    });
 
-    Alert.alert(
-      'Choose another frame?',
-      'Changing the reference frame will clear all placed pins.',
-      [
-        { text: 'Keep Pins', style: 'cancel' },
-        {
-          text: 'Clear Pins',
-          style: 'destructive',
-          onPress: () => {
-            clearPins();
-            player.pause();
-            player.currentTime = boundedTime;
-            setCurrentTime(boundedTime);
-          },
-        },
-      ]
-    );
+    if (action === 'accept') {
+      handleSeek(boundedTime);
+    } else if (action === 'restore_pinned_frame') {
+      restorePinnedFrame();
+    } else if (action === 'reset_and_accept') {
+      clearPins();
+      handleSeek(boundedTime);
+    } else {
+      setPendingFrameTime(boundedTime);
+      setFrameChangeDialogVisible(true);
+    }
+  };
+
+  const cancelFrameChange = () => {
+    setFrameChangeDialogVisible(false);
+    setPendingFrameTime(null);
+    setDontShowFrameChangeWarningAgain(false);
+    restorePinnedFrame();
+  };
+
+  const confirmFrameChange = () => {
+    const nextTime = pendingFrameTime ?? currentTime;
+    clearPins();
+    handleSeek(nextTime);
+    setFrameChangeDialogVisible(false);
+    setPendingFrameTime(null);
+    if (dontShowFrameChangeWarningAgain) {
+      setSuppressFrameChangeWarning(true);
+      void AsyncStorage.setItem(FRAME_CHANGE_WARNING_PREFERENCE_KEY, 'true').catch(() => undefined);
+    }
+    setDontShowFrameChangeWarningAgain(false);
   };
 
   const undoLatestPin = () => {
@@ -358,6 +410,9 @@ export default function TrackingPinSetupModal({
               const selectedPin = existingPin ?? nextPin;
               if (selectedPin) {
                 if (!pins[selectedPin]) {
+                  if (pinCount === 0) {
+                    setPinnedFrameTime(currentTime);
+                  }
                   setPlacementOrder((current) => (
                     current.includes(selectedPin) ? current : [...current, selectedPin]
                   ));
@@ -417,6 +472,17 @@ export default function TrackingPinSetupModal({
             <Button label="Use These Pins" onPress={savePins} disabled={!allPinsPlaced} style={styles.saveButton} />
           </View>
         </View>
+        <ConfirmationDialog
+          visible={frameChangeDialogVisible}
+          title="Change frame?"
+          message="Changing the frame will reset all placed pins."
+          confirmLabel="OK"
+          checkboxLabel="Don't show this again"
+          checkboxValue={dontShowFrameChangeWarningAgain}
+          onCheckboxChange={setDontShowFrameChangeWarningAgain}
+          onConfirm={confirmFrameChange}
+          onCancel={cancelFrameChange}
+        />
     </SafeAreaView>
   );
 
@@ -448,7 +514,7 @@ const styles = StyleSheet.create({
     zIndex: 40,
   },
   header: {
-    minHeight: 54,
+    minHeight: 50,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -458,7 +524,7 @@ const styles = StyleSheet.create({
   headerButtonText: { color: tokens.colors.brand, fontSize: 15, fontWeight: '600' },
   headerSpacer: { width: 72 },
   title: { color: tokens.colors.textPrimary, fontSize: 18, fontWeight: '700' },
-  instructions: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12, gap: 5 },
+  instructions: { paddingHorizontal: 20, paddingTop: 3, paddingBottom: 12, gap: 5 },
   instructionTitle: { color: tokens.colors.textPrimary, fontSize: 20, fontWeight: '700' },
   instructionText: { color: tokens.colors.textMuted, fontSize: 14, lineHeight: 20 },
   progressText: { color: tokens.colors.brand, fontSize: 13, fontWeight: '700' },
