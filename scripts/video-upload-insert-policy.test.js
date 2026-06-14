@@ -5,6 +5,34 @@ const {
   getVideoInsertRetryMode,
   omitLegacyStorageMetadata,
 } = require('../lib/videoUploadInsertPolicy');
+const { withOptionalTrackingSetup } = require('../lib/videoUploadPayload');
+
+test('automatic uploads omit tracking_setup', () => {
+  assert.deepEqual(
+    withOptionalTrackingSetup({ id: 'video-1' }, null),
+    { id: 'video-1' }
+  );
+});
+
+test('pin-assisted uploads retain the complete tracking_setup payload', () => {
+  const trackingSetup = {
+    version: 1,
+    reference_time_ms: 250,
+    barbell_target: 'near_side_collar',
+    anchors: {
+      shoulder: { x: 0.4, y: 0.2 },
+      hip: { x: 0.4, y: 0.4 },
+      knee: { x: 0.4, y: 0.6 },
+      ankle: { x: 0.4, y: 0.8 },
+      barbell: { x: 0.6, y: 0.2 },
+    },
+  };
+
+  assert.deepEqual(
+    withOptionalTrackingSetup({ id: 'video-1' }, trackingSetup),
+    { id: 'video-1', tracking_setup: trackingSetup }
+  );
+});
 
 test('missing tracking_setup blocks pin-assisted uploads', () => {
   assert.equal(

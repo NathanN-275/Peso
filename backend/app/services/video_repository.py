@@ -59,6 +59,32 @@ class VideoRepository:
 
     return response.data[0] if response.data else None
 
+  def supports_tracking_setup(self) -> bool:
+    # Selecting the nullable column verifies PostgREST schema support without mutating data.
+    try:
+      (
+        self.client.table("videos")
+        .select("tracking_setup")
+        .limit(1)
+        .execute()
+      )
+      return True
+    except Exception as error:
+      error_code = str(getattr(error, "code", "") or "")
+      error_message = str(error).lower()
+      missing_tracking_column = (
+        error_code == "42703"
+        or (
+          "tracking_setup" in error_message
+          and ("does not exist" in error_message or "could not find" in error_message)
+        )
+      )
+
+      if missing_tracking_column:
+        return False
+
+      raise
+
   def require_owned_video(self, video_id: str, user_id: str) -> dict[str, Any]:
     # Ownership checks keep user data isolated.
     video = self.get_video(video_id)

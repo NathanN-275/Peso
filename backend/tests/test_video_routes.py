@@ -10,6 +10,7 @@ from fastapi import BackgroundTasks, HTTPException
 from app.analysis.versioning import annotate_analysis_freshness, analysis_is_current
 from app.routes.videos import (
   discard_video,
+  get_video_capabilities,
   get_storage_usage,
   get_video_playback_url,
   list_saved_videos,
@@ -78,6 +79,41 @@ class VideoRoutesTest(unittest.TestCase):
     quota_service.get_usage.assert_called_once_with(50)
     self.assertEqual(response.projected_peak_bytes, 201)
     self.assertFalse(response.blocked)
+
+  def test_video_capabilities_reports_pin_tracking_support(self) -> None:
+    repository = MagicMock()
+    repository.supports_tracking_setup.return_value = True
+
+    with patch("app.routes.videos.VideoRepository", return_value=repository):
+      response = get_video_capabilities(USER_ID)
+
+    repository.supports_tracking_setup.assert_called_once_with()
+    self.assertTrue(response.pin_assisted_tracking)
+    self.assertEqual(response.tracking_setup_versions, [1])
+    self.assertIsNone(response.reason)
+
+  def test_video_capabilities_reports_missing_tracking_migration(self) -> None:
+    repository = MagicMock()
+    repository.supports_tracking_setup.return_value = False
+
+    with patch("app.routes.videos.VideoRepository", return_value=repository):
+      response = get_video_capabilities(USER_ID)
+
+    self.assertFalse(response.pin_assisted_tracking)
+    self.assertEqual(response.tracking_setup_versions, [])
+    self.assertEqual(response.reason, "tracking_setup_migration_missing")
+
+  def test_video_capabilities_returns_service_unavailable_for_database_errors(self) -> None:
+    repository = MagicMock()
+    repository.supports_tracking_setup.side_effect = RuntimeError("database unavailable")
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      get_video_capabilities(USER_ID)
+
+    self.assertEqual(raised.exception.status_code, 503)
 
   def test_queue_analysis_returns_idempotent_in_progress_status(self) -> None:
     repository = MagicMock()

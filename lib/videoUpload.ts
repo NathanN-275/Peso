@@ -4,10 +4,15 @@ import { Platform } from 'react-native';
 import type { VideoCompressorType } from 'react-native-compressor';
 import { CameraAngle, ExerciseOption } from '../src/constants/videoSetup';
 import type { TrackingSetup } from '../src/types/trackingSetup';
-import { fetchStorageUsage } from './backendApi';
+import { fetchStorageUsage, fetchVideoCapabilities } from './backendApi';
 import { getFreshBackendAccessToken } from './backendAuth';
+import {
+  shouldCheckPinTrackingCapability,
+  verifyPinTrackingCapability,
+} from './pinTrackingCapabilityPolicy';
 import { supabase, supabaseConfigError } from './supabase';
 import { getVideoInsertRetryMode, omitLegacyStorageMetadata } from './videoUploadInsertPolicy';
+import { withOptionalTrackingSetup } from './videoUploadPayload';
 
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = resolveFrontendMaxUploadBytes();
@@ -667,6 +672,29 @@ export async function uploadVideoForAnalysis({
     throw new Error('You must be logged in to upload and analyze a video.');
   }
 
+  let accessToken: string | null = null;
+
+  if (shouldCheckPinTrackingCapability(trackingSetup)) {
+    onStatusChange?.('Checking pin tracking support...');
+    try {
+      accessToken = await verifyPinTrackingCapability({
+        trackingSetup,
+        getAccessToken: getFreshBackendAccessToken,
+        fetchCapabilities: fetchVideoCapabilities,
+      });
+    } catch (error) {
+      logVideoUploadWarning('Unable to verify pin tracking support before upload.', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (error instanceof Error && error.message.startsWith('Pin-assisted tracking')) {
+        throw error;
+      }
+      throw new Error(
+        'Unable to verify pin-assisted tracking support. Deploy the latest backend and tracking database migration, then try again.'
+      );
+    }
+  }
+
   validateInitialVideoMetadata(asset);
   const preparedVideo = await prepareVideoForUpload(asset, onStatusChange);
 
@@ -689,7 +717,7 @@ export async function uploadVideoForAnalysis({
     wasCompressed: preparedVideo.wasCompressed,
   });
   onStatusChange?.('Checking storage capacity...');
-  const accessToken = await getFreshBackendAccessToken();
+  accessToken ??= await getFreshBackendAccessToken();
   const storageUsage = await fetchStorageUsage(uploadSource.sizeBytes, accessToken);
 
   if (storageUsage.blocked || storageUsage.status === 'blocked') {
@@ -722,7 +750,7 @@ export async function uploadVideoForAnalysis({
   const normalizedViewType = normalizeViewType(angle);
   const expiresAt = new Date(Date.now() + PENDING_VIDEO_TTL_MS).toISOString();
 
-  const insertPayload = {
+  const insertPayload = withOptionalTrackingSetup({
     id: videoId,
     user_id: user.id,
     storage_path: storagePath,
@@ -737,8 +765,7 @@ export async function uploadVideoForAnalysis({
     uploaded_size_bytes: uploadSource.sizeBytes,
     was_compressed: preparedVideo.wasCompressed,
     storage_state: 'available',
-    ...(trackingSetup ? { tracking_setup: trackingSetup } : {}),
-  };
+  }, trackingSetup);
 
   const { error: insertError } = await supabase
     .from('videos')

@@ -125,6 +125,12 @@ class StorageUsageResponse(BaseModel):
   message: str
 
 
+class VideoCapabilitiesResponse(BaseModel):
+  pin_assisted_tracking: bool
+  tracking_setup_versions: list[int]
+  reason: str | None = None
+
+
 def _authorize_cleanup(cleanup_token: str | None) -> None:
   settings = get_settings()
 
@@ -216,6 +222,26 @@ def get_storage_usage(
 ) -> StorageUsageResponse:
   report = StorageQuotaService().get_usage(upload_size_bytes)
   return StorageUsageResponse(**report.to_dict())
+
+
+@router.get("/videos/capabilities", response_model=VideoCapabilitiesResponse)
+def get_video_capabilities(
+  _user_id: str = Depends(get_current_user_id),
+) -> VideoCapabilitiesResponse:
+  try:
+    pin_assisted_tracking = VideoRepository().supports_tracking_setup()
+  except Exception as error:
+    logger.exception("Unable to verify video tracking capabilities: %s", error)
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Unable to verify pin-assisted tracking database support.",
+    ) from error
+
+  return VideoCapabilitiesResponse(
+    pin_assisted_tracking=pin_assisted_tracking,
+    tracking_setup_versions=[1] if pin_assisted_tracking else [],
+    reason=None if pin_assisted_tracking else "tracking_setup_migration_missing",
+  )
 
 
 @router.post("/analyze/{video_id}", response_model=AnalyzeResponse)

@@ -202,6 +202,10 @@ PLAYBACK_STORAGE_ESTIMATE_RATIO=1.0
 THUMBNAIL_STORAGE_ALLOWANCE_BYTES=1048576
 ```
 
+### `GET /videos/capabilities`
+
+Returns authenticated video-upload capabilities. Pin-assisted uploads call this before compression or storage upload and require `pin_assisted_tracking: true` with tracking setup version `1`. Missing schema support blocks the upload without creating a row or storage object.
+
 ### `POST /videos/cleanup-expired`
 
 Dry-runs cleanup by default and reports reclaimable storage without deleting anything. Pass `confirm=true` to delete unnecessary Supabase Storage data and mark eligible rows discarded. Cleanup removes expired pending uploads, stale pending analysis jobs, old analyzed export MP4s, and unreferenced app-owned upload objects. Saved source videos are never deleted.

@@ -219,6 +219,12 @@ export type StorageUsageResponse = {
   message: string;
 };
 
+export type VideoCapabilitiesResponse = {
+  pin_assisted_tracking: boolean;
+  tracking_setup_versions: number[];
+  reason: string | null;
+};
+
 export async function testBackendConnection() {
   // Health checks confirm the backend is reachable before upload starts.
   return requestJson<{ status: string }>('/health');
@@ -230,6 +236,10 @@ export async function fetchStorageUsage(uploadSizeBytes: number, accessToken: st
     `/videos/storage-usage?upload_size_bytes=${normalizedSize}`,
     accessToken
   );
+}
+
+export async function fetchVideoCapabilities(accessToken: string) {
+  return requestJson<VideoCapabilitiesResponse>('/videos/capabilities', accessToken);
 }
 
 export async function triggerVideoAnalysis(videoId: string, accessToken: string) {
