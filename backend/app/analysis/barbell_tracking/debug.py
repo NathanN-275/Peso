@@ -20,6 +20,9 @@ def _draw_debug_frame(
   final_bar_point: tuple[float, float] | None = None,
   pose_predicted_point: tuple[float, float] | None = None,
   emitted_point: tuple[float, float] | None = None,
+  manual_point: tuple[float, float] | None = None,
+  visual_validation_point: tuple[float, float] | None = None,
+  fusion_residual_px: float | None = None,
   rejection_reason: str | None = None,
   mode: str | None = None,
 ) -> Any:
@@ -101,6 +104,26 @@ def _draw_debug_frame(
       thickness=2,
     )
 
+  if manual_point:
+    cv2.drawMarker(
+      debug,
+      (int(manual_point[0]), int(manual_point[1])),
+      (255, 80, 80),
+      markerType=cv2.MARKER_CROSS,
+      markerSize=18,
+      thickness=2,
+    )
+
+  if visual_validation_point:
+    cv2.drawMarker(
+      debug,
+      (int(visual_validation_point[0]), int(visual_validation_point[1])),
+      (80, 200, 255),
+      markerType=cv2.MARKER_TILTED_CROSS,
+      markerSize=18,
+      thickness=2,
+    )
+
   if predicted_collar:
     cv2.drawMarker(
       debug,
@@ -125,5 +148,15 @@ def _draw_debug_frame(
     cv2.putText(debug, mode, (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (40, 235, 52), 2)
   if rejection_reason:
     cv2.putText(debug, rejection_reason, (12, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 120, 255), 2)
+  if fusion_residual_px is not None:
+    cv2.putText(
+      debug,
+      f"pin/visual residual: {fusion_residual_px:.1f}px",
+      (12, 82),
+      cv2.FONT_HERSHEY_SIMPLEX,
+      0.5,
+      (80, 200, 255),
+      1,
+    )
 
   return debug

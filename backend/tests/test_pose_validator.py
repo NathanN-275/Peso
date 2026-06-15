@@ -108,6 +108,17 @@ class PoseValidatorTest(unittest.TestCase):
     self.assertEqual(report["selected_side"], "left")
     self.assertIn("tracking_side_confidence", report)
 
+  def test_pin_selected_side_overrides_automatic_side_selection(self) -> None:
+    frames = [frame(0), frame(100), frame(200)]
+
+    _validated, report = validate_squat_pose_frames(
+      frames,
+      selected_side_override="right",
+    )
+
+    self.assertEqual(report["selected_side"], "right")
+    self.assertTrue(report["selected_side_overridden"])
+
 
 if __name__ == "__main__":
   unittest.main()

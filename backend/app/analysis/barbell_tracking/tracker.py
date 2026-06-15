@@ -69,6 +69,11 @@ class BarbellTracker:
     self.manual_seed_count = 0
     self.manual_point_count = 0
     self.automatic_point_count = 0
+    self.manual_accepted_count = 0
+    self.manual_blended_count = 0
+    self.manual_rejected_count = 0
+    self.manual_fallback_count = 0
+    self.manual_rejection_reason_counts: dict[str, int] = {}
 
   @staticmethod
   def _manual_prior_is_plausible(
@@ -687,6 +692,93 @@ class BarbellTracker:
       ),
     )
 
+  def _visible_hub_for_manual_proposal(
+    self,
+    cv2: Any,
+    frame: Any,
+    *,
+    manual_point: tuple[float, float],
+    bounds: tuple[float, float, float, float],
+    previous: dict[str, Any] | None,
+    shoulder: tuple[float, float] | None,
+    width: int,
+    height: int,
+  ) -> dict[str, Any] | None:
+    candidates, _, _, _ = _detect_crop_candidates(
+      cv2,
+      frame,
+      bounds,
+      shoulder=shoulder,
+    )
+    descriptors: list[dict[str, Any]] = []
+    for candidate in candidates:
+      if not _candidate_in_bounds(candidate, bounds):
+        continue
+      if _plate_rejection_reason(
+        candidate,
+        previous=previous,
+        shoulder=shoulder,
+        width=width,
+        height=height,
+        bootstrapping=previous is None,
+      ):
+        continue
+      descriptor = self._collar_descriptor_from_plate(
+        cv2,
+        frame,
+        plate=candidate,
+        previous=previous,
+        shoulder=shoulder,
+        width=width,
+        height=height,
+        bootstrapping=True,
+      )
+      if descriptor["final_bar_reason"] is not None or not descriptor["hub_safe"]:
+        continue
+      sleeve_direction = descriptor["sleeve_direction"]
+      sleeve_normal = (-sleeve_direction[1], sleeve_direction[0])
+      refined_collar = descriptor["refined_collar"]
+      guided_target_point = (
+        refined_collar[0]
+        - (sleeve_direction[0] * candidate.radius * 0.07)
+        - (sleeve_normal[0] * candidate.radius * 0.18),
+        refined_collar[1]
+        - (sleeve_direction[1] * candidate.radius * 0.07)
+        - (sleeve_normal[1] * candidate.radius * 0.18),
+      )
+      descriptor["guided_target_point"] = guided_target_point
+      target_point = guided_target_point
+      if previous is None:
+        if math.hypot(target_point[0] - manual_point[0], target_point[1] - manual_point[1]) > max(
+          40.0,
+          max(width, height) * 0.16,
+        ):
+          continue
+      else:
+        previous_target = previous.get("display_target_point") or (
+          previous["plate"].x,
+          previous["plate"].y,
+        )
+        if math.hypot(target_point[0] - previous_target[0], target_point[1] - previous_target[1]) > max(
+          previous["plate"].radius * 0.95,
+          max(width, height) * 0.12,
+        ):
+          continue
+      descriptors.append(descriptor)
+
+    if not descriptors:
+      return None
+    return min(
+      descriptors,
+      key=lambda descriptor: (
+        math.hypot(
+          descriptor["guided_target_point"][0] - manual_point[0],
+          descriptor["guided_target_point"][1] - manual_point[1],
+        )
+        - (float(descriptor["final_bar_confidence"]) * 8.0)
+      ),
+    )
+
   def track(
     self,
     file_path: str,
@@ -706,6 +798,11 @@ class BarbellTracker:
     self.manual_seed_count = 0
     self.manual_point_count = 0
     self.automatic_point_count = 0
+    self.manual_accepted_count = 0
+    self.manual_blended_count = 0
+    self.manual_rejected_count = 0
+    self.manual_fallback_count = 0
+    self.manual_rejection_reason_counts = {}
     normalized_manual_priors = manual_barbell_priors or {}
     started = time.perf_counter()
     if not Path(file_path).is_file():
@@ -864,6 +961,9 @@ class BarbellTracker:
     manual_reentry_streak = 0
     previous_manual_point: tuple[float, float] | None = None
     manual_reference_shoulder_offset: tuple[float, float] | None = None
+    manual_visual_mismatch_streak = 0
+    manual_visual_residuals: list[float] = []
+    manual_validation_missing_count = 0
 
     if debug_output_path:
       debug_writer = cv2.VideoWriter(
@@ -989,79 +1089,196 @@ class BarbellTracker:
             manual_reentry_streak += 1
             use_manual_prior = manual_reentry_streak >= 2
         else:
+          if manual_prior is not None and manual_has_activated:
+            reason = "manual_prior_implausible"
+            self.manual_rejected_count += 1
+            self.manual_fallback_count += 1
+            self.manual_rejection_reason_counts[reason] = (
+              self.manual_rejection_reason_counts.get(reason, 0) + 1
+            )
           manual_reentry_streak = 0
           manual_mode_active = False
 
         if use_manual_prior:
-          manual_mode_active = True
-          manual_has_activated = True
-          manual_reentry_streak = 0
           manual_point = (
             float(manual_prior["x"]) * width,
             float(manual_prior["y"]) * height,
           )
+          visible_descriptor = self._visible_hub_for_manual_proposal(
+            cv2,
+            frame,
+            manual_point=manual_point,
+            bounds=candidate_bounds,
+            previous=tracking_lock,
+            shoulder=shoulder,
+            width=width,
+            height=height,
+          )
+          visible_target = visible_descriptor["guided_target_point"] if visible_descriptor else None
+          visible_discrepancy = (
+            math.hypot(visible_target[0] - manual_point[0], visible_target[1] - manual_point[1])
+            if visible_target
+            else None
+          )
+          visible_tolerance = (
+            max(12.0, float(visible_descriptor["plate"].radius) * 0.34)
+            if visible_descriptor
+            else None
+          )
+          if visible_discrepancy is not None:
+            manual_visual_residuals.append(visible_discrepancy)
+          else:
+            manual_validation_missing_count += 1
+
+          visual_mismatch = bool(
+            visible_discrepancy is not None
+            and visible_tolerance is not None
+            and visible_discrepancy > visible_tolerance
+          )
+          if visual_mismatch:
+            manual_visual_mismatch_streak += 1
+            reason = "visible_hub_mismatch"
+            self.manual_rejection_reason_counts[reason] = (
+              self.manual_rejection_reason_counts.get(reason, 0) + 1
+            )
+            bad_candidate_rejection_counts[reason] = (
+              bad_candidate_rejection_counts.get(reason, 0) + 1
+            )
+          else:
+            manual_visual_mismatch_streak = 0
+
+          if manual_visual_mismatch_streak >= 2:
+            self.manual_rejected_count += 1
+            self.manual_fallback_count += 1
+            manual_mode_active = False
+            manual_reentry_streak = 0
+            tracking_lock = None
+            samples.append(None)
+            previous_gray = gray
+            frame_index += 1
+            continue
+
+          manual_mode_active = True
+          manual_has_activated = True
+          manual_reentry_streak = 0
           previous_manual_point = manual_point
           if shoulder is not None and manual_reference_shoulder_offset is None:
             manual_reference_shoulder_offset = (
               manual_point[0] - shoulder[0],
               manual_point[1] - shoulder[1],
             )
-          manual_radius = max(height * 0.035, 12.0)
-          selected_plate = Candidate(
-            x=manual_point[0],
-            y=manual_point[1],
-            radius=manual_radius,
-            confidence=float(manual_prior["confidence"]),
-          )
-          sleeve_direction = (1.0, 0.0)
+
+          final_manual_point = manual_point
+          final_bar_confidence = float(manual_prior["confidence"])
+          if visual_mismatch:
+            final_bar_confidence *= 0.72
+          if visible_descriptor:
+            selected_plate = visible_descriptor["plate"]
+            sleeve_direction = visible_descriptor["sleeve_direction"]
+            if (visible_discrepancy or 0.0) <= 2.0:
+              self.manual_accepted_count += 1
+            else:
+              self.manual_blended_count += 1
+          else:
+            manual_radius = max(height * 0.035, 12.0)
+            selected_plate = Candidate(
+              x=manual_point[0],
+              y=manual_point[1],
+              radius=manual_radius,
+              confidence=float(manual_prior["confidence"]),
+            )
+            sleeve_direction = (1.0, 0.0)
+            self.manual_accepted_count += 1
+
           tracking_lock = _make_tracking_lock(
             cv2,
             gray,
             plate=selected_plate,
-            collar=manual_point,
+            collar=(visible_descriptor["refined_collar"] if visible_descriptor else final_manual_point),
             sleeve_direction=sleeve_direction,
-            final_bar_point=manual_point,
-            display_target_point=manual_point,
-            final_bar_confidence=float(manual_prior["confidence"]),
+            final_bar_point=final_manual_point,
+            display_target_point=final_manual_point,
+            final_bar_confidence=final_bar_confidence,
             final_bar_reason=None,
             shoulder=shoulder,
-            target_kind=SLEEVE_END_TRACKING_TARGET,
+            target_kind=(TRACKING_TARGET if visible_descriptor else SLEEVE_END_TRACKING_TARGET),
           )
           tracking_lock.update(
             {
-              "predicted_collar": manual_point,
-              "refined_collar": manual_point,
+              "predicted_collar": visible_descriptor["predicted_collar"] if visible_descriptor else final_manual_point,
+              "refined_collar": visible_descriptor["refined_collar"] if visible_descriptor else final_manual_point,
               "collar_geometry_valid": True,
               "fallback_used": False,
               "final_bar_source": "manual_collar_prior",
-              "collar_descriptor_score": float(manual_prior["confidence"]),
+              "collar_descriptor_score": (
+                float(visible_descriptor["collar_descriptor_score"])
+                if visible_descriptor
+                else float(manual_prior["confidence"])
+              ),
             }
           )
           tracking_mode = "manual_collar"
           has_ever_locked = True
           self.manual_seed_count += 1
           self.manual_point_count += 1
-          final_bar_point = manual_point
-          final_bar_confidence = float(manual_prior["confidence"])
+          final_bar_point = final_manual_point
           final_bar_reason = None
-          final_bar_source = "manual_collar_prior"
-          predicted_collar = manual_point
-          refined_collar = manual_point
+          final_bar_source = tracking_lock["final_bar_source"]
+          predicted_collar = tracking_lock["predicted_collar"]
+          refined_collar = tracking_lock["refined_collar"]
           collar_geometry_valid = True
+          tracking_state = (
+            "reference"
+            if manual_prior.get("tracking_state") == "reference"
+            else "guided"
+          )
           point = {
             "time": timestamp,
-            "x": manual_point[0] / width,
-            "y": manual_point[1] / height,
+            "x": final_manual_point[0] / width,
+            "y": final_manual_point[1] / height,
             "confidence": final_bar_confidence,
+            "trackingState": tracking_state,
             "manual_assisted": True,
           }
           samples.append(point)
-          accepted_points_px.append(manual_point)
-          historical_target_point = manual_point
+          manual_frames = self.bootstrap_diagnostics.setdefault("manual_frames", [])
+          if len(manual_frames) < 120:
+            manual_frames.append({
+              "frame_index": frame_index,
+              "state": tracking_state,
+              "raw_pin_x": round(manual_point[0], 2),
+              "raw_pin_y": round(manual_point[1], 2),
+              "visual_x": round(visible_target[0], 2) if visible_target else None,
+              "visual_y": round(visible_target[1], 2) if visible_target else None,
+              "fusion_residual_px": round(visible_discrepancy, 2) if visible_discrepancy is not None else None,
+              "visual_mismatch": visual_mismatch,
+            })
+          accepted_points_px.append(final_manual_point)
+          historical_target_point = final_manual_point
           last_accepted_timestamp = timestamp
           detected_count += 1
           if current_rep_index is not None:
             rep_detected_counts[current_rep_index] = rep_detected_counts.get(current_rep_index, 0) + 1
+          if debug_writer:
+            debug_writer.write(
+              _draw_debug_frame(
+                cv2,
+                frame,
+                bounds=candidate_bounds,
+                candidates=[],
+                rejected=[],
+                selected_plate=selected_plate,
+                predicted_collar=predicted_collar,
+                refined_collar=refined_collar,
+                final_bar_point=final_manual_point,
+                emitted_point=final_manual_point,
+                manual_point=manual_point,
+                visual_validation_point=visible_target,
+                fusion_residual_px=visible_discrepancy,
+                rejection_reason="visible_hub_mismatch" if visual_mismatch else None,
+                mode=f"manual_collar:{tracking_state}",
+              )
+            )
           previous_gray = gray
           frame_index += 1
           continue
@@ -1323,6 +1540,7 @@ class BarbellTracker:
               "x": emitted_bar_point[0] / width,
               "y": emitted_bar_point[1] / height,
               "confidence": final_bar_confidence,
+              "trackingState": "automatic",
             }
             accepted_points_px.append(emitted_bar_point)
             historical_target_point = emitted_bar_point
@@ -1937,6 +2155,7 @@ class BarbellTracker:
           "x": emitted_bar_point[0] / width,
           "y": emitted_bar_point[1] / height,
           "confidence": confidence,
+          "trackingState": "automatic",
         }
         real_hub_detection_count += 1
         accepted_points_px.append(emitted_bar_point)
@@ -2108,6 +2327,11 @@ class BarbellTracker:
         stale_prior_expiration_count=stale_prior_expiration_count,
         reacquisition_success_count=reacquisition_success_count,
         per_rep_coverage=per_rep_coverage,
+        manual_accepted_count=self.manual_accepted_count,
+        manual_blended_count=self.manual_blended_count,
+        manual_rejected_count=self.manual_rejected_count,
+        manual_fallback_count=self.manual_fallback_count,
+        manual_rejection_reason_counts=self.manual_rejection_reason_counts,
       )
       result["diagnostics"]["bootstrap_diagnostics"] = self.bootstrap_diagnostics
       return result
@@ -2204,6 +2428,11 @@ class BarbellTracker:
         per_rep_coverage=per_rep_coverage,
         manual_point_count=self.manual_point_count,
         automatic_point_count=self.automatic_point_count,
+        manual_accepted_count=self.manual_accepted_count,
+        manual_blended_count=self.manual_blended_count,
+        manual_rejected_count=self.manual_rejected_count,
+        manual_fallback_count=self.manual_fallback_count,
+        manual_rejection_reason_counts=self.manual_rejection_reason_counts,
       )
       result["diagnostics"]["bootstrap_diagnostics"] = self.bootstrap_diagnostics
       return result
@@ -2268,11 +2497,35 @@ class BarbellTracker:
         per_rep_coverage=per_rep_coverage,
         manual_point_count=self.manual_point_count,
         automatic_point_count=self.automatic_point_count,
+        manual_accepted_count=self.manual_accepted_count,
+        manual_blended_count=self.manual_blended_count,
+        manual_rejected_count=self.manual_rejected_count,
+        manual_fallback_count=self.manual_fallback_count,
+        manual_rejection_reason_counts=self.manual_rejection_reason_counts,
       )
       result["diagnostics"]["bootstrap_diagnostics"] = self.bootstrap_diagnostics
       return result
 
     smoothed_points = _smooth_points(points)
+    source_state_counts: dict[str, int] = {}
+    source_switch_count = 0
+    previous_source_state: str | None = None
+    for point in smoothed_points:
+      source_state = str(point.get("trackingState") or "automatic")
+      source_state_counts[source_state] = source_state_counts.get(source_state, 0) + 1
+      if previous_source_state is not None and source_state != previous_source_state:
+        source_switch_count += 1
+      previous_source_state = source_state
+    manual_fusion_mean_residual_px = (
+      round(sum(manual_visual_residuals) / len(manual_visual_residuals), 2)
+      if manual_visual_residuals
+      else None
+    )
+    manual_fusion_max_residual_px = (
+      round(max(manual_visual_residuals), 2)
+      if manual_visual_residuals
+      else None
+    )
     coverage = round(coverage, 3)
     point_times = [float(point["time"]) for point in smoothed_points]
     if normalized_rep_windows:
@@ -2323,6 +2576,16 @@ class BarbellTracker:
         "detected_point_count": detected_count,
         "manual_point_count": self.manual_point_count,
         "automatic_point_count": self.automatic_point_count,
+        "manual_accepted_count": self.manual_accepted_count,
+        "manual_blended_count": self.manual_blended_count,
+        "manual_rejected_count": self.manual_rejected_count,
+        "manual_fallback_count": self.manual_fallback_count,
+        "manual_rejection_reason_counts": self.manual_rejection_reason_counts,
+        "manual_validation_missing_count": manual_validation_missing_count,
+        "manual_fusion_mean_residual_px": manual_fusion_mean_residual_px,
+        "manual_fusion_max_residual_px": manual_fusion_max_residual_px,
+        "source_switch_count": source_switch_count,
+        "source_state_counts": source_state_counts,
         "interpolated_point_count": interpolated_count,
         "rejected_frame_count": max(sampled_count - detected_count - interpolated_count, 0),
         "rejected_candidate_count": rejected_candidate_count,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import logging
 import tempfile
 import time
@@ -65,6 +66,7 @@ def _apply_tracking_assistance(
     "barbellSeedUsed": False,
     "manualBarbellPointCount": 0,
     "automaticBarbellPointCount": 0,
+    "reference": None,
   }
   assisted_estimation = dict(estimation)
   assisted_estimation["tracking_assistance"] = assistance
@@ -108,6 +110,12 @@ def _apply_tracking_assistance(
         "rejectedTrackCount": int(fusion.get("rejected_track_count") or 0),
         "rejectionReasons": fusion.get("rejection_reasons") or {},
         "coverage": fusion.get("coverage") or {},
+        "reference": {
+          "version": validated_setup["version"],
+          "timeMs": validated_setup["reference_time_ms"],
+          "selectedSide": fusion.get("selected_side"),
+          "anchors": copy.deepcopy(validated_setup["anchors"]),
+        },
       }
     )
   except Exception as error:
@@ -413,12 +421,19 @@ def _analyze_squat_result(
     return result
 
   analyzer = SquatAnalyzer()
+  assistance = estimation.get("tracking_assistance") or {}
+  selected_side_override = (
+    assistance.get("selectedSide")
+    if assistance.get("actualMode") == "pin_assisted"
+    else None
+  )
   return analyzer.analyze(
     video_id=video_id,
     exercise_type=video["exercise_type"],
     view_type=video["view_type"],
     frames=estimation["frames"],
     sampled_frame_count=estimation.get("sampled_frame_count"),
+    selected_side_override=selected_side_override,
   )
 
 def _finalize_storage_assets(
@@ -537,7 +552,9 @@ def _attach_barbell_tracking(
 
   diagnostics = result.setdefault("diagnostics", {})
   selected_side = (
-    (diagnostics.get("pose_validation") or {}).get("selected_side")
+    (result.get("trackingAssistance") or {}).get("selectedSide")
+    or (diagnostics.get("tracking_assistance") or {}).get("selectedSide")
+    or (diagnostics.get("pose_validation") or {}).get("selected_side")
     or diagnostics.get("selected_side")
   )
   rep_windows = [

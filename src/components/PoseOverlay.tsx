@@ -1,4 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
+import { layoutTrackingLabels } from '../../lib/trackingOverlayPolicy';
 import { VideoPoseFrame } from '../types/videoAnalysis';
 import {
   ContentFit,
@@ -22,7 +23,15 @@ type PoseOverlayProps = {
   confidenceThreshold?: number;
 };
 
-function Line({ from, to }: { from: { x: number; y: number }; to: { x: number; y: number } }) {
+function Line({
+  from,
+  to,
+  estimated = false,
+}: {
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  estimated?: boolean;
+}) {
   // Draw each skeleton segment as a rotated line.
   const dx = to.x - from.x;
   const dy = to.y - from.y;
@@ -33,6 +42,7 @@ function Line({ from, to }: { from: { x: number; y: number }; to: { x: number; y
     <View
       style={[
         styles.line,
+        estimated && styles.estimatedLine,
         {
           left: from.x,
           top: from.y,
@@ -72,6 +82,18 @@ export default function PoseOverlay({
       return [mapped.name, { ...mapped, label: keypoint.label }];
     })
   );
+  const labelLayout = layoutTrackingLabels(
+    [...mappedKeypoints.values()].map((point) => ({
+      id: point.name,
+      x: point.x,
+      y: point.y,
+      labelWidth: LABEL_WIDTH,
+      labelHeight: LABEL_HEIGHT,
+    })),
+    containerSize,
+    { gap: 8 }
+  );
+  const labelsByName = new Map(labelLayout.map((point) => [point.id, point]));
   const visiblePoints = [...mappedKeypoints.values()];
 
   return (
@@ -84,23 +106,31 @@ export default function PoseOverlay({
           return null;
         }
 
-        return <Line key={`${fromName}-${toName}`} from={from} to={to} />;
+        const isEstimated = [from.trackingState, to.trackingState].some(
+          (state) => state === 'automatic' || state === 'estimated'
+        );
+        return <Line key={`${fromName}-${toName}`} from={from} to={to} estimated={isEstimated} />;
       })}
 
       {visiblePoints.map((point) => {
-        const labelLeft = Math.min(
-          Math.max(point.x + 10, 0),
-          Math.max(containerSize.width - LABEL_WIDTH, 0)
-        );
-        const labelTop = Math.min(
-          Math.max(point.y - LABEL_HEIGHT - 4, 0),
-          Math.max(containerSize.height - LABEL_HEIGHT, 0)
-        );
-        const isEstimated = point.confidence < 0.5;
+        const label = labelsByName.get(point.name);
+        if (!label) {
+          return null;
+        }
+        const isEstimated = point.confidence < 0.5
+          || point.trackingState === 'automatic'
+          || point.trackingState === 'estimated';
         const pointOpacity = isEstimated ? 0.58 : 1;
+        const labelCenter = {
+          x: label.labelX + (label.labelWidth / 2),
+          y: label.labelY + (label.labelHeight / 2),
+        };
 
         return (
           <View key={point.name}>
+            {label.displaced ? (
+              <Line from={point} to={labelCenter} estimated={isEstimated} />
+            ) : null}
             <View
               style={[
                 styles.point,
@@ -118,8 +148,8 @@ export default function PoseOverlay({
                 styles.label,
                 isEstimated && styles.estimatedLabel,
                 {
-                  left: labelLeft,
-                  top: labelTop,
+                  left: label.labelX,
+                  top: label.labelY,
                   opacity: pointOpacity,
                 },
               ]}
@@ -140,6 +170,13 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: 'rgba(31, 107, 255, 0.92)',
     transformOrigin: '0px 1.5px',
+  },
+  estimatedLine: {
+    height: 0,
+    backgroundColor: 'transparent',
+    borderTopWidth: 2,
+    borderStyle: 'dashed',
+    borderColor: 'rgba(255, 176, 32, 0.82)',
   },
   point: {
     position: 'absolute',

@@ -66,6 +66,11 @@ def _empty_result(
   per_rep_coverage: list[dict[str, Any]] | None = None,
   manual_point_count: int = 0,
   automatic_point_count: int = 0,
+  manual_accepted_count: int = 0,
+  manual_blended_count: int = 0,
+  manual_rejected_count: int = 0,
+  manual_fallback_count: int = 0,
+  manual_rejection_reason_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
   return {
     "barbellPath": {
@@ -84,6 +89,11 @@ def _empty_result(
       "detected_point_count": detected_point_count,
       "manual_point_count": manual_point_count,
       "automatic_point_count": automatic_point_count,
+      "manual_accepted_count": manual_accepted_count,
+      "manual_blended_count": manual_blended_count,
+      "manual_rejected_count": manual_rejected_count,
+      "manual_fallback_count": manual_fallback_count,
+      "manual_rejection_reason_counts": manual_rejection_reason_counts or {},
       "interpolated_point_count": interpolated_point_count,
       "rejected_frame_count": max(sampled_frame_count - detected_point_count, 0),
       "rejected_candidate_count": rejected_candidate_count,

@@ -46,6 +46,48 @@ def frame(
 
 
 class SquatAnalyzerTest(unittest.TestCase):
+  def test_pin_selected_side_remains_authoritative_for_rep_depth(self) -> None:
+    frames = [
+      frame(0, left_visibility=0.55, right_visibility=0.99),
+      frame(
+        500,
+        left_visibility=0.55,
+        right_visibility=0.99,
+        left_hip_y=0.74,
+        left_knee_y=0.58,
+        right_hip_y=0.46,
+        right_knee_y=0.70,
+      ),
+      frame(1000, left_visibility=0.55, right_visibility=0.99),
+    ]
+
+    with patch(
+      "app.analysis.exercises.squat.detect_reps",
+      return_value=(
+        [{
+          "start_index": 0,
+          "bottom_index": 1,
+          "end_index": 2,
+          "start_timestamp_ms": 0,
+          "bottom_timestamp_ms": 500,
+          "end_timestamp_ms": 1000,
+        }],
+        {"motion_amplitude": 0.5, "reason": None, "rep_count": 1},
+      ),
+    ):
+      result = SquatAnalyzer().analyze(
+        video_id="video-1",
+        exercise_type="squat",
+        view_type="side",
+        frames=frames,
+        sampled_frame_count=3,
+        selected_side_override="left",
+      )
+
+    self.assertEqual(result["diagnostics"]["selected_side"], "left")
+    self.assertEqual(result["diagnostics"]["pose_validation"]["selected_side"], "left")
+    self.assertEqual(result["reps"][0]["selected_side"], "left")
+
   def test_rep_summary_uses_selected_side_depth(self) -> None:
     frames = [
       frame(0, left_hip_y=0.46, left_knee_y=0.70, right_hip_y=0.46, right_knee_y=0.70),

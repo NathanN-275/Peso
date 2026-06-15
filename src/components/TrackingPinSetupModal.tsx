@@ -22,6 +22,7 @@ import {
 } from '../types/trackingSetup';
 import { calculateVideoRect } from '../utils/videoReview';
 import { getPinnedFrameChangeAction } from '../../lib/trackingPinFramePolicy';
+import { layoutTrackingLabels } from '../../lib/trackingOverlayPolicy';
 import Button from './Button';
 import ConfirmationDialog from './ConfirmationDialog';
 import TimelineScrubber from './TimelineScrubber';
@@ -63,6 +64,34 @@ function orientationCorrectedVideoSize(
   return sizeIsPortrait === expectedIsPortrait
     ? size
     : { width: size.height, height: size.width };
+}
+
+function PinLeaderLine({
+  from,
+  to,
+  color,
+}: {
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  color: string;
+}) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  return (
+    <View
+      pointerEvents="none"
+      style={[
+        styles.pinLeaderLine,
+        {
+          left: from.x,
+          top: from.y,
+          width: Math.hypot(dx, dy),
+          backgroundColor: color,
+          transform: [{ rotateZ: `${Math.atan2(dy, dx)}rad` }],
+        },
+      ]}
+    />
+  );
 }
 
 export default function TrackingPinSetupModal({
@@ -192,6 +221,23 @@ export default function TrackingPinSetupModal({
     () => calculateVideoRect(videoLayout, displayVideoSize, 'contain'),
     [displayVideoSize, videoLayout]
   );
+  const renderedPins = useMemo(() => layoutTrackingLabels(
+    TRACKING_PIN_NAMES.flatMap((name) => {
+      const point = pins[name];
+      if (!point) {
+        return [];
+      }
+      return [{
+        id: name,
+        x: videoRect.x + (point.x * videoRect.width),
+        y: videoRect.y + (point.y * videoRect.height),
+        labelWidth: name === 'barbell' ? 104 : 76,
+        labelHeight: 20,
+      }];
+    }),
+    videoLayout,
+    { gap: 7 }
+  ), [pins, videoLayout, videoRect]);
   const nextPin = TRACKING_PIN_NAMES.find((name) => !pins[name]) ?? null;
   const pinCount = TRACKING_PIN_NAMES.filter((name) => pins[name]).length;
   const allPinsPlaced = pinCount === TRACKING_PIN_NAMES.length;
@@ -432,23 +478,36 @@ export default function TrackingPinSetupModal({
             onResponderRelease={() => setDraggingPin(null)}
             onResponderTerminate={() => setDraggingPin(null)}
           >
-            {TRACKING_PIN_NAMES.map((name) => {
-              const point = pins[name];
-              if (!point) {
-                return null;
-              }
-              const x = videoRect.x + (point.x * videoRect.width);
-              const y = videoRect.y + (point.y * videoRect.height);
+            {renderedPins.map((point) => {
+              const name = point.id as TrackingPinName;
+              const labelCenter = {
+                x: point.labelX + (point.labelWidth / 2),
+                y: point.labelY + (point.labelHeight / 2),
+              };
               return (
-                <View
-                  key={name}
-                  pointerEvents="none"
-                  style={[styles.pinContainer, { left: x - 13, top: y - 13 }]}
-                >
-                  <View style={[styles.pin, { backgroundColor: PIN_COLORS[name] }]}>
+                <View key={name} pointerEvents="none">
+                  {point.displaced ? (
+                    <PinLeaderLine from={point} to={labelCenter} color={PIN_COLORS[name]} />
+                  ) : null}
+                  <View style={[styles.pinMarker, { left: point.x - 13, top: point.y - 13 }]}>
+                    <View style={[styles.pin, { backgroundColor: PIN_COLORS[name] }]}>
                     <Ionicons name="add" size={18} color="#05070A" />
+                    </View>
                   </View>
-                  <Text style={[styles.pinLabel, { color: PIN_COLORS[name] }]}>{PIN_LABELS[name]}</Text>
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      styles.pinLabel,
+                      {
+                        left: point.labelX,
+                        top: point.labelY,
+                        width: point.labelWidth,
+                        color: PIN_COLORS[name],
+                      },
+                    ]}
+                  >
+                    {PIN_LABELS[name]}
+                  </Text>
                 </View>
               );
             })}
@@ -539,7 +598,13 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   video: { ...StyleSheet.absoluteFillObject },
-  pinContainer: { position: 'absolute', alignItems: 'center' },
+  pinMarker: { position: 'absolute' },
+  pinLeaderLine: {
+    position: 'absolute',
+    height: 1,
+    opacity: 0.8,
+    transformOrigin: '0px 0.5px',
+  },
   pin: {
     width: 26,
     height: 26,
@@ -550,13 +615,15 @@ const styles = StyleSheet.create({
     borderColor: '#FFFFFF',
   },
   pinLabel: {
-    marginTop: 2,
+    position: 'absolute',
+    height: 20,
     paddingHorizontal: 4,
     paddingVertical: 1,
     borderRadius: 4,
     backgroundColor: 'rgba(0,0,0,0.76)',
     fontSize: 11,
     fontWeight: '700',
+    textAlign: 'center',
   },
   controls: {
     flexShrink: 0,

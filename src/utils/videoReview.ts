@@ -19,6 +19,7 @@ export type MappedPoint = {
   x: number;
   y: number;
   confidence: number;
+  trackingState?: VideoPoseKeypoint['trackingState'];
 };
 
 export type SquatOverlayPoint = VideoPoseKeypoint & {
@@ -227,6 +228,9 @@ export function findInterpolatedBarbellPathPoint(
     x: previousPoint.x + ((nextPoint.x - previousPoint.x) * progress),
     y: previousPoint.y + ((nextPoint.y - previousPoint.y) * progress),
     confidence: Math.min(previousPoint.confidence, nextPoint.confidence),
+    trackingState: previousPoint.trackingState === nextPoint.trackingState
+      ? previousPoint.trackingState
+      : 'estimated',
   };
 }
 
@@ -383,6 +387,7 @@ export function mapNormalizedKeypoint(
     x: rect.x + (keypoint.x * rect.width),
     y: rect.y + (keypoint.y * rect.height),
     confidence: keypoint.confidence,
+    trackingState: keypoint.trackingState,
   };
 }
 

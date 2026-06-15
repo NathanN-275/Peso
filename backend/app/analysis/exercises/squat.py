@@ -61,6 +61,11 @@ def _build_pose_frames(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
           "x": point["x"],
           "y": point["y"],
           "confidence": point["visibility"],
+          **(
+            {"trackingState": point["tracking_state"]}
+            if point.get("tracking_state") in {"reference", "guided", "automatic", "estimated"}
+            else {}
+          ),
         }
         for name, point in frame["landmarks"].items()
       ],
@@ -172,6 +177,7 @@ def _rep_bottom_depth_assessment(
   frames: list[dict[str, Any]],
   bottom_index: int,
   pose_validation: dict[str, Any],
+  selected_side_override: str | None = None,
 ) -> tuple[dict[str, Any], int]:
   # Use a small window around the detected bottom so one noisy hip frame cannot fail depth.
   start_index = max(0, bottom_index - DEPTH_BOTTOM_WINDOW)
@@ -180,7 +186,14 @@ def _rep_bottom_depth_assessment(
 
   for frame_index in range(start_index, end_index + 1):
     frame = frames[frame_index]
-    selected_side, selected_score, alternate_score, side_clarity = select_depth_side(frame)
+    automatic_side, selected_score, alternate_score, side_clarity = select_depth_side(frame)
+    selected_side = (
+      selected_side_override
+      if selected_side_override in {"left", "right"}
+      else automatic_side
+    )
+    if selected_side != automatic_side:
+      selected_score, alternate_score = alternate_score, selected_score
     assessment = squat_depth_assessment(
       point_for_side(frame, selected_side, "shoulder"),
       point_for_side(frame, selected_side, "hip"),
@@ -465,9 +478,13 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
     view_type: str,
     frames: list[dict[str, Any]],
     sampled_frame_count: int | None = None,
+    selected_side_override: str | None = None,
   ) -> dict[str, Any]:
     # Squat analysis combines quality checks, rep detection, and feedback.
-    frames, pose_validation = validate_squat_pose_frames(frames)
+    frames, pose_validation = validate_squat_pose_frames(
+      frames,
+      selected_side_override=selected_side_override,
+    )
     diagnostics = self._build_quality_report(
       frames=frames,
       sampled_frame_count=sampled_frame_count,
@@ -541,6 +558,7 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
         frames=frames,
         bottom_index=rep["bottom_index"],
         pose_validation=pose_validation,
+        selected_side_override=selected_side,
       )
       rep_depth_side = depth_assessment.get("selected_side") or selected_side
       depth_score = depth_assessment["score"]

@@ -355,6 +355,7 @@ def _apply_smoothing(
           neighbor_midpoint.get("visibility", 0.0),
           INTERPOLATED_CONFIDENCE,
         )
+        target["tracking_state"] = "estimated"
         smoothed_count += 1
         continue
 
@@ -386,12 +387,18 @@ def _apply_smoothing(
         + (following.get("z", 0.0) * following_weight)
       )
       target["visibility"] = min(target.get("visibility", 0.0), SMOOTHED_CONFIDENCE_CAP)
+      if target.get("tracking_state") != "reference":
+        target["tracking_state"] = "estimated"
       smoothed_count += 1
 
   return smoothed_count, hysteresis_count
 
 
-def validate_squat_pose_frames(frames: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def validate_squat_pose_frames(
+  frames: list[dict[str, Any]],
+  *,
+  selected_side_override: str | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
   # Downgrade or interpolate squat-critical landmarks that are anatomically or temporally implausible.
   if not frames:
     return frames, {
@@ -405,7 +412,8 @@ def validate_squat_pose_frames(frames: list[dict[str, Any]]) -> tuple[list[dict[
       "unreliable_landmarks": [],
     }
 
-  selected_side, tracking_confidence = select_tracking_side_for_clip(frames)
+  automatic_side, tracking_confidence = select_tracking_side_for_clip(frames)
+  selected_side = selected_side_override if selected_side_override in {"left", "right"} else automatic_side
   subject_height = _subject_height(frames, selected_side)
   invalid = _find_invalid_landmarks(
     frames,
@@ -452,9 +460,11 @@ def validate_squat_pose_frames(frames: list[dict[str, Any]]) -> tuple[list[dict[
       )
       corrected_count += 1
       interpolated_count += 1
+      target["tracking_state"] = "estimated"
       status = "interpolated"
     else:
       target["visibility"] = min(target.get("visibility", 0.0), LOW_RELIABILITY_CONFIDENCE)
+      target["tracking_state"] = "estimated"
       rejected_count += 1
       status = "rejected"
 
@@ -478,6 +488,7 @@ def validate_squat_pose_frames(frames: list[dict[str, Any]]) -> tuple[list[dict[
 
   return validated_frames, {
     "selected_side": selected_side,
+    "selected_side_overridden": selected_side != automatic_side,
     "tracking_side_confidence": tracking_confidence,
     "subject_height": round(subject_height, 3),
     "corrected_landmark_count": corrected_count,

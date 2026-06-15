@@ -14,6 +14,13 @@ export type TrackingSetup = {
   anchors: Record<TrackingPinName, NormalizedTrackingPoint>;
 };
 
+export type TrackingReference = {
+  version: 1;
+  timeMs: number;
+  selectedSide?: 'left' | 'right' | null;
+  anchors: Record<TrackingPinName, NormalizedTrackingPoint>;
+};
+
 export type TrackingAssistance = {
   requestedMode: 'automatic' | 'pins';
   actualMode: 'automatic' | 'pin_assisted' | 'automatic_fallback';
@@ -30,4 +37,5 @@ export type TrackingAssistance = {
   barbellSeedUsed?: boolean;
   manualBarbellPointCount?: number;
   automaticBarbellPointCount?: number;
+  reference?: TrackingReference | null;
 };

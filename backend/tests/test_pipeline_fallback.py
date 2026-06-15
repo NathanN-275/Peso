@@ -180,6 +180,32 @@ class PipelineFallbackTest(unittest.TestCase):
         analyzer.analyze.assert_called_once()
         self.assertEqual(analyzer.analyze.call_args.kwargs["exercise_type"], exercise_type)
 
+  def test_pin_selected_side_is_passed_to_squat_analysis(self) -> None:
+    pipeline = self._import_pipeline()
+    estimation = self._estimation()
+    estimation["tracking_assistance"] = {
+      "actualMode": "pin_assisted",
+      "selectedSide": "right",
+    }
+    analyzer = MagicMock()
+    analyzer.analyze.return_value = {"reps": [], "diagnostics": {}}
+
+    with patch("app.analysis.pipeline.SquatAnalyzer", return_value=analyzer):
+      pipeline._analyze_squat_result(
+        video_id="video-1",
+        video={
+          "id": "video-1",
+          "exercise_type": "squat",
+          "view_type": "side",
+        },
+        estimation=estimation,
+      )
+
+    self.assertEqual(
+      analyzer.analyze.call_args.kwargs["selected_side_override"],
+      "right",
+    )
+
   def test_non_squat_variation_remains_limited(self) -> None:
     pipeline = self._import_pipeline()
 

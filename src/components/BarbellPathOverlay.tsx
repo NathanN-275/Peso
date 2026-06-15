@@ -69,6 +69,7 @@ export default function BarbellPathOverlay({
       x: rect.x + (point.x * rect.width),
       y: rect.y + (point.y * rect.height),
       time: point.time,
+      trackingState: point.trackingState,
     }));
 
   if (mappedPoints.length < 1) {
@@ -90,7 +91,14 @@ export default function BarbellPathOverlay({
       })}
       <View style={[styles.startPoint, { left: firstPoint.x - 3, top: firstPoint.y - 3 }]} />
       {currentPoint ? (
-        <View style={[styles.currentPoint, { left: lastPoint.x - 7, top: lastPoint.y - 7 }]} />
+        <View
+          style={[
+            styles.currentPoint,
+            (currentPoint.trackingState === 'automatic' || currentPoint.trackingState === 'estimated')
+              && styles.estimatedCurrentPoint,
+            { left: lastPoint.x - 7, top: lastPoint.y - 7 },
+          ]}
+        />
       ) : null}
     </View>
   );
@@ -125,5 +133,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(64, 235, 52, 0.92)',
     borderWidth: 2,
     borderColor: '#FFFFFF',
+  },
+  estimatedCurrentPoint: {
+    backgroundColor: 'rgba(255, 255, 255, 0.72)',
+    borderColor: '#FFB020',
+    borderStyle: 'dashed',
   },
 });

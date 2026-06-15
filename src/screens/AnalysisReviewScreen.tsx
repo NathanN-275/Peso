@@ -16,11 +16,16 @@ import { useAuth } from '../../context/AuthContext';
 import { discardAnalyzedVideo, saveAnalyzedVideo } from '../../lib/backendApi';
 import BarbellPathOverlay from '../components/BarbellPathOverlay';
 import PoseOverlay from '../components/PoseOverlay';
+import TrackingReferenceOverlay from '../components/TrackingReferenceOverlay';
 import ReviewBottomSheet from '../components/ReviewBottomSheet';
 import TimelineScrubber from '../components/TimelineScrubber';
 import TrackingDisplaySheet from '../components/TrackingDisplaySheet';
 import tokens from '../theme/tokens';
 import { BarbellPath, VideoAnalysisResult } from '../types/videoAnalysis';
+import {
+  isReferenceTrackingTime,
+  resolveSelectedTrackingSide,
+} from '../../lib/trackingOverlayPolicy';
 import {
   calculateVideoRect,
   findInterpolatedPoseFrame,
@@ -274,12 +279,16 @@ export default function AnalysisReviewScreen({
   const hasBarbellPath = barbellPath?.available === true
     && Array.isArray(barbellPath.points)
     && barbellPath.points.length >= 2;
-  const showPoseOverlay = hasPoseTimeline && poseOverlayEnabled;
-  const showBarbellPath = hasBarbellPath && barbellPathEnabled;
+  const trackingAssistance = result.trackingAssistance ?? result.diagnostics?.tracking_assistance;
+  const trackingReference = trackingAssistance?.reference ?? null;
+  const showReferencePins = Boolean(
+    trackingReference
+    && isReferenceTrackingTime(currentTime, trackingReference.timeMs)
+  );
+  const showPoseOverlay = hasPoseTimeline && poseOverlayEnabled && !showReferencePins;
+  const showBarbellPath = hasBarbellPath && barbellPathEnabled && !showReferencePins;
   const cameraView = result.cameraView ?? result.view;
-  const selectedPoseSide = result.diagnostics?.pose_validation?.selected_side
-    ?? result.diagnostics?.selected_side
-    ?? null;
+  const selectedPoseSide = resolveSelectedTrackingSide(trackingAssistance, result.diagnostics);
   const analysisStale = result.analysis_stale ?? result.diagnostics?.analysis_stale ?? false;
   const analysisIncomplete = result.analysis_incomplete ?? result.diagnostics?.analysis_incomplete ?? false;
   const depthSummaryDebug = result.diagnostics?.depth_summary_debug;
@@ -319,7 +328,6 @@ export default function AnalysisReviewScreen({
   const fallbackUnavailableReason =
     result.fallback_unavailable_reason ?? result.diagnostics?.fallback_unavailable_reason;
   const landmarkModel = result.landmark_model ?? result.diagnostics?.landmark_model;
-  const trackingAssistance = result.trackingAssistance ?? result.diagnostics?.tracking_assistance;
   const trackingAssistanceLabel = trackingAssistance?.actualMode === 'pin_assisted'
     ? 'Pin-assisted'
     : trackingAssistance?.requestedMode === 'pins'
@@ -578,6 +586,14 @@ export default function AnalysisReviewScreen({
                   <BarbellPathOverlay
                     path={barbellPath}
                     currentTime={currentTime}
+                    containerSize={videoLayout}
+                    videoSize={videoSize}
+                    contentFit="cover"
+                  />
+                ) : null}
+                {showReferencePins && trackingReference ? (
+                  <TrackingReferenceOverlay
+                    reference={trackingReference}
                     containerSize={videoLayout}
                     videoSize={videoSize}
                     contentFit="cover"

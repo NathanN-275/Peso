@@ -140,6 +140,7 @@ export type VideoPoseKeypoint = {
   x: number;
   y: number;
   confidence: number;
+  trackingState?: 'reference' | 'guided' | 'automatic' | 'estimated';
 };
 
 export type PoseValidationLandmark = {
@@ -161,6 +162,7 @@ export type BarbellPathPoint = {
   x: number;
   y: number;
   confidence: number;
+  trackingState?: 'reference' | 'guided' | 'automatic' | 'estimated';
 };
 
 export type BarbellPath = {
@@ -203,6 +205,7 @@ export type VideoAnalysisDiagnostics = {
   pose_validation?: {
     selected_side?: string | null;
     tracking_side_confidence?: number;
+    selected_side_overridden?: boolean;
     subject_height?: number;
     corrected_landmark_count?: number;
     smoothed_landmark_count?: number;
