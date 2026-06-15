@@ -355,7 +355,7 @@ def _track_direction(
   initial_point: tuple[float, float],
   *,
   barbell: bool = False,
-) -> dict[int, dict[str, float]]:
+) -> dict[int, dict[str, Any]]:
   if not ordered_indices:
     return {}
   tracks = {
@@ -414,15 +414,15 @@ def _track_direction(
 
 
 def _smooth_anchor_track(
-  tracks: dict[int, dict[str, float]],
+  tracks: dict[int, dict[str, Any]],
   *,
   reference_index: int,
-) -> dict[int, dict[str, float]]:
+) -> dict[int, dict[str, Any]]:
   ordered_indices = sorted(tracks)
   if len(ordered_indices) < 3:
     return tracks
 
-  smoothed: dict[int, dict[str, float]] = {}
+  smoothed: dict[int, dict[str, Any]] = {}
   for position, source_index in enumerate(ordered_indices):
     point = tracks[source_index]
     if source_index == reference_index:

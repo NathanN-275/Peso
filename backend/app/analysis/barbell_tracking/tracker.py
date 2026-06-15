@@ -804,6 +804,10 @@ class BarbellTracker:
     self.manual_fallback_count = 0
     self.manual_rejection_reason_counts = {}
     normalized_manual_priors = manual_barbell_priors or {}
+    manual_priors_have_reference = any(
+      prior.get("tracking_state") == "reference"
+      for prior in normalized_manual_priors.values()
+    )
     started = time.perf_counter()
     if not Path(file_path).is_file():
       return _empty_result("video_unavailable")
@@ -955,6 +959,7 @@ class BarbellTracker:
     last_path_residual_px: float | None = None
     frame_index = 0
     debug_writer = None
+    debug_frame_size = (width - (width % 2), height - (height % 2))
     sampled_shoulder_y_values: list[float] = []
     manual_mode_active = False
     manual_has_activated = False
@@ -962,6 +967,9 @@ class BarbellTracker:
     previous_manual_point: tuple[float, float] | None = None
     manual_reference_shoulder_offset: tuple[float, float] | None = None
     manual_visual_mismatch_streak = 0
+    manual_visual_match_streak = 0
+    manual_visual_recovery_active = False
+    manual_visual_offset: tuple[float, float] | None = None
     manual_visual_residuals: list[float] = []
     manual_validation_missing_count = 0
 
@@ -970,8 +978,15 @@ class BarbellTracker:
         debug_output_path,
         cv2.VideoWriter_fourcc(*"mp4v"),
         BARBELL_TRACK_TARGET_FPS,
-        (width, height),
+        debug_frame_size,
       )
+
+    def write_debug_frame(debug_frame: Any) -> None:
+      if debug_writer is None:
+        return
+      if (debug_frame.shape[1], debug_frame.shape[0]) != debug_frame_size:
+        debug_frame = cv2.resize(debug_frame, debug_frame_size, interpolation=cv2.INTER_AREA)
+      debug_writer.write(debug_frame)
 
     try:
       while capture.isOpened():
@@ -1115,9 +1130,33 @@ class BarbellTracker:
             height=height,
           )
           visible_target = visible_descriptor["guided_target_point"] if visible_descriptor else None
+          can_calibrate_visual_offset = (
+            not manual_priors_have_reference
+            or manual_prior.get("tracking_state") == "reference"
+          )
+          if (
+            visible_target is not None
+            and manual_visual_offset is None
+            and can_calibrate_visual_offset
+          ):
+            manual_visual_offset = (
+              manual_point[0] - visible_target[0],
+              manual_point[1] - visible_target[1],
+            )
+          calibrated_visual_target = (
+            (
+              visible_target[0] + manual_visual_offset[0],
+              visible_target[1] + manual_visual_offset[1],
+            )
+            if visible_target is not None and manual_visual_offset is not None
+            else None
+          )
           visible_discrepancy = (
-            math.hypot(visible_target[0] - manual_point[0], visible_target[1] - manual_point[1])
-            if visible_target
+            math.hypot(
+              calibrated_visual_target[0] - manual_point[0],
+              calibrated_visual_target[1] - manual_point[1],
+            )
+            if calibrated_visual_target
             else None
           )
           visible_tolerance = (
@@ -1137,6 +1176,7 @@ class BarbellTracker:
           )
           if visual_mismatch:
             manual_visual_mismatch_streak += 1
+            manual_visual_match_streak = 0
             reason = "visible_hub_mismatch"
             self.manual_rejection_reason_counts[reason] = (
               self.manual_rejection_reason_counts.get(reason, 0) + 1
@@ -1146,13 +1186,19 @@ class BarbellTracker:
             )
           else:
             manual_visual_mismatch_streak = 0
+            if manual_visual_recovery_active and calibrated_visual_target is not None:
+              manual_visual_match_streak += 1
 
           if manual_visual_mismatch_streak >= 2:
-            self.manual_rejected_count += 1
-            self.manual_fallback_count += 1
-            manual_mode_active = False
-            manual_reentry_streak = 0
-            tracking_lock = None
+            if not manual_visual_recovery_active:
+              self.manual_rejected_count += 1
+              self.manual_fallback_count += 1
+            manual_visual_recovery_active = True
+          elif manual_visual_recovery_active and manual_visual_match_streak >= 2:
+            manual_visual_recovery_active = False
+            manual_visual_match_streak = 0
+
+          if manual_visual_recovery_active and calibrated_visual_target is None:
             samples.append(None)
             previous_gray = gray
             frame_index += 1
@@ -1168,9 +1214,18 @@ class BarbellTracker:
               manual_point[1] - shoulder[1],
             )
 
-          final_manual_point = manual_point
+          final_manual_point = (
+            calibrated_visual_target
+            if manual_visual_recovery_active and calibrated_visual_target is not None
+            else manual_point
+          )
           final_bar_confidence = float(manual_prior["confidence"])
-          if visual_mismatch:
+          if manual_visual_recovery_active:
+            final_bar_confidence = min(
+              final_bar_confidence * 0.82,
+              float(visible_descriptor["final_bar_confidence"]) if visible_descriptor else 0.0,
+            )
+          elif visual_mismatch:
             final_bar_confidence *= 0.72
           if visible_descriptor:
             selected_plate = visible_descriptor["plate"]
@@ -1228,9 +1283,13 @@ class BarbellTracker:
           refined_collar = tracking_lock["refined_collar"]
           collar_geometry_valid = True
           tracking_state = (
-            "reference"
-            if manual_prior.get("tracking_state") == "reference"
-            else "guided"
+            "automatic"
+            if manual_visual_recovery_active
+            else (
+              "reference"
+              if manual_prior.get("tracking_state") == "reference"
+              else "guided"
+            )
           )
           point = {
             "time": timestamp,
@@ -1238,8 +1297,9 @@ class BarbellTracker:
             "y": final_manual_point[1] / height,
             "confidence": final_bar_confidence,
             "trackingState": tracking_state,
-            "manual_assisted": True,
           }
+          if not manual_visual_recovery_active:
+            point["manual_assisted"] = True
           samples.append(point)
           manual_frames = self.bootstrap_diagnostics.setdefault("manual_frames", [])
           if len(manual_frames) < 120:
@@ -1250,8 +1310,11 @@ class BarbellTracker:
               "raw_pin_y": round(manual_point[1], 2),
               "visual_x": round(visible_target[0], 2) if visible_target else None,
               "visual_y": round(visible_target[1], 2) if visible_target else None,
+              "calibrated_visual_x": round(calibrated_visual_target[0], 2) if calibrated_visual_target else None,
+              "calibrated_visual_y": round(calibrated_visual_target[1], 2) if calibrated_visual_target else None,
               "fusion_residual_px": round(visible_discrepancy, 2) if visible_discrepancy is not None else None,
               "visual_mismatch": visual_mismatch,
+              "visual_recovery_active": manual_visual_recovery_active,
             })
           accepted_points_px.append(final_manual_point)
           historical_target_point = final_manual_point
@@ -1260,7 +1323,7 @@ class BarbellTracker:
           if current_rep_index is not None:
             rep_detected_counts[current_rep_index] = rep_detected_counts.get(current_rep_index, 0) + 1
           if debug_writer:
-            debug_writer.write(
+            write_debug_frame(
               _draw_debug_frame(
                 cv2,
                 frame,
@@ -1273,7 +1336,7 @@ class BarbellTracker:
                 final_bar_point=final_manual_point,
                 emitted_point=final_manual_point,
                 manual_point=manual_point,
-                visual_validation_point=visible_target,
+                visual_validation_point=calibrated_visual_target,
                 fusion_residual_px=visible_discrepancy,
                 rejection_reason="visible_hub_mismatch" if visual_mismatch else None,
                 mode=f"manual_collar:{tracking_state}",
@@ -1601,7 +1664,7 @@ class BarbellTracker:
             detected_count += 1
             previous_gray = gray
             if debug_writer:
-              debug_writer.write(
+              write_debug_frame(
                 _draw_debug_frame(
                   cv2,
                   frame,
@@ -1658,7 +1721,7 @@ class BarbellTracker:
             samples.append(None)
             # Keep previous_gray aligned with tracking_lock/features after a failed local update.
             if debug_writer:
-              debug_writer.write(
+              write_debug_frame(
                 _draw_debug_frame(
                   cv2,
                   frame,
@@ -1767,7 +1830,7 @@ class BarbellTracker:
           )
           samples.append(None)
           if debug_writer:
-            debug_writer.write(
+            write_debug_frame(
               _draw_debug_frame(
                 cv2,
                 frame,
@@ -2046,7 +2109,7 @@ class BarbellTracker:
           samples.append(None)
           previous_gray = gray
           if debug_writer:
-            debug_writer.write(
+            write_debug_frame(
               _draw_debug_frame(
                 cv2,
                 frame,
@@ -2126,7 +2189,7 @@ class BarbellTracker:
           )
           samples.append(None)
           if debug_writer:
-            debug_writer.write(
+            write_debug_frame(
               _draw_debug_frame(
                 cv2,
                 frame,
@@ -2241,7 +2304,7 @@ class BarbellTracker:
         detected_count += 1
         previous_gray = gray
         if debug_writer:
-          debug_writer.write(
+          write_debug_frame(
             _draw_debug_frame(
               cv2,
               frame,
