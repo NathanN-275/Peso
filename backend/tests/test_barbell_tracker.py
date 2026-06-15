@@ -153,6 +153,42 @@ def write_unloaded_sleeve_video(
 
 
 class BarbellTrackerTest(unittest.TestCase):
+  def test_target_hub_point_never_prefers_rejected_candidate(self) -> None:
+    plate = Candidate(x=200.0, y=100.0, radius=48.0, confidence=0.95)
+    confirmed_hub = (214.0, 112.0)
+    rejected_plate_detail = (184.0, 100.0)
+    result = {
+      "point": confirmed_hub,
+      "confidence": 0.86,
+      "reason": None,
+      "source": "hough_hub",
+      "candidates": [
+        {
+          "point": confirmed_hub,
+          "radius": 6.0,
+          "confidence": 0.86,
+          "reason": None,
+        }
+      ],
+      "rejected_candidates": [
+        {
+          "point": rejected_plate_detail,
+          "radius": 5.0,
+          "confidence": 0.79,
+          "reason": "low_confidence_hub",
+        }
+      ],
+    }
+
+    selected = BarbellTracker()._target_hub_point(
+      result,
+      plate=plate,
+      shoulder=(150.0, 100.0),
+      height=240,
+    )
+
+    self.assertEqual(selected, confirmed_hub)
+
   def test_multiclip_regression_manifest_covers_release_angles(self) -> None:
     fixture_path = Path(__file__).resolve().parent / "fixtures" / "barbell_multiclip_manifest.json"
     fixture = json.loads(fixture_path.read_text())
@@ -540,8 +576,12 @@ class BarbellTrackerTest(unittest.TestCase):
       path = Path(temp_dir) / "manual-collar-priors.mp4"
       write_video(path, stationary_rack, fps=6.0)
       pose_frames = [
-        pose_frame(index, x=0.55, y=0.40)
-        for index in range(frame_count)
+        pose_frame(
+          index,
+          x=(center[0] - 60) / 320,
+          y=center[1] / 240,
+        )
+        for index, center in enumerate(manual_centers)
       ]
       manual_priors = {
         index: {

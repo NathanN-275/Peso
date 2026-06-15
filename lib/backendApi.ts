@@ -151,6 +151,9 @@ async function requestJson<T>(path: string, accessToken?: string, init?: Request
       // Try the configured backend URL first.
       response = await fetch(requestUrl, requestOptions);
     } catch (error) {
+      if (init?.signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+        throw error;
+      }
       const fallbackUrl = getWebLoopbackFallbackUrl(requestUrl);
 
       if (!fallbackUrl) {
@@ -168,6 +171,9 @@ async function requestJson<T>(path: string, accessToken?: string, init?: Request
       response = await fetch(fallbackUrl, requestOptions);
     }
   } catch (error) {
+    if (init?.signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+      throw error;
+    }
     // Expand network failures with the exact URL and environment details.
     const message = error instanceof Error ? error.message : 'Unknown network error.';
     const fallbackUrl = getWebLoopbackFallbackUrl(requestUrl);
@@ -225,9 +231,9 @@ export type VideoCapabilitiesResponse = {
   reason: string | null;
 };
 
-export async function testBackendConnection() {
+export async function testBackendConnection(signal?: AbortSignal) {
   // Health checks confirm the backend is reachable before upload starts.
-  return requestJson<{ status: string }>('/health');
+  return requestJson<{ status: string }>('/health', undefined, { signal });
 }
 
 export async function fetchStorageUsage(uploadSizeBytes: number, accessToken: string) {
@@ -242,7 +248,7 @@ export async function fetchVideoCapabilities(accessToken: string) {
   return requestJson<VideoCapabilitiesResponse>('/videos/capabilities', accessToken);
 }
 
-export async function triggerVideoAnalysis(videoId: string, accessToken: string) {
+export async function triggerVideoAnalysis(videoId: string, accessToken: string, signal?: AbortSignal) {
   // Queue analysis for an uploaded video.
   const analyzePath = `/analyze/${videoId}`;
 
@@ -251,18 +257,19 @@ export async function triggerVideoAnalysis(videoId: string, accessToken: string)
     accessToken,
     {
       method: 'POST',
+      signal,
     }
   );
 }
 
-export async function fetchVideoStatus(videoId: string, accessToken: string) {
+export async function fetchVideoStatus(videoId: string, accessToken: string, signal?: AbortSignal) {
   // Poll the backend for the current analysis status.
-  return requestJson<VideoStatusResponse>(`/videos/${videoId}/status`, accessToken);
+  return requestJson<VideoStatusResponse>(`/videos/${videoId}/status`, accessToken, { signal });
 }
 
-export async function fetchAnalysisResult(videoId: string, accessToken: string) {
+export async function fetchAnalysisResult(videoId: string, accessToken: string, signal?: AbortSignal) {
   // Fetch the completed analysis payload once processing finishes.
-  return requestJson<AnalysisResponse>(`/analysis/${videoId}`, accessToken);
+  return requestJson<AnalysisResponse>(`/analysis/${videoId}`, accessToken, { signal });
 }
 
 export async function getSavedVideos(accessToken: string) {

@@ -76,6 +76,8 @@ class BarbellTracker:
     *,
     bounds: tuple[float, float, float, float],
     shoulder: tuple[float, float] | None,
+    previous_point: tuple[float, float] | None = None,
+    reference_shoulder_offset: tuple[float, float] | None = None,
     width: int,
     height: int,
   ) -> bool:
@@ -88,6 +90,15 @@ class BarbellTracker:
     if not (x0 - margin <= x <= x1 + margin and y0 - margin <= y <= y1 + margin):
       return False
     if shoulder and math.hypot(x - shoulder[0], y - shoulder[1]) > max(width, height) * 0.34:
+      return False
+    if shoulder and reference_shoulder_offset:
+      shoulder_offset = (x - shoulder[0], y - shoulder[1])
+      if math.hypot(
+        shoulder_offset[0] - reference_shoulder_offset[0],
+        shoulder_offset[1] - reference_shoulder_offset[1],
+      ) > max(18.0, max(width, height) * 0.05):
+        return False
+    if previous_point and math.hypot(x - previous_point[0], y - previous_point[1]) > max(width, height) * 0.12:
       return False
     return True
 
@@ -129,14 +140,12 @@ class BarbellTracker:
     shoulder: tuple[float, float] | None,
     height: int,
   ) -> tuple[float, float] | None:
-    candidates = [
-      *list(result.get("candidates") or []),
-      *list(result.get("rejected_candidates") or []),
-    ]
+    candidates = list(result.get("candidates") or [])
     plausible = [
       candidate
       for candidate in candidates
       if candidate.get("point") is not None
+      and candidate.get("reason") is None
       and float(candidate.get("confidence") or 0.0) >= 0.74
       and _point_inside_plate(candidate["point"], plate=plate, max_radius_ratio=0.58)
     ]
@@ -853,6 +862,8 @@ class BarbellTracker:
     manual_mode_active = False
     manual_has_activated = False
     manual_reentry_streak = 0
+    previous_manual_point: tuple[float, float] | None = None
+    manual_reference_shoulder_offset: tuple[float, float] | None = None
 
     if debug_output_path:
       debug_writer = cv2.VideoWriter(
@@ -907,6 +918,7 @@ class BarbellTracker:
           tracking_lock = None
           manual_mode_active = False
           manual_reentry_streak = 0
+          previous_manual_point = None
           pending_plate = None
           pending_confirmation_count = 0
           pending_miss_count = 0
@@ -964,6 +976,8 @@ class BarbellTracker:
           manual_prior,
           bounds=candidate_bounds,
           shoulder=shoulder,
+          previous_point=previous_manual_point,
+          reference_shoulder_offset=manual_reference_shoulder_offset,
           width=width,
           height=height,
         )
@@ -986,6 +1000,12 @@ class BarbellTracker:
             float(manual_prior["x"]) * width,
             float(manual_prior["y"]) * height,
           )
+          previous_manual_point = manual_point
+          if shoulder is not None and manual_reference_shoulder_offset is None:
+            manual_reference_shoulder_offset = (
+              manual_point[0] - shoulder[0],
+              manual_point[1] - shoulder[1],
+            )
           manual_radius = max(height * 0.035, 12.0)
           selected_plate = Candidate(
             x=manual_point[0],

@@ -57,7 +57,10 @@ def _apply_tracking_assistance(
     "selectedSide": None,
     "fusedLandmarkCount": 0,
     "directlyAnchoredLandmarkCount": 0,
+    "blendedLandmarkCount": 0,
+    "fallbackLandmarkCount": 0,
     "rejectedTrackCount": 0,
+    "rejectionReasons": {},
     "coverage": {},
     "barbellSeedUsed": False,
     "manualBarbellPointCount": 0,
@@ -100,7 +103,10 @@ def _apply_tracking_assistance(
         "directlyAnchoredLandmarkCount": int(
           fusion.get("directly_anchored_landmark_count") or 0
         ),
+        "blendedLandmarkCount": int(fusion.get("blended_landmark_count") or 0),
+        "fallbackLandmarkCount": int(fusion.get("fallback_landmark_count") or 0),
         "rejectedTrackCount": int(fusion.get("rejected_track_count") or 0),
+        "rejectionReasons": fusion.get("rejection_reasons") or {},
         "coverage": fusion.get("coverage") or {},
       }
     )

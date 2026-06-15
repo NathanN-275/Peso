@@ -7,6 +7,9 @@ const tokens = {
     textMuted: '#A7B3C7',
     inputBg: '#121417',
     inputBorder: '#232A36',
+    secondarySurface: '#111827',
+    secondaryBorder: '#263244',
+    secondaryText: '#E5E7EB',
   },
   radii: {
     button: 10,

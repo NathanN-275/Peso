@@ -126,7 +126,12 @@ export default function TrackingDisplaySheet({
               </Text>
             </View>
             <Text style={styles.assistanceDetail}>
-              Body points used: {trackingAssistance.directlyAnchoredLandmarkCount ?? 0}
+              Body points guided: {trackingAssistance.fusedLandmarkCount ?? 0}
+            </Text>
+            <Text style={styles.assistanceDetail}>
+              Reference anchors: {trackingAssistance.directlyAnchoredLandmarkCount ?? 0},{' '}
+              blended: {trackingAssistance.blendedLandmarkCount ?? 0},{' '}
+              automatic fallbacks: {trackingAssistance.fallbackLandmarkCount ?? 0}
             </Text>
             <Text style={styles.assistanceDetail}>
               Barbell points: {trackingAssistance.manualBarbellPointCount ?? 0} pin-assisted,{' '}

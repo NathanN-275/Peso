@@ -3,7 +3,18 @@ import * as ImagePicker from 'expo-image-picker';
 import Constants, { AppOwnership } from 'expo-constants';
 import { useEffect, useRef, useState } from 'react';
 import { LayoutChangeEvent } from 'react-native';
-import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -22,6 +33,12 @@ import {
   uploadVideoForAnalysis,
 } from '../../lib/videoUpload';
 import type { UploadVideoForAnalysisResult } from '../../lib/videoUpload';
+import {
+  cancelAnalysisRun,
+  createAnalysisRun,
+  isAnalysisRunCurrent,
+} from '../../lib/analysisRunPolicy';
+import type { AnalysisRun } from '../../lib/analysisRunPolicy';
 import Button from '../components/Button';
 import ConfirmationDialog from '../components/ConfirmationDialog';
 import SelectedVideoPreview from '../components/SelectedVideoPreview';
@@ -100,6 +117,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   const [removePinsDialogVisible, setRemovePinsDialogVisible] = useState(false);
   const [screenLayout, setScreenLayout] = useState({ width: 0, height: 0 });
   const [uploading, setUploading] = useState(false);
+  const [analysisRunning, setAnalysisRunning] = useState(false);
   const [analysisVideoId, setAnalysisVideoId] = useState<string | null>(null);
   const [analysisStatus, setAnalysisStatus] = useState<VideoAnalysisStatus | null>(null);
   const [analysisResult, setAnalysisResult] = useState<VideoAnalysisResult | null>(null);
@@ -110,9 +128,35 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   const [displayedVideoSizeBytes, setDisplayedVideoSizeBytes] = useState<number | null>(null);
   const analysisStartInFlightRef = useRef(false);
   const analysisQueuedForVideoRef = useRef<string | null>(null);
+  const analysisRunGenerationRef = useRef(0);
+  const activeAnalysisRunRef = useRef<AnalysisRun | null>(null);
+
+  const analysisRunIsCurrent = (run: AnalysisRun) => (
+    isAnalysisRunCurrent(analysisRunGenerationRef.current, run)
+  );
+
+  const cancelActiveAnalysis = () => {
+    const run = activeAnalysisRunRef.current;
+    if (run) {
+      analysisRunGenerationRef.current = cancelAnalysisRun(analysisRunGenerationRef.current, run);
+    } else {
+      analysisRunGenerationRef.current += 1;
+    }
+    activeAnalysisRunRef.current = null;
+    analysisStartInFlightRef.current = false;
+    analysisQueuedForVideoRef.current = null;
+    setUploading(false);
+    setAnalysisRunning(false);
+    setAnalysisVideoId(null);
+    setAnalysisStatus(null);
+    setAnalysisResult(null);
+    setStatusMessage(null);
+    setErrorMessage(null);
+  };
 
   const handleSelectedVideo = (asset: ImagePicker.ImagePickerAsset) => {
     // Selecting a new asset clears any old analysis state.
+    cancelActiveAnalysis();
     analysisStartInFlightRef.current = false;
     analysisQueuedForVideoRef.current = null;
     setSelectedVideo(asset);
@@ -170,35 +214,76 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     setStatusMessage(null);
     setQuotaWarningMessage(null);
     setUploading(true);
+    setAnalysisRunning(true);
     analysisStartInFlightRef.current = true;
+    const run = createAnalysisRun(analysisRunGenerationRef.current);
+    analysisRunGenerationRef.current = run.generation;
+    activeAnalysisRunRef.current = run;
     let uploadedVideo: UploadVideoForAnalysisResult | null = null;
 
     try {
       // Start with a backend health check so failures are clearer.
       setStatusMessage('Checking backend connection...');
-      await testBackendConnection();
+      await testBackendConnection(run.controller.signal);
+
+      if (!analysisRunIsCurrent(run)) {
+        return;
+      }
 
       const uploadResult = await uploadVideoForAnalysis({
         asset: selectedVideo,
         exercise: videoSetup.exercise,
         angle: videoSetup.angle,
         trackingSetup,
-        onStatusChange: setStatusMessage,
-        onQuotaWarning: setQuotaWarningMessage,
+        onStatusChange: (message) => {
+          if (analysisRunIsCurrent(run)) {
+            setStatusMessage(message);
+          }
+        },
+        onQuotaWarning: (message) => {
+          if (analysisRunIsCurrent(run)) {
+            setQuotaWarningMessage(message);
+          }
+        },
       });
       uploadedVideo = uploadResult;
+
+      if (!analysisRunIsCurrent(run)) {
+        void cleanupUploadedVideoForAnalysis({
+          videoId: uploadResult.videoId,
+          storagePath: uploadResult.storagePath,
+        });
+        return;
+      }
 
       setDisplayedVideoSizeBytes(uploadResult.uploadedFileSizeBytes);
 
       setStatusMessage('Starting analysis...');
       console.log('[analysis] starting backend analysis', uploadResult.videoId);
       const accessToken = await getFreshBackendAccessToken();
-      const queuedResponse = await triggerVideoAnalysis(uploadResult.videoId, accessToken);
+      if (!analysisRunIsCurrent(run)) {
+        void cleanupUploadedVideoForAnalysis({
+          videoId: uploadResult.videoId,
+          storagePath: uploadResult.storagePath,
+        });
+        return;
+      }
+      const queuedResponse = await triggerVideoAnalysis(
+        uploadResult.videoId,
+        accessToken,
+        run.controller.signal
+      );
+      if (!analysisRunIsCurrent(run)) {
+        return;
+      }
       analysisQueuedForVideoRef.current = uploadResult.videoId;
       setAnalysisVideoId(uploadResult.videoId);
       setAnalysisStatus(queuedResponse.status);
       setStatusMessage(null);
     } catch (error) {
+      if (!analysisRunIsCurrent(run)) {
+        return;
+      }
       const message = error instanceof Error ? error.message : 'Unable to upload and analyze this video.';
       const triggerFailedAfterUpload = Boolean(uploadedVideo);
 
@@ -217,6 +302,9 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
           videoId: uploadedVideo.videoId,
           storagePath: uploadedVideo.storagePath,
         });
+        if (!analysisRunIsCurrent(run)) {
+          return;
+        }
         setAnalysisVideoId(null);
         setAnalysisStatus(null);
       }
@@ -232,8 +320,12 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
           : message
       );
       analysisStartInFlightRef.current = false;
+      activeAnalysisRunRef.current = null;
+      setAnalysisRunning(false);
     } finally {
-      setUploading(false);
+      if (analysisRunIsCurrent(run)) {
+        setUploading(false);
+      }
     }
   };
 
@@ -344,6 +436,14 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     void syncPermissionStatus();
   }, []);
 
+  useEffect(() => () => {
+    const run = activeAnalysisRunRef.current;
+    if (run) {
+      analysisRunGenerationRef.current = cancelAnalysisRun(analysisRunGenerationRef.current, run);
+      activeAnalysisRunRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     // Generate a thumbnail for the selected clip when possible.
     if (!selectedVideo?.uri) {
@@ -405,22 +505,35 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
       return;
     }
 
+    const run = activeAnalysisRunRef.current;
+    if (!run || !analysisRunIsCurrent(run)) {
+      return;
+    }
     let active = true;
+    const isCurrentPoll = () => active && analysisRunIsCurrent(run);
 
     const poll = async () => {
       try {
         const accessToken = await getFreshBackendAccessToken();
-        const statusResponse = await fetchVideoStatus(analysisVideoId, accessToken);
-
-        if (!active) {
+        if (!isCurrentPoll()) {
           return;
         }
+        const statusResponse = await fetchVideoStatus(
+          analysisVideoId,
+          accessToken,
+          run.controller.signal
+        );
 
-        setAnalysisStatus(statusResponse.status);
+        if (!isCurrentPoll()) {
+          return;
+        }
 
         if (statusResponse.status === 'failed') {
           analysisStartInFlightRef.current = false;
           analysisQueuedForVideoRef.current = null;
+          activeAnalysisRunRef.current = null;
+          setAnalysisRunning(false);
+          setAnalysisStatus('failed');
           setStatusMessage(null);
           setErrorMessage('Analysis failed. Check the backend logs and try another upload.');
           return;
@@ -429,26 +542,47 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
         if (statusResponse.status === 'completed') {
           try {
             const analysisAccessToken = await getFreshBackendAccessToken();
-            const analysisResponse = await fetchAnalysisResult(analysisVideoId, analysisAccessToken);
+            if (!isCurrentPoll()) {
+              return;
+            }
+            const analysisResponse = await fetchAnalysisResult(
+              analysisVideoId,
+              analysisAccessToken,
+              run.controller.signal
+            );
 
-            if (!active) {
+            if (!isCurrentPoll()) {
               return;
             }
 
+            analysisStartInFlightRef.current = false;
+            analysisQueuedForVideoRef.current = null;
+            activeAnalysisRunRef.current = null;
+            setAnalysisRunning(false);
+            setAnalysisStatus('completed');
             setAnalysisResult(analysisResponse.result_json);
           } catch (error) {
             if (__DEV__) {
               console.warn('Analysis result not ready yet.', error);
             }
           }
+          return;
         }
+
+        setAnalysisStatus(statusResponse.status);
       } catch (error) {
+        if (!isCurrentPoll()) {
+          return;
+        }
         if (__DEV__) {
           console.warn('Polling video analysis status failed.', error);
         }
 
-        if (active && isBackendAuthError(error)) {
+        if (isBackendAuthError(error)) {
           analysisStartInFlightRef.current = false;
+          analysisQueuedForVideoRef.current = null;
+          activeAnalysisRunRef.current = null;
+          setAnalysisRunning(false);
           setStatusMessage(null);
           setErrorMessage('Your sign-in session expired while checking analysis status. Sign in again and reopen the upload.');
         }
@@ -530,6 +664,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     // Only a fully configured, idle upload can be sent to analysis.
     Boolean(selectedVideo && videoSetup) &&
     !uploading &&
+    !analysisRunning &&
     !isAnalysisInProgress(analysisStatus) &&
     analysisStatus !== 'completed';
 
@@ -546,6 +681,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
 
   const handleReviewDiscarded = () => {
     // Clearing the review screen resets the upload flow.
+    cancelActiveAnalysis();
     analysisStartInFlightRef.current = false;
     analysisQueuedForVideoRef.current = null;
     setSelectedVideo(null);
@@ -623,7 +759,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        <Button label="Back" onPress={onBack} style={styles.backButton} />
+        <Button label="Back" onPress={onBack} variant="secondary" style={styles.backButton} />
 
         <View style={styles.content}>
           <Ionicons name="cloud-upload-outline" size={72} color={tokens.colors.textPrimary} />
@@ -654,7 +790,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
                   <Text style={styles.videoCardName}>{resolvedVideoName}</Text>
                   {resolvedFileSize ? <Text style={styles.videoCardMeta}>{resolvedFileSize}</Text> : null}
                   {analysisVideoId ? <Text style={styles.videoCardMeta}>Video ID: {analysisVideoId}</Text> : null}
-                  {analysisStatus ? (
+                  {analysisStatus && !(analysisRunning && isAnalysisInProgress(analysisStatus)) ? (
                     <Text style={styles.statusText}>Status: {formatStatusLabel(analysisStatus)}</Text>
                   ) : null}
                 </View>
@@ -731,12 +867,14 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
                 label="Choose Another Video"
                 onPress={handlePickVideoPress}
                 disabled={uploading}
+                variant="secondary"
                 style={styles.primaryAction}
               />
               <Button
                 label="Edit Video Setup"
                 onPress={() => setSetupModalVisible(true)}
                 disabled={uploading}
+                variant="secondary"
                 style={styles.primaryAction}
               />
               {canStartAnalysis ? (
@@ -755,7 +893,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
             <Text style={styles.quotaWarningText}>{quotaWarningMessage}</Text>
           ) : null}
 
-          {inlineMessage ? (
+          {inlineMessage && !analysisRunning ? (
             <Text style={errorMessage ? styles.errorText : styles.inlineStatusText}>{inlineMessage}</Text>
           ) : null}
 
@@ -825,18 +963,47 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
                 label="Choose Video"
                 onPress={handlePickVideoPress}
                 disabled={uploading}
+                variant="secondary"
                 style={styles.primaryAction}
               />
               <Button
                 label={videoSetup ? 'Edit Video Setup' : 'Open Video Setup'}
                 onPress={() => setSetupModalVisible(true)}
                 disabled={uploading}
+                variant="secondary"
                 style={styles.primaryAction}
               />
             </View>
           ) : null}
         </View>
       </ScrollView>
+      <Modal
+        visible={analysisRunning}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={cancelActiveAnalysis}
+      >
+        <View
+          accessibilityViewIsModal
+          accessibilityLabel="Video analysis in progress"
+          style={styles.analysisOverlay}
+        >
+          <View style={styles.analysisPanel}>
+            <ActivityIndicator size="large" color={tokens.colors.brand} />
+            <Text style={styles.analysisOverlayTitle}>Analyzing video…</Text>
+            <Text style={styles.analysisOverlayHelper}>
+              We’re processing your lift. This may take a minute.
+            </Text>
+            <Button
+              label="Cancel"
+              onPress={cancelActiveAnalysis}
+              variant="secondary"
+              style={styles.analysisCancelButton}
+            />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -864,7 +1031,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 8,
-    backgroundColor: '#3B6EEA',
   },
   content: {
     flex: 1,
@@ -992,7 +1158,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'stretch',
     borderRadius: tokens.radii.button,
-    backgroundColor: tokens.colors.brand,
+    backgroundColor: tokens.colors.secondarySurface,
+    borderWidth: 1,
+    borderColor: tokens.colors.secondaryBorder,
     overflow: 'hidden',
   },
   trackingSplitButtonDisabled: { opacity: 0.6 },
@@ -1015,7 +1183,7 @@ const styles = StyleSheet.create({
   },
   trackingSplitDivider: {
     width: StyleSheet.hairlineWidth,
-    backgroundColor: 'rgba(255, 255, 255, 0.42)',
+    backgroundColor: tokens.colors.secondaryBorder,
     marginVertical: 9,
   },
   trackingSplitToggle: {
@@ -1065,6 +1233,43 @@ const styles = StyleSheet.create({
     color: tokens.colors.textMuted,
     fontSize: 14,
     lineHeight: 20,
+  },
+  analysisOverlay: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.58)',
+    paddingHorizontal: 24,
+  },
+  analysisPanel: {
+    width: '100%',
+    maxWidth: 360,
+    alignItems: 'center',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: tokens.colors.secondaryBorder,
+    backgroundColor: '#0F141C',
+    paddingHorizontal: 24,
+    paddingVertical: 28,
+  },
+  analysisOverlayTitle: {
+    marginTop: 18,
+    color: tokens.colors.textPrimary,
+    fontSize: 20,
+    lineHeight: 26,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  analysisOverlayHelper: {
+    marginTop: 8,
+    color: tokens.colors.textMuted,
+    fontSize: 14,
+    lineHeight: 21,
+    textAlign: 'center',
+  },
+  analysisCancelButton: {
+    width: '100%',
+    marginTop: 22,
   },
   quotaWarningText: {
     width: '100%',

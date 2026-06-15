@@ -10,6 +10,7 @@ TRACKING_SETUP_VERSION = 1
 BODY_ANCHORS = ("shoulder", "hip", "knee", "ankle")
 ALL_ANCHORS = (*BODY_ANCHORS, "barbell")
 MIN_TRACK_CONFIDENCE = 0.42
+MIN_MODEL_VISIBILITY = 0.15
 
 
 def validate_tracking_setup(value: Any, *, duration_ms: int | None = None) -> tuple[dict[str, Any] | None, str | None]:
@@ -79,6 +80,35 @@ def select_manual_tracking_side(reference_frame: dict[str, Any], anchors: dict[s
       distances.append(_point_distance(anchors[joint], model_point))
     scores[side] = sum(distances)
   return min(scores, key=scores.get)
+
+
+def select_reference_source_index(
+  pose_frames: list[dict[str, Any]],
+  *,
+  reference_time_ms: int,
+  fps: float | None,
+) -> int | None:
+  if not pose_frames:
+    return None
+
+  timestamped_frames = [
+    frame
+    for frame in pose_frames
+    if isinstance(frame.get("timestamp_ms"), (int, float))
+    and math.isfinite(float(frame["timestamp_ms"]))
+  ]
+  if timestamped_frames:
+    selected = min(
+      timestamped_frames,
+      key=lambda frame: abs(float(frame["timestamp_ms"]) - reference_time_ms),
+    )
+    return int(selected["source_frame_index"])
+
+  requested_source_index = int(round((reference_time_ms / 1000) * (fps or 0.0)))
+  return min(
+    (int(frame["source_frame_index"]) for frame in pose_frames),
+    key=lambda index: abs(index - requested_source_index),
+  )
 
 
 def _read_sampled_gray_frames(
@@ -245,8 +275,13 @@ def track_manual_anchors(
   if not source_indices or width <= 0 or height <= 0:
     return {"tracks": {}, "reference_source_index": None, "coverage": {name: 0.0 for name in ALL_ANCHORS}}
 
-  requested_source_index = int(round((setup["reference_time_ms"] / 1000) * (fps or 0.0)))
-  reference_index = min(source_indices, key=lambda index: abs(index - requested_source_index))
+  reference_index = select_reference_source_index(
+    pose_frames,
+    reference_time_ms=setup["reference_time_ms"],
+    fps=fps,
+  )
+  if reference_index is None:
+    return {"tracks": {}, "reference_source_index": None, "coverage": {name: 0.0 for name in ALL_ANCHORS}}
   gray_frames = _read_sampled_gray_frames(
     file_path,
     source_indices=source_indices,
@@ -301,7 +336,10 @@ def fuse_manual_body_tracks(
       "selected_side": None,
       "fused_landmark_count": 0,
       "directly_anchored_landmark_count": 0,
+      "blended_landmark_count": 0,
+      "fallback_landmark_count": 0,
       "rejected_track_count": 0,
+      "rejection_reasons": {},
       "coverage": tracking.get("coverage") or {},
     }
 
@@ -313,10 +351,24 @@ def fuse_manual_body_tracks(
   selected_side = select_manual_tracking_side(reference_frame, setup["anchors"])
   fused_frames = copy.deepcopy(pose_frames)
   fused_count = 0
+  directly_anchored_count = 0
+  blended_count = 0
+  fallback_count = 0
   rejected_count = 0
+  rejection_reasons: dict[str, int] = {}
   manual_active = {joint: False for joint in BODY_ANCHORS}
   manual_has_activated = {joint: False for joint in BODY_ANCHORS}
   manual_reentry_streak = {joint: 0 for joint in BODY_ANCHORS}
+  previous_manual_points: dict[str, dict[str, float]] = {}
+  torso_scale = max(_point_distance(setup["anchors"]["shoulder"], setup["anchors"]["hip"]), 0.08)
+
+  def reject(joint: str, reason: str) -> None:
+    nonlocal fallback_count, rejected_count
+    rejected_count += 1
+    fallback_count += 1
+    rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
+    manual_active[joint] = False
+    manual_reentry_streak[joint] = 0
 
   for frame in fused_frames:
     source_index = int(frame.get("source_frame_index", -1))
@@ -333,10 +385,8 @@ def fuse_manual_body_tracks(
         and available_points["hip"]["y"] - 0.04 < available_points["knee"]["y"]
         and available_points["knee"]["y"] < available_points["ankle"]["y"] + 0.04
       ):
-        rejected_count += len(available_points)
         for joint in available_points:
-          manual_active[joint] = False
-          manual_reentry_streak[joint] = 0
+          reject(joint, "invalid_body_geometry")
         continue
 
     for joint in BODY_ANCHORS:
@@ -362,22 +412,53 @@ def fuse_manual_body_tracks(
       manual_reentry_streak[joint] = 0
       landmark = landmarks.get(f"{selected_side}_{joint}")
       if not landmark:
-        rejected_count += 1
+        reject(joint, "missing_pose_landmark")
         continue
       model_visibility = float(landmark.get("visibility") or 0.0)
-      landmark["x"] = float(track["x"])
-      landmark["y"] = float(track["y"])
+      model_point = {"x": float(landmark["x"]), "y": float(landmark["y"])}
+      model_distance = _point_distance(track, model_point)
+      max_model_distance = max(0.08, torso_scale * (1.0 if model_visibility < MIN_MODEL_VISIBILITY else 0.65))
+      if not force_reference_anchor and model_distance > max_model_distance:
+        reject(joint, "pose_divergence")
+        continue
+
+      previous_point = previous_manual_points.get(joint)
+      if (
+        not force_reference_anchor
+        and previous_point is not None
+        and _point_distance(track, previous_point) > max(0.10, torso_scale * 0.75)
+      ):
+        reject(joint, "temporal_jump")
+        continue
+
+      track_confidence = min(max(float(track["confidence"]), 0.0), 1.0)
+      if force_reference_anchor:
+        manual_weight = 1.0
+        directly_anchored_count += 1
+        manual_source = "reference_pin"
+      else:
+        manual_weight = min(max(0.35 + (track_confidence * 0.35) + ((1.0 - model_visibility) * 0.20), 0.40), 0.85)
+        blended_count += 1
+        manual_source = "guided_fusion"
+
+      landmark["x"] = (float(track["x"]) * manual_weight) + (model_point["x"] * (1.0 - manual_weight))
+      landmark["y"] = (float(track["y"]) * manual_weight) + (model_point["y"] * (1.0 - manual_weight))
       landmark["visibility"] = max(model_visibility, min(float(track["confidence"]), 0.92))
       landmark["manual_assisted"] = True
-      landmark["manual_source"] = "optical_flow"
+      landmark["manual_source"] = manual_source
+      landmark["manual_weight"] = round(manual_weight, 3)
+      previous_manual_points[joint] = {"x": float(track["x"]), "y": float(track["y"])}
       fused_count += 1
 
   return fused_frames, {
     "used": fused_count > 0,
     "selected_side": selected_side,
     "fused_landmark_count": fused_count,
-    "directly_anchored_landmark_count": fused_count,
+    "directly_anchored_landmark_count": directly_anchored_count,
+    "blended_landmark_count": blended_count,
+    "fallback_landmark_count": fallback_count,
     "rejected_track_count": rejected_count,
+    "rejection_reasons": rejection_reasons,
     "coverage": tracking.get("coverage") or {},
   }
 

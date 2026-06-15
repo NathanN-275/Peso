@@ -22,7 +22,10 @@ export type TrackingAssistance = {
   selectedSide?: 'left' | 'right' | null;
   fusedLandmarkCount?: number;
   directlyAnchoredLandmarkCount?: number;
+  blendedLandmarkCount?: number;
+  fallbackLandmarkCount?: number;
   rejectedTrackCount?: number;
+  rejectionReasons?: Record<string, number>;
   coverage?: Partial<Record<TrackingPinName, number>>;
   barbellSeedUsed?: boolean;
   manualBarbellPointCount?: number;

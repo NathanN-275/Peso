@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,7 @@ import numpy as np
 from app.analysis.manual_tracking import (
   BODY_ANCHORS,
   fuse_manual_body_tracks,
+  select_reference_source_index,
   select_manual_tracking_side,
   track_manual_anchors,
   validate_tracking_setup,
@@ -98,6 +100,18 @@ class ManualTrackingTest(unittest.TestCase):
       "left",
     )
 
+  def test_reference_frame_uses_decoded_timestamps_before_nominal_fps(self) -> None:
+    frames = [
+      {"source_frame_index": 0, "timestamp_ms": 0},
+      {"source_frame_index": 4, "timestamp_ms": 180},
+      {"source_frame_index": 8, "timestamp_ms": 410},
+    ]
+
+    self.assertEqual(
+      select_reference_source_index(frames, reference_time_ms=390, fps=10.0),
+      8,
+    )
+
   def test_fusion_blends_reliable_tracks_into_selected_side_only(self) -> None:
     frame = pose_frame()
     original_right_hip = frame["landmarks"]["right_hip"]["x"]
@@ -156,6 +170,33 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertNotIn("manual_assisted", fused[2]["landmarks"]["left_hip"])
     self.assertTrue(fused[3]["landmarks"]["left_hip"]["manual_assisted"])
 
+  def test_fusion_rejects_one_joint_drift_without_disabling_valid_joints(self) -> None:
+    frame = pose_frame(2)
+    tracks = {
+      joint: {
+        2: {
+          "x": tracking_setup()["anchors"][joint]["x"] + (0.28 if joint == "hip" else 0.01),
+          "y": tracking_setup()["anchors"][joint]["y"],
+          "confidence": 0.95,
+        }
+      }
+      for joint in BODY_ANCHORS
+    }
+    original_hip = dict(frame["landmarks"]["left_hip"])
+
+    fused, diagnostics = fuse_manual_body_tracks(
+      [frame],
+      setup=tracking_setup(),
+      tracking={"tracks": tracks, "reference_source_index": 1, "coverage": {}},
+    )
+
+    self.assertEqual(fused[0]["landmarks"]["left_hip"], original_hip)
+    self.assertNotIn("manual_assisted", fused[0]["landmarks"]["left_hip"])
+    self.assertTrue(fused[0]["landmarks"]["left_shoulder"]["manual_assisted"])
+    self.assertGreaterEqual(diagnostics["rejected_track_count"], 1)
+    self.assertGreaterEqual(diagnostics["fallback_landmark_count"], 1)
+    self.assertGreaterEqual(diagnostics["blended_landmark_count"], 1)
+
   def test_tracks_anchors_forward_and_backward_from_reference_frame(self) -> None:
     width, height, fps = 160, 120, 10.0
     with tempfile.TemporaryDirectory() as directory:
@@ -202,6 +243,55 @@ class ManualTrackingTest(unittest.TestCase):
     for name in setup["anchors"]:
       self.assertEqual(set(result["tracks"][name]), {0, 1, 2})
       self.assertGreaterEqual(result["coverage"][name], 0.99)
+
+  def test_img0012_video_tracking_stays_near_labeled_reference_points(self) -> None:
+    fixture_path = Path(__file__).resolve().parent / "fixtures" / "manual_tracking_img0012_reference.json"
+    fixture = json.loads(fixture_path.read_text())
+    video_path = Path(__file__).resolve().parent.parent / "test_videos" / fixture["video"]
+    width = fixture["coordinate_space"]["width"]
+    height = fixture["coordinate_space"]["height"]
+    fps = fixture["fps"]
+    first_label = fixture["labels"][0]
+    setup = {
+      "version": 1,
+      "reference_time_ms": fixture["reference_time_ms"],
+      "barbell_target": "near_side_collar",
+      "anchors": {
+        name: {"x": point[0] / width, "y": point[1] / height}
+        for name, point in first_label["anchors"].items()
+      },
+    }
+    final_index = fixture["labels"][-1]["source_frame_index"]
+    source_indices = list(range(0, final_index + 1, 4))
+    frames = [
+      {"source_frame_index": index, "timestamp_ms": round((index / fps) * 1000)}
+      for index in source_indices
+    ]
+
+    result = track_manual_anchors(
+      str(video_path),
+      setup=setup,
+      pose_frames=frames,
+      fps=fps,
+      width=width,
+      height=height,
+    )
+
+    self.assertEqual(result["reference_source_index"], 0)
+    self.assertGreaterEqual(result["coverage"]["hip"], 0.35)
+    for name in ("shoulder", "knee", "ankle", "barbell"):
+      self.assertGreaterEqual(result["coverage"][name], 0.95)
+    for label in fixture["labels"]:
+      source_index = min(source_indices, key=lambda index: abs(index - label["source_frame_index"]))
+      for name, expected in label["anchors"].items():
+        point = result["tracks"].get(name, {}).get(source_index)
+        if point is None:
+          continue
+        error_px = math.hypot(
+          (point["x"] * width) - expected[0],
+          (point["y"] * height) - expected[1],
+        )
+        self.assertLessEqual(error_px, fixture["tolerance_px"] * 3)
 
   def test_pipeline_fails_open_when_tracking_setup_is_invalid(self) -> None:
     invalid_setup = tracking_setup()
@@ -250,6 +340,8 @@ class ManualTrackingTest(unittest.TestCase):
 
     self.assertEqual(assisted["tracking_assistance"]["actualMode"], "pin_assisted")
     self.assertTrue(assisted["tracking_assistance"]["used"])
+    self.assertIn("blendedLandmarkCount", assisted["tracking_assistance"])
+    self.assertIn("fallbackLandmarkCount", assisted["tracking_assistance"])
 
   def test_pipeline_marks_manual_collar_points_as_pin_assisted(self) -> None:
     tracker = BarbellTracker()
@@ -297,6 +389,22 @@ class ManualTrackingTest(unittest.TestCase):
       {"x": 0.95, "y": 0.95, "confidence": 0.9},
       bounds=(20, 10, 140, 70),
       shoulder=(60, 32),
+      width=160,
+      height=120,
+    ))
+    self.assertFalse(BarbellTracker._manual_prior_is_plausible(
+      {"x": 0.78, "y": 0.25, "confidence": 0.9},
+      bounds=(20, 10, 140, 70),
+      shoulder=(60, 32),
+      previous_point=(80, 30),
+      width=160,
+      height=120,
+    ))
+    self.assertFalse(BarbellTracker._manual_prior_is_plausible(
+      {"x": 0.68, "y": 0.25, "confidence": 0.9},
+      bounds=(20, 10, 140, 70),
+      shoulder=(60, 32),
+      reference_shoulder_offset=(20, -2),
       width=160,
       height=120,
     ))

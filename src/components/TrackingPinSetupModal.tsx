@@ -195,6 +195,9 @@ export default function TrackingPinSetupModal({
   const nextPin = TRACKING_PIN_NAMES.find((name) => !pins[name]) ?? null;
   const pinCount = TRACKING_PIN_NAMES.filter((name) => pins[name]).length;
   const allPinsPlaced = pinCount === TRACKING_PIN_NAMES.length;
+  const placementInstruction = nextPin === 'barbell'
+    ? 'Place the center of the + on the near-side hub where the sleeve meets the plate.'
+    : 'Choose a clear side-view frame, then tap each landmark. Drag any pin to adjust it.';
 
   const pointFromTouch = (x: number, y: number): NormalizedTrackingPoint | null => {
     if (
@@ -369,7 +372,7 @@ export default function TrackingPinSetupModal({
             {nextPin ? `Place: ${PIN_LABELS[nextPin]}` : 'All pins placed'}
           </Text>
           <Text style={styles.instructionText}>
-            Choose a clear side-view frame, then tap each landmark. Drag any pin to adjust it.
+            {placementInstruction}
           </Text>
           <Text style={styles.progressText}>{pinCount}/5 pins</Text>
         </View>
