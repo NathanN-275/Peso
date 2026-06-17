@@ -51,7 +51,7 @@ These commits contain current pin-tracking implementation and UI work.
 
 ### Pin Setup and Review UI
 
-- Added complete single-frame pin setup for shoulder, hip, knee, ankle, and barbell.
+- Added complete single-frame pin setup for upper back, hip, knee, ankle, and barbell. The upper-back pin is stored under the legacy `shoulder` key for compatibility.
 - Added reference timestamp and normalized anchor payload.
 - Added selected-side resolution based on pinned body chain.
 - Added reference pin overlay during review near saved reference timestamp.
@@ -153,7 +153,7 @@ Current uncommitted backend changes:
 - Recovery diagnostics now include raw pin, raw visual, calibrated visual, offset, offset source/frame, residual, match/mismatch streaks, active state, emitted-versus-gap state, and rejection reason.
 - Missing-sample handling now interpolates only one or two ordinary interior gaps. Leading, trailing, three-or-more-frame, manual recovery, and local identity-risk gaps remain absent.
 - Interpolated points use linear time/position, conservative confidence, `estimated` tracking state, and no manual-assisted flag.
-- Added `MAX_JOINT_DISPLACEMENT_PX = 15` for shoulder, hip, knee, and ankle optical-flow tracks.
+- Added `MAX_JOINT_DISPLACEMENT_PX = 15` for upper back, hip, knee, and ankle optical-flow tracks.
 - Joint proposals beyond 15 px reuse the previous valid coordinate, reduce confidence, log at DEBUG level, and store per-point distance/cap diagnostics.
 - Tracking-assistance diagnostics now expose total and per-joint velocity-cap counts.
 

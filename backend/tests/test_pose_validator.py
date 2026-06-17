@@ -14,11 +14,16 @@ def landmark(x: float, y: float, visibility: float = 0.95) -> dict[str, float]:
   }
 
 
-def frame(timestamp_ms: int, *, left_hip: dict[str, float] | None = None) -> dict[str, object]:
+def frame(
+  timestamp_ms: int,
+  *,
+  left_shoulder: dict[str, float] | None = None,
+  left_hip: dict[str, float] | None = None,
+) -> dict[str, object]:
   return {
     "timestamp_ms": timestamp_ms,
     "landmarks": {
-      "left_shoulder": landmark(0.42, 0.25),
+      "left_shoulder": left_shoulder or landmark(0.42, 0.25),
       "left_hip": left_hip or landmark(0.46, 0.56),
       "left_knee": landmark(0.56, 0.72),
       "left_ankle": landmark(0.54, 0.93),
@@ -118,6 +123,22 @@ class PoseValidatorTest(unittest.TestCase):
 
     self.assertEqual(report["selected_side"], "right")
     self.assertTrue(report["selected_side_overridden"])
+
+  def test_automatic_upper_back_jump_is_interpolated(self) -> None:
+    frames = [
+      frame(0),
+      frame(100, left_shoulder=landmark(0.67, 0.48)),
+      frame(200),
+    ]
+
+    validated, report = validate_squat_pose_frames(frames)
+    corrected = validated[1]["landmarks"]["left_shoulder"]
+
+    self.assertEqual(corrected["tracking_state"], "estimated")
+    self.assertLess(corrected["x"], 0.50)
+    self.assertLess(corrected["y"], 0.34)
+    self.assertIn("upper_back_relative_jump", report["unreliable_landmarks"][0]["reasons"])
+    self.assertEqual(report["upper_back_proxy_semantics"], "displayed_as_upper_back")
 
 
 if __name__ == "__main__":

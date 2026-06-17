@@ -8,8 +8,8 @@ from typing import Any
 
 
 SQUAT_LABELS = {
-  "left_shoulder": "Shoulder",
-  "right_shoulder": "Shoulder",
+  "left_shoulder": "Upper Back",
+  "right_shoulder": "Upper Back",
   "left_hip": "Hip",
   "right_hip": "Hip",
   "left_knee": "Knee",

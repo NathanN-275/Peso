@@ -166,7 +166,7 @@ def _crop_bounds_from_anchor(
   shoulder: tuple[float, float] | None,
 ) -> dict[str, Any]:
   min_x, min_y, max_x, max_y = bounds
-  anchor_label = "shoulder" if shoulder else "pose_bounds"
+  anchor_label = "upper_back_proxy" if shoulder else "pose_bounds"
   if shoulder:
     shoulder_x, shoulder_y = shoulder
     x_margin = width * 0.46

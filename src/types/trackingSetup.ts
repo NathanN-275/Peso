@@ -37,5 +37,12 @@ export type TrackingAssistance = {
   barbellSeedUsed?: boolean;
   manualBarbellPointCount?: number;
   automaticBarbellPointCount?: number;
+  upperBackAnchorKey?: 'shoulder';
+  upperBackAnchorSemantics?: 'upper_back_anchor';
+  upperBackAnchorUsedCount?: number;
+  upperBackAnchorCoverage?: number;
+  pinOwnedLandmarkCount?: number;
+  modelDivergenceAcceptedCount?: number;
+  bodyPinFrames?: Array<Record<string, unknown>>;
   reference?: TrackingReference | null;
 };

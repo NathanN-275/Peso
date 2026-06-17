@@ -11,7 +11,7 @@ const PIN_SIZE = 22;
 const LABEL_HEIGHT = 20;
 
 const PIN_LABELS: Record<TrackingPinName, string> = {
-  shoulder: 'Shoulder',
+  shoulder: 'Upper Back',
   hip: 'Hip',
   knee: 'Knee',
   ankle: 'Ankle',
@@ -74,7 +74,7 @@ export default function TrackingReferenceOverlay({
     id: name,
     x: rect.x + (reference.anchors[name].x * rect.width),
     y: rect.y + (reference.anchors[name].y * rect.height),
-    labelWidth: name === 'barbell' ? 104 : 76,
+    labelWidth: name === 'barbell' ? 104 : name === 'shoulder' ? 104 : 76,
     labelHeight: LABEL_HEIGHT,
   }));
   const labels = layoutTrackingLabels(points, containerSize, { gap: 7 });

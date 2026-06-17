@@ -40,7 +40,7 @@ type TrackingPinSetupModalProps = {
 };
 
 const PIN_LABELS: Record<TrackingPinName, string> = {
-  shoulder: 'Shoulder',
+  shoulder: 'Upper Back',
   hip: 'Hip',
   knee: 'Knee',
   ankle: 'Ankle',
@@ -231,7 +231,7 @@ export default function TrackingPinSetupModal({
         id: name,
         x: videoRect.x + (point.x * videoRect.width),
         y: videoRect.y + (point.y * videoRect.height),
-        labelWidth: name === 'barbell' ? 104 : 76,
+        labelWidth: name === 'barbell' ? 104 : name === 'shoulder' ? 104 : 76,
         labelHeight: 20,
       }];
     }),

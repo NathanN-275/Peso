@@ -10,7 +10,7 @@ import {
 } from '../utils/videoReview';
 
 const POINT_SIZE = 12;
-const LABEL_WIDTH = 76;
+const LABEL_WIDTH = 104;
 const LABEL_HEIGHT = 22;
 
 type PoseOverlayProps = {

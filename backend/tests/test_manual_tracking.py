@@ -18,7 +18,11 @@ from app.analysis.manual_tracking import (
   track_manual_anchors,
   validate_tracking_setup,
 )
-from app.analysis.pipeline import _apply_tracking_assistance, _attach_barbell_tracking
+from app.analysis.pipeline import (
+  _apply_tracking_assistance,
+  _attach_barbell_tracking,
+  _barbell_pose_frames_with_upper_back_context,
+)
 from app.analysis.barbell_tracking.tracker import BarbellTracker
 from app.services.video_repository import VIDEO_STORAGE_COLUMNS
 
@@ -112,9 +116,10 @@ class ManualTrackingTest(unittest.TestCase):
       8,
     )
 
-  def test_fusion_blends_reliable_tracks_into_selected_side_only(self) -> None:
+  def test_fusion_uses_reliable_body_pins_on_selected_side_only(self) -> None:
     frame = pose_frame()
     original_right_hip = frame["landmarks"]["right_hip"]["x"]
+    original_left_shoulder = dict(frame["landmarks"]["left_shoulder"])
     tracks = {
       joint: {
         1: {
@@ -134,14 +139,18 @@ class ManualTrackingTest(unittest.TestCase):
 
     self.assertTrue(diagnostics["used"])
     self.assertEqual(diagnostics["selected_side"], "left")
-    self.assertEqual(diagnostics["fused_landmark_count"], 4)
+    self.assertEqual(diagnostics["fused_landmark_count"], 3)
+    self.assertEqual(diagnostics["upper_back_anchor_semantics"], "upper_back_anchor")
+    self.assertEqual(diagnostics["upper_back_anchor_used_count"], 1)
     self.assertTrue(fused[0]["landmarks"]["left_hip"]["manual_assisted"])
     self.assertEqual(
       fused[0]["landmarks"]["left_hip"]["x"],
       tracks["hip"][1]["x"],
     )
-    self.assertEqual(diagnostics["directly_anchored_landmark_count"], 4)
+    self.assertEqual(diagnostics["directly_anchored_landmark_count"], 3)
     self.assertEqual(fused[0]["landmarks"]["right_hip"]["x"], original_right_hip)
+    self.assertEqual(fused[0]["landmarks"]["left_shoulder"]["x"], original_left_shoulder["x"])
+    self.assertNotIn("manual_assisted", fused[0]["landmarks"]["left_shoulder"])
 
   def test_fusion_requires_two_valid_frames_before_manual_reentry(self) -> None:
     frames = [pose_frame(index) for index in (1, 2, 3, 4)]
@@ -194,10 +203,86 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertEqual(fused[0]["landmarks"]["left_hip"]["y"], original_hip["y"])
     self.assertEqual(fused[0]["landmarks"]["left_hip"]["tracking_state"], "automatic")
     self.assertNotIn("manual_assisted", fused[0]["landmarks"]["left_hip"])
-    self.assertTrue(fused[0]["landmarks"]["left_shoulder"]["manual_assisted"])
+    self.assertNotIn("manual_assisted", fused[0]["landmarks"]["left_shoulder"])
     self.assertGreaterEqual(diagnostics["rejected_track_count"], 1)
     self.assertGreaterEqual(diagnostics["fallback_landmark_count"], 1)
     self.assertGreaterEqual(diagnostics["blended_landmark_count"], 1)
+
+  def test_upper_back_pin_does_not_overwrite_anatomical_shoulder(self) -> None:
+    frame = pose_frame(1)
+    original_shoulder = dict(frame["landmarks"]["left_shoulder"])
+    tracks = {
+      joint: {
+        1: {
+          "x": tracking_setup()["anchors"][joint]["x"] + (0.18 if joint == "shoulder" else 0.0),
+          "y": tracking_setup()["anchors"][joint]["y"] + (0.10 if joint == "shoulder" else 0.0),
+          "confidence": 0.95,
+          "tracking_state": "reference",
+        }
+      }
+      for joint in BODY_ANCHORS
+    }
+
+    fused, diagnostics = fuse_manual_body_tracks(
+      [frame],
+      setup=tracking_setup(),
+      tracking={"tracks": tracks, "reference_source_index": 1, "coverage": {"shoulder": 1.0}},
+    )
+
+    self.assertEqual(fused[0]["landmarks"]["left_shoulder"]["x"], original_shoulder["x"])
+    self.assertEqual(fused[0]["landmarks"]["left_shoulder"]["y"], original_shoulder["y"])
+    self.assertNotIn("manual_assisted", fused[0]["landmarks"]["left_shoulder"])
+    self.assertEqual(diagnostics["upper_back_anchor_used_count"], 1)
+    self.assertEqual(diagnostics["body_pin_frames"][0]["upper_back_source"], "reference")
+
+  def test_valid_knee_pin_is_not_dragged_to_bad_automatic_pose(self) -> None:
+    frame = pose_frame(2)
+    frame["landmarks"]["left_knee"].update({"x": 0.63, "y": 0.53, "visibility": 0.82})
+    tracks = {
+      joint: {
+        2: {
+          **tracking_setup()["anchors"][joint],
+          "confidence": 0.92,
+          "tracking_state": "guided",
+        }
+      }
+      for joint in BODY_ANCHORS
+    }
+
+    fused, diagnostics = fuse_manual_body_tracks(
+      [frame],
+      setup=tracking_setup(),
+      tracking={"tracks": tracks, "reference_source_index": 1, "coverage": {}},
+    )
+
+    knee = fused[0]["landmarks"]["left_knee"]
+    self.assertAlmostEqual(knee["x"], tracking_setup()["anchors"]["knee"]["x"])
+    self.assertAlmostEqual(knee["y"], tracking_setup()["anchors"]["knee"]["y"])
+    self.assertTrue(knee["manual_assisted"])
+    self.assertEqual(knee["manual_weight"], 1.0)
+    self.assertEqual(diagnostics["model_divergence_accepted_count"], 1)
+
+  def test_barbell_context_uses_upper_back_without_mutating_public_pose_frames(self) -> None:
+    frame = pose_frame(1)
+    original_shoulder = dict(frame["landmarks"]["left_shoulder"])
+    contextual_frames, count = _barbell_pose_frames_with_upper_back_context(
+      [frame],
+      manual_tracking={
+        "tracks": {
+          "shoulder": {
+            1: {"x": 0.51, "y": 0.33, "confidence": 0.88},
+          },
+        },
+      },
+      selected_side="left",
+    )
+
+    self.assertEqual(count, 1)
+    self.assertEqual(frame["landmarks"]["left_shoulder"]["x"], original_shoulder["x"])
+    contextual_shoulder = contextual_frames[0]["landmarks"]["left_shoulder"]
+    self.assertEqual(contextual_shoulder["x"], 0.51)
+    self.assertEqual(contextual_shoulder["y"], 0.33)
+    self.assertTrue(contextual_shoulder["upper_back_context"])
 
   def test_fusion_selects_a_valid_complete_chain_when_automatic_ankle_is_inverted(self) -> None:
     frame = pose_frame(2)
@@ -368,6 +453,8 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertTrue(assisted["tracking_assistance"]["used"])
     self.assertIn("blendedLandmarkCount", assisted["tracking_assistance"])
     self.assertIn("fallbackLandmarkCount", assisted["tracking_assistance"])
+    self.assertEqual(assisted["tracking_assistance"]["upperBackAnchorSemantics"], "upper_back_anchor")
+    self.assertEqual(assisted["tracking_assistance"]["pinOwnedLandmarkCount"], 3)
     self.assertEqual(
       assisted["tracking_assistance"]["reference"],
       {

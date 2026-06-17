@@ -56,8 +56,8 @@ const CONFIDENCE_THRESHOLD = 0.35;
 const ESTIMATED_CONFIDENCE_THRESHOLD = 0.15;
 const MAX_BARBELL_POINT_GAP_SECONDS = 0.5;
 const SQUAT_LABELS: Record<SquatLandmarkName, string> = {
-  left_shoulder: 'Shoulder',
-  right_shoulder: 'Shoulder',
+  left_shoulder: 'Upper Back',
+  right_shoulder: 'Upper Back',
   left_hip: 'Hip',
   right_hip: 'Hip',
   left_knee: 'Knee',

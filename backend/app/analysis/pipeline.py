@@ -68,6 +68,13 @@ def _apply_tracking_assistance(
     "barbellSeedUsed": False,
     "manualBarbellPointCount": 0,
     "automaticBarbellPointCount": 0,
+    "upperBackAnchorKey": "shoulder",
+    "upperBackAnchorSemantics": "upper_back_anchor",
+    "upperBackAnchorUsedCount": 0,
+    "upperBackAnchorCoverage": 0.0,
+    "pinOwnedLandmarkCount": 0,
+    "modelDivergenceAcceptedCount": 0,
+    "bodyPinFrames": [],
     "reference": None,
   }
   assisted_estimation = dict(estimation)
@@ -114,6 +121,13 @@ def _apply_tracking_assistance(
         "coverage": fusion.get("coverage") or {},
         "velocityCapCount": int(tracking.get("velocity_cap_count") or 0),
         "velocityCapCounts": tracking.get("velocity_cap_counts") or {},
+        "upperBackAnchorKey": fusion.get("upper_back_anchor_key") or "shoulder",
+        "upperBackAnchorSemantics": fusion.get("upper_back_anchor_semantics") or "upper_back_anchor",
+        "upperBackAnchorUsedCount": int(fusion.get("upper_back_anchor_used_count") or 0),
+        "upperBackAnchorCoverage": float(fusion.get("upper_back_anchor_coverage") or 0.0),
+        "pinOwnedLandmarkCount": int(fusion.get("pin_owned_landmark_count") or 0),
+        "modelDivergenceAcceptedCount": int(fusion.get("model_divergence_accepted_count") or 0),
+        "bodyPinFrames": fusion.get("body_pin_frames") or [],
         "reference": {
           "version": validated_setup["version"],
           "timeMs": validated_setup["reference_time_ms"],
@@ -134,6 +148,43 @@ def _attach_tracking_assistance(result: dict[str, Any], estimation: dict[str, An
   assistance = dict(estimation.get("tracking_assistance") or {})
   result["trackingAssistance"] = assistance
   result.setdefault("diagnostics", {})["tracking_assistance"] = assistance
+
+
+def _barbell_pose_frames_with_upper_back_context(
+  frames: list[dict[str, Any]],
+  *,
+  manual_tracking: dict[str, Any],
+  selected_side: str | None,
+) -> tuple[list[dict[str, Any]], int]:
+  if selected_side not in {"left", "right"}:
+    return frames, 0
+
+  upper_back_tracks = (manual_tracking.get("tracks") or {}).get("shoulder") or {}
+  if not upper_back_tracks:
+    return frames, 0
+
+  contextual_frames = copy.deepcopy(frames)
+  replaced_count = 0
+  for frame in contextual_frames:
+    source_index = frame.get("source_frame_index")
+    if source_index is None:
+      continue
+    track = upper_back_tracks.get(int(source_index))
+    if not track or float(track.get("confidence") or 0.0) < 0.42:
+      continue
+    landmark = (frame.get("landmarks") or {}).get(f"{selected_side}_shoulder")
+    if not landmark:
+      continue
+    landmark["x"] = float(track["x"])
+    landmark["y"] = float(track["y"])
+    landmark["visibility"] = max(
+      float(landmark.get("visibility") or 0.0),
+      min(float(track.get("confidence") or 0.0), 0.92),
+    )
+    landmark["upper_back_context"] = True
+    replaced_count += 1
+
+  return contextual_frames, replaced_count
 
 
 def build_limited_result(
@@ -575,9 +626,14 @@ def _attach_barbell_tracking(
   ]
   try:
     tracker = BarbellTracker()
+    barbell_pose_frames, upper_back_context_count = _barbell_pose_frames_with_upper_back_context(
+      estimation.get("frames") or [],
+      manual_tracking=estimation.get("manual_tracking") or {},
+      selected_side=selected_side,
+    )
     tracking = tracker.track(
       file_path,
-      pose_frames=estimation.get("frames") or [],
+      pose_frames=barbell_pose_frames,
       frame_step=int(estimation.get("frame_step") or 1),
       processed_width=estimation.get("processed_frame_width") or estimation.get("frame_width"),
       processed_height=estimation.get("processed_frame_height") or estimation.get("frame_height"),
@@ -615,6 +671,7 @@ def _attach_barbell_tracking(
     tracking_diagnostics["manual_seed_count"] = manual_seed_count
     tracking_diagnostics["manual_point_count"] = manual_point_count
     tracking_diagnostics["automatic_point_count"] = automatic_point_count
+    tracking_diagnostics["upper_back_context_frame_count"] = upper_back_context_count
     diagnostics["barbell_tracking"] = tracking_diagnostics
   except Exception as error:
     logger.warning("Barbell tracking failed for video %s: %s", video.get("id"), error)

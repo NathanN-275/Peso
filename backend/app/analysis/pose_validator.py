@@ -24,6 +24,7 @@ JOINT_JUMP_SCALE = {
   "knee": 0.30,
   "ankle": 0.36,
 }
+UPPER_BACK_RELATIVE_JUMP_SCALE = 0.16
 
 
 def _distance(first: dict[str, float], second: dict[str, float]) -> float:
@@ -267,6 +268,53 @@ def _find_invalid_landmarks(
         ):
           _mark_invalid(invalid, frame_index, joint, "isolated_chain_jump")
 
+      previous_shoulder = point_for_side(previous_frame, side, "shoulder")
+      following_shoulder = point_for_side(following_frame, side, "shoulder")
+      previous_hip = point_for_side(previous_frame, side, "hip")
+      following_hip = point_for_side(following_frame, side, "hip")
+      if min(
+        shoulder.get("visibility", 0.0),
+        hip.get("visibility", 0.0),
+        previous_shoulder.get("visibility", 0.0),
+        following_shoulder.get("visibility", 0.0),
+        previous_hip.get("visibility", 0.0),
+        following_hip.get("visibility", 0.0),
+        previous_knee.get("visibility", 0.0),
+        previous_ankle.get("visibility", 0.0),
+        following_knee.get("visibility", 0.0),
+        following_ankle.get("visibility", 0.0),
+      ) >= 0.35:
+        previous_relative = {
+          "x": previous_shoulder["x"] - previous_hip["x"],
+          "y": previous_shoulder["y"] - previous_hip["y"],
+        }
+        following_relative = {
+          "x": following_shoulder["x"] - following_hip["x"],
+          "y": following_shoulder["y"] - following_hip["y"],
+        }
+        current_relative = {
+          "x": shoulder["x"] - hip["x"],
+          "y": shoulder["y"] - hip["y"],
+        }
+        expected_relative = {
+          "x": (previous_relative["x"] + following_relative["x"]) / 2,
+          "y": (previous_relative["y"] + following_relative["y"]) / 2,
+        }
+        expected_hip = {
+          "x": (previous_hip["x"] + following_hip["x"]) / 2,
+          "y": (previous_hip["y"] + following_hip["y"]) / 2,
+        }
+        relative_jump_threshold = max(0.055, subject_height * UPPER_BACK_RELATIVE_JUMP_SCALE)
+        hip_motion = _distance(previous_hip, following_hip)
+        if (
+          _distance(current_relative, expected_relative) > relative_jump_threshold
+          and _distance(previous_relative, following_relative) < relative_jump_threshold
+          and _distance(hip, expected_hip) < max(0.045, subject_height * 0.12)
+          and hip_motion < max(0.055, subject_height * 0.16)
+          and chain_movement < max(stable_chain_threshold * 1.4, subject_height * 0.10)
+        ):
+          _mark_invalid(invalid, frame_index, "shoulder", "upper_back_relative_jump")
+
   return invalid
 
 
@@ -403,6 +451,7 @@ def validate_squat_pose_frames(
   if not frames:
     return frames, {
       "selected_side": None,
+      "upper_back_proxy_landmark": "shoulder",
       "corrected_landmark_count": 0,
       "smoothed_landmark_count": 0,
       "hysteresis_rejected_jump_count": 0,
@@ -489,6 +538,8 @@ def validate_squat_pose_frames(
   return validated_frames, {
     "selected_side": selected_side,
     "selected_side_overridden": selected_side != automatic_side,
+    "upper_back_proxy_landmark": "shoulder",
+    "upper_back_proxy_semantics": "displayed_as_upper_back",
     "tracking_side_confidence": tracking_confidence,
     "subject_height": round(subject_height, 3),
     "corrected_landmark_count": corrected_count,

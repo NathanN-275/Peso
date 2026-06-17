@@ -978,7 +978,7 @@ class BarbellTrackerTest(unittest.TestCase):
     self.assertEqual(result["source"], "no_hub")
     self.assertIn(result["reason"], ("moments_fallback_uncertain", "no_hub_candidates"))
 
-  def test_detection_crop_is_anchored_to_shoulder(self) -> None:
+  def test_detection_crop_is_anchored_to_upper_back_proxy(self) -> None:
     shoulder = (136.0, 103.2)
     wrist = (260.0, 200.0)
     landmarks = {
@@ -996,7 +996,7 @@ class BarbellTrackerTest(unittest.TestCase):
 
     crop_x0, crop_y0, crop_x1, crop_y1 = diagnostics["crop_bounds"]
     crop_center_x = (crop_x0 + crop_x1) / 2
-    self.assertEqual(diagnostics["anchor_landmark"], "shoulder")
+    self.assertEqual(diagnostics["anchor_landmark"], "upper_back_proxy")
     self.assertAlmostEqual(crop_center_x, shoulder[0], delta=8.0)
     self.assertLess(abs(crop_center_x - shoulder[0]), abs(crop_center_x - wrist[0]))
 
@@ -1076,7 +1076,7 @@ class BarbellTrackerTest(unittest.TestCase):
       frame_index=4,
       tracking_mode="initializing",
       detection_diagnostics={
-        "anchor_landmark": "shoulder",
+        "anchor_landmark": "upper_back_proxy",
         "crop_bounds": (27.0, 45.0, 245.0, 152.0),
         "wrist_rejected_count": 1,
       },
@@ -1086,7 +1086,7 @@ class BarbellTrackerTest(unittest.TestCase):
     )
 
     self.assertIs(diagnostic, tracker.bootstrap_diagnostics["frames"][0])
-    self.assertEqual(tracker.bootstrap_diagnostics["frames"][0]["crop_anchor_landmark"], "shoulder")
+    self.assertEqual(tracker.bootstrap_diagnostics["frames"][0]["crop_anchor_landmark"], "upper_back_proxy")
     self.assertEqual(tracker.bootstrap_diagnostics["frames"][0]["winning_candidate_x"], 226.0)
     self.assertEqual(tracker.bootstrap_diagnostics["frames"][0]["winning_candidate_y"], 72.0)
     self.assertEqual(tracker.bootstrap_diagnostics["frames"][0]["wrist_rejected_count"], 1)

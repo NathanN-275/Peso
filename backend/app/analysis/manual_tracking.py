@@ -10,6 +10,8 @@ from typing import Any
 
 TRACKING_SETUP_VERSION = 1
 BODY_ANCHORS = ("shoulder", "hip", "knee", "ankle")
+UPPER_BACK_ANCHOR = "shoulder"
+FUSED_BODY_ANCHORS = ("hip", "knee", "ankle")
 ALL_ANCHORS = (*BODY_ANCHORS, "barbell")
 MIN_TRACK_CONFIDENCE = 0.42
 MIN_MODEL_VISIBILITY = 0.15
@@ -72,18 +74,53 @@ def _point_distance(first: dict[str, float], second: dict[str, float]) -> float:
   return math.hypot(first["x"] - second["x"], first["y"] - second["y"])
 
 
+def _landmark_point(
+  landmarks: dict[str, Any],
+  side: str,
+  joint: str,
+) -> dict[str, float] | None:
+  point = landmarks.get(f"{side}_{joint}")
+  if not point:
+    return None
+  return {
+    "x": float(point.get("x", 0.0)),
+    "y": float(point.get("y", 0.0)),
+    "visibility": float(point.get("visibility", 0.0) or 0.0),
+  }
+
+
+def _upper_back_proxy(
+  landmarks: dict[str, Any],
+  side: str,
+) -> dict[str, float] | None:
+  shoulder = _landmark_point(landmarks, side, "shoulder")
+  hip = _landmark_point(landmarks, side, "hip")
+  if shoulder and hip:
+    return {
+      "x": (shoulder["x"] * 0.72) + (hip["x"] * 0.28),
+      "y": (shoulder["y"] * 0.72) + (hip["y"] * 0.28),
+      "visibility": min(shoulder["visibility"], hip["visibility"]),
+    }
+  return shoulder
+
+
 def select_manual_tracking_side(reference_frame: dict[str, Any], anchors: dict[str, dict[str, float]]) -> str:
   landmarks = reference_frame.get("landmarks") or {}
   scores: dict[str, float] = {}
   for side in ("left", "right"):
-    distances: list[float] = []
+    score = 0.0
     for joint in BODY_ANCHORS:
-      model_point = landmarks.get(f"{side}_{joint}")
+      model_point = (
+        _upper_back_proxy(landmarks, side)
+        if joint == UPPER_BACK_ANCHOR
+        else _landmark_point(landmarks, side, joint)
+      )
       if not model_point:
-        distances.append(2.0)
+        score += 2.0
         continue
-      distances.append(_point_distance(anchors[joint], model_point))
-    scores[side] = sum(distances)
+      weight = 0.65 if joint == UPPER_BACK_ANCHOR else 1.0
+      score += _point_distance(anchors[joint], model_point) * weight
+    scores[side] = score
   return min(scores, key=scores.get)
 
 
@@ -579,6 +616,15 @@ def fuse_manual_body_tracks(
   setup: dict[str, Any],
   tracking: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+  base_diagnostics = {
+    "upper_back_anchor_key": UPPER_BACK_ANCHOR,
+    "upper_back_anchor_semantics": "upper_back_anchor",
+    "fused_anchor_names": list(FUSED_BODY_ANCHORS),
+    "upper_back_anchor_used_count": 0,
+    "pin_owned_landmark_count": 0,
+    "model_divergence_accepted_count": 0,
+    "body_pin_frames": [],
+  }
   if not pose_frames or not tracking.get("tracks"):
     return pose_frames, {
       "used": False,
@@ -590,6 +636,7 @@ def fuse_manual_body_tracks(
       "rejected_track_count": 0,
       "rejection_reasons": {},
       "coverage": tracking.get("coverage") or {},
+      **base_diagnostics,
     }
 
   reference_source_index = tracking.get("reference_source_index")
@@ -602,16 +649,20 @@ def fuse_manual_body_tracks(
   fused_count = 0
   directly_anchored_count = 0
   blended_count = 0
+  pin_owned_count = 0
   fallback_count = 0
   rejected_count = 0
+  upper_back_anchor_used_count = 0
+  model_divergence_accepted_count = 0
   rejection_reasons: dict[str, int] = {}
-  manual_active = {joint: False for joint in BODY_ANCHORS}
-  manual_has_activated = {joint: False for joint in BODY_ANCHORS}
-  manual_reentry_streak = {joint: 0 for joint in BODY_ANCHORS}
+  manual_active = {joint: False for joint in FUSED_BODY_ANCHORS}
+  manual_has_activated = {joint: False for joint in FUSED_BODY_ANCHORS}
+  manual_reentry_streak = {joint: 0 for joint in FUSED_BODY_ANCHORS}
   previous_manual_points: dict[str, dict[str, float]] = {}
   previous_valid_chain: dict[str, dict[str, float]] | None = None
   valid_chains: dict[int, dict[str, dict[str, float]]] = {}
   unresolved_frame_positions: list[int] = []
+  frame_diagnostics: list[dict[str, Any]] = []
   torso_scale = max(_point_distance(setup["anchors"]["shoulder"], setup["anchors"]["hip"]), 0.08)
   reference_lengths = {
     "torso": _point_distance(setup["anchors"]["shoulder"], setup["anchors"]["hip"]),
@@ -644,31 +695,77 @@ def fuse_manual_body_tracks(
       return False
     for segment, length in lengths.items():
       reference_length = max(reference_lengths[segment], 1e-5)
-      if not 0.38 <= length / reference_length <= 1.90:
+      if not 0.30 <= length / reference_length <= 2.25:
         return False
     shin_length = max(lengths["shin"], 1e-5)
-    if not 0.28 <= lengths["thigh"] / shin_length <= 2.10:
+    if not 0.22 <= lengths["thigh"] / shin_length <= 2.55:
       return False
-    if not 0.22 <= lengths["torso"] / shin_length <= 2.40:
+    if not 0.16 <= lengths["torso"] / shin_length <= 3.00:
       return False
     if previous_valid_chain is not None:
       previous_lengths = chain_lengths(previous_valid_chain)
       for segment, length in lengths.items():
-        if not 0.48 <= length / max(previous_lengths[segment], 1e-5) <= 1.75:
+        if not 0.38 <= length / max(previous_lengths[segment], 1e-5) <= 2.10:
           return False
     return True
 
   for frame_position, frame in enumerate(fused_frames):
     source_index = int(frame.get("source_frame_index", -1))
     landmarks = frame.get("landmarks") or {}
+    model_upper_back = _upper_back_proxy(landmarks, selected_side)
+    raw_model_shoulder = _landmark_point(landmarks, selected_side, "shoulder")
+    upper_back_track = (tracking["tracks"].get(UPPER_BACK_ANCHOR) or {}).get(source_index)
+    upper_back_point = model_upper_back
+    upper_back_source = "automatic"
+    if (
+      upper_back_track
+      and float(upper_back_track.get("confidence") or 0.0) >= MIN_TRACK_CONFIDENCE
+    ):
+      upper_back_point = {
+        "x": float(upper_back_track["x"]),
+        "y": float(upper_back_track["y"]),
+        "visibility": min(float(upper_back_track.get("confidence") or 0.0), 0.92),
+      }
+      upper_back_source = (
+        "reference"
+        if upper_back_track.get("tracking_state") == "reference"
+        else "pin_guided"
+      )
+      upper_back_anchor_used_count += 1
+
+    frame_diagnostic: dict[str, Any] | None = None
+    if len(frame_diagnostics) < 120:
+      frame_diagnostic = {
+        "source_index": source_index,
+        "upper_back_source": upper_back_source,
+        "raw_model_shoulder": (
+          {
+            "x": round(raw_model_shoulder["x"], 4),
+            "y": round(raw_model_shoulder["y"], 4),
+            "visibility": round(raw_model_shoulder["visibility"], 3),
+          }
+          if raw_model_shoulder
+          else None
+        ),
+        "accepted_upper_back": (
+          {
+            "x": round(upper_back_point["x"], 4),
+            "y": round(upper_back_point["y"], 4),
+            "visibility": round(upper_back_point.get("visibility", 0.0), 3),
+          }
+          if upper_back_point
+          else None
+        ),
+        "joints": {},
+      }
     available_points: dict[str, dict[str, float]] = {}
-    for joint in BODY_ANCHORS:
+    for joint in FUSED_BODY_ANCHORS:
       track = (tracking["tracks"].get(joint) or {}).get(source_index)
       if track and float(track.get("confidence") or 0.0) >= MIN_TRACK_CONFIDENCE:
         available_points[joint] = track
 
     options_by_joint: dict[str, list[dict[str, Any]]] = {}
-    for joint in BODY_ANCHORS:
+    for joint in FUSED_BODY_ANCHORS:
       landmark = landmarks.get(f"{selected_side}_{joint}")
       if not landmark:
         reject(joint, "missing_pose_landmark")
@@ -688,6 +785,18 @@ def fuse_manual_body_tracks(
       if not track:
         manual_active[joint] = False
         manual_reentry_streak[joint] = 0
+        if frame_diagnostic is not None:
+          frame_diagnostic["joints"][joint] = {
+            "source": "automatic",
+            "raw_model": {
+              "x": round(model_point["x"], 4),
+              "y": round(model_point["y"], 4),
+              "visibility": round(model_visibility, 3),
+            },
+            "raw_pin": None,
+            "residual": None,
+            "rejection_reason": "pin_track_missing",
+          }
         continue
 
       force_reference_anchor = (
@@ -699,58 +808,141 @@ def fuse_manual_body_tracks(
         manual_reentry_streak[joint] += 1
         use_manual_track = manual_reentry_streak[joint] >= 2
       if not use_manual_track:
+        if frame_diagnostic is not None:
+          frame_diagnostic["joints"][joint] = {
+            "source": "automatic",
+            "raw_model": {
+              "x": round(model_point["x"], 4),
+              "y": round(model_point["y"], 4),
+              "visibility": round(model_visibility, 3),
+            },
+            "raw_pin": {
+              "x": round(float(track["x"]), 4),
+              "y": round(float(track["y"]), 4),
+              "confidence": round(float(track.get("confidence") or 0.0), 3),
+            },
+            "residual": round(_point_distance(track, model_point), 4),
+            "rejection_reason": "manual_reentry_wait",
+          }
         continue
       model_distance = _point_distance(track, model_point)
+      track_confidence = min(max(float(track["confidence"]), 0.0), 1.0)
       max_model_distance = max(
-        0.08,
-        torso_scale * (1.80 if model_visibility < MIN_MODEL_VISIBILITY else 0.65),
+        0.16,
+        torso_scale * (2.00 if model_visibility < MIN_MODEL_VISIBILITY else 1.20),
       )
-      if not force_reference_anchor and model_distance > max_model_distance:
+      accept_pose_divergence = (
+        joint == "knee"
+        and track_confidence >= 0.70
+        and model_distance <= max(max_model_distance, torso_scale * 1.55, 0.24)
+      )
+      if not force_reference_anchor and model_distance > max_model_distance and not accept_pose_divergence:
         reject(joint, "pose_divergence")
+        if frame_diagnostic is not None:
+          frame_diagnostic["joints"][joint] = {
+            "source": "automatic",
+            "raw_model": {
+              "x": round(model_point["x"], 4),
+              "y": round(model_point["y"], 4),
+              "visibility": round(model_visibility, 3),
+            },
+            "raw_pin": {
+              "x": round(float(track["x"]), 4),
+              "y": round(float(track["y"]), 4),
+              "confidence": round(track_confidence, 3),
+            },
+            "residual": round(model_distance, 4),
+            "rejection_reason": "pose_divergence",
+          }
         continue
+      if accept_pose_divergence and model_distance > max_model_distance:
+        model_divergence_accepted_count += 1
 
       previous_point = previous_manual_points.get(joint)
       if (
         not force_reference_anchor
         and previous_point is not None
-        and _point_distance(track, previous_point) > max(0.10, torso_scale * 0.75)
+        and _point_distance(track, previous_point) > max(0.12, torso_scale * 0.95)
       ):
         reject(joint, "temporal_jump")
+        if frame_diagnostic is not None:
+          frame_diagnostic["joints"][joint] = {
+            "source": "automatic",
+            "raw_model": {
+              "x": round(model_point["x"], 4),
+              "y": round(model_point["y"], 4),
+              "visibility": round(model_visibility, 3),
+            },
+            "raw_pin": {
+              "x": round(float(track["x"]), 4),
+              "y": round(float(track["y"]), 4),
+              "confidence": round(track_confidence, 3),
+            },
+            "residual": round(model_distance, 4),
+            "rejection_reason": "temporal_jump",
+          }
         continue
 
-      track_confidence = min(max(float(track["confidence"]), 0.0), 1.0)
       if force_reference_anchor:
         manual_weight = 1.0
         manual_source = "reference_pin"
         tracking_state = "reference"
       else:
-        manual_weight = min(max(0.35 + (track_confidence * 0.35) + ((1.0 - model_visibility) * 0.20), 0.40), 0.85)
-        manual_source = "guided_fusion"
+        manual_weight = 1.0
+        manual_source = "pin_guided"
         tracking_state = "guided"
+      manual_visibility = max(model_visibility, min(track_confidence, 0.92))
+      if accept_pose_divergence and model_distance > max_model_distance:
+        manual_visibility = min(manual_visibility, 0.72)
       options_by_joint[joint].append(
         {
           "source": manual_source,
           "point": {
-            "x": (float(track["x"]) * manual_weight) + (model_point["x"] * (1.0 - manual_weight)),
-            "y": (float(track["y"]) * manual_weight) + (model_point["y"] * (1.0 - manual_weight)),
+            "x": float(track["x"]),
+            "y": float(track["y"]),
           },
-          "visibility": max(model_visibility, min(track_confidence, 0.92)),
-          "score": 1.0 + (track_confidence * 0.40) - (model_distance * 0.35),
+          "visibility": manual_visibility,
+          "score": 1.15 + (track_confidence * 0.55) - (model_distance * 0.20),
           "manual_weight": manual_weight,
           "track": track,
           "tracking_state": tracking_state,
+          "model_distance": model_distance,
+          "pose_divergence_accepted": accept_pose_divergence and model_distance > max_model_distance,
         }
       )
+      if frame_diagnostic is not None:
+        frame_diagnostic["joints"][joint] = {
+          "source": manual_source,
+          "raw_model": {
+            "x": round(model_point["x"], 4),
+            "y": round(model_point["y"], 4),
+            "visibility": round(model_visibility, 3),
+          },
+          "raw_pin": {
+            "x": round(float(track["x"]), 4),
+            "y": round(float(track["y"]), 4),
+            "confidence": round(track_confidence, 3),
+          },
+          "residual": round(model_distance, 4),
+          "rejection_reason": None,
+          "pose_divergence_accepted": accept_pose_divergence and model_distance > max_model_distance,
+        }
 
-    if any(not options_by_joint.get(joint) for joint in BODY_ANCHORS):
+    if frame_diagnostic is not None:
+      frame_diagnostics.append(frame_diagnostic)
+
+    if upper_back_point is None or any(not options_by_joint.get(joint) for joint in FUSED_BODY_ANCHORS):
       unresolved_frame_positions.append(frame_position)
       continue
 
     combinations: list[tuple[float, tuple[dict[str, Any], ...]]] = []
-    for options in product(*(options_by_joint[joint] for joint in BODY_ANCHORS)):
+    for options in product(*(options_by_joint[joint] for joint in FUSED_BODY_ANCHORS)):
       chain = {
-        joint: options[index]["point"]
-        for index, joint in enumerate(BODY_ANCHORS)
+        UPPER_BACK_ANCHOR: upper_back_point,
+        **{
+          joint: options[index]["point"]
+          for index, joint in enumerate(FUSED_BODY_ANCHORS)
+        },
       }
       if chain_is_valid(chain):
         combinations.append((sum(float(option["score"]) for option in options), options))
@@ -763,7 +955,8 @@ def fuse_manual_body_tracks(
 
     _score, selected_options = max(combinations, key=lambda item: item[0])
     selected_chain: dict[str, dict[str, float]] = {}
-    for joint, option in zip(BODY_ANCHORS, selected_options):
+    selected_chain[UPPER_BACK_ANCHOR] = dict(upper_back_point)
+    for joint, option in zip(FUSED_BODY_ANCHORS, selected_options):
       landmark = landmarks[f"{selected_side}_{joint}"]
       selected_chain[joint] = dict(option["point"])
       landmark["x"] = float(option["point"]["x"])
@@ -788,11 +981,14 @@ def fuse_manual_body_tracks(
       landmark["manual_source"] = option["source"]
       landmark["manual_weight"] = round(float(option["manual_weight"]), 3)
       landmark["tracking_state"] = option["tracking_state"]
+      if option.get("pose_divergence_accepted"):
+        landmark["pose_divergence_accepted"] = True
       previous_manual_points[joint] = {
         "x": float(option["track"]["x"]),
         "y": float(option["track"]["y"]),
       }
       fused_count += 1
+      pin_owned_count += 1
       if option["source"] == "reference_pin":
         directly_anchored_count += 1
       else:
@@ -806,7 +1002,7 @@ def fuse_manual_body_tracks(
     following_positions = [position for position in valid_chains if position > frame_position]
     previous_position = max(previous_positions) if previous_positions else None
     following_position = min(following_positions) if following_positions else None
-    for joint in BODY_ANCHORS:
+    for joint in FUSED_BODY_ANCHORS:
       landmark = landmarks.get(f"{selected_side}_{joint}")
       if not landmark:
         continue
@@ -834,6 +1030,14 @@ def fuse_manual_body_tracks(
     "rejected_track_count": rejected_count,
     "rejection_reasons": rejection_reasons,
     "coverage": tracking.get("coverage") or {},
+    "upper_back_anchor_key": UPPER_BACK_ANCHOR,
+    "upper_back_anchor_semantics": "upper_back_anchor",
+    "fused_anchor_names": list(FUSED_BODY_ANCHORS),
+    "upper_back_anchor_used_count": upper_back_anchor_used_count,
+    "upper_back_anchor_coverage": (tracking.get("coverage") or {}).get(UPPER_BACK_ANCHOR, 0.0),
+    "pin_owned_landmark_count": pin_owned_count,
+    "model_divergence_accepted_count": model_divergence_accepted_count,
+    "body_pin_frames": frame_diagnostics,
   }
 
 
