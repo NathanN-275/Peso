@@ -38,6 +38,7 @@ from .geometry import (
   _validate_collar_geometry,
 )
 from .local_tracker import _make_tracking_lock, _track_local_patch
+from .pin_tracker import build_pin_assisted_barbell_result
 from .pose import _pose_bounds, _side_wrist_points
 from .postprocess import _interpolate_missing, _remove_motion_outliers, _smooth_points
 from .results import _empty_result
@@ -891,7 +892,36 @@ class BarbellTracker:
       capture.release()
       return sleeve_result
 
+    if normalized_manual_priors and manual_priors_have_reference:
+      pin_result, pin_diagnostics = build_pin_assisted_barbell_result(
+        manual_priors=normalized_manual_priors,
+        pose_source_indices=pose_source_indices,
+        fps=fps,
+        width=width,
+        height=height,
+        tracking_frame_step=tracking_frame_step,
+        rep_windows=normalized_rep_windows,
+        selected_side=normalized_selected_side,
+        coordinate_space=coordinate_space,
+        started_at=started,
+      )
+      self.bootstrap_diagnostics["pin_assisted"] = pin_diagnostics
+      if pin_result is not None:
+        pin_tracking_diagnostics = pin_result.get("diagnostics") or {}
+        self.manual_point_count = int(pin_tracking_diagnostics.get("manual_point_count") or 0)
+        self.automatic_point_count = int(pin_tracking_diagnostics.get("automatic_point_count") or 0)
+        self.manual_accepted_count = int(pin_tracking_diagnostics.get("manual_accepted_count") or 0)
+        self.manual_blended_count = int(pin_tracking_diagnostics.get("manual_blended_count") or 0)
+        self.manual_rejected_count = int(pin_tracking_diagnostics.get("manual_rejected_count") or 0)
+        self.manual_fallback_count = int(pin_tracking_diagnostics.get("manual_fallback_count") or 0)
+        pin_tracking_diagnostics["bootstrap_diagnostics"] = self.bootstrap_diagnostics
+        capture.release()
+        return pin_result
+      pin_source_counts = pin_diagnostics.setdefault("pin_source_counts", {})
+      pin_source_counts["automatic_fallback"] = int(pin_source_counts.get("automatic_fallback") or 0) + 1
+
     samples: list[dict[str, Any] | None] = []
+    non_interpolable_gap_indices: set[int] = set()
     tracking_lock: dict[str, Any] | None = None
     pending_plate: dict[str, float] | None = None
     pending_confirmation_count = 0
@@ -970,8 +1000,12 @@ class BarbellTracker:
     manual_visual_match_streak = 0
     manual_visual_recovery_active = False
     manual_visual_offset: tuple[float, float] | None = None
+    manual_visual_offset_source: str | None = None
+    manual_visual_offset_frame_index: int | None = None
     manual_visual_residuals: list[float] = []
     manual_validation_missing_count = 0
+    manual_visual_recovery_emitted_count = 0
+    manual_visual_recovery_gap_count = 0
 
     if debug_output_path:
       debug_writer = cv2.VideoWriter(
@@ -1130,9 +1164,11 @@ class BarbellTracker:
             height=height,
           )
           visible_target = visible_descriptor["guided_target_point"] if visible_descriptor else None
+          manual_prior_is_reference = manual_prior.get("tracking_state") == "reference"
           can_calibrate_visual_offset = (
-            not manual_priors_have_reference
-            or manual_prior.get("tracking_state") == "reference"
+            manual_prior_is_reference
+            if manual_priors_have_reference
+            else True
           )
           if (
             visible_target is not None
@@ -1143,6 +1179,12 @@ class BarbellTracker:
               manual_point[0] - visible_target[0],
               manual_point[1] - visible_target[1],
             )
+            manual_visual_offset_source = (
+              "reference"
+              if manual_prior_is_reference
+              else "legacy_first_visible_prior"
+            )
+            manual_visual_offset_frame_index = frame_index
           calibrated_visual_target = (
             (
               visible_target[0] + manual_visual_offset[0],
@@ -1198,7 +1240,75 @@ class BarbellTracker:
             manual_visual_recovery_active = False
             manual_visual_match_streak = 0
 
-          if manual_visual_recovery_active and calibrated_visual_target is None:
+          recovery_visual_is_safe = bool(
+            visible_descriptor
+            and calibrated_visual_target is not None
+            and visible_descriptor.get("hub_safe")
+            and visible_descriptor.get("collar_geometry_valid")
+            and visible_descriptor.get("final_bar_reason") is None
+            and float(visible_descriptor.get("collar_descriptor_score") or 0.0)
+            >= MIN_BOOTSTRAP_COLLAR_DESCRIPTOR_SCORE
+            and float(visible_descriptor.get("final_bar_confidence") or 0.0)
+            >= MIN_COLLAR_DESCRIPTOR_SCORE
+          )
+          recovery_rejection_reason = (
+            "manual_visual_recovery_low_confidence"
+            if manual_visual_recovery_active and not recovery_visual_is_safe
+            else None
+          )
+          if recovery_rejection_reason:
+            manual_visual_recovery_gap_count += 1
+            self.manual_rejection_reason_counts[recovery_rejection_reason] = (
+              self.manual_rejection_reason_counts.get(recovery_rejection_reason, 0) + 1
+            )
+            bad_candidate_rejection_counts[recovery_rejection_reason] = (
+              bad_candidate_rejection_counts.get(recovery_rejection_reason, 0) + 1
+            )
+            manual_frames = self.bootstrap_diagnostics.setdefault("manual_frames", [])
+            if len(manual_frames) < 120:
+              manual_frames.append({
+                "frame_index": frame_index,
+                "state": "reacquiring",
+                "raw_pin_x": round(manual_point[0], 2),
+                "raw_pin_y": round(manual_point[1], 2),
+                "raw_visual_x": round(visible_target[0], 2) if visible_target else None,
+                "raw_visual_y": round(visible_target[1], 2) if visible_target else None,
+                "visual_x": round(visible_target[0], 2) if visible_target else None,
+                "visual_y": round(visible_target[1], 2) if visible_target else None,
+                "calibrated_visual_x": round(calibrated_visual_target[0], 2) if calibrated_visual_target else None,
+                "calibrated_visual_y": round(calibrated_visual_target[1], 2) if calibrated_visual_target else None,
+                "visual_to_pin_offset_x": round(manual_visual_offset[0], 2) if manual_visual_offset else None,
+                "visual_to_pin_offset_y": round(manual_visual_offset[1], 2) if manual_visual_offset else None,
+                "visual_offset_source": manual_visual_offset_source,
+                "fusion_residual_px": round(visible_discrepancy, 2) if visible_discrepancy is not None else None,
+                "visual_mismatch": visual_mismatch,
+                "visual_mismatch_streak": manual_visual_mismatch_streak,
+                "visual_match_streak": manual_visual_match_streak,
+                "visual_recovery_active": True,
+                "visual_recovery_emitted": False,
+                "rejection_reason": recovery_rejection_reason,
+              })
+            if debug_writer:
+              write_debug_frame(
+                _draw_debug_frame(
+                  cv2,
+                  frame,
+                  bounds=candidate_bounds,
+                  candidates=[],
+                  rejected=[],
+                  selected_plate=visible_descriptor["plate"] if visible_descriptor else None,
+                  predicted_collar=(visible_descriptor["predicted_collar"] if visible_descriptor else None),
+                  refined_collar=(visible_descriptor["refined_collar"] if visible_descriptor else None),
+                  final_bar_point=None,
+                  emitted_point=None,
+                  manual_point=manual_point,
+                  visual_validation_point=calibrated_visual_target,
+                  fusion_residual_px=visible_discrepancy,
+                  rejection_reason=recovery_rejection_reason,
+                  mode="manual_collar:reacquiring",
+                )
+              )
+            non_interpolable_gap_indices.add(len(samples))
             samples.append(None)
             previous_gray = gray
             frame_index += 1
@@ -1216,11 +1326,12 @@ class BarbellTracker:
 
           final_manual_point = (
             calibrated_visual_target
-            if manual_visual_recovery_active and calibrated_visual_target is not None
+            if manual_visual_recovery_active and recovery_visual_is_safe
             else manual_point
           )
           final_bar_confidence = float(manual_prior["confidence"])
           if manual_visual_recovery_active:
+            manual_visual_recovery_emitted_count += 1
             final_bar_confidence = min(
               final_bar_confidence * 0.82,
               float(visible_descriptor["final_bar_confidence"]) if visible_descriptor else 0.0,
@@ -1308,13 +1419,22 @@ class BarbellTracker:
               "state": tracking_state,
               "raw_pin_x": round(manual_point[0], 2),
               "raw_pin_y": round(manual_point[1], 2),
+              "raw_visual_x": round(visible_target[0], 2) if visible_target else None,
+              "raw_visual_y": round(visible_target[1], 2) if visible_target else None,
               "visual_x": round(visible_target[0], 2) if visible_target else None,
               "visual_y": round(visible_target[1], 2) if visible_target else None,
               "calibrated_visual_x": round(calibrated_visual_target[0], 2) if calibrated_visual_target else None,
               "calibrated_visual_y": round(calibrated_visual_target[1], 2) if calibrated_visual_target else None,
+              "visual_to_pin_offset_x": round(manual_visual_offset[0], 2) if manual_visual_offset else None,
+              "visual_to_pin_offset_y": round(manual_visual_offset[1], 2) if manual_visual_offset else None,
+              "visual_offset_source": manual_visual_offset_source,
               "fusion_residual_px": round(visible_discrepancy, 2) if visible_discrepancy is not None else None,
               "visual_mismatch": visual_mismatch,
+              "visual_mismatch_streak": manual_visual_mismatch_streak,
+              "visual_match_streak": manual_visual_match_streak,
               "visual_recovery_active": manual_visual_recovery_active,
+              "visual_recovery_emitted": manual_visual_recovery_active,
+              "rejection_reason": None,
             })
           accepted_points_px.append(final_manual_point)
           historical_target_point = final_manual_point
@@ -1718,6 +1838,7 @@ class BarbellTracker:
               fallback_used=fallback_used,
               path_residual_px=last_path_residual_px,
             )
+            non_interpolable_gap_indices.add(len(samples))
             samples.append(None)
             # Keep previous_gray aligned with tracking_lock/features after a failed local update.
             if debug_writer:
@@ -2399,7 +2520,10 @@ class BarbellTracker:
       result["diagnostics"]["bootstrap_diagnostics"] = self.bootstrap_diagnostics
       return result
 
-    points, interpolated_count = _interpolate_missing(samples)
+    points, interpolated_count = _interpolate_missing(
+      samples,
+      blocked_gap_indices=non_interpolable_gap_indices,
+    )
     points, outlier_removed_count = _remove_motion_outliers(points)
     if normalized_rep_windows:
       points = [
@@ -2647,6 +2771,15 @@ class BarbellTracker:
         "manual_validation_missing_count": manual_validation_missing_count,
         "manual_fusion_mean_residual_px": manual_fusion_mean_residual_px,
         "manual_fusion_max_residual_px": manual_fusion_max_residual_px,
+        "manual_visual_offset_x": round(manual_visual_offset[0], 2) if manual_visual_offset else None,
+        "manual_visual_offset_y": round(manual_visual_offset[1], 2) if manual_visual_offset else None,
+        "manual_visual_offset_source": manual_visual_offset_source,
+        "manual_visual_offset_frame_index": manual_visual_offset_frame_index,
+        "manual_visual_recovery_active": manual_visual_recovery_active,
+        "manual_visual_mismatch_streak": manual_visual_mismatch_streak,
+        "manual_visual_match_streak": manual_visual_match_streak,
+        "manual_visual_recovery_emitted_count": manual_visual_recovery_emitted_count,
+        "manual_visual_recovery_gap_count": manual_visual_recovery_gap_count,
         "source_switch_count": source_switch_count,
         "source_state_counts": source_state_counts,
         "interpolated_point_count": interpolated_count,

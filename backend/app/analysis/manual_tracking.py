@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import math
 from itertools import product
 from statistics import median
@@ -12,6 +13,9 @@ BODY_ANCHORS = ("shoulder", "hip", "knee", "ankle")
 ALL_ANCHORS = (*BODY_ANCHORS, "barbell")
 MIN_TRACK_CONFIDENCE = 0.42
 MIN_MODEL_VISIBILITY = 0.15
+MAX_JOINT_DISPLACEMENT_PX = 15
+
+logger = logging.getLogger(__name__)
 
 
 def validate_tracking_setup(value: Any, *, duration_ms: int | None = None) -> tuple[dict[str, Any] | None, str | None]:
@@ -355,6 +359,7 @@ def _track_direction(
   initial_point: tuple[float, float],
   *,
   barbell: bool = False,
+  joint_name: str | None = None,
 ) -> dict[int, dict[str, Any]]:
   if not ordered_indices:
     return {}
@@ -374,6 +379,29 @@ def _track_direction(
     )
     if next_point is None:
       break
+
+    proposed_displacement_px = math.hypot(
+      next_point[0] - current_point[0],
+      next_point[1] - current_point[1],
+    )
+    if not barbell and proposed_displacement_px > MAX_JOINT_DISPLACEMENT_PX:
+      logger.debug(
+        "Rejected manual %s track at frame %s: %.2f px exceeds %.2f px velocity cap",
+        joint_name or "unknown",
+        frame_index,
+        proposed_displacement_px,
+        MAX_JOINT_DISPLACEMENT_PX,
+      )
+      next_point = current_point
+      confidence *= 0.55
+      diagnostics = {
+        **diagnostics,
+        "velocity_capped": 1.0,
+        "velocity_cap_reused_previous": 1.0,
+        "velocity_cap_distance_px": proposed_displacement_px,
+        "proposed_displacement_px": proposed_displacement_px,
+        "max_joint_displacement_px": MAX_JOINT_DISPLACEMENT_PX,
+      }
 
     direct_point = None
     direct_confidence = 0.0
@@ -425,7 +453,7 @@ def _smooth_anchor_track(
   smoothed: dict[int, dict[str, Any]] = {}
   for position, source_index in enumerate(ordered_indices):
     point = tracks[source_index]
-    if source_index == reference_index:
+    if source_index == reference_index or point.get("velocity_cap_reused_previous"):
       smoothed[source_index] = dict(point)
       continue
     neighbor_indices = ordered_indices[max(position - 1, 0):min(position + 2, len(ordered_indices))]
@@ -452,7 +480,13 @@ def track_manual_anchors(
 
   source_indices = sorted({int(frame["source_frame_index"]) for frame in pose_frames})
   if not source_indices or width <= 0 or height <= 0:
-    return {"tracks": {}, "reference_source_index": None, "coverage": {name: 0.0 for name in ALL_ANCHORS}}
+    return {
+      "tracks": {},
+      "reference_source_index": None,
+      "coverage": {name: 0.0 for name in ALL_ANCHORS},
+      "velocity_cap_count": 0,
+      "velocity_cap_counts": {name: 0 for name in BODY_ANCHORS},
+    }
 
   reference_index = select_reference_source_index(
     pose_frames,
@@ -460,7 +494,13 @@ def track_manual_anchors(
     fps=fps,
   )
   if reference_index is None:
-    return {"tracks": {}, "reference_source_index": None, "coverage": {name: 0.0 for name in ALL_ANCHORS}}
+    return {
+      "tracks": {},
+      "reference_source_index": None,
+      "coverage": {name: 0.0 for name in ALL_ANCHORS},
+      "velocity_cap_count": 0,
+      "velocity_cap_counts": {name: 0 for name in BODY_ANCHORS},
+    }
   gray_frames = _read_sampled_gray_frames(
     file_path,
     source_indices=source_indices,
@@ -469,10 +509,17 @@ def track_manual_anchors(
   )
   available_indices = [index for index in source_indices if index in gray_frames]
   if reference_index not in gray_frames or not available_indices:
-    return {"tracks": {}, "reference_source_index": reference_index, "coverage": {name: 0.0 for name in ALL_ANCHORS}}
+    return {
+      "tracks": {},
+      "reference_source_index": reference_index,
+      "coverage": {name: 0.0 for name in ALL_ANCHORS},
+      "velocity_cap_count": 0,
+      "velocity_cap_counts": {name: 0 for name in BODY_ANCHORS},
+    }
 
   reference_position = available_indices.index(reference_index)
   tracks: dict[str, dict[int, dict[str, float]]] = {}
+  velocity_cap_counts = {name: 0 for name in BODY_ANCHORS}
   for name in ALL_ANCHORS:
     anchor = setup["anchors"][name]
     initial_point = (anchor["x"] * width, anchor["y"] * height)
@@ -483,6 +530,7 @@ def track_manual_anchors(
       available_indices[reference_position:],
       initial_point,
       barbell=is_barbell,
+      joint_name=None if is_barbell else name,
     )
     backward = _track_direction(
       cv2,
@@ -490,8 +538,13 @@ def track_manual_anchors(
       list(reversed(available_indices[:reference_position + 1])),
       initial_point,
       barbell=is_barbell,
+      joint_name=None if is_barbell else name,
     )
     combined = {**backward, **forward}
+    if not is_barbell:
+      velocity_cap_counts[name] = sum(
+        1 for point in combined.values() if point.get("velocity_capped")
+      )
     normalized_tracks = {
       index: {
         "x": point["x"] / width,
@@ -515,6 +568,8 @@ def track_manual_anchors(
     "tracks": tracks,
     "reference_source_index": reference_index,
     "coverage": coverage,
+    "velocity_cap_count": sum(velocity_cap_counts.values()),
+    "velocity_cap_counts": velocity_cap_counts,
   }
 
 

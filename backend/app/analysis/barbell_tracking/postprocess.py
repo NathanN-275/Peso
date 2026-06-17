@@ -10,10 +10,55 @@ MAX_SMOOTHING_DISPLACEMENT = 0.015
 MAX_MANUAL_SMOOTHING_DISPLACEMENT = 0.006
 
 
-def _interpolate_missing(samples: list[dict[str, Any] | None]) -> tuple[list[dict[str, Any]], int]:
-  # Strict hub tracking treats missing samples as uncertainty. Do not create
-  # synthetic points between frames that failed fresh hub validation.
-  return [point for point in samples if point is not None], 0
+def _interpolate_missing(
+  samples: list[dict[str, Any] | None],
+  *,
+  blocked_gap_indices: set[int] | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+  points: list[dict[str, Any]] = []
+  interpolated_count = 0
+  sample_index = 0
+  blocked_gap_indices = blocked_gap_indices or set()
+
+  while sample_index < len(samples):
+    point = samples[sample_index]
+    if point is not None:
+      points.append(point)
+      sample_index += 1
+      continue
+
+    gap_start = sample_index
+    while sample_index < len(samples) and samples[sample_index] is None:
+      sample_index += 1
+    gap_length = sample_index - gap_start
+    previous = points[-1] if points else None
+    following = samples[sample_index] if sample_index < len(samples) else None
+    gap_is_blocked = any(
+      index in blocked_gap_indices
+      for index in range(gap_start, sample_index)
+    )
+    if previous is None or following is None or gap_length > 2 or gap_is_blocked:
+      continue
+
+    confidence = min(
+      float(previous.get("confidence") or 0.0),
+      float(following.get("confidence") or 0.0),
+    ) * 0.6
+    for gap_offset in range(1, gap_length + 1):
+      progress = gap_offset / (gap_length + 1)
+      points.append({
+        "time": float(previous["time"])
+        + ((float(following["time"]) - float(previous["time"])) * progress),
+        "x": float(previous["x"])
+        + ((float(following["x"]) - float(previous["x"])) * progress),
+        "y": float(previous["y"])
+        + ((float(following["y"]) - float(previous["y"])) * progress),
+        "confidence": min(confidence, 0.45),
+        "trackingState": "estimated",
+      })
+      interpolated_count += 1
+
+  return points, interpolated_count
 
 
 def _remove_motion_outliers(points: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:

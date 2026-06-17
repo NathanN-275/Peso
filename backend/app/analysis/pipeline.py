@@ -63,6 +63,8 @@ def _apply_tracking_assistance(
     "rejectedTrackCount": 0,
     "rejectionReasons": {},
     "coverage": {},
+    "velocityCapCount": 0,
+    "velocityCapCounts": {},
     "barbellSeedUsed": False,
     "manualBarbellPointCount": 0,
     "automaticBarbellPointCount": 0,
@@ -110,6 +112,8 @@ def _apply_tracking_assistance(
         "rejectedTrackCount": int(fusion.get("rejected_track_count") or 0),
         "rejectionReasons": fusion.get("rejection_reasons") or {},
         "coverage": fusion.get("coverage") or {},
+        "velocityCapCount": int(tracking.get("velocity_cap_count") or 0),
+        "velocityCapCounts": tracking.get("velocity_cap_counts") or {},
         "reference": {
           "version": validated_setup["version"],
           "timeMs": validated_setup["reference_time_ms"],

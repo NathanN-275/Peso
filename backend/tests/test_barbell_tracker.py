@@ -30,6 +30,7 @@ from app.analysis.barbell_tracking.geometry import (
 from app.analysis.barbell_tracking.selection import _best_initial_plate
 from app.analysis.barbell_tracking.sleeve_tracker import track_unloaded_sleeve_end
 from app.analysis.barbell_tracking.postprocess import _smooth_points
+from app.analysis.barbell_tracking.pin_tracker import build_pin_assisted_barbell_result
 
 TEST_COLLAR_OFFSET_RATIO = 0.28
 
@@ -613,6 +614,124 @@ class BarbellTrackerTest(unittest.TestCase):
     for point, expected in zip(result["barbellPath"]["points"], manual_centers):
       self.assertAlmostEqual(float(point["x"]) * 320, expected[0], delta=2.0)
       self.assertAlmostEqual(float(point["y"]) * 240, expected[1], delta=2.0)
+
+  def test_pin_assisted_barbell_priors_own_output_before_visual_recovery(self) -> None:
+    plate_centers = [(178 + index * 4, 96 + index * 2) for index in range(8)]
+    expected_pin_points = [
+      (collar_from_plate(center)[0] - 9, collar_from_plate(center)[1] + 5)
+      for center in plate_centers
+    ]
+    manual_priors = {
+      index: {
+        "x": pin[0] / 320,
+        "y": pin[1] / 240,
+        "confidence": 0.94,
+        "tracking_state": "reference" if index == 0 else "guided",
+      }
+      for index, pin in enumerate(expected_pin_points)
+    }
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "pin-assisted-primary.mp4"
+      write_plate_video(path, plate_centers, fps=6.0)
+      pose_frames = [
+        pose_frame(index, x=(center[0] - 42) / 320, y=center[1] / 240)
+        for index, center in enumerate(plate_centers)
+      ]
+      with patch.object(
+        BarbellTracker,
+        "_visible_hub_for_manual_proposal",
+        side_effect=AssertionError("pin-assisted primary path should not use visual replacement"),
+      ):
+        result = BarbellTracker().track(
+          str(path),
+          pose_frames=pose_frames,
+          frame_step=1,
+          processed_width=320,
+          processed_height=240,
+          selected_side="left",
+          manual_barbell_priors=manual_priors,
+        )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    diagnostics = result["diagnostics"]
+    self.assertTrue(diagnostics["pin_assisted_primary"])
+    self.assertEqual(diagnostics["tracking_mode"], "pin_assisted_roi")
+    self.assertEqual(diagnostics["automatic_point_count"], 0)
+    self.assertEqual(diagnostics["selected_candidate_type"], "manual_pin_roi")
+    points = result["barbellPath"]["points"]
+    self.assertEqual(len(points), len(expected_pin_points))
+    self.assertAlmostEqual(points[0]["x"] * 320, expected_pin_points[0][0], delta=0.01)
+    self.assertAlmostEqual(points[0]["y"] * 240, expected_pin_points[0][1], delta=0.01)
+    for point, expected in zip(points[1:], expected_pin_points[1:]):
+      self.assertAlmostEqual(float(point["x"]) * 320, expected[0], delta=3.0)
+      self.assertAlmostEqual(float(point["y"]) * 240, expected[1], delta=3.0)
+
+  def test_pin_assisted_short_missing_priors_emit_estimated_points(self) -> None:
+    centers = [(184 + index * 3, 92 + index * 2) for index in range(6)]
+    manual_priors = {
+      index: {
+        "x": centers[index][0] / 320,
+        "y": centers[index][1] / 240,
+        "confidence": 0.95,
+        "tracking_state": "reference" if index == 0 else "guided",
+      }
+      for index in (0, 1, 4, 5)
+    }
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "pin-assisted-estimated.mp4"
+      write_video(path, centers, fps=6.0)
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=[pose_frame(index, x=0.5, y=0.4) for index in range(len(centers))],
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+        manual_barbell_priors=manual_priors,
+      )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    estimated_points = [
+      point
+      for point in result["barbellPath"]["points"]
+      if point.get("trackingState") == "estimated"
+    ]
+    self.assertEqual(len(estimated_points), 2)
+    self.assertTrue(all("manual_assisted" not in point for point in estimated_points))
+    self.assertEqual(result["diagnostics"]["pin_source_counts"]["pin_estimated"], 2)
+    self.assertEqual(result["diagnostics"]["automatic_point_count"], 0)
+
+  def test_pin_assisted_long_missing_prior_run_remains_gap(self) -> None:
+    manual_priors = {
+      index: {
+        "x": (184 + index * 3) / 320,
+        "y": (92 + index * 2) / 240,
+        "confidence": 0.95,
+        "tracking_state": "reference" if index == 0 else "guided",
+      }
+      for index in (0, 1, 5, 6, 7, 8)
+    }
+
+    result, diagnostics = build_pin_assisted_barbell_result(
+      manual_priors=manual_priors,
+      pose_source_indices=list(range(9)),
+      fps=6.0,
+      width=320,
+      height=240,
+      tracking_frame_step=1,
+      rep_windows=[],
+      selected_side="left",
+      coordinate_space={"width": 320, "height": 240, "source": "processed_frame"},
+      started_at=0.0,
+    )
+
+    self.assertIsNotNone(result)
+    assert result is not None
+    self.assertTrue(result["diagnostics"]["pin_assisted_primary"])
+    self.assertEqual(result["diagnostics"]["pin_source_counts"].get("pin_estimated", 0), 0)
+    self.assertEqual(result["diagnostics"]["pin_source_counts"]["gap"], 3)
+    self.assertEqual(diagnostics["pin_source_counts"]["gap"], 3)
 
   def test_visible_hub_rejects_coordinated_manual_prior_drift(self) -> None:
     plate_centers = [(178 + index * 2, 96 + index * 2) for index in range(10)]
