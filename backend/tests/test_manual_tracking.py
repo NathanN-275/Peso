@@ -561,6 +561,49 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertEqual(assistance["automaticBarbellPointCount"], 2)
     self.assertIsNone(assistance["fallbackReason"])
 
+  def test_barbell_tracking_uses_validated_pose_context(self) -> None:
+    frames = [pose_frame(index) for index in (0, 1, 2)]
+    frames[1]["landmarks"]["left_shoulder"].update({"x": 0.68, "y": 0.36})
+    frames[1]["landmarks"]["left_hip"].update({"x": 0.70, "y": 0.58})
+    frames[1]["landmarks"]["left_knee"].update({"x": 0.73, "y": 0.70})
+    tracker = BarbellTracker()
+    tracking_result = {
+      "barbellPath": {"available": True, "coverage": 1.0, "points": []},
+      "diagnostics": {
+        "manual_point_count": 0,
+        "automatic_point_count": 3,
+        "pose_context_validated": True,
+      },
+    }
+    captured_pose_frames: list[dict] = []
+
+    def capture_track(*args, **kwargs) -> dict:
+      captured_pose_frames.extend(kwargs["pose_frames"])
+      return tracking_result
+
+    tracker.track = capture_track
+    result = {
+      "reps": [],
+      "diagnostics": {
+        "selected_side": "left",
+        "pose_validation": {"selected_side": "left"},
+      },
+    }
+
+    with patch("app.analysis.pipeline.BarbellTracker", return_value=tracker):
+      _attach_barbell_tracking(
+        result=result,
+        video={"id": "video-1", "exercise_type": "squat", "view_type": "side"},
+        file_path="unused.mov",
+        estimation={"frames": frames, "frame_step": 1, "manual_tracking": {"tracks": {}}},
+      )
+
+    self.assertEqual(
+      captured_pose_frames[1]["landmarks"]["left_hip"]["tracking_state"],
+      "estimated",
+    )
+    self.assertTrue(result["diagnostics"]["barbell_tracking"]["pose_context_validated"])
+
   def test_barbell_prior_must_be_confident_and_inside_pose_region(self) -> None:
     self.assertTrue(BarbellTracker._manual_prior_is_plausible(
       {"x": 0.5, "y": 0.25, "confidence": 0.9},

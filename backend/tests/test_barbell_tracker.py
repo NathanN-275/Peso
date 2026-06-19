@@ -29,7 +29,8 @@ from app.analysis.barbell_tracking.geometry import (
 )
 from app.analysis.barbell_tracking.selection import _best_initial_plate
 from app.analysis.barbell_tracking.sleeve_tracker import track_unloaded_sleeve_end
-from app.analysis.barbell_tracking.postprocess import _smooth_points
+from app.analysis.barbell_tracking.local_tracker import _make_tracking_lock, _track_local_patch
+from app.analysis.barbell_tracking.postprocess import _smooth_points, _smooth_points_with_diagnostics
 from app.analysis.barbell_tracking.pin_tracker import build_pin_assisted_barbell_result
 
 TEST_COLLAR_OFFSET_RATIO = 0.28
@@ -1247,6 +1248,55 @@ class BarbellTrackerTest(unittest.TestCase):
     self.assertEqual((smoothed[0]["x"], smoothed[0]["y"]), (0.5, 0.5))
     self.assertLess(abs(smoothed[1]["x"] - 0.5), abs(points[1]["x"] - 0.5))
     self.assertLess(abs(smoothed[1]["y"] - 0.5), abs(points[1]["y"] - 0.5))
+
+  def test_velocity_aware_smoothing_preserves_fast_automatic_motion(self) -> None:
+    points = [
+      {"time": 0.0, "x": 0.50, "y": 0.24, "confidence": 0.9, "trackingState": "automatic"},
+      {"time": 0.1, "x": 0.50, "y": 0.38, "confidence": 0.9, "trackingState": "automatic"},
+      {"time": 0.2, "x": 0.50, "y": 0.52, "confidence": 0.9, "trackingState": "automatic"},
+      {"time": 0.3, "x": 0.50, "y": 0.66, "confidence": 0.9, "trackingState": "automatic"},
+      {"time": 0.4, "x": 0.50, "y": 0.80, "confidence": 0.9, "trackingState": "automatic"},
+    ]
+
+    smoothed, diagnostics = _smooth_points_with_diagnostics(points, width=320, height=240)
+
+    for raw, point in zip(points, smoothed):
+      self.assertLessEqual(abs(point["y"] - raw["y"]) * 240, 4.0)
+    self.assertLessEqual(diagnostics["max_along_path_lag_px"], 4.0)
+
+  def test_local_tracking_uses_velocity_prediction_for_template_search(self) -> None:
+    previous_gray = np.zeros((120, 160), dtype=np.uint8)
+    gray = np.zeros((120, 160), dtype=np.uint8)
+    cv2.rectangle(previous_gray, (48, 48), (60, 60), 255, -1)
+    cv2.rectangle(gray, (78, 48), (90, 60), 255, -1)
+    plate = Candidate(x=54, y=54, radius=24, confidence=0.95)
+    lock = _make_tracking_lock(
+      cv2,
+      previous_gray,
+      plate=plate,
+      collar=(54, 54),
+      sleeve_direction=(1.0, 0.0),
+      final_bar_point=(54, 54),
+      display_target_point=(54, 54),
+      final_bar_confidence=0.9,
+      shoulder=(38, 54),
+    )
+
+    next_lock, stats = _track_local_patch(
+      cv2,
+      previous_gray,
+      gray,
+      lock,
+      shoulder=(68, 54),
+      width=160,
+      height=120,
+      predicted_point=(84, 54),
+    )
+
+    self.assertIsNotNone(next_lock)
+    self.assertEqual(stats["local_tracker_type"], "template_matching")
+    self.assertTrue(stats["prediction_assisted"])
+    self.assertAlmostEqual(next_lock["display_target_point"][0], 84, delta=3)
 
   def test_shoulder_motion_with_stationary_plate_marks_frames_missing(self) -> None:
     plate_centers = [(178, 104) for _ in range(8)]

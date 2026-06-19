@@ -8,6 +8,7 @@ from .constants import MAX_OUTLIER_VELOCITY
 MAX_SMOOTHING_TIME_GAP_SECONDS = 0.5
 MAX_SMOOTHING_DISPLACEMENT = 0.015
 MAX_MANUAL_SMOOTHING_DISPLACEMENT = 0.006
+HIGH_CONFIDENCE_AUTOMATIC = 0.65
 
 
 def _interpolate_missing(
@@ -117,8 +118,57 @@ def _remove_motion_outliers(points: list[dict[str, Any]]) -> tuple[list[dict[str
   return filtered, removed_count
 
 
-def _smooth_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _motion_tangent_px(
+  points: list[dict[str, Any]],
+  index: int,
+  *,
+  width: float,
+  height: float,
+) -> tuple[float, float] | None:
+  point = points[index]
+  previous = points[index - 1] if index > 0 else None
+  following = points[index + 1] if index < len(points) - 1 else None
+  if (
+    previous is not None
+    and float(point["time"]) - float(previous["time"]) > MAX_SMOOTHING_TIME_GAP_SECONDS
+  ):
+    previous = None
+  if (
+    following is not None
+    and float(following["time"]) - float(point["time"]) > MAX_SMOOTHING_TIME_GAP_SECONDS
+  ):
+    following = None
+
+  if previous is not None and following is not None:
+    dx = (float(following["x"]) - float(previous["x"])) * width
+    dy = (float(following["y"]) - float(previous["y"])) * height
+  elif following is not None:
+    dx = (float(following["x"]) - float(point["x"])) * width
+    dy = (float(following["y"]) - float(point["y"])) * height
+  elif previous is not None:
+    dx = (float(point["x"]) - float(previous["x"])) * width
+    dy = (float(point["y"]) - float(previous["y"])) * height
+  else:
+    return None
+
+  length = math.hypot(dx, dy)
+  if length <= 1e-6:
+    return None
+  return dx / length, dy / length
+
+
+def _smooth_points_with_diagnostics(
+  points: list[dict[str, Any]],
+  *,
+  width: float = 1.0,
+  height: float = 1.0,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
   smoothed: list[dict[str, Any]] = []
+  displacement_values: list[float] = []
+  along_path_lag_values: list[float] = []
+  diagnostic_samples: list[dict[str, float | str | None]] = []
+  width = max(float(width), 1.0)
+  height = max(float(height), 1.0)
 
   for index, point in enumerate(points):
     if point.get("trackingState") == "reference":
@@ -150,7 +200,22 @@ def _smooth_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
     raw_x = float(point["x"])
     raw_y = float(point["y"])
-    displacement = math.hypot(target_x - raw_x, target_y - raw_y)
+    displacement_x_px = (target_x - raw_x) * width
+    displacement_y_px = (target_y - raw_y) * height
+    tangent = _motion_tangent_px(points, index, width=width, height=height)
+    preserve_path_motion = (
+      not point.get("manual_assisted")
+      and point.get("trackingState") == "automatic"
+      and float(point.get("confidence") or 0.0) >= HIGH_CONFIDENCE_AUTOMATIC
+      and tangent is not None
+    )
+    if preserve_path_motion and tangent is not None:
+      tangent_x, tangent_y = tangent
+      along_px = (displacement_x_px * tangent_x) + (displacement_y_px * tangent_y)
+      displacement_x_px -= along_px * tangent_x
+      displacement_y_px -= along_px * tangent_y
+
+    displacement = math.hypot(displacement_x_px / width, displacement_y_px / height)
     displacement_limit = (
       MAX_MANUAL_SMOOTHING_DISPLACEMENT
       if point.get("manual_assisted")
@@ -158,8 +223,28 @@ def _smooth_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
     if displacement > displacement_limit:
       scale = displacement_limit / displacement
-      target_x = raw_x + ((target_x - raw_x) * scale)
-      target_y = raw_y + ((target_y - raw_y) * scale)
+      displacement_x_px *= scale
+      displacement_y_px *= scale
+    target_x = raw_x + (displacement_x_px / width)
+    target_y = raw_y + (displacement_y_px / height)
+    final_displacement_px = math.hypot(displacement_x_px, displacement_y_px)
+    final_along_lag_px = 0.0
+    if tangent is not None:
+      final_along_px = (displacement_x_px * tangent[0]) + (displacement_y_px * tangent[1])
+      final_along_lag_px = max(0.0, -final_along_px)
+    displacement_values.append(final_displacement_px)
+    along_path_lag_values.append(final_along_lag_px)
+    if len(diagnostic_samples) < 40 and final_displacement_px > 0.01:
+      diagnostic_samples.append({
+        "time": round(float(point["time"]), 4),
+        "trackingState": str(point.get("trackingState") or "automatic"),
+        "raw_x": round(raw_x, 4),
+        "raw_y": round(raw_y, 4),
+        "smoothed_x": round(target_x, 4),
+        "smoothed_y": round(target_y, 4),
+        "displacement_px": round(final_displacement_px, 2),
+        "along_path_lag_px": round(final_along_lag_px, 2),
+      })
     smoothed.append(
       {
         **point,
@@ -170,4 +255,20 @@ def _smooth_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
       }
     )
 
+  mean_displacement = (
+    sum(displacement_values) / len(displacement_values)
+    if displacement_values
+    else 0.0
+  )
+  return smoothed, {
+    "smoothing_point_count": len(displacement_values),
+    "mean_smoothing_displacement_px": round(mean_displacement, 2),
+    "max_smoothing_displacement_px": round(max(displacement_values), 2) if displacement_values else 0.0,
+    "max_along_path_lag_px": round(max(along_path_lag_values), 2) if along_path_lag_values else 0.0,
+    "samples": diagnostic_samples,
+  }
+
+
+def _smooth_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+  smoothed, _diagnostics = _smooth_points_with_diagnostics(points)
   return smoothed

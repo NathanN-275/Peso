@@ -19,14 +19,16 @@ def frame(
   *,
   left_shoulder: dict[str, float] | None = None,
   left_hip: dict[str, float] | None = None,
+  left_knee: dict[str, float] | None = None,
+  left_ankle: dict[str, float] | None = None,
 ) -> dict[str, object]:
   return {
     "timestamp_ms": timestamp_ms,
     "landmarks": {
       "left_shoulder": left_shoulder or landmark(0.42, 0.25),
       "left_hip": left_hip or landmark(0.46, 0.56),
-      "left_knee": landmark(0.56, 0.72),
-      "left_ankle": landmark(0.54, 0.93),
+      "left_knee": left_knee or landmark(0.56, 0.72),
+      "left_ankle": left_ankle or landmark(0.54, 0.93),
       "right_shoulder": landmark(0.50, 0.25, 0.4),
       "right_hip": landmark(0.54, 0.56, 0.4),
       "right_knee": landmark(0.64, 0.72, 0.4),
@@ -139,6 +141,34 @@ class PoseValidatorTest(unittest.TestCase):
     self.assertLess(corrected["y"], 0.34)
     self.assertIn("upper_back_relative_jump", report["unreliable_landmarks"][0]["reasons"])
     self.assertEqual(report["upper_back_proxy_semantics"], "displayed_as_upper_back")
+
+  def test_chain_jumble_near_rack_is_estimated_instead_of_displayed(self) -> None:
+    frames = [
+      frame(0),
+      frame(100),
+      frame(
+        200,
+        left_shoulder=landmark(0.62, 0.34),
+        left_hip=landmark(0.65, 0.58),
+        left_knee=landmark(0.68, 0.71),
+        left_ankle=landmark(0.54, 0.93),
+      ),
+      frame(300),
+      frame(400),
+    ]
+
+    validated, report = validate_squat_pose_frames(frames)
+    unreliable = {
+      item["joint"]: item
+      for item in report["unreliable_landmarks"]
+      if item["frame_index"] == 2
+    }
+
+    for joint in ("shoulder", "hip", "knee"):
+      self.assertIn(joint, unreliable)
+      self.assertIn("chain_jumble", unreliable[joint]["reasons"])
+      self.assertEqual(validated[2]["landmarks"][f"left_{joint}"]["tracking_state"], "estimated")
+      self.assertLessEqual(validated[2]["landmarks"][f"left_{joint}"]["visibility"], 0.48)
 
 
 if __name__ == "__main__":
