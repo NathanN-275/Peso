@@ -75,6 +75,7 @@ def _apply_tracking_assistance(
     "pinOwnedLandmarkCount": 0,
     "modelDivergenceAcceptedCount": 0,
     "bodyPinFrames": [],
+    "sourceCounts": {},
     "reference": None,
   }
   assisted_estimation = dict(estimation)
@@ -128,6 +129,7 @@ def _apply_tracking_assistance(
         "pinOwnedLandmarkCount": int(fusion.get("pin_owned_landmark_count") or 0),
         "modelDivergenceAcceptedCount": int(fusion.get("model_divergence_accepted_count") or 0),
         "bodyPinFrames": fusion.get("body_pin_frames") or [],
+        "sourceCounts": fusion.get("source_counts") or {},
         "reference": {
           "version": validated_setup["version"],
           "timeMs": validated_setup["reference_time_ms"],

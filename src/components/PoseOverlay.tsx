@@ -21,6 +21,7 @@ type PoseOverlayProps = {
   cameraView?: string;
   selectedSide?: string | null;
   confidenceThreshold?: number;
+  preferUpperBackKeypoint?: boolean;
 };
 
 function Line({
@@ -62,6 +63,7 @@ export default function PoseOverlay({
   cameraView,
   selectedSide,
   confidenceThreshold = 0.35,
+  preferUpperBackKeypoint = false,
 }: PoseOverlayProps) {
   // The overlay is pure rendering; it never handles touch input.
   if (!frame || containerSize.width <= 0 || containerSize.height <= 0) {
@@ -72,10 +74,16 @@ export default function PoseOverlay({
     frame,
     cameraView,
     confidenceThreshold,
-    selectedSide
+    selectedSide,
+    preferUpperBackKeypoint
   );
   // Map the normalized pose points into the rendered video rectangle.
-  const connections = getSquatPoseConnections(squatKeypoints, cameraView, selectedSide);
+  const connections = getSquatPoseConnections(
+    squatKeypoints,
+    cameraView,
+    selectedSide,
+    preferUpperBackKeypoint
+  );
   const mappedKeypoints = new Map(
     squatKeypoints.map((keypoint) => {
       const mapped = mapNormalizedKeypoint(keypoint, containerSize, videoSize, contentFit);

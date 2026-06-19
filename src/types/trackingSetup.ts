@@ -1,6 +1,8 @@
 export const TRACKING_PIN_NAMES = ['shoulder', 'hip', 'knee', 'ankle', 'barbell'] as const;
 
 export type TrackingPinName = (typeof TRACKING_PIN_NAMES)[number];
+export type TrackingBodySource = 'reference' | 'pin_guided' | 'pin_estimated' | 'automatic' | 'gap';
+export type TrackingBodySourceName = 'upper_back' | 'hip' | 'knee' | 'ankle';
 
 export type NormalizedTrackingPoint = {
   x: number;
@@ -33,6 +35,8 @@ export type TrackingAssistance = {
   fallbackLandmarkCount?: number;
   rejectedTrackCount?: number;
   rejectionReasons?: Record<string, number>;
+  velocityCapCount?: number;
+  velocityCapCounts?: Partial<Record<TrackingPinName, number>>;
   coverage?: Partial<Record<TrackingPinName, number>>;
   barbellSeedUsed?: boolean;
   manualBarbellPointCount?: number;
@@ -43,6 +47,7 @@ export type TrackingAssistance = {
   upperBackAnchorCoverage?: number;
   pinOwnedLandmarkCount?: number;
   modelDivergenceAcceptedCount?: number;
+  sourceCounts?: Partial<Record<TrackingBodySourceName, Partial<Record<TrackingBodySource, number>>>>;
   bodyPinFrames?: Array<Record<string, unknown>>;
   reference?: TrackingReference | null;
 };

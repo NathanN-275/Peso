@@ -235,6 +235,37 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertEqual(diagnostics["upper_back_anchor_used_count"], 1)
     self.assertEqual(diagnostics["body_pin_frames"][0]["upper_back_source"], "reference")
 
+  def test_upper_back_pin_emits_separate_overlay_landmark(self) -> None:
+    frame = pose_frame(1)
+    original_shoulder = dict(frame["landmarks"]["left_shoulder"])
+    tracks = {
+      joint: {
+        1: {
+          **tracking_setup()["anchors"][joint],
+          "confidence": 0.91,
+          "tracking_state": "guided",
+        }
+      }
+      for joint in BODY_ANCHORS
+    }
+    tracks["shoulder"][1].update({"x": 0.52, "y": 0.34})
+
+    fused, diagnostics = fuse_manual_body_tracks(
+      [frame],
+      setup=tracking_setup(),
+      tracking={"tracks": tracks, "reference_source_index": 0, "coverage": {"shoulder": 1.0}},
+    )
+
+    landmarks = fused[0]["landmarks"]
+    self.assertEqual(landmarks["left_shoulder"]["x"], original_shoulder["x"])
+    self.assertEqual(landmarks["left_shoulder"]["y"], original_shoulder["y"])
+    self.assertIn("left_upper_back", landmarks)
+    self.assertAlmostEqual(landmarks["left_upper_back"]["x"], 0.52)
+    self.assertAlmostEqual(landmarks["left_upper_back"]["y"], 0.34)
+    self.assertEqual(landmarks["left_upper_back"]["tracking_state"], "guided")
+    self.assertEqual(landmarks["left_upper_back"]["manual_source"], "pin_guided")
+    self.assertEqual(diagnostics["source_counts"]["upper_back"]["pin_guided"], 1)
+
   def test_valid_knee_pin_is_not_dragged_to_bad_automatic_pose(self) -> None:
     frame = pose_frame(2)
     frame["landmarks"]["left_knee"].update({"x": 0.63, "y": 0.53, "visibility": 0.82})
@@ -261,6 +292,37 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertTrue(knee["manual_assisted"])
     self.assertEqual(knee["manual_weight"], 1.0)
     self.assertEqual(diagnostics["model_divergence_accepted_count"], 1)
+
+  def test_recent_knee_pin_dropout_estimates_instead_of_accepting_bad_model_knee(self) -> None:
+    frames = [pose_frame(index) for index in (1, 2, 3)]
+    frames[1]["landmarks"]["left_knee"].update({"x": 0.52, "y": 0.60, "visibility": 0.88})
+    tracks = {
+      joint: {
+        index: {
+          "x": tracking_setup()["anchors"][joint]["x"] + ((index - 1) * 0.01),
+          "y": tracking_setup()["anchors"][joint]["y"],
+          "confidence": 0.9,
+          "tracking_state": "guided",
+        }
+        for index in (1, 2, 3)
+      }
+      for joint in BODY_ANCHORS
+    }
+    del tracks["knee"][2]
+
+    fused, diagnostics = fuse_manual_body_tracks(
+      frames,
+      setup=tracking_setup(),
+      tracking={"tracks": tracks, "reference_source_index": 1, "coverage": {}},
+    )
+
+    knee = fused[1]["landmarks"]["left_knee"]
+    self.assertEqual(knee["tracking_state"], "estimated")
+    self.assertAlmostEqual(knee["x"], 0.39)
+    self.assertAlmostEqual(knee["y"], tracking_setup()["anchors"]["knee"]["y"])
+    self.assertNotAlmostEqual(knee["x"], 0.52)
+    self.assertEqual(diagnostics["source_counts"]["knee"]["pin_estimated"], 1)
+    self.assertEqual(diagnostics["rejection_reasons"]["pin_track_missing_recent"], 1)
 
   def test_barbell_context_uses_upper_back_without_mutating_public_pose_frames(self) -> None:
     frame = pose_frame(1)

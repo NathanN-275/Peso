@@ -28,6 +28,8 @@ export type SquatOverlayPoint = VideoPoseKeypoint & {
 
 // Landmarks used by the review overlay and squat-specific summaries.
 export const SQUAT_LANDMARK_NAMES = [
+  'left_upper_back',
+  'right_upper_back',
   'left_shoulder',
   'right_shoulder',
   'left_hip',
@@ -56,6 +58,8 @@ const CONFIDENCE_THRESHOLD = 0.35;
 const ESTIMATED_CONFIDENCE_THRESHOLD = 0.15;
 const MAX_BARBELL_POINT_GAP_SECONDS = 0.5;
 const SQUAT_LABELS: Record<SquatLandmarkName, string> = {
+  left_upper_back: 'Upper Back',
+  right_upper_back: 'Upper Back',
   left_shoulder: 'Upper Back',
   right_shoulder: 'Upper Back',
   left_hip: 'Hip',
@@ -276,8 +280,8 @@ export function shouldPreferSingleSideForSquat(keypoints: VideoPoseKeypoint[], c
 
   const leftHip = findKeypoint(keypoints, 'left_hip');
   const rightHip = findKeypoint(keypoints, 'right_hip');
-  const leftShoulder = findKeypoint(keypoints, 'left_shoulder');
-  const rightShoulder = findKeypoint(keypoints, 'right_shoulder');
+  const leftShoulder = findKeypoint(keypoints, 'left_upper_back') ?? findKeypoint(keypoints, 'left_shoulder');
+  const rightShoulder = findKeypoint(keypoints, 'right_upper_back') ?? findKeypoint(keypoints, 'right_shoulder');
 
   if (!leftHip || !rightHip || !leftShoulder || !rightShoulder) {
     return false;
@@ -299,29 +303,52 @@ export function selectVisibleSquatSide(keypoints: VideoPoseKeypoint[]) {
 export function getSquatPoseConnections(
   keypoints: VideoPoseKeypoint[],
   cameraView?: string,
-  lockedSide?: string | null
+  lockedSide?: string | null,
+  preferUpperBackKeypoint = false
 ) {
+  const torsoStart = (side: 'left' | 'right') => {
+    const upperBackName = `${side}_upper_back`;
+    if (keypoints.some((keypoint) => keypoint.name === upperBackName)) {
+      return upperBackName;
+    }
+    return preferUpperBackKeypoint ? null : `${side}_shoulder`;
+  };
+
   // Render either the full body or a single visible side.
   if (cameraView?.toLowerCase() !== 'side') {
-    return SQUAT_BODY_CONNECTIONS;
+    const leftTorso = torsoStart('left');
+    const rightTorso = torsoStart('right');
+    return [
+      ...(leftTorso ? [[leftTorso, 'left_hip']] : []),
+      ['left_hip', 'left_knee'],
+      ['left_knee', 'left_ankle'],
+      ...(rightTorso ? [[rightTorso, 'right_hip']] : []),
+      ['right_hip', 'right_knee'],
+      ['right_knee', 'right_ankle'],
+      ['left_hip', 'right_hip'],
+      ...(leftTorso && rightTorso ? [[leftTorso, rightTorso]] : []),
+    ] as Array<[string, string]>;
   }
 
   const side = lockedSide === 'left' || lockedSide === 'right'
     ? lockedSide
     : selectVisibleSquatSide(keypoints);
 
+  const sideTorso = torsoStart(side);
+
   return [
-    [`${side}_shoulder`, `${side}_hip`],
+    ...(sideTorso ? [[sideTorso, `${side}_hip`]] : []),
     [`${side}_hip`, `${side}_knee`],
     [`${side}_knee`, `${side}_ankle`],
-  ] as const;
+  ] as Array<[string, string]>;
 }
 
 export function getSquatOverlayKeypoints(
   frame: VideoPoseFrame | null,
   cameraView?: string,
   confidenceThreshold = CONFIDENCE_THRESHOLD,
-  lockedSide?: string | null
+  lockedSide?: string | null,
+  preferUpperBackKeypoint = false
 ): SquatOverlayPoint[] {
   const keypoints = filterSquatKeypoints(
     frame,
@@ -331,6 +358,11 @@ export function getSquatOverlayKeypoints(
   const selectedSide = normalizedLockedSide ?? (cameraView?.toLowerCase() === 'side'
     ? selectVisibleSquatSide(keypoints)
     : null);
+  const upperBackSides = new Set(
+    keypoints
+      .filter((keypoint) => keypoint.name === 'left_upper_back' || keypoint.name === 'right_upper_back')
+      .map((keypoint) => keypoint.name.split('_')[0])
+  );
 
   return keypoints
     .filter((keypoint) => {
@@ -338,7 +370,19 @@ export function getSquatOverlayKeypoints(
         return false;
       }
 
-      return !selectedSide || keypoint.name.startsWith(`${selectedSide}_`);
+      if (selectedSide && !keypoint.name.startsWith(`${selectedSide}_`)) {
+        return false;
+      }
+
+      const side = keypoint.name.startsWith('left_') ? 'left' : 'right';
+      if (
+        keypoint.name === `${side}_shoulder`
+        && (upperBackSides.has(side) || (preferUpperBackKeypoint && selectedSide === side))
+      ) {
+        return false;
+      }
+
+      return true;
     })
     .map((keypoint) => ({
       ...keypoint,

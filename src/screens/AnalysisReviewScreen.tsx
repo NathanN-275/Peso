@@ -580,6 +580,7 @@ export default function AnalysisReviewScreen({
                     contentFit="cover"
                     cameraView={cameraView}
                     selectedSide={selectedPoseSide}
+                    preferUpperBackKeypoint={trackingAssistance?.actualMode === 'pin_assisted'}
                   />
                 ) : null}
                 {showBarbellPath ? (

@@ -1,4 +1,12 @@
-import { Pressable, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import {
+  Pressable,
+  ScrollView,
+  StyleProp,
+  StyleSheet,
+  Text,
+  View,
+  ViewStyle,
+} from 'react-native';
 import tokens from '../theme/tokens';
 
 type ReviewBottomSheetProps = {
@@ -8,6 +16,7 @@ type ReviewBottomSheetProps = {
   children: React.ReactNode;
   showCloseButton?: boolean;
   sheetStyle?: StyleProp<ViewStyle>;
+  scrollable?: boolean;
 };
 
 export default function ReviewBottomSheet({
@@ -17,6 +26,7 @@ export default function ReviewBottomSheet({
   children,
   showCloseButton = true,
   sheetStyle,
+  scrollable = false,
 }: ReviewBottomSheetProps) {
   if (!visible) {
     return null;
@@ -35,7 +45,17 @@ export default function ReviewBottomSheet({
             </Pressable>
           ) : null}
         </View>
-        <View style={styles.content}>{children}</View>
+        {scrollable ? (
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator
+          >
+            {children}
+          </ScrollView>
+        ) : (
+          <View style={styles.content}>{children}</View>
+        )}
       </View>
     </View>
   );
@@ -63,6 +83,12 @@ const styles = StyleSheet.create({
   },
   content: {
     flexShrink: 1,
+  },
+  scroll: {
+    flexShrink: 1,
+  },
+  scrollContent: {
+    paddingBottom: 4,
   },
   handle: {
     width: 44,
