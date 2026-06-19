@@ -315,6 +315,54 @@ def _find_invalid_landmarks(
         ):
           _mark_invalid(invalid, frame_index, "shoulder", "upper_back_relative_jump")
 
+      previous_ankle = point_for_side(previous_frame, side, "ankle")
+      following_ankle = point_for_side(following_frame, side, "ankle")
+      current_ankle = point_for_side(frame, side, "ankle")
+      ankle_midpoint = {
+        "x": (previous_ankle["x"] + following_ankle["x"]) / 2,
+        "y": (previous_ankle["y"] + following_ankle["y"]) / 2,
+      }
+      chain_jumble_threshold = max(0.06, subject_height * 0.14)
+      ankle_is_stable = (
+        min(
+          current_ankle.get("visibility", 0.0),
+          previous_ankle.get("visibility", 0.0),
+          following_ankle.get("visibility", 0.0),
+        ) >= 0.35
+        and _distance(current_ankle, ankle_midpoint) < max(0.045, subject_height * 0.10)
+        and _distance(previous_ankle, following_ankle) < max(0.055, subject_height * 0.12)
+      )
+      coherent_offsets: list[tuple[str, float, float]] = []
+      for joint in ("shoulder", "hip", "knee"):
+        point = point_for_side(frame, side, joint)
+        previous_point = point_for_side(previous_frame, side, joint)
+        following_point = point_for_side(following_frame, side, joint)
+        if min(
+          point.get("visibility", 0.0),
+          previous_point.get("visibility", 0.0),
+          following_point.get("visibility", 0.0),
+        ) < 0.35:
+          continue
+        midpoint = {
+          "x": (previous_point["x"] + following_point["x"]) / 2,
+          "y": (previous_point["y"] + following_point["y"]) / 2,
+        }
+        dx = point["x"] - midpoint["x"]
+        jump_distance = _distance(point, midpoint)
+        if (
+          jump_distance > chain_jumble_threshold
+          and abs(dx) > chain_jumble_threshold * 0.60
+          and _distance(previous_point, following_point) < max(0.055, subject_height * 0.12)
+        ):
+          coherent_offsets.append((joint, dx, jump_distance))
+
+      if ankle_is_stable and len(coherent_offsets) >= 2:
+        positive = sum(1 for _, dx, _ in coherent_offsets if dx > 0)
+        negative = sum(1 for _, dx, _ in coherent_offsets if dx < 0)
+        if max(positive, negative) >= 2:
+          for joint, _, _ in coherent_offsets:
+            _mark_invalid(invalid, frame_index, joint, "chain_jumble")
+
   return invalid
 
 

@@ -42,6 +42,8 @@ const SOURCE_LABELS: Record<string, string> = {
   pin_guided: 'pin guided',
   pin_estimated: 'pin estimated',
   automatic: 'automatic',
+  automatic_recovery: 'automatic recovery',
+  stale_pin_rejected: 'stale pin rejected',
   gap: 'gap',
 };
 

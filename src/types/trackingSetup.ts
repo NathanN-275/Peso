@@ -1,7 +1,14 @@
 export const TRACKING_PIN_NAMES = ['shoulder', 'hip', 'knee', 'ankle', 'barbell'] as const;
 
 export type TrackingPinName = (typeof TRACKING_PIN_NAMES)[number];
-export type TrackingBodySource = 'reference' | 'pin_guided' | 'pin_estimated' | 'automatic' | 'gap';
+export type TrackingBodySource =
+  | 'reference'
+  | 'pin_guided'
+  | 'pin_estimated'
+  | 'automatic'
+  | 'automatic_recovery'
+  | 'stale_pin_rejected'
+  | 'gap';
 export type TrackingBodySourceName = 'upper_back' | 'hip' | 'knee' | 'ankle';
 
 export type NormalizedTrackingPoint = {

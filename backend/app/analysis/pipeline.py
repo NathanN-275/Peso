@@ -21,6 +21,7 @@ from .manual_tracking import (
 )
 from .pose_fallback import analysis_needs_pose_fallback
 from .pose_estimator import PoseEstimator
+from .pose_validator import validate_squat_pose_frames
 from ..services.config import get_settings
 from ..services.storage_service import IMMUTABLE_CACHE_CONTROL_SECONDS, StorageService
 from ..services.video_assets import (
@@ -628,8 +629,17 @@ def _attach_barbell_tracking(
   ]
   try:
     tracker = BarbellTracker()
+    pose_context_frames = estimation.get("frames") or []
+    pose_context_validation: dict[str, Any] = {}
+    pose_context_validated = False
+    if pose_context_frames:
+      pose_context_frames, pose_context_validation = validate_squat_pose_frames(
+        pose_context_frames,
+        selected_side_override=selected_side,
+      )
+      pose_context_validated = True
     barbell_pose_frames, upper_back_context_count = _barbell_pose_frames_with_upper_back_context(
-      estimation.get("frames") or [],
+      pose_context_frames,
       manual_tracking=estimation.get("manual_tracking") or {},
       selected_side=selected_side,
     )
@@ -674,6 +684,8 @@ def _attach_barbell_tracking(
     tracking_diagnostics["manual_point_count"] = manual_point_count
     tracking_diagnostics["automatic_point_count"] = automatic_point_count
     tracking_diagnostics["upper_back_context_frame_count"] = upper_back_context_count
+    tracking_diagnostics["pose_context_validated"] = pose_context_validated
+    tracking_diagnostics["pose_context_validation"] = pose_context_validation
     diagnostics["barbell_tracking"] = tracking_diagnostics
   except Exception as error:
     logger.warning("Barbell tracking failed for video %s: %s", video.get("id"), error)

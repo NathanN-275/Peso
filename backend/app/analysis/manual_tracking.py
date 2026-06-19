@@ -17,7 +17,15 @@ ALL_ANCHORS = (*BODY_ANCHORS, "barbell")
 MIN_TRACK_CONFIDENCE = 0.42
 MIN_MODEL_VISIBILITY = 0.15
 MAX_JOINT_DISPLACEMENT_PX = 15
-SOURCE_NAMES = ("reference", "pin_guided", "pin_estimated", "automatic", "gap")
+SOURCE_NAMES = (
+  "reference",
+  "pin_guided",
+  "pin_estimated",
+  "automatic",
+  "automatic_recovery",
+  "stale_pin_rejected",
+  "gap",
+)
 JOINT_DISPLACEMENT_RATIOS = {
   "shoulder": 0.042,
   "hip": 0.036,
@@ -240,6 +248,7 @@ def _track_template(
   gray: Any,
   point: tuple[float, float],
   *,
+  search_point: tuple[float, float] | None = None,
   patch_radius_ratio: float = 0.016,
   search_radius_ratio: float = 0.055,
   min_score: float = 0.54,
@@ -257,10 +266,13 @@ def _track_template(
   if template_x0 < 0 or template_y0 < 0 or template_x1 > width or template_y1 > height:
     return None, 0.0
   template = previous_gray[template_y0:template_y1, template_x0:template_x1]
-  search_x0 = max(center_x - search_radius - patch_radius, 0)
-  search_y0 = max(center_y - search_radius - patch_radius, 0)
-  search_x1 = min(center_x + search_radius + patch_radius + 1, width)
-  search_y1 = min(center_y + search_radius + patch_radius + 1, height)
+  search_reference = search_point or point
+  search_center_x = int(round(search_reference[0]))
+  search_center_y = int(round(search_reference[1]))
+  search_x0 = max(search_center_x - search_radius - patch_radius, 0)
+  search_y0 = max(search_center_y - search_radius - patch_radius, 0)
+  search_x1 = min(search_center_x + search_radius + patch_radius + 1, width)
+  search_y1 = min(search_center_y + search_radius + patch_radius + 1, height)
   search = gray[search_y0:search_y1, search_x0:search_x1]
   if search.shape[0] < template.shape[0] or search.shape[1] < template.shape[1]:
     return None, 0.0
@@ -272,7 +284,7 @@ def _track_template(
     float(search_x0 + location[0] + patch_radius),
     float(search_y0 + location[1] + patch_radius),
   )
-  if math.hypot(matched_center[0] - point[0], matched_center[1] - point[1]) > search_radius:
+  if math.hypot(matched_center[0] - search_reference[0], matched_center[1] - search_reference[1]) > search_radius:
     return None, 0.0
   return matched_center, float(score)
 
@@ -306,13 +318,40 @@ def _template_settings(
 def _joint_displacement_cap_px(
   frame_shape: tuple[int, int],
   joint_name: str | None,
+  *,
+  frame_gap: int = 1,
 ) -> float:
   max_dimension = float(max(frame_shape))
   if joint_name not in JOINT_DISPLACEMENT_RATIOS:
     return float(MAX_JOINT_DISPLACEMENT_PX)
-  return max(
+  base_cap = max(
     JOINT_DISPLACEMENT_FLOORS_PX[joint_name],
     max_dimension * JOINT_DISPLACEMENT_RATIOS[joint_name],
+  )
+  gap_scale = max(1.0, min(float(abs(frame_gap)), 8.0) ** 0.75)
+  return base_cap * gap_scale
+
+
+def _predict_track_point(
+  history: list[tuple[int, tuple[float, float]]],
+  frame_index: int,
+) -> tuple[float, float] | None:
+  if len(history) < 2:
+    return None
+  previous_index, previous_point = history[-2]
+  last_index, last_point = history[-1]
+  frame_delta = last_index - previous_index
+  if frame_delta == 0:
+    return None
+  horizon = frame_index - last_index
+  if horizon == 0 or (horizon > 0) != (frame_delta > 0):
+    return None
+  scale = horizon / frame_delta
+  if abs(scale) > 2.5:
+    return None
+  return (
+    last_point[0] + ((last_point[0] - previous_point[0]) * scale),
+    last_point[1] + ((last_point[1] - previous_point[1]) * scale),
   )
 
 
@@ -324,12 +363,28 @@ def _track_step(
   *,
   barbell: bool = False,
   joint_name: str | None = None,
+  predicted_point: tuple[float, float] | None = None,
+  frame_gap: int = 1,
 ) -> tuple[tuple[float, float] | None, float, dict[str, float]]:
   import numpy as np
 
   template_config = _template_settings(barbell=barbell, joint_name=joint_name)
+  if template_config and joint_name == "knee":
+    template_config = {
+      **template_config,
+      "search_radius_ratio": float(template_config["search_radius_ratio"])
+      * max(1.0, min(float(abs(frame_gap)), 8.0) ** 0.75),
+    }
+  template_search_point = predicted_point if joint_name == "knee" else None
   template_point, template_score = (
-    _track_template(cv2, previous_gray, gray, point, **template_config)
+    _track_template(
+      cv2,
+      previous_gray,
+      gray,
+      point,
+      search_point=template_search_point,
+      **template_config,
+    )
     if template_config
     else (None, 0.0)
   )
@@ -342,6 +397,7 @@ def _track_step(
     return template_point, min(template_score * confidence_multiplier, confidence_cap), {
       "template_score": template_score,
       "template_fallback": 1.0,
+      **({"prediction_assisted": 1.0} if template_search_point is not None else {}),
     }
 
   previous_points = _feature_points(cv2, previous_gray, point, barbell=barbell)
@@ -369,16 +425,59 @@ def _track_step(
     dx = float(median(float(value) for value in motions[:, 0]))
     dy = float(median(float(value) for value in motions[:, 1]))
     next_point = (point[0] + dx, point[1] + dy)
-    max_jump = max(gray.shape[:2]) * 0.10
+    template_prediction_override = False
+    if predicted_point is not None and template_point is not None and template_score >= 0.50:
+      optical_flow_error = math.hypot(
+        next_point[0] - predicted_point[0],
+        next_point[1] - predicted_point[1],
+      )
+      template_error = math.hypot(
+        template_point[0] - predicted_point[0],
+        template_point[1] - predicted_point[1],
+      )
+      predicted_motion = math.hypot(
+        predicted_point[0] - point[0],
+        predicted_point[1] - point[1],
+      )
+      optical_flow_motion = math.hypot(dx, dy)
+      if (
+        template_error + max(4.0, max(gray.shape[:2]) * 0.018) < optical_flow_error
+        or (
+          predicted_motion > max(8.0, max(gray.shape[:2]) * 0.04)
+          and optical_flow_motion < predicted_motion * 0.45
+          and template_error < max(10.0, max(gray.shape[:2]) * 0.06)
+        )
+      ):
+        next_point = template_point
+        confidence = min(template_score * 0.78, 0.72)
+        template_prediction_override = True
+      else:
+        confidence = min(1.0, (float(inlier_mask.sum()) / max(len(previous_points), 1)) * 1.15)
+    else:
+      confidence = min(1.0, (float(inlier_mask.sum()) / max(len(previous_points), 1)) * 1.15)
+    max_jump = max(gray.shape[:2]) * 0.10 * max(1.0, min(float(abs(frame_gap)), 8.0) ** 0.75)
     height, width = gray.shape[:2]
-    if math.hypot(dx, dy) > max_jump or not (
+    if math.hypot(next_point[0] - point[0], next_point[1] - point[1]) > max_jump or not (
       0 <= next_point[0] < width and 0 <= next_point[1] < height
     ):
       return None, 0.0, {}
-    confidence = min(1.0, (float(inlier_mask.sum()) / max(len(previous_points), 1)) * 1.15)
     return next_point, confidence, {
       "tracked_features": float(len(previous_points)),
       "median_back_error": float(median(float(value) for value in back_error[inlier_mask])),
+      **({"template_score": template_score} if template_point is not None else {}),
+      **({"prediction_assisted": 1.0} if predicted_point is not None else {}),
+      **({"template_prediction_override": 1.0} if template_prediction_override else {}),
+      **(
+        {
+          "predicted_point_x": float(predicted_point[0]),
+          "predicted_point_y": float(predicted_point[1]),
+          "prediction_error_px": float(
+            math.hypot(next_point[0] - predicted_point[0], next_point[1] - predicted_point[1])
+          ),
+        }
+        if predicted_point is not None
+        else {}
+      ),
     }
 
   transform, affine_mask = cv2.estimateAffinePartial2D(
@@ -467,7 +566,10 @@ def _track_direction(
   current_point = initial_point
   previous_index = ordered_indices[0]
   reference_index = ordered_indices[0]
+  accepted_history: list[tuple[int, tuple[float, float]]] = [(previous_index, current_point)]
   for frame_index in ordered_indices[1:]:
+    frame_gap = abs(frame_index - previous_index)
+    predicted_point = _predict_track_point(accepted_history, frame_index) if joint_name == "knee" else None
     next_point, confidence, diagnostics = _track_step(
       cv2,
       frames[previous_index],
@@ -475,8 +577,28 @@ def _track_direction(
       current_point,
       barbell=barbell,
       joint_name=joint_name,
+      predicted_point=predicted_point,
+      frame_gap=frame_gap,
     )
     if next_point is None:
+      if joint_name == "knee":
+        fallback_point = predicted_point or current_point
+        tracks[frame_index] = {
+          "x": fallback_point[0],
+          "y": fallback_point[1],
+          "confidence": 0.0,
+          "tracking_lost": 1.0,
+          "stale_track": 1.0,
+          **(
+            {
+              "predicted_point_x": float(predicted_point[0]),
+              "predicted_point_y": float(predicted_point[1]),
+            }
+            if predicted_point is not None
+            else {}
+          ),
+        }
+        continue
       break
 
     proposed_displacement_px = math.hypot(
@@ -486,6 +608,7 @@ def _track_direction(
     max_joint_displacement_px = _joint_displacement_cap_px(
       frames[frame_index].shape[:2],
       joint_name,
+      frame_gap=frame_gap,
     )
     if not barbell and proposed_displacement_px > max_joint_displacement_px:
       logger.debug(
@@ -495,12 +618,36 @@ def _track_direction(
         proposed_displacement_px,
         max_joint_displacement_px,
       )
+      if joint_name == "knee":
+        fallback_point = predicted_point or current_point
+        tracks[frame_index] = {
+          "x": fallback_point[0],
+          "y": fallback_point[1],
+          "confidence": min(confidence * 0.25, MIN_TRACK_CONFIDENCE - 0.05),
+          **diagnostics,
+          "velocity_capped": 1.0,
+          "velocity_cap_reused_previous": 1.0,
+          "stale_track": 1.0,
+          "velocity_cap_distance_px": proposed_displacement_px,
+          "proposed_displacement_px": proposed_displacement_px,
+          "max_joint_displacement_px": max_joint_displacement_px,
+          **(
+            {
+              "predicted_point_x": float(predicted_point[0]),
+              "predicted_point_y": float(predicted_point[1]),
+            }
+            if predicted_point is not None
+            else {}
+          ),
+        }
+        continue
       next_point = current_point
       confidence = min(confidence * 0.45, MIN_TRACK_CONFIDENCE - 0.02)
       diagnostics = {
         **diagnostics,
         "velocity_capped": 1.0,
         "velocity_cap_reused_previous": 1.0,
+        "stale_track": 1.0,
         "velocity_cap_distance_px": proposed_displacement_px,
         "proposed_displacement_px": proposed_displacement_px,
         "max_joint_displacement_px": max_joint_displacement_px,
@@ -542,6 +689,9 @@ def _track_direction(
     }
     current_point = next_point
     previous_index = frame_index
+    accepted_history.append((frame_index, current_point))
+    if len(accepted_history) > 4:
+      accepted_history = accepted_history[-4:]
   return tracks
 
 
@@ -557,7 +707,12 @@ def _smooth_anchor_track(
   smoothed: dict[int, dict[str, Any]] = {}
   for position, source_index in enumerate(ordered_indices):
     point = tracks[source_index]
-    if source_index == reference_index or point.get("velocity_cap_reused_previous"):
+    if (
+      source_index == reference_index
+      or position == 0
+      or position == len(ordered_indices) - 1
+      or point.get("velocity_cap_reused_previous")
+    ):
       smoothed[source_index] = dict(point)
       continue
     neighbor_indices = ordered_indices[max(position - 1, 0):min(position + 2, len(ordered_indices))]
@@ -569,6 +724,18 @@ def _smooth_anchor_track(
       "confidence": float(point["confidence"]),
     }
   return smoothed
+
+
+def _manual_track_is_usable(track: dict[str, Any] | None) -> bool:
+  if not track:
+    return False
+  if float(track.get("confidence") or 0.0) < MIN_TRACK_CONFIDENCE:
+    return False
+  return not (
+    track.get("velocity_cap_reused_previous")
+    or track.get("stale_track")
+    or track.get("tracking_lost")
+  )
 
 
 def track_manual_anchors(
@@ -624,6 +791,7 @@ def track_manual_anchors(
   reference_position = available_indices.index(reference_index)
   tracks: dict[str, dict[int, dict[str, float]]] = {}
   velocity_cap_counts = {name: 0 for name in BODY_ANCHORS}
+  stale_track_counts = {name: 0 for name in BODY_ANCHORS}
   for name in ALL_ANCHORS:
     anchor = setup["anchors"][name]
     initial_point = (anchor["x"] * width, anchor["y"] * height)
@@ -649,6 +817,9 @@ def track_manual_anchors(
       velocity_cap_counts[name] = sum(
         1 for point in combined.values() if point.get("velocity_capped")
       )
+      stale_track_counts[name] = sum(
+        1 for point in combined.values() if point.get("stale_track")
+      )
     normalized_tracks = {
       index: {
         "x": point["x"] / width,
@@ -665,7 +836,10 @@ def track_manual_anchors(
     )
 
   coverage = {
-    name: round(len(anchor_tracks) / max(len(available_indices), 1), 3)
+    name: round(
+      sum(1 for point in anchor_tracks.values() if _manual_track_is_usable(point)) / max(len(available_indices), 1),
+      3,
+    )
     for name, anchor_tracks in tracks.items()
   }
   return {
@@ -674,6 +848,8 @@ def track_manual_anchors(
     "coverage": coverage,
     "velocity_cap_count": sum(velocity_cap_counts.values()),
     "velocity_cap_counts": velocity_cap_counts,
+    "stale_track_count": sum(stale_track_counts.values()),
+    "stale_track_counts": stale_track_counts,
   }
 
 
@@ -734,6 +910,7 @@ def fuse_manual_body_tracks(
   manual_has_activated = {joint: False for joint in FUSED_BODY_ANCHORS}
   manual_reentry_streak = {joint: 0 for joint in FUSED_BODY_ANCHORS}
   previous_manual_points: dict[str, dict[str, float]] = {}
+  manual_history: dict[str, list[dict[str, float]]] = {joint: [] for joint in FUSED_BODY_ANCHORS}
   previous_valid_chain: dict[str, dict[str, float]] | None = None
   valid_chains: dict[int, dict[str, dict[str, float]]] = {}
   unresolved_frame_positions: list[int] = []
@@ -833,6 +1010,73 @@ def fuse_manual_body_tracks(
           return False
     return True
 
+  def knee_context_prediction(source_index: int) -> dict[str, float] | None:
+    if previous_valid_chain is None:
+      return None
+    deltas: list[dict[str, float]] = []
+    for context_joint in ("hip", "ankle"):
+      track = (tracking["tracks"].get(context_joint) or {}).get(source_index)
+      if not _manual_track_is_usable(track):
+        continue
+      previous_context = previous_valid_chain.get(context_joint)
+      if not previous_context:
+        continue
+      deltas.append({
+        "x": float(track["x"]) - previous_context["x"],
+        "y": float(track["y"]) - previous_context["y"],
+      })
+    if not deltas:
+      return None
+    previous_knee = previous_valid_chain.get("knee")
+    if not previous_knee:
+      return None
+    return {
+      "x": previous_knee["x"] + (sum(delta["x"] for delta in deltas) / len(deltas)),
+      "y": previous_knee["y"] + (sum(delta["y"] for delta in deltas) / len(deltas)),
+    }
+
+  def knee_velocity_prediction(source_index: int) -> dict[str, float] | None:
+    history = manual_history["knee"]
+    if len(history) < 2:
+      return None
+    previous = history[-2]
+    last = history[-1]
+    frame_delta = last["source_index"] - previous["source_index"]
+    if frame_delta == 0:
+      return None
+    horizon = source_index - last["source_index"]
+    if horizon == 0 or (horizon > 0) != (frame_delta > 0):
+      return None
+    scale = horizon / frame_delta
+    if abs(scale) > 2.5:
+      return None
+    return {
+      "x": last["x"] + ((last["x"] - previous["x"]) * scale),
+      "y": last["y"] + ((last["y"] - previous["y"]) * scale),
+    }
+
+  def automatic_knee_recovery_option(
+    *,
+    source_index: int,
+    model_point: dict[str, float],
+    model_visibility: float,
+  ) -> dict[str, Any] | None:
+    prediction = knee_velocity_prediction(source_index) or knee_context_prediction(source_index)
+    if prediction is None:
+      return None
+    residual = _point_distance(model_point, prediction)
+    if residual > max(0.025, torso_scale * 0.12):
+      return None
+    return {
+      "source": "automatic_recovery",
+      "point": model_point,
+      "visibility": min(model_visibility, 0.55),
+      "score": 0.58 + (model_visibility * 0.20) - residual,
+      "tracking_state": "estimated",
+      "model_distance": residual,
+      "prediction": prediction,
+    }
+
   for frame_position, frame in enumerate(fused_frames):
     source_index = int(frame.get("source_frame_index", -1))
     landmarks = frame.get("landmarks") or {}
@@ -888,10 +1132,13 @@ def fuse_manual_body_tracks(
         ),
         "joints": {},
       }
+    raw_points: dict[str, dict[str, float]] = {}
     available_points: dict[str, dict[str, float]] = {}
     for joint in FUSED_BODY_ANCHORS:
       track = (tracking["tracks"].get(joint) or {}).get(source_index)
-      if track and float(track.get("confidence") or 0.0) >= MIN_TRACK_CONFIDENCE:
+      if track:
+        raw_points[joint] = track
+      if _manual_track_is_usable(track):
         available_points[joint] = track
 
     options_by_joint: dict[str, list[dict[str, Any]]] = {}
@@ -911,12 +1158,45 @@ def fuse_manual_body_tracks(
           "score": 0.25 + (model_visibility * 0.35),
         }
       ]
+      raw_track = raw_points.get(joint)
       track = available_points.get(joint)
       if not track:
-        if joint == "knee" and (
-          manual_has_activated[joint] or previous_manual_points.get(joint) is not None
-        ):
-          note_rejection("pin_track_missing_recent")
+        track_stale = bool(
+          raw_track
+          and (
+            raw_track.get("velocity_cap_reused_previous")
+            or raw_track.get("stale_track")
+            or raw_track.get("tracking_lost")
+          )
+        )
+        if joint == "knee" and track_stale:
+          note_rejection("stale_pin_rejected")
+          record_source("knee", "stale_pin_rejected")
+          recovery = automatic_knee_recovery_option(
+            source_index=source_index,
+            model_point=model_point,
+            model_visibility=model_visibility,
+          )
+          if recovery is not None:
+            options_by_joint[joint] = [recovery]
+            if frame_diagnostic is not None:
+              frame_diagnostic["joints"][joint] = {
+                "source": "automatic_recovery",
+                "raw_model": {
+                  "x": round(model_point["x"], 4),
+                  "y": round(model_point["y"], 4),
+                  "visibility": round(model_visibility, 3),
+                },
+                "raw_pin": {
+                  "x": round(float(raw_track["x"]), 4),
+                  "y": round(float(raw_track["y"]), 4),
+                  "confidence": round(float(raw_track.get("confidence") or 0.0), 3),
+                  "stale": True,
+                },
+                "residual": round(float(recovery["model_distance"]), 4),
+                "rejection_reason": "stale_pin_rejected",
+              }
+            continue
           options_by_joint[joint] = []
           if frame_diagnostic is not None:
             frame_diagnostic["joints"][joint] = {
@@ -926,8 +1206,36 @@ def fuse_manual_body_tracks(
                 "y": round(model_point["y"], 4),
                 "visibility": round(model_visibility, 3),
               },
-              "raw_pin": None,
+              "raw_pin": {
+                "x": round(float(raw_track["x"]), 4),
+                "y": round(float(raw_track["y"]), 4),
+                "confidence": round(float(raw_track.get("confidence") or 0.0), 3),
+                "stale": True,
+              },
               "residual": None,
+              "rejection_reason": "stale_pin_rejected",
+            }
+          continue
+        if joint == "knee" and (
+          manual_has_activated[joint] or previous_manual_points.get(joint) is not None
+        ):
+          note_rejection("pin_track_missing_recent")
+          recovery = automatic_knee_recovery_option(
+            source_index=source_index,
+            model_point=model_point,
+            model_visibility=model_visibility,
+          )
+          options_by_joint[joint] = [recovery] if recovery is not None else []
+          if frame_diagnostic is not None:
+            frame_diagnostic["joints"][joint] = {
+              "source": "automatic_recovery" if recovery is not None else "gap",
+              "raw_model": {
+                "x": round(model_point["x"], 4),
+                "y": round(model_point["y"], 4),
+                "visibility": round(model_visibility, 3),
+              },
+              "raw_pin": None,
+              "residual": round(float(recovery["model_distance"]), 4) if recovery is not None else None,
               "rejection_reason": "pin_track_missing_recent",
             }
           continue
@@ -1123,6 +1431,14 @@ def fuse_manual_body_tracks(
           reject(joint, "whole_chain_fallback")
         continue
 
+      if option["source"] == "automatic_recovery":
+        landmark["tracking_state"] = "estimated"
+        landmark.pop("manual_assisted", None)
+        landmark["manual_source"] = "automatic_recovery"
+        landmark.pop("manual_weight", None)
+        record_source(joint, "automatic_recovery")
+        continue
+
       manual_active[joint] = True
       manual_has_activated[joint] = True
       manual_reentry_streak[joint] = 0
@@ -1136,7 +1452,15 @@ def fuse_manual_body_tracks(
       previous_manual_points[joint] = {
         "x": float(option["track"]["x"]),
         "y": float(option["track"]["y"]),
+        "source_index": float(source_index),
       }
+      manual_history[joint].append({
+        "x": float(option["track"]["x"]),
+        "y": float(option["track"]["y"]),
+        "source_index": float(source_index),
+      })
+      if len(manual_history[joint]) > 4:
+        manual_history[joint] = manual_history[joint][-4:]
       fused_count += 1
       pin_owned_count += 1
       if option["source"] == "reference_pin":
@@ -1152,9 +1476,44 @@ def fuse_manual_body_tracks(
     following_positions = [position for position in valid_chains if position > frame_position]
     previous_position = max(previous_positions) if previous_positions else None
     following_position = min(following_positions) if following_positions else None
+    current_source_index = int(fused_frames[frame_position].get("source_frame_index", -1))
+
+    def context_motion_estimate(
+      joint: str,
+      anchor_position: int,
+    ) -> dict[str, float] | None:
+      if joint != "knee":
+        return None
+      anchor_chain = valid_chains.get(anchor_position)
+      if not anchor_chain:
+        return None
+      deltas: list[dict[str, float]] = []
+      for context_joint in ("hip", "ankle"):
+        current_track = (tracking["tracks"].get(context_joint) or {}).get(current_source_index)
+        if not _manual_track_is_usable(current_track):
+          continue
+        anchor_point = anchor_chain.get(context_joint)
+        if not anchor_point:
+          continue
+        deltas.append({
+          "x": float(current_track["x"]) - anchor_point["x"],
+          "y": float(current_track["y"]) - anchor_point["y"],
+        })
+      if not deltas:
+        return None
+      anchor_point = anchor_chain.get(joint)
+      if not anchor_point:
+        return None
+      return {
+        "x": anchor_point["x"] + (sum(delta["x"] for delta in deltas) / len(deltas)),
+        "y": anchor_point["y"] + (sum(delta["y"] for delta in deltas) / len(deltas)),
+        "visibility": min(float(anchor_point.get("visibility", 0.48) or 0.48), 0.48),
+      }
 
     def estimated_chain_point(joint: str) -> dict[str, float] | None:
       if previous_position is not None and following_position is not None:
+        if following_position - previous_position > 3:
+          return None
         span = following_position - previous_position
         weight = (frame_position - previous_position) / max(span, 1)
         previous_point = valid_chains[previous_position][joint]
@@ -1169,6 +1528,11 @@ def fuse_manual_body_tracks(
           ),
         }
       if previous_position is not None:
+        if frame_position - previous_position > 2:
+          return None
+        context_estimate = context_motion_estimate(joint, previous_position)
+        if context_estimate is not None:
+          return context_estimate
         previous_point = valid_chains[previous_position][joint]
         return {
           "x": previous_point["x"],
@@ -1176,6 +1540,11 @@ def fuse_manual_body_tracks(
           "visibility": min(float(previous_point.get("visibility", 0.48) or 0.48), 0.48),
         }
       if following_position is not None:
+        if following_position - frame_position > 2:
+          return None
+        context_estimate = context_motion_estimate(joint, following_position)
+        if context_estimate is not None:
+          return context_estimate
         following_point = valid_chains[following_position][joint]
         return {
           "x": following_point["x"],

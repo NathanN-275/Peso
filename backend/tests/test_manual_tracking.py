@@ -324,6 +324,100 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertEqual(diagnostics["source_counts"]["knee"]["pin_estimated"], 1)
     self.assertEqual(diagnostics["rejection_reasons"]["pin_track_missing_recent"], 1)
 
+  def test_velocity_capped_knee_pin_is_not_rendered_as_guided(self) -> None:
+    frames = [pose_frame(index) for index in (1, 2, 3)]
+    tracks = {
+      joint: {
+        index: {
+          "x": tracking_setup()["anchors"][joint]["x"] + ((index - 1) * 0.03),
+          "y": tracking_setup()["anchors"][joint]["y"],
+          "confidence": 0.9,
+          "tracking_state": "guided",
+        }
+        for index in (1, 2, 3)
+      }
+      for joint in BODY_ANCHORS
+    }
+    tracks["knee"][2] = {
+      **tracking_setup()["anchors"]["knee"],
+      "confidence": 0.9,
+      "tracking_state": "guided",
+      "velocity_cap_reused_previous": 1.0,
+      "stale_track": 1.0,
+    }
+    tracks["knee"][3].update({"x": 0.50})
+
+    fused, diagnostics = fuse_manual_body_tracks(
+      frames,
+      setup=tracking_setup(),
+      tracking={"tracks": tracks, "reference_source_index": 1, "coverage": {}},
+    )
+
+    knee = fused[1]["landmarks"]["left_knee"]
+    self.assertEqual(knee["tracking_state"], "estimated")
+    self.assertNotIn("manual_assisted", knee)
+    self.assertGreater(knee["x"], tracking_setup()["anchors"]["knee"]["x"] + 0.03)
+    self.assertEqual(diagnostics["source_counts"]["knee"]["stale_pin_rejected"], 1)
+    self.assertEqual(diagnostics["source_counts"]["knee"]["pin_estimated"], 1)
+
+  def test_short_knee_dropout_estimates_from_hip_ankle_motion_without_following_chain(self) -> None:
+    frames = [pose_frame(index) for index in (1, 2)]
+    frames[1]["landmarks"]["left_knee"].update({"x": 0.60, "y": 0.54, "visibility": 0.88})
+    tracks = {
+      joint: {
+        index: {
+          "x": tracking_setup()["anchors"][joint]["x"] + (0.04 if index == 2 else 0.0),
+          "y": tracking_setup()["anchors"][joint]["y"],
+          "confidence": 0.9,
+          "tracking_state": "guided",
+        }
+        for index in (1, 2)
+      }
+      for joint in BODY_ANCHORS
+    }
+    del tracks["knee"][2]
+
+    fused, diagnostics = fuse_manual_body_tracks(
+      frames,
+      setup=tracking_setup(),
+      tracking={"tracks": tracks, "reference_source_index": 1, "coverage": {}},
+    )
+
+    knee = fused[1]["landmarks"]["left_knee"]
+    self.assertEqual(knee["tracking_state"], "estimated")
+    self.assertAlmostEqual(knee["x"], tracking_setup()["anchors"]["knee"]["x"] + 0.04)
+    self.assertNotAlmostEqual(knee["x"], tracking_setup()["anchors"]["knee"]["x"])
+    self.assertLessEqual(knee["visibility"], 0.48)
+    self.assertEqual(diagnostics["source_counts"]["knee"]["pin_estimated"], 1)
+
+  def test_long_knee_dropout_gaps_instead_of_holding_previous_knee(self) -> None:
+    frames = [pose_frame(index) for index in (1, 2, 3, 4)]
+    tracks = {
+      joint: {
+        index: {
+          "x": tracking_setup()["anchors"][joint]["x"] + ((index - 1) * 0.03),
+          "y": tracking_setup()["anchors"][joint]["y"],
+          "confidence": 0.9,
+          "tracking_state": "guided",
+        }
+        for index in (1, 2, 3, 4)
+      }
+      for joint in BODY_ANCHORS
+    }
+    for index in (2, 3, 4):
+      del tracks["knee"][index]
+
+    fused, diagnostics = fuse_manual_body_tracks(
+      frames,
+      setup=tracking_setup(),
+      tracking={"tracks": tracks, "reference_source_index": 1, "coverage": {}},
+    )
+
+    knee = fused[3]["landmarks"]["left_knee"]
+    self.assertEqual(knee["tracking_state"], "estimated")
+    self.assertEqual(knee["visibility"], 0.0)
+    self.assertGreaterEqual(diagnostics["source_counts"]["knee"]["gap"], 1)
+
   def test_barbell_context_uses_upper_back_without_mutating_public_pose_frames(self) -> None:
     frame = pose_frame(1)
     original_shoulder = dict(frame["landmarks"]["left_shoulder"])
@@ -416,6 +510,75 @@ class ManualTrackingTest(unittest.TestCase):
     for name in setup["anchors"]:
       self.assertEqual(set(result["tracks"][name]), {0, 1, 2})
       self.assertGreaterEqual(result["coverage"][name], 0.99)
+
+  def test_knee_tracking_scales_motion_cap_across_sampled_frames(self) -> None:
+    width, height, fps = 180, 140, 30.0
+    with tempfile.TemporaryDirectory() as directory:
+      video_path = Path(directory) / "fast-knee-tracking.avi"
+      writer = cv2.VideoWriter(
+        str(video_path),
+        cv2.VideoWriter_fourcc(*"MJPG"),
+        fps,
+        (width, height),
+      )
+      self.assertTrue(writer.isOpened())
+      stable_points = {
+        "shoulder": (55, 30),
+        "hip": (58, 55),
+        "ankle": (66, 112),
+        "barbell": (92, 32),
+      }
+      knee_positions = {
+        0: (60, 82),
+        4: (91, 84),
+        8: (137, 86),
+      }
+      for frame_index in range(9):
+        image = np.zeros((height, width, 3), dtype=np.uint8)
+        if frame_index <= 4:
+          ratio = frame_index / 4
+          start = knee_positions[0]
+          end = knee_positions[4]
+        else:
+          ratio = (frame_index - 4) / 4
+          start = knee_positions[4]
+          end = knee_positions[8]
+        knee_center = (
+          int(round(start[0] + ((end[0] - start[0]) * ratio))),
+          int(round(start[1] + ((end[1] - start[1]) * ratio))),
+        )
+        for point in stable_points.values():
+          cv2.rectangle(image, (point[0] - 5, point[1] - 5), (point[0] + 5, point[1] + 5), (90, 90, 90), 1)
+          cv2.line(image, (point[0] - 6, point[1]), (point[0] + 6, point[1]), (90, 90, 90), 1)
+          cv2.line(image, (point[0], point[1] - 6), (point[0], point[1] + 6), (90, 90, 90), 1)
+        cv2.circle(image, knee_center, 6, (255, 255, 255), -1)
+        cv2.circle(image, knee_center, 2, (130, 130, 130), -1)
+        writer.write(image)
+      writer.release()
+
+      setup = tracking_setup()
+      setup["reference_time_ms"] = 0
+      setup["anchors"] = {
+        "shoulder": {"x": stable_points["shoulder"][0] / width, "y": stable_points["shoulder"][1] / height},
+        "hip": {"x": stable_points["hip"][0] / width, "y": stable_points["hip"][1] / height},
+        "knee": {"x": knee_positions[0][0] / width, "y": knee_positions[0][1] / height},
+        "ankle": {"x": stable_points["ankle"][0] / width, "y": stable_points["ankle"][1] / height},
+        "barbell": {"x": stable_points["barbell"][0] / width, "y": stable_points["barbell"][1] / height},
+      }
+      result = track_manual_anchors(
+        str(video_path),
+        setup=setup,
+        pose_frames=[pose_frame(0), pose_frame(4), pose_frame(8)],
+        fps=fps,
+        width=width,
+        height=height,
+      )
+
+    knee = result["tracks"]["knee"][8]
+    self.assertNotIn("velocity_cap_reused_previous", knee)
+    self.assertGreater(knee["confidence"], 0.5)
+    self.assertGreater(knee["x"] * width, 120)
+    self.assertEqual(result["velocity_cap_counts"]["knee"], 0)
 
   def test_img0012_video_tracking_stays_near_labeled_reference_points(self) -> None:
     fixture_path = Path(__file__).resolve().parent / "fixtures" / "manual_tracking_img0012_reference.json"
