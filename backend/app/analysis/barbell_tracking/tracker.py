@@ -40,7 +40,7 @@ from .geometry import (
 from .local_tracker import _make_tracking_lock, _track_local_patch
 from .pin_tracker import build_pin_assisted_barbell_result
 from .pose import _pose_bounds, _side_wrist_points
-from .postprocess import _interpolate_missing, _remove_motion_outliers, _smooth_points
+from .postprocess import _interpolate_missing, _remove_motion_outliers, _smooth_points_with_diagnostics
 from .results import _empty_result
 from .selection import (
   _plate_rejection_reason,
@@ -1007,6 +1007,37 @@ class BarbellTracker:
     manual_visual_recovery_emitted_count = 0
     manual_visual_recovery_gap_count = 0
 
+    def choose_automatic_emit_point(
+      *,
+      final_point: tuple[float, float],
+      target_point: tuple[float, float],
+    ) -> tuple[float, float]:
+      if not accepted_points_px:
+        return target_point
+      previous = accepted_points_px[-1]
+      target_step = (
+        target_point[0] - previous[0],
+        target_point[1] - previous[1],
+      )
+      final_step = (
+        final_point[0] - previous[0],
+        final_point[1] - previous[1],
+      )
+      target_distance = math.hypot(target_step[0], target_step[1])
+      final_distance = math.hypot(final_step[0], final_step[1])
+      if final_distance + 4.0 < target_distance and target_distance > 6.0:
+        return final_point
+      if len(accepted_points_px) >= 2:
+        previous_velocity = (
+          previous[0] - accepted_points_px[-2][0],
+          previous[1] - accepted_points_px[-2][1],
+        )
+        target_dot = (target_step[0] * previous_velocity[0]) + (target_step[1] * previous_velocity[1])
+        final_dot = (final_step[0] * previous_velocity[0]) + (final_step[1] * previous_velocity[1])
+        if target_dot < -1.0 and final_dot >= -1.0:
+          return final_point
+      return target_point
+
     if debug_output_path:
       debug_writer = cv2.VideoWriter(
         debug_output_path,
@@ -1714,9 +1745,9 @@ class BarbellTracker:
             sleeve_direction = (tracking_lock["collar_direction_x"], tracking_lock["collar_direction_y"])
             collar_geometry_valid = True
             consecutive_local_failures = 0
-            emitted_bar_point = tracking_lock.get(
-              "display_target_point",
-              (selected_plate.x, selected_plate.y),
+            emitted_bar_point = choose_automatic_emit_point(
+              final_point=final_bar_point,
+              target_point=tracking_lock.get("display_target_point", final_bar_point),
             )
             point = {
               "time": timestamp,
@@ -2270,7 +2301,10 @@ class BarbellTracker:
         collar_geometry_valid = True
         collar_rejection_reason = None
         hub_result = selected_descriptor["hub_result"]
-        emitted_bar_point = selected_descriptor["target_point"]
+        emitted_bar_point = choose_automatic_emit_point(
+          final_point=final_bar_point,
+          target_point=selected_descriptor["target_point"],
+        )
 
         path_reason, path_residual, path_model = self._path_prior_rejection_reason(
           emitted_bar_point,
@@ -2693,7 +2727,11 @@ class BarbellTracker:
       result["diagnostics"]["bootstrap_diagnostics"] = self.bootstrap_diagnostics
       return result
 
-    smoothed_points = _smooth_points(points)
+    smoothed_points, smoothing_diagnostics = _smooth_points_with_diagnostics(
+      points,
+      width=width,
+      height=height,
+    )
     source_state_counts: dict[str, int] = {}
     source_switch_count = 0
     previous_source_state: str | None = None
@@ -2782,6 +2820,7 @@ class BarbellTracker:
         "manual_visual_recovery_gap_count": manual_visual_recovery_gap_count,
         "source_switch_count": source_switch_count,
         "source_state_counts": source_state_counts,
+        "smoothing": smoothing_diagnostics,
         "interpolated_point_count": interpolated_count,
         "rejected_frame_count": max(sampled_count - detected_count - interpolated_count, 0),
         "rejected_candidate_count": rejected_candidate_count,

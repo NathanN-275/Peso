@@ -332,6 +332,10 @@ def _track_local_patch(
     old_display_point[0] + motion[0],
     old_display_point[1] + motion[1],
   )
+  prediction_locked = (
+    predicted_point is not None
+    and float(stats.get("prediction_error_px") or 0.0) <= max(4.0, old_plate.radius * 0.22)
+  )
   target_kind = lock.get("target_kind", TRACKING_TARGET)
   if (
     target_kind != SLEEVE_END_TRACKING_TARGET
@@ -359,12 +363,17 @@ def _track_local_patch(
     )
     tracked_collar = (old_collar[0] + motion[0], old_collar[1] + motion[1])
     reason = _validate_collar_geometry(tracked_collar, plate=tracked_plate, sleeve_direction=sleeve_direction, previous=lock)
+    if prediction_locked and reason:
+      reason = None
+      predicted_collar = tracked_collar
     stats["fallback_used"] = reason is not None
     final_collar = predicted_collar if reason else (
       (predicted_collar[0] * 0.7) + (tracked_collar[0] * 0.3),
       (predicted_collar[1] * 0.7) + (tracked_collar[1] * 0.3),
     )
     final_reason = _validate_collar_geometry(final_collar, plate=tracked_plate, sleeve_direction=sleeve_direction, previous=lock)
+    if prediction_locked and final_reason:
+      final_reason = None
     if final_reason:
       stats["collar_rejection_reason"] = final_reason
       return None, stats

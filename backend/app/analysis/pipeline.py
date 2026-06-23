@@ -633,11 +633,15 @@ def _attach_barbell_tracking(
     pose_context_validation: dict[str, Any] = {}
     pose_context_validated = False
     if pose_context_frames:
-      pose_context_frames, pose_context_validation = validate_squat_pose_frames(
-        pose_context_frames,
-        selected_side_override=selected_side,
-      )
-      pose_context_validated = True
+      try:
+        pose_context_frames, pose_context_validation = validate_squat_pose_frames(
+          pose_context_frames,
+          selected_side_override=selected_side,
+        )
+        pose_context_validated = True
+      except Exception as validation_error:
+        pose_context_frames = estimation.get("frames") or []
+        pose_context_validation = {"error": str(validation_error), "failed_open": True}
     barbell_pose_frames, upper_back_context_count = _barbell_pose_frames_with_upper_back_context(
       pose_context_frames,
       manual_tracking=estimation.get("manual_tracking") or {},
