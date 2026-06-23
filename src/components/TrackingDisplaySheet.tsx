@@ -41,6 +41,7 @@ const SOURCE_LABELS: Record<string, string> = {
   reference: 'reference',
   pin_guided: 'pin guided',
   pin_estimated: 'pin estimated',
+  pin_visual_fallback: 'visual fallback',
   automatic: 'automatic',
   automatic_recovery: 'automatic recovery',
   stale_pin_rejected: 'stale pin rejected',

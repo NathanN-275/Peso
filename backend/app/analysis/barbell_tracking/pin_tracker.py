@@ -11,8 +11,6 @@ from .constants import (
   TRACKING_SOURCE,
   TRACKING_TARGET,
 )
-from .postprocess import _smooth_points
-
 PIN_ASSISTED_MIN_COVERAGE = max(MIN_TRACK_COVERAGE, 0.35)
 PIN_ESTIMATE_MAX_GAP_FRAMES = 2
 PIN_ESTIMATE_CONFIDENCE_CAP = 0.42
@@ -97,6 +95,19 @@ def _empty_source_counts() -> dict[str, int]:
     "automatic_fallback": 0,
     "gap": 0,
   }
+
+
+def _rounded_pin_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+  return [
+    {
+      **point,
+      "time": round(float(point["time"]), 4),
+      "x": round(float(point["x"]), 4),
+      "y": round(float(point["y"]), 4),
+      "confidence": round(float(point["confidence"]), 3),
+    }
+    for point in points
+  ]
 
 
 def _clamp_point_coordinate(value: float) -> float:
@@ -334,7 +345,7 @@ def build_pin_assisted_barbell_result(
     })
     return None, diagnostics
 
-  smoothed_points = _smooth_points(points)
+  smoothed_points = _rounded_pin_points(points)
   point_times = [float(point["time"]) for point in smoothed_points]
   source_switch_count = 0
   previous_source: str | None = None
@@ -411,10 +422,11 @@ def build_pin_assisted_barbell_result(
       "coverage": round(coverage, 3),
       "sampled_frame_count": sampled_count,
       "detected_point_count": real_point_count,
-      "manual_point_count": len(points),
+      "manual_point_count": real_point_count,
       "automatic_point_count": 0,
-      "manual_accepted_count": len(points),
+      "manual_accepted_count": real_point_count,
       "manual_blended_count": estimated_count,
+      "manual_estimated_display_count": estimated_count,
       "manual_rejected_count": source_counts.get("gap", 0),
       "manual_fallback_count": 0,
       "manual_rejection_reason_counts": {},
@@ -441,7 +453,7 @@ def build_pin_assisted_barbell_result(
       "optical_flow_inlier_count": 0,
       "template_match_score": None,
       "local_tracking_confidence": 0.0,
-      "accepted_local_tracking_count": len(points),
+      "accepted_local_tracking_count": real_point_count,
       "fresh_hough_correction_count": 0,
       "stationary_hardware_rejection_count": 0,
       "reacquisition_count": 0,
@@ -472,7 +484,7 @@ def build_pin_assisted_barbell_result(
       "coordinate_space": coordinate_space,
       "collar_candidate_count": 0,
       "collar_descriptor_score": None,
-      "tracklet_confirmation_count": len(points),
+      "tracklet_confirmation_count": real_point_count,
       "bad_candidate_rejection_counts": {},
       "path_reset_count": 0,
       "stale_prior_expiration_count": 0,
@@ -484,6 +496,8 @@ def build_pin_assisted_barbell_result(
         "guided": source_counts.get("pin_roi", 0),
         "estimated": source_counts.get("pin_estimated", 0),
       },
+      "accepted_pin_point_count": real_point_count,
+      "estimated_display_point_count": estimated_count,
       "max_point_gap_seconds": round(max_point_gap_seconds, 4),
       "effective_tracking_fps": round(effective_tracking_fps, 3),
       **diagnostics,

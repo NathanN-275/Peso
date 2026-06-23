@@ -57,8 +57,9 @@ def _build_pose_frames(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
     user_pinned = bool(
       point.get("user_pinned")
       or point.get("manual_assisted")
-      or manual_source in {"reference_pin", "pin_guided", "pin_estimated"}
+      or manual_source in {"reference_pin", "pin_guided", "pin_estimated", "pin_visual_fallback"}
     )
+    visual_fallback = point.get("visual_fallback")
     return {
       "name": name,
       "x": point["x"],
@@ -70,7 +71,26 @@ def _build_pose_frames(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
         else {}
       ),
       **({"manualSource": manual_source} if isinstance(manual_source, str) else {}),
+      **(
+        {"acceptedSource": point["accepted_source"]}
+        if isinstance(point.get("accepted_source"), str)
+        else {}
+      ),
       **({"userPinned": True} if user_pinned else {}),
+      **(
+        {
+          "visualFallback": {
+            "x": visual_fallback["point"]["x"],
+            "y": visual_fallback["point"]["y"],
+            "confidence": visual_fallback["confidence"],
+            "manualSource": visual_fallback["manual_source"],
+            "reason": visual_fallback["reason"],
+          }
+        }
+        if isinstance(visual_fallback, dict)
+        and isinstance(visual_fallback.get("point"), dict)
+        else {}
+      ),
     }
 
   return [

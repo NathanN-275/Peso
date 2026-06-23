@@ -5,6 +5,7 @@ export type TrackingBodySource =
   | 'reference'
   | 'pin_guided'
   | 'pin_estimated'
+  | 'pin_visual_fallback'
   | 'automatic'
   | 'automatic_recovery'
   | 'stale_pin_rejected'

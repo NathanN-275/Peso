@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from app.analysis.exercises.squat import SquatAnalyzer
+from app.analysis.exercises.squat import SquatAnalyzer, _build_pose_frames
 
 
 def landmark(x: float, y: float, visibility: float = 0.95) -> dict[str, float]:
@@ -46,6 +46,44 @@ def frame(
 
 
 class SquatAnalyzerTest(unittest.TestCase):
+  def test_public_pose_frames_do_not_emit_pin_metadata_for_automatic_points(self) -> None:
+    pose_frames = _build_pose_frames([frame(0)])
+
+    left_knee = next(
+      keypoint
+      for keypoint in pose_frames[0]["keypoints"]
+      if keypoint["name"] == "left_knee"
+    )
+
+    self.assertNotIn("manualSource", left_knee)
+    self.assertNotIn("userPinned", left_knee)
+    self.assertNotIn("acceptedSource", left_knee)
+    self.assertNotIn("visualFallback", left_knee)
+
+  def test_public_pose_frames_emit_visual_fallback_without_replacing_accepted_point(self) -> None:
+    source_frame = frame(0)
+    left_knee = source_frame["landmarks"]["left_knee"]
+    left_knee["accepted_source"] = "automatic"
+    left_knee["visual_fallback"] = {
+      "manual_source": "pin_visual_fallback",
+      "reason": "long_pin_track_loss",
+      "confidence": 0.24,
+      "point": {"x": 0.42, "y": 0.66},
+    }
+
+    pose_frames = _build_pose_frames([source_frame])
+    public_knee = next(
+      keypoint
+      for keypoint in pose_frames[0]["keypoints"]
+      if keypoint["name"] == "left_knee"
+    )
+
+    self.assertEqual(public_knee["x"], 0.60)
+    self.assertEqual(public_knee["y"], 0.68)
+    self.assertEqual(public_knee["acceptedSource"], "automatic")
+    self.assertEqual(public_knee["visualFallback"]["x"], 0.42)
+    self.assertEqual(public_knee["visualFallback"]["manualSource"], "pin_visual_fallback")
+
   def test_pin_selected_side_remains_authoritative_for_rep_depth(self) -> None:
     frames = [
       frame(0, left_visibility=0.55, right_visibility=0.99),

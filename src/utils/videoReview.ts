@@ -176,7 +176,23 @@ export function findInterpolatedPoseFrame(frames: VideoPoseFrame[] | undefined, 
         manualSource: previous.manualSource === next.manualSource
           ? previous.manualSource
           : previous.manualSource ?? next.manualSource,
+        acceptedSource: previous.acceptedSource === next.acceptedSource
+          ? previous.acceptedSource
+          : previous.acceptedSource ?? next.acceptedSource,
         userPinned: previous.userPinned || next.userPinned,
+        visualFallback: previous.visualFallback && next.visualFallback
+          ? {
+            x: previous.visualFallback.x + ((next.visualFallback.x - previous.visualFallback.x) * progress),
+            y: previous.visualFallback.y + ((next.visualFallback.y - previous.visualFallback.y) * progress),
+            confidence: Math.min(previous.visualFallback.confidence, next.visualFallback.confidence),
+            manualSource: previous.visualFallback.manualSource === next.visualFallback.manualSource
+              ? previous.visualFallback.manualSource
+              : previous.visualFallback.manualSource ?? next.visualFallback.manualSource,
+            reason: previous.visualFallback.reason === next.visualFallback.reason
+              ? previous.visualFallback.reason
+              : previous.visualFallback.reason ?? next.visualFallback.reason,
+          }
+          : previous.visualFallback ?? next.visualFallback,
       };
     }),
   };
@@ -256,16 +272,31 @@ export function filterSquatKeypoints(
     return [];
   }
 
-  return frame.keypoints.filter((keypoint) => {
+  return frame.keypoints.flatMap((keypoint) => {
     if (!SQUAT_LANDMARK_SET.has(keypoint.name)) {
-      return false;
+      return [];
     }
 
-    return (
-      keypoint.confidence >= confidenceThreshold
-      || keypoint.userPinned === true
-      || keypoint.manualSource === 'pin_estimated'
-    );
+    if (keypoint.confidence >= confidenceThreshold) {
+      return [keypoint];
+    }
+
+    const fallback = keypoint.visualFallback;
+    if (fallback) {
+      return [{
+        ...keypoint,
+        x: fallback.x,
+        y: fallback.y,
+        confidence: fallback.confidence,
+        trackingState: 'estimated' as const,
+        manualSource: fallback.manualSource ?? 'pin_visual_fallback',
+        userPinned: true,
+      }];
+    }
+
+    return keypoint.userPinned === true || keypoint.manualSource === 'pin_estimated'
+      ? [keypoint]
+      : [];
   });
 }
 

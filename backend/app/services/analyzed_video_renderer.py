@@ -71,16 +71,27 @@ def _overlay_keypoints(
   if not frame:
     return []
 
-  keypoints = [
-    keypoint
-    for keypoint in frame.get("keypoints") or []
-    if keypoint.get("name") in SQUAT_LANDMARKS
-    and (
-      float(keypoint.get("confidence") or 0) >= CONFIDENCE_THRESHOLD
-      or bool(keypoint.get("userPinned"))
-      or keypoint.get("manualSource") == "pin_estimated"
-    )
-  ]
+  keypoints: list[dict[str, Any]] = []
+  for keypoint in frame.get("keypoints") or []:
+    if keypoint.get("name") not in SQUAT_LANDMARKS:
+      continue
+    if float(keypoint.get("confidence") or 0) >= CONFIDENCE_THRESHOLD:
+      keypoints.append(keypoint)
+      continue
+    fallback = keypoint.get("visualFallback")
+    if isinstance(fallback, dict):
+      keypoints.append({
+        **keypoint,
+        "x": fallback.get("x", keypoint.get("x")),
+        "y": fallback.get("y", keypoint.get("y")),
+        "confidence": fallback.get("confidence", keypoint.get("confidence")),
+        "trackingState": "estimated",
+        "manualSource": fallback.get("manualSource", "pin_visual_fallback"),
+        "userPinned": True,
+      })
+      continue
+    if bool(keypoint.get("userPinned")) or keypoint.get("manualSource") == "pin_estimated":
+      keypoints.append(keypoint)
   side = selected_side if selected_side in {"left", "right"} else None
 
   if camera_view == "side" and not side:

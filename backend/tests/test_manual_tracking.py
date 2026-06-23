@@ -177,8 +177,8 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertEqual(fused[1]["landmarks"]["left_hip"]["tracking_state"], "estimated")
     self.assertEqual(fused[1]["landmarks"]["left_hip"]["manual_source"], "pin_estimated")
     self.assertTrue(fused[1]["landmarks"]["left_hip"]["user_pinned"])
-    self.assertNotEqual(fused[2]["landmarks"]["left_hip"]["x"], automatic_frame_three_hip)
-    self.assertTrue(fused[2]["landmarks"]["left_hip"]["manual_assisted"])
+    self.assertEqual(fused[2]["landmarks"]["left_hip"]["x"], automatic_frame_three_hip)
+    self.assertNotIn("manual_assisted", fused[2]["landmarks"]["left_hip"])
     self.assertTrue(fused[3]["landmarks"]["left_hip"]["manual_assisted"])
 
   def test_fusion_rejects_one_joint_drift_without_disabling_valid_joints(self) -> None:
@@ -358,7 +358,7 @@ class ManualTrackingTest(unittest.TestCase):
     knee = fused[1]["landmarks"]["left_knee"]
     self.assertEqual(knee["tracking_state"], "estimated")
     self.assertNotIn("manual_assisted", knee)
-    self.assertGreater(knee["x"], tracking_setup()["anchors"]["knee"]["x"] + 0.03)
+    self.assertAlmostEqual(knee["x"], tracking_setup()["anchors"]["knee"]["x"] + 0.03)
     self.assertEqual(diagnostics["source_counts"]["knee"]["stale_pin_rejected"], 1)
     self.assertEqual(diagnostics["source_counts"]["knee"]["pin_estimated"], 1)
 
@@ -392,7 +392,7 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertLessEqual(knee["visibility"], 0.48)
     self.assertEqual(diagnostics["source_counts"]["knee"]["pin_estimated"], 1)
 
-  def test_long_knee_dropout_keeps_low_confidence_persistent_pin(self) -> None:
+  def test_long_knee_dropout_keeps_visual_fallback_without_accepting_pin(self) -> None:
     frames = [pose_frame(index) for index in (1, 2, 3, 4)]
     tracks = {
       joint: {
@@ -416,13 +416,14 @@ class ManualTrackingTest(unittest.TestCase):
     )
 
     knee = fused[3]["landmarks"]["left_knee"]
-    self.assertEqual(knee["tracking_state"], "estimated")
-    self.assertEqual(knee["manual_source"], "pin_estimated")
-    self.assertTrue(knee["user_pinned"])
-    self.assertGreaterEqual(knee["visibility"], 0.15)
-    self.assertGreaterEqual(diagnostics["source_counts"]["knee"]["pin_estimated"], 1)
+    self.assertNotEqual(knee.get("manual_source"), "pin_estimated")
+    self.assertNotEqual(knee.get("accepted_source"), "pin_estimated")
+    self.assertEqual(knee["visual_fallback"]["manual_source"], "pin_visual_fallback")
+    self.assertTrue(knee["visual_fallback"]["user_pinned"])
+    self.assertGreaterEqual(knee["visual_fallback"]["confidence"], 0.15)
+    self.assertGreaterEqual(diagnostics["source_counts"]["knee"]["pin_visual_fallback"], 1)
 
-  def test_upper_back_long_dropout_keeps_persistent_estimated_landmark(self) -> None:
+  def test_upper_back_long_dropout_uses_automatic_proxy_instead_of_stale_pin(self) -> None:
     frames = [pose_frame(index) for index in (1, 2, 3, 4)]
     tracks = {
       joint: {
@@ -446,11 +447,11 @@ class ManualTrackingTest(unittest.TestCase):
     )
 
     upper_back = fused[3]["landmarks"]["left_upper_back"]
-    self.assertEqual(upper_back["tracking_state"], "estimated")
-    self.assertEqual(upper_back["manual_source"], "pin_estimated")
-    self.assertTrue(upper_back["user_pinned"])
-    self.assertGreaterEqual(upper_back["visibility"], 0.15)
-    self.assertEqual(diagnostics["source_counts"]["upper_back"]["pin_estimated"], 3)
+    self.assertEqual(upper_back["tracking_state"], "automatic")
+    self.assertEqual(upper_back["manual_source"], "automatic")
+    self.assertFalse(upper_back["user_pinned"])
+    self.assertEqual(upper_back["accepted_source"], "automatic")
+    self.assertEqual(diagnostics["source_counts"]["upper_back"]["automatic"], 3)
 
   def test_barbell_context_uses_upper_back_without_mutating_public_pose_frames(self) -> None:
     frame = pose_frame(1)
