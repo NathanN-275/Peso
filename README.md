@@ -1,52 +1,46 @@
-# Peso Video Analysis Backend
+# Peso
 
-FastAPI backend for Peso, a mobile-first lifting analysis app. The project analyzes uploaded workout videos, estimates pose, segments repetitions, computes technique metrics, and stores the results for the mobile client to display.
+Peso is a mobile-first lifting analysis app that turns a workout video into visual feedback, rep summaries, and technique cues.
+
+The current version focuses on side-view squat analysis. A user uploads or records a squat video, Peso processes the movement, tracks the lifter and barbell, and returns an analyzed playback view with movement overlays and coaching feedback.
+
+## Demo
+
+<p align="center">
+  <a href="assets/demo/peso-pin-assisted-bar-path.mp4">
+    <img src="assets/demo/peso-pin-assisted-bar-path.jpg" alt="Peso pin-assisted bar path demo" width="260">
+  </a>
+  &nbsp;
+  <a href="assets/demo/peso-pose-overlay.mp4">
+    <img src="assets/demo/peso-pose-overlay.jpg" alt="Peso pose overlay demo" width="260">
+  </a>
+</p>
+
+<p align="center">
+  <em>Tap a preview to watch the demo video.</em>
+</p>
 
 ## What it does
 
-- Authenticates requests with Supabase JWT bearer tokens
-- Reads and updates video records in Supabase
-- Downloads uploaded videos from Supabase Storage
-- Runs pose estimation with MediaPipe and OpenCV
-- Detects repetitions and computes squat-specific technique metrics
-- Stores analysis results back in Supabase as structured JSON
-- Supports saving or discarding uploaded videos
+Peso helps lifters review their form from a regular phone video.
 
-## Product Scope
+At a high level, the app:
 
-The original project proposal describes Peso as a computer-vision coaching tool for lifters. The intended user flow is:
+* lets a user upload or record a lifting video
+* sends the video to a backend analysis pipeline
+* tracks the lifter’s movement and bar path across the video
+* identifies squat reps and movement phases
+* generates visual overlays for playback
+* returns technique feedback and rep-level summaries
+* saves analyzed videos so the user can review progress later
 
-1. Record or upload a lifting video from the mobile app.
-2. Send the video to this backend for processing.
-3. Extract frames and run pose estimation.
-4. Segment repetitions and compute movement metrics.
-5. Return feedback, flags, and rep summaries to the client.
+The goal is to make lifting analysis easier to understand without requiring expensive motion-capture equipment or a coach standing next to the lifter every session.
 
-The current backend implementation is focused on squat analysis. Side-view squat videos receive the richest analysis. Other exercise or camera-view combinations still produce a limited result so the app can explain the constraint clearly instead of failing silently.
+## Current focus
 
-## Requirements
+Peso currently works best with side-view squat videos.
 
-- Python 3.11 or newer
-- FFmpeg with `libx264` available on `PATH`, or `FFMPEG_BINARY` pointing to the binary. The backend requires FFmpeg for analyzed exports and for the compressed saved-video playback asset.
-- Supabase project with:
-  - `SUPABASE_URL`
-  - `SUPABASE_SERVICE_ROLE_KEY`
-  - `SUPABASE_JWT_SECRET`
-- A storage bucket for uploaded videos, defaulting to `videos`
-- Video metadata stored in a `videos` table
-- Analysis output stored in an `analysis_results` table
-
-## Environment Variables
-
-The backend requires these variables:
-
-```bash
-SUPABASE_URL=
-SUPABASE_SERVICE_ROLE_KEY=
-SUPABASE_JWT_SECRET=
-```
-
-Optional variables:
+The main analysis pipeline is focused on:
 
 ```bash
 BACKEND_ENV=development
@@ -72,14 +66,95 @@ BACKEND_CORS_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhos
 BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true
 ```
 
-Pose analysis samples squat videos at `POSE_TARGET_FPS` and resizes frames so the longest side is at most `POSE_MAX_FRAME_DIMENSION` before pose inference. `POSE_BACKEND=hybrid` runs MediaPipe first and retries hard clips with RTMPose when `POSE_FALLBACK_ENABLED=true` and the `rtmlib`/`onnxruntime` dependencies are installed. `POSE_FALLBACK_MODE` accepts `performance`, `lightweight`, or `balanced`. The original and processed video dimensions are preserved in saved analysis metadata.
+For videos that do not match the current supported setup, Peso should return a clear, limited-analysis result instead of failing silently or pretending the analysis is more complete than it is.
 
 Apply `supabase/migrations/202606120001_tracking_setup.sql` to enable optional pin-assisted tracking metadata. Side-view squat uploads may store a user-selected reference frame with upper back, hip, knee, ankle, and near-side collar anchors. The upper-back anchor is stored under the existing `shoulder` key for compatibility. Invalid or unavailable anchor tracks fall back to the automatic pose and barbell pipeline.
 
 `BACKEND_CORS_ORIGINS` supports common Expo web, simulator, and local browser ports used by the mobile client. In `BACKEND_ENV=development`, the API also allows local browser origins matching `localhost`, `127.0.0.1`, `0.0.0.0`, or private LAN IPs on any port so Expo web and Expo Go can still work if they choose a different local port. Set `BACKEND_ENV=production` in deployed environments to disable that local-dev regex and rely only on explicit `BACKEND_CORS_ORIGINS`.
 `BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true` supports Chrome's local private-network preflight during development. It is ignored when `BACKEND_ENV=production`.
 
-## Installation
+I am actively improving the tracking and playback experience.
+
+Current priorities:
+
+* making pin-assisted tracking more reliable
+* keeping the upper-back marker stable across frames
+* smoothing the barbell path overlay
+* improving pose landmark consistency during squats
+* refining the coaching feedback shown after analysis
+
+
+## Tech stack
+
+### Mobile app
+
+* React Native
+* Expo
+* TypeScript
+* NativeWind / Tailwind styling
+* Supabase client
+* Expo video and media tools
+
+### Backend
+
+* Python
+* FastAPI
+* OpenCV
+* MediaPipe
+* RTMPose fallback support
+* FFmpeg
+* Supabase Auth, Database, and Storage
+
+## How the app works
+
+1. The user records or uploads a lifting video.
+2. The app stores the video through Supabase.
+3. The backend receives an analysis request.
+4. The backend downloads the video and processes it frame by frame.
+5. Pose and barbell tracking are used to estimate movement quality.
+6. Rep summaries, diagnostics, overlays, and coaching feedback are saved.
+7. The mobile app displays the analyzed result to the user.
+
+## Local development
+
+### Requirements
+
+* Node.js
+* npm
+* Python 3.11 or newer
+* FFmpeg with H.264 support
+* Supabase project
+* Expo development environment
+
+### Environment variables
+
+Create a `.env` file from `.env.example` and fill in the required Supabase values.
+
+Frontend variables include:
+
+```bash
+EXPO_PUBLIC_SUPABASE_URL=
+EXPO_PUBLIC_SUPABASE_ANON_KEY=
+EXPO_PUBLIC_BACKEND_TARGET=auto
+EXPO_PUBLIC_BACKEND_PORT=8000
+EXPO_PUBLIC_MAX_VIDEO_UPLOAD_BYTES=52428800
+```
+
+Backend variables include:
+
+```bash
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_JWT_SECRET=
+```
+
+### Install frontend dependencies
+
+```bash
+npm install
+```
+
+### Install backend dependencies
 
 ```bash
 cd backend
@@ -88,93 +163,9 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Install FFmpeg for local development:
+### Start the app locally
 
-```bash
-brew install ffmpeg
-ffmpeg -version
-```
-
-For production, install an OS FFmpeg package in the runtime image or set `FFMPEG_BINARY` to the deployed binary path. The binary must support H.264 encoding through `libx264`.
-
-## Running the API
-
-Start the server from the `backend` directory so `app.main:app` resolves correctly:
-
-```bash
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-Use `--host 0.0.0.0` for Expo Go on a physical phone. Binding FastAPI to `localhost` only makes it unreachable from another device on the same network.
-
-If you keep environment variables in a file, you can also use:
-
-```bash
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --env-file .env
-```
-
-For Expo web on the same Mac as the backend:
-
-```bash
-EXPO_PUBLIC_BACKEND_URL=http://localhost:8000
-npx expo start -c
-```
-
-For Expo Go on a physical phone, keep FastAPI bound to `0.0.0.0:8000`. If `EXPO_PUBLIC_BACKEND_URL` is accidentally set to `http://localhost:8000`, the frontend ignores that loopback value on-device and auto-detects the Expo dev server LAN IP for backend requests.
-
-From the project root, `npm start` starts both the local FastAPI backend and Expo. If a backend is already responding on `http://127.0.0.1:8000/health`, the script reuses it instead of starting another copy.
-
-```bash
-npm start
-```
-
-To run the two processes separately:
-
-```bash
-npm run start:backend
-npm run start:frontend
-```
-
-## Health Check
-
-```bash
-GET /health
-```
-
-Response:
-
-```json
-{"status":"ok"}
-```
-
-## API Endpoints
-
-All protected endpoints require:
-
-```http
-Authorization: Bearer <supabase_access_token>
-```
-
-### `POST /analyze/{video_id}`
-
-Queues a background analysis job for a video owned by the current user.
-
-The backend validates ownership with Supabase before queueing the job. The request returns immediately with `queued`, while the analysis runs asynchronously.
-
-Response:
-
-```json
-{
-  "video_id": "uuid",
-  "status": "queued"
-}
-```
-
-### `POST /videos/{video_id}/save`
-
-Marks the video as saved by updating metadata only. It does not copy or duplicate the storage object.
-
-### `POST /videos/{video_id}/discard`
+From the project root:
 
 Deletes explicit storage objects for the video and marks the row discarded.
 
@@ -230,62 +221,55 @@ backend/.venv/bin/python scripts/cleanup_supabase_storage.py --dry-run
 
 ### Saved thumbnail backfill
 
-Existing saved videos that predate `thumbnail_path` can be backfilled without copying videos or deleting originals:
+To run the frontend and backend separately:
 
 ```bash
-backend/.venv/bin/python scripts/backfill_saved_video_thumbnails.py
-backend/.venv/bin/python scripts/backfill_saved_video_thumbnails.py --confirm
-backend/.venv/bin/python scripts/backfill_saved_video_thumbnails.py --force --confirm
+npm run start:frontend
+npm run start:backend
 ```
 
-The script loads `backend/.env` automatically and is dry-run by default. With `--confirm`, it downloads only saved videos missing the current thumbnail version, writes one JPEG thumbnail to `thumbnails/`, updates the row, and logs each source and thumbnail path. Add `--force` to regenerate saved thumbnails that already have the current thumbnail path.
+For Expo Go on a physical phone, the backend must bind to `0.0.0.0` so another device on the same network can reach it.
 
-Apply `supabase/migrations/202605240001_storage_egress_cleanup.sql` before running confirmed backfill or production optimization. It adds `thumbnail_path`, `playback_path`, `original_storage_path`, saved/discard metadata, and cleanup indexes.
+## Backend API overview
 
-### `GET /videos/{video_id}/status`
+Protected routes require a Supabase bearer token.
 
-Returns the current status and basic metadata for a video.
+```http
+Authorization: Bearer <supabase_access_token>
+```
 
-### `GET /analysis/{video_id}`
+Main endpoints:
 
-Returns the latest stored analysis result for the video. If analysis has not completed yet, the API returns `404`.
+* `POST /analyze/{video_id}` — queues analysis for an uploaded video
+* `GET /videos/{video_id}/status` — checks video processing status
+* `GET /analysis/{video_id}` — returns the latest analysis result
+* `POST /videos/{video_id}/save` — saves a video for later review
+* `POST /videos/{video_id}/discard` — discards a video
+* `GET /videos/saved` — lists saved videos
+* `GET /videos/{video_id}/playback-url` — returns a signed playback URL
+* `POST /videos/cleanup-expired` — cleans up expired or unused storage objects
 
-The result payload is stored as JSON and includes rep summaries, quality diagnostics, video dimensions, and coaching feedback. For limited-analysis cases, it also includes a reason describing why full analysis was not available.
+## Project status
 
-## Analysis Behavior
+Peso is under active development.
 
-The project proposal calls out bar-path tracking, rep counting, coaching cues, and technique flags. The current implementation covers the squat portion of that scope through pose estimation and rule-based metrics.
+The current version demonstrates the core product idea: upload a lifting video, analyze the movement, and return useful visual feedback. The next major step is improving tracking reliability so the app can handle more real-world gym videos with clutter, occlusion, and imperfect camera angles.
 
-Current squat analysis includes:
+## Repository structure
 
-- Rep segmentation
-- Depth scoring
-- Torso angle tracking
-- Velocity stats during each rep
-- Quality checks for pose coverage, body visibility, and camera angle
+```text
+.
+├── assets/                 # App assets and README demo media
+├── backend/                # FastAPI video-analysis backend
+├── lib/                    # Shared frontend utilities
+├── scripts/                # Development scripts
+├── src/                    # Mobile app source code
+├── supabase/migrations/    # Database migrations
+├── App.tsx                 # App entry point
+├── package.json            # Frontend scripts and dependencies
+└── README.md
+```
 
-The current analysis pipeline is optimized for squat videos from a side view. For other exercise or camera-view combinations, the backend stores a limited result that records the constraint instead of trying to fake a full report.
+## Notes
 
-If pose detection fails completely, the result includes diagnostics explaining that no pose was detected.
-
-## Development Notes
-
-- CORS defaults to common Expo and local web development origins.
-- The backend uses Supabase service-role credentials server-side only.
-- Temporary video files are downloaded to the local filesystem during analysis and removed after processing.
-- After analysis results are saved, the backend creates one JPEG thumbnail and a 720p H.264 playback copy with long cache-control. The original upload is deleted only after the thumbnail path and playback path are written successfully.
-- If thumbnail or playback generation fails, analysis still completes and the original storage path remains available for playback.
-- The analysis pipeline is built around `PoseEstimator` and `SquatAnalyzer`, with results written back through `VideoRepository`.
-- `model_version` is stored with each analysis result so future analysis passes can coexist with older ones.
-- Run storage cleanup from the backend environment with `python -m app.jobs.storage_cleanup --dry-run`, then `python -m app.jobs.storage_cleanup` when the report looks correct. Schedule the real cleanup command daily in production.
-
-## Typical Local Flow
-
-1. Start Supabase and make sure the `videos` table and storage bucket exist.
-2. Set the required environment variables.
-3. Start this backend on port `8000`.
-4. Point the frontend at the backend URL for your platform.
-
-## Project Notes
-
-The project proposal also mentions a future technique coach bot and bar-path visualization. Those pieces are part of the product vision, but the backend in this repository currently supports the video analysis and storage pipeline that the mobile app depends on.
+Peso is a coaching and analysis tool, not a medical or professional training replacement. The app is meant to help lifters review movement patterns and better understand their own training videos.
