@@ -16,6 +16,7 @@ DISPLAY_BODY_ANCHORS = ("upper_back", *FUSED_BODY_ANCHORS)
 ALL_ANCHORS = (*BODY_ANCHORS, "barbell")
 MIN_TRACK_CONFIDENCE = 0.42
 MIN_MODEL_VISIBILITY = 0.15
+PIN_PERSISTENCE_CONFIDENCE = 0.24
 MAX_JOINT_DISPLACEMENT_PX = 15
 SOURCE_NAMES = (
   "reference",
@@ -965,7 +966,7 @@ def fuse_manual_body_tracks(
     elif source == "pin_estimated":
       tracking_state = "estimated"
       manual_source = "pin_estimated"
-      confidence = min(confidence, 0.48)
+      confidence = max(min(confidence, 0.48), PIN_PERSISTENCE_CONFIDENCE)
 
     landmarks[landmark_name] = {
       "x": float(point["x"]),
@@ -974,6 +975,7 @@ def fuse_manual_body_tracks(
       "visibility": confidence,
       "manual_assisted": source != "pin_estimated",
       "manual_source": manual_source,
+      "user_pinned": True,
       "tracking_state": tracking_state,
       "upper_back_anchor": True,
     }
@@ -1035,8 +1037,8 @@ def fuse_manual_body_tracks(
       "y": previous_knee["y"] + (sum(delta["y"] for delta in deltas) / len(deltas)),
     }
 
-  def knee_velocity_prediction(source_index: int) -> dict[str, float] | None:
-    history = manual_history["knee"]
+  def manual_velocity_prediction(joint: str, source_index: int) -> dict[str, float] | None:
+    history = manual_history[joint]
     if len(history) < 2:
       return None
     previous = history[-2]
@@ -1054,6 +1056,9 @@ def fuse_manual_body_tracks(
       "x": last["x"] + ((last["x"] - previous["x"]) * scale),
       "y": last["y"] + ((last["y"] - previous["y"]) * scale),
     }
+
+  def knee_velocity_prediction(source_index: int) -> dict[str, float] | None:
+    return manual_velocity_prediction("knee", source_index)
 
   def automatic_knee_recovery_option(
     *,
@@ -1077,6 +1082,91 @@ def fuse_manual_body_tracks(
       "prediction": prediction,
     }
 
+  def persistent_anchor_estimate(
+    joint: str,
+    source_index: int,
+    *,
+    raw_track: dict[str, Any] | None = None,
+  ) -> dict[str, float]:
+    track_is_stale = bool(
+      raw_track
+      and (
+        raw_track.get("velocity_cap_reused_previous")
+        or raw_track.get("stale_track")
+        or raw_track.get("tracking_lost")
+      )
+    )
+    if joint == "knee":
+      contextual_prediction = knee_velocity_prediction(source_index) or knee_context_prediction(source_index)
+      if contextual_prediction is not None:
+        return {
+          "x": contextual_prediction["x"],
+          "y": contextual_prediction["y"],
+          "visibility": PIN_PERSISTENCE_CONFIDENCE,
+        }
+
+    if raw_track and not track_is_stale:
+      x = raw_track.get("x")
+      y = raw_track.get("y")
+      if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+        if math.isfinite(float(x)) and math.isfinite(float(y)):
+          return {
+            "x": float(x),
+            "y": float(y),
+            "visibility": max(
+              min(float(raw_track.get("confidence") or 0.0), 0.48),
+              PIN_PERSISTENCE_CONFIDENCE,
+            ),
+          }
+
+    predicted = manual_velocity_prediction(joint, source_index) if joint in FUSED_BODY_ANCHORS else None
+    if predicted is not None:
+      return {
+        "x": predicted["x"],
+        "y": predicted["y"],
+        "visibility": PIN_PERSISTENCE_CONFIDENCE,
+      }
+
+    if previous_valid_chain is not None and joint in previous_valid_chain:
+      previous_point = previous_valid_chain[joint]
+      return {
+        "x": previous_point["x"],
+        "y": previous_point["y"],
+        "visibility": PIN_PERSISTENCE_CONFIDENCE,
+      }
+
+    anchor_key = UPPER_BACK_ANCHOR if joint == UPPER_BACK_ANCHOR else joint
+    setup_anchor = setup["anchors"][anchor_key]
+    return {
+      "x": float(setup_anchor["x"]),
+      "y": float(setup_anchor["y"]),
+      "visibility": PIN_PERSISTENCE_CONFIDENCE,
+    }
+
+  def pin_estimated_option(
+    joint: str,
+    source_index: int,
+    *,
+    raw_track: dict[str, Any] | None = None,
+    reason: str,
+  ) -> dict[str, Any]:
+    estimate = persistent_anchor_estimate(joint, source_index, raw_track=raw_track)
+    return {
+      "source": "pin_estimated",
+      "point": {"x": estimate["x"], "y": estimate["y"]},
+      "visibility": estimate["visibility"],
+      "score": 0.66,
+      "manual_weight": 0.35,
+      "track": {
+        "x": estimate["x"],
+        "y": estimate["y"],
+        "confidence": estimate["visibility"],
+      },
+      "tracking_state": "estimated",
+      "model_distance": None,
+      "rejection_reason": reason,
+    }
+
   for frame_position, frame in enumerate(fused_frames):
     source_index = int(frame.get("source_frame_index", -1))
     landmarks = frame.get("landmarks") or {}
@@ -1085,10 +1175,7 @@ def fuse_manual_body_tracks(
     upper_back_track = (tracking["tracks"].get(UPPER_BACK_ANCHOR) or {}).get(source_index)
     upper_back_point = model_upper_back
     upper_back_source = "automatic"
-    if (
-      upper_back_track
-      and float(upper_back_track.get("confidence") or 0.0) >= MIN_TRACK_CONFIDENCE
-    ):
+    if _manual_track_is_usable(upper_back_track):
       upper_back_point = {
         "x": float(upper_back_track["x"]),
         "y": float(upper_back_track["y"]),
@@ -1104,6 +1191,19 @@ def fuse_manual_body_tracks(
         landmarks,
         upper_back_point,
         source=upper_back_source,
+        raw_shoulder=raw_model_shoulder,
+      )
+    else:
+      upper_back_point = persistent_anchor_estimate(
+        UPPER_BACK_ANCHOR,
+        source_index,
+        raw_track=upper_back_track,
+      )
+      upper_back_source = "pin_estimated"
+      write_upper_back_landmark(
+        landmarks,
+        upper_back_point,
+        source="pin_estimated",
         raw_shoulder=raw_model_shoulder,
       )
 
@@ -1145,8 +1245,23 @@ def fuse_manual_body_tracks(
     for joint in FUSED_BODY_ANCHORS:
       landmark = landmarks.get(f"{selected_side}_{joint}")
       if not landmark:
-        reject(joint, "missing_pose_landmark")
-        options_by_joint[joint] = []
+        note_rejection("missing_pose_landmark")
+        estimated_option = pin_estimated_option(
+          joint,
+          source_index,
+          raw_track=raw_points.get(joint),
+          reason="missing_pose_landmark",
+        )
+        landmarks[f"{selected_side}_{joint}"] = {
+          "x": estimated_option["point"]["x"],
+          "y": estimated_option["point"]["y"],
+          "z": 0.0,
+          "visibility": estimated_option["visibility"],
+          "tracking_state": "estimated",
+          "manual_source": "pin_estimated",
+          "user_pinned": True,
+        }
+        options_by_joint[joint] = [estimated_option]
         continue
       model_visibility = float(landmark.get("visibility") or 0.0)
       model_point = {"x": float(landmark["x"]), "y": float(landmark["y"])}
@@ -1216,6 +1331,35 @@ def fuse_manual_body_tracks(
               "rejection_reason": "stale_pin_rejected",
             }
           continue
+        if track_stale:
+          note_rejection("stale_pin_rejected")
+          record_source(joint, "stale_pin_rejected")
+          options_by_joint[joint] = [
+            pin_estimated_option(
+              joint,
+              source_index,
+              raw_track=raw_track,
+              reason="stale_pin_rejected",
+            )
+          ]
+          if frame_diagnostic is not None:
+            frame_diagnostic["joints"][joint] = {
+              "source": "pin_estimated",
+              "raw_model": {
+                "x": round(model_point["x"], 4),
+                "y": round(model_point["y"], 4),
+                "visibility": round(model_visibility, 3),
+              },
+              "raw_pin": {
+                "x": round(float(raw_track["x"]), 4),
+                "y": round(float(raw_track["y"]), 4),
+                "confidence": round(float(raw_track.get("confidence") or 0.0), 3),
+                "stale": True,
+              } if raw_track else None,
+              "residual": None,
+              "rejection_reason": "stale_pin_rejected",
+            }
+          continue
         if joint == "knee" and (
           manual_has_activated[joint] or previous_manual_points.get(joint) is not None
         ):
@@ -1236,6 +1380,29 @@ def fuse_manual_body_tracks(
               },
               "raw_pin": None,
               "residual": round(float(recovery["model_distance"]), 4) if recovery is not None else None,
+              "rejection_reason": "pin_track_missing_recent",
+            }
+          continue
+        if manual_has_activated[joint] or previous_manual_points.get(joint) is not None:
+          note_rejection("pin_track_missing_recent")
+          options_by_joint[joint] = [
+            pin_estimated_option(
+              joint,
+              source_index,
+              raw_track=raw_track,
+              reason="pin_track_missing_recent",
+            )
+          ]
+          if frame_diagnostic is not None:
+            frame_diagnostic["joints"][joint] = {
+              "source": "pin_estimated",
+              "raw_model": {
+                "x": round(model_point["x"], 4),
+                "y": round(model_point["y"], 4),
+                "visibility": round(model_visibility, 3),
+              },
+              "raw_pin": None,
+              "residual": None,
               "rejection_reason": "pin_track_missing_recent",
             }
           continue
@@ -1439,12 +1606,22 @@ def fuse_manual_body_tracks(
         record_source(joint, "automatic_recovery")
         continue
 
+      if option["source"] == "pin_estimated":
+        landmark["tracking_state"] = "estimated"
+        landmark.pop("manual_assisted", None)
+        landmark["manual_source"] = "pin_estimated"
+        landmark["manual_weight"] = round(float(option["manual_weight"]), 3)
+        landmark["user_pinned"] = True
+        record_source(joint, "pin_estimated")
+        continue
+
       manual_active[joint] = True
       manual_has_activated[joint] = True
       manual_reentry_streak[joint] = 0
       landmark["manual_assisted"] = True
       landmark["manual_source"] = option["source"]
       landmark["manual_weight"] = round(float(option["manual_weight"]), 3)
+      landmark["user_pinned"] = True
       landmark["tracking_state"] = option["tracking_state"]
       if option.get("pose_divergence_accepted"):
         landmark["pose_divergence_accepted"] = True
@@ -1555,7 +1732,10 @@ def fuse_manual_body_tracks(
 
     upper_back_landmark_name = f"{selected_side}_upper_back"
     if upper_back_landmark_name not in landmarks:
-      upper_back_estimate = estimated_chain_point(UPPER_BACK_ANCHOR)
+      upper_back_estimate = (
+        estimated_chain_point(UPPER_BACK_ANCHOR)
+        or persistent_anchor_estimate(UPPER_BACK_ANCHOR, current_source_index)
+      )
       if upper_back_estimate is not None:
         write_upper_back_landmark(
           landmarks,
@@ -1569,20 +1749,38 @@ def fuse_manual_body_tracks(
     for joint in FUSED_BODY_ANCHORS:
       landmark = landmarks.get(f"{selected_side}_{joint}")
       if not landmark:
-        record_source(joint, "gap")
+        estimate = persistent_anchor_estimate(joint, current_source_index)
+        landmarks[f"{selected_side}_{joint}"] = {
+          "x": estimate["x"],
+          "y": estimate["y"],
+          "z": 0.0,
+          "visibility": estimate["visibility"],
+          "tracking_state": "estimated",
+          "manual_source": "pin_estimated",
+          "user_pinned": True,
+        }
+        record_source(joint, "pin_estimated")
         continue
       estimate = estimated_chain_point(joint)
       if estimate is None:
-        landmark["visibility"] = 0.0
+        estimate = persistent_anchor_estimate(joint, current_source_index)
+      if estimate is None:
+        landmark["visibility"] = PIN_PERSISTENCE_CONFIDENCE
         landmark["tracking_state"] = "estimated"
-        record_source(joint, "gap")
+        landmark["manual_source"] = "pin_estimated"
+        landmark["user_pinned"] = True
+        record_source(joint, "pin_estimated")
         continue
       landmark["x"] = estimate["x"]
       landmark["y"] = estimate["y"]
-      landmark["visibility"] = min(float(landmark.get("visibility") or 0.0), estimate["visibility"], 0.48)
+      landmark["visibility"] = max(
+        min(float(landmark.get("visibility") or 0.0), estimate["visibility"], 0.48),
+        PIN_PERSISTENCE_CONFIDENCE,
+      )
       landmark["tracking_state"] = "estimated"
       landmark.pop("manual_assisted", None)
       landmark["manual_source"] = "pin_estimated"
+      landmark["user_pinned"] = True
       record_source(joint, "pin_estimated")
 
   return fused_frames, {

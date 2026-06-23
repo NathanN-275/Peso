@@ -699,11 +699,11 @@ class BarbellTrackerTest(unittest.TestCase):
       if point.get("trackingState") == "estimated"
     ]
     self.assertEqual(len(estimated_points), 2)
-    self.assertTrue(all("manual_assisted" not in point for point in estimated_points))
+    self.assertTrue(all(point.get("manual_assisted") for point in estimated_points))
     self.assertEqual(result["diagnostics"]["pin_source_counts"]["pin_estimated"], 2)
     self.assertEqual(result["diagnostics"]["automatic_point_count"], 0)
 
-  def test_pin_assisted_long_missing_prior_run_remains_gap(self) -> None:
+  def test_pin_assisted_long_missing_prior_run_remains_estimated_pin_path(self) -> None:
     manual_priors = {
       index: {
         "x": (184 + index * 3) / 320,
@@ -730,9 +730,16 @@ class BarbellTrackerTest(unittest.TestCase):
     self.assertIsNotNone(result)
     assert result is not None
     self.assertTrue(result["diagnostics"]["pin_assisted_primary"])
-    self.assertEqual(result["diagnostics"]["pin_source_counts"].get("pin_estimated", 0), 0)
-    self.assertEqual(result["diagnostics"]["pin_source_counts"]["gap"], 3)
-    self.assertEqual(diagnostics["pin_source_counts"]["gap"], 3)
+    estimated_points = [
+      point
+      for point in result["barbellPath"]["points"]
+      if point.get("trackingState") == "estimated"
+    ]
+    self.assertEqual(len(estimated_points), 3)
+    self.assertTrue(all(point.get("manual_assisted") for point in estimated_points))
+    self.assertEqual(result["diagnostics"]["pin_source_counts"].get("pin_estimated", 0), 3)
+    self.assertEqual(result["diagnostics"]["pin_source_counts"]["gap"], 0)
+    self.assertEqual(diagnostics["pin_source_counts"]["gap"], 0)
 
   def test_visible_hub_rejects_coordinated_manual_prior_drift(self) -> None:
     plate_centers = [(178 + index * 2, 96 + index * 2) for index in range(10)]

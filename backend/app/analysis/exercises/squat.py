@@ -41,7 +41,7 @@ def _clean_depth_flags(rep_summaries: list[dict[str, Any]]) -> None:
     rep["flags"] = flags
 
 
-def _public_point(point: dict[str, float]) -> dict[str, float]:
+def _public_point(point: dict[str, Any]) -> dict[str, Any]:
   return {
     "x": round(point["x"], 4),
     "y": round(point["y"], 4),
@@ -52,21 +52,32 @@ def _public_point(point: dict[str, float]) -> dict[str, float]:
 
 def _build_pose_frames(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
   # Reformat backend frames into the shape the client expects.
+  def public_keypoint(name: str, point: dict[str, Any]) -> dict[str, Any]:
+    manual_source = point.get("manual_source")
+    user_pinned = bool(
+      point.get("user_pinned")
+      or point.get("manual_assisted")
+      or manual_source in {"reference_pin", "pin_guided", "pin_estimated"}
+    )
+    return {
+      "name": name,
+      "x": point["x"],
+      "y": point["y"],
+      "confidence": point["visibility"],
+      **(
+        {"trackingState": point["tracking_state"]}
+        if point.get("tracking_state") in {"reference", "guided", "automatic", "estimated"}
+        else {}
+      ),
+      **({"manualSource": manual_source} if isinstance(manual_source, str) else {}),
+      **({"userPinned": True} if user_pinned else {}),
+    }
+
   return [
     {
       "time": frame["timestamp_ms"] / 1000,
       "keypoints": [
-        {
-          "name": name,
-          "x": point["x"],
-          "y": point["y"],
-          "confidence": point["visibility"],
-          **(
-            {"trackingState": point["tracking_state"]}
-            if point.get("tracking_state") in {"reference", "guided", "automatic", "estimated"}
-            else {}
-          ),
-        }
+        public_keypoint(name, point)
         for name, point in frame["landmarks"].items()
       ],
     }

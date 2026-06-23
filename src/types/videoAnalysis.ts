@@ -141,6 +141,8 @@ export type VideoPoseKeypoint = {
   y: number;
   confidence: number;
   trackingState?: 'reference' | 'guided' | 'automatic' | 'estimated';
+  manualSource?: string;
+  userPinned?: boolean;
 };
 
 export type PoseValidationLandmark = {

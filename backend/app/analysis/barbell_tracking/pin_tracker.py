@@ -16,6 +16,7 @@ from .postprocess import _smooth_points
 PIN_ASSISTED_MIN_COVERAGE = max(MIN_TRACK_COVERAGE, 0.35)
 PIN_ESTIMATE_MAX_GAP_FRAMES = 2
 PIN_ESTIMATE_CONFIDENCE_CAP = 0.42
+PIN_PERSISTENCE_CONFIDENCE = 0.24
 PIN_PRIOR_MIN_CONFIDENCE = 0.42
 
 
@@ -36,7 +37,8 @@ def _point_from_prior(
   fps: float,
 ) -> dict[str, Any] | None:
   confidence = float(prior.get("confidence") or 0.0)
-  if confidence < PIN_PRIOR_MIN_CONFIDENCE:
+  is_reference = prior.get("tracking_state") == "reference"
+  if confidence < PIN_PRIOR_MIN_CONFIDENCE and not is_reference:
     return None
   x = prior.get("x")
   y = prior.get("y")
@@ -47,12 +49,12 @@ def _point_from_prior(
   if not (0.0 <= float(x) <= 1.0 and 0.0 <= float(y) <= 1.0):
     return None
 
-  tracking_state = "reference" if prior.get("tracking_state") == "reference" else "guided"
+  tracking_state = "reference" if is_reference else "guided"
   return {
     "time": _timestamp_for_index(source_index, fps),
     "x": float(x),
     "y": float(y),
-    "confidence": confidence,
+    "confidence": max(confidence, PIN_PERSISTENCE_CONFIDENCE) if is_reference else confidence,
     "trackingState": tracking_state,
     "manual_assisted": True,
   }
@@ -95,6 +97,111 @@ def _empty_source_counts() -> dict[str, int]:
     "automatic_fallback": 0,
     "gap": 0,
   }
+
+
+def _clamp_point_coordinate(value: float) -> float:
+  return min(max(float(value), 0.0), 1.0)
+
+
+def _neighbor_sample(
+  samples: list[dict[str, Any] | None],
+  start: int,
+  step: int,
+) -> tuple[int, dict[str, Any]] | None:
+  index = start
+  while 0 <= index < len(samples):
+    point = samples[index]
+    if point is not None:
+      return index, point
+    index += step
+  return None
+
+
+def _pin_estimated_sample(
+  samples: list[dict[str, Any] | None],
+  expected_indices: list[int],
+  sample_index: int,
+  *,
+  fps: float,
+) -> tuple[dict[str, Any] | None, str]:
+  previous = _neighbor_sample(samples, sample_index - 1, -1)
+  following = _neighbor_sample(samples, sample_index + 1, 1)
+  timestamp = _timestamp_for_index(expected_indices[sample_index], fps)
+
+  if previous is not None and following is not None:
+    previous_position, previous_point = previous
+    following_position, following_point = following
+    span = max(following_position - previous_position, 1)
+    progress = (sample_index - previous_position) / span
+    confidence = min(
+      float(previous_point.get("confidence") or 0.0),
+      float(following_point.get("confidence") or 0.0),
+      PIN_ESTIMATE_CONFIDENCE_CAP,
+    ) * 0.82
+    return {
+      "time": timestamp,
+      "x": _clamp_point_coordinate(
+        float(previous_point["x"])
+        + ((float(following_point["x"]) - float(previous_point["x"])) * progress)
+      ),
+      "y": _clamp_point_coordinate(
+        float(previous_point["y"])
+        + ((float(following_point["y"]) - float(previous_point["y"])) * progress)
+      ),
+      "confidence": max(confidence, PIN_PERSISTENCE_CONFIDENCE),
+      "trackingState": "estimated",
+      "manual_assisted": True,
+    }, "interpolated_between_pin_samples"
+
+  if previous is not None:
+    previous_position, previous_point = previous
+    earlier = _neighbor_sample(samples, previous_position - 1, -1)
+    if earlier is not None:
+      earlier_position, earlier_point = earlier
+      previous_index = expected_indices[previous_position]
+      earlier_index = expected_indices[earlier_position]
+      frame_delta = max(previous_index - earlier_index, 1)
+      horizon = expected_indices[sample_index] - previous_index
+      velocity_x = (float(previous_point["x"]) - float(earlier_point["x"])) / frame_delta
+      velocity_y = (float(previous_point["y"]) - float(earlier_point["y"])) / frame_delta
+      x = float(previous_point["x"]) + (velocity_x * horizon)
+      y = float(previous_point["y"]) + (velocity_y * horizon)
+      reason = "predicted_from_pin_velocity"
+    else:
+      x = float(previous_point["x"])
+      y = float(previous_point["y"])
+      reason = "held_last_pin_sample"
+    gap_frames = max(sample_index - previous_position, 1)
+    confidence = min(
+      float(previous_point.get("confidence") or 0.0) * (0.78 ** gap_frames),
+      PIN_ESTIMATE_CONFIDENCE_CAP,
+    )
+    return {
+      "time": timestamp,
+      "x": _clamp_point_coordinate(x),
+      "y": _clamp_point_coordinate(y),
+      "confidence": max(confidence, PIN_PERSISTENCE_CONFIDENCE),
+      "trackingState": "estimated",
+      "manual_assisted": True,
+    }, reason
+
+  if following is not None:
+    following_position, following_point = following
+    gap_frames = max(following_position - sample_index, 1)
+    confidence = min(
+      float(following_point.get("confidence") or 0.0) * (0.78 ** gap_frames),
+      PIN_ESTIMATE_CONFIDENCE_CAP,
+    )
+    return {
+      "time": timestamp,
+      "x": _clamp_point_coordinate(float(following_point["x"])),
+      "y": _clamp_point_coordinate(float(following_point["y"])),
+      "confidence": max(confidence, PIN_PERSISTENCE_CONFIDENCE),
+      "trackingState": "estimated",
+      "manual_assisted": True,
+    }, "held_next_pin_sample"
+
+  return None, "missing_pin_neighbors"
 
 
 def build_pin_assisted_barbell_result(
@@ -185,54 +292,32 @@ def build_pin_assisted_barbell_result(
     })
 
   estimated_count = 0
-  sample_index = 0
-  while sample_index < len(samples):
-    if samples[sample_index] is not None:
-      sample_index += 1
+  detected_samples = list(samples)
+  for sample_index, sample in enumerate(detected_samples):
+    if sample is not None:
+      continue
+    estimated_point, estimate_reason = _pin_estimated_sample(
+      detected_samples,
+      expected_indices,
+      sample_index,
+      fps=fps,
+    )
+    if estimated_point is None:
+      frame_diagnostics[sample_index]["rejection_reason"] = estimate_reason
       continue
 
-    gap_start = sample_index
-    while sample_index < len(samples) and samples[sample_index] is None:
-      sample_index += 1
-    gap_length = sample_index - gap_start
-    previous_point = samples[gap_start - 1] if gap_start > 0 else None
-    following_point = samples[sample_index] if sample_index < len(samples) else None
-    if (
-      previous_point is None
-      or following_point is None
-      or gap_length > PIN_ESTIMATE_MAX_GAP_FRAMES
-    ):
-      continue
-
-    for offset in range(gap_length):
-      interpolation_index = gap_start + offset
-      progress = (offset + 1) / (gap_length + 1)
-      confidence = min(
-        float(previous_point["confidence"]),
-        float(following_point["confidence"]),
-        PIN_ESTIMATE_CONFIDENCE_CAP,
-      ) * 0.82
-      estimated_point = {
-        "time": float(previous_point["time"])
-        + ((float(following_point["time"]) - float(previous_point["time"])) * progress),
-        "x": float(previous_point["x"])
-        + ((float(following_point["x"]) - float(previous_point["x"])) * progress),
-        "y": float(previous_point["y"])
-        + ((float(following_point["y"]) - float(previous_point["y"])) * progress),
-        "confidence": confidence,
-        "trackingState": "estimated",
-      }
-      samples[interpolation_index] = estimated_point
-      estimated_count += 1
-      source_counts["gap"] = max(source_counts["gap"] - 1, 0)
-      _append_source_count(source_counts, "pin_estimated")
-      frame_diagnostics[interpolation_index].update({
-        "source": "pin_estimated",
-        "predicted_x": round(float(estimated_point["x"]) * width, 2),
-        "predicted_y": round(float(estimated_point["y"]) * height, 2),
-        "confidence": round(confidence, 3),
-        "rejection_reason": None,
-      })
+    samples[sample_index] = estimated_point
+    estimated_count += 1
+    source_counts["gap"] = max(source_counts["gap"] - 1, 0)
+    _append_source_count(source_counts, "pin_estimated")
+    frame_diagnostics[sample_index].update({
+      "source": "pin_estimated",
+      "predicted_x": round(float(estimated_point["x"]) * width, 2),
+      "predicted_y": round(float(estimated_point["y"]) * height, 2),
+      "confidence": round(float(estimated_point["confidence"]), 3),
+      "rejection_reason": None,
+      "fallback_reason": estimate_reason,
+    })
 
   points = [point for point in samples if point is not None]
   sampled_count = len(expected_indices)
@@ -326,9 +411,9 @@ def build_pin_assisted_barbell_result(
       "coverage": round(coverage, 3),
       "sampled_frame_count": sampled_count,
       "detected_point_count": real_point_count,
-      "manual_point_count": real_point_count,
+      "manual_point_count": len(points),
       "automatic_point_count": 0,
-      "manual_accepted_count": real_point_count,
+      "manual_accepted_count": len(points),
       "manual_blended_count": estimated_count,
       "manual_rejected_count": source_counts.get("gap", 0),
       "manual_fallback_count": 0,
@@ -356,7 +441,7 @@ def build_pin_assisted_barbell_result(
       "optical_flow_inlier_count": 0,
       "template_match_score": None,
       "local_tracking_confidence": 0.0,
-      "accepted_local_tracking_count": real_point_count,
+      "accepted_local_tracking_count": len(points),
       "fresh_hough_correction_count": 0,
       "stationary_hardware_rejection_count": 0,
       "reacquisition_count": 0,
@@ -387,7 +472,7 @@ def build_pin_assisted_barbell_result(
       "coordinate_space": coordinate_space,
       "collar_candidate_count": 0,
       "collar_descriptor_score": None,
-      "tracklet_confirmation_count": real_point_count,
+      "tracklet_confirmation_count": len(points),
       "bad_candidate_rejection_counts": {},
       "path_reset_count": 0,
       "stale_prior_expiration_count": 0,

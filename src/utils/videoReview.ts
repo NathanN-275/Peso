@@ -168,6 +168,15 @@ export function findInterpolatedPoseFrame(frames: VideoPoseFrame[] | undefined, 
         x: previous.x + ((next.x - previous.x) * progress),
         y: previous.y + ((next.y - previous.y) * progress),
         confidence: Math.min(previous.confidence, next.confidence),
+        trackingState: previous.trackingState === next.trackingState
+          ? previous.trackingState
+          : previous.userPinned || next.userPinned
+            ? 'estimated'
+            : undefined,
+        manualSource: previous.manualSource === next.manualSource
+          ? previous.manualSource
+          : previous.manualSource ?? next.manualSource,
+        userPinned: previous.userPinned || next.userPinned,
       };
     }),
   };
@@ -247,9 +256,17 @@ export function filterSquatKeypoints(
     return [];
   }
 
-  return frame.keypoints.filter(
-    (keypoint) => SQUAT_LANDMARK_SET.has(keypoint.name) && keypoint.confidence >= confidenceThreshold
-  );
+  return frame.keypoints.filter((keypoint) => {
+    if (!SQUAT_LANDMARK_SET.has(keypoint.name)) {
+      return false;
+    }
+
+    return (
+      keypoint.confidence >= confidenceThreshold
+      || keypoint.userPinned === true
+      || keypoint.manualSource === 'pin_estimated'
+    );
+  });
 }
 
 function getAverageConfidence(keypoints: VideoPoseKeypoint[], side: 'left' | 'right') {
