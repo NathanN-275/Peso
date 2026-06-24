@@ -63,6 +63,36 @@ def _select_visible_side(keypoints: list[dict[str, Any]]) -> str:
   return "left" if _average_side_confidence(keypoints, "left") >= _average_side_confidence(keypoints, "right") else "right"
 
 
+def _visual_fallback_point(keypoint: dict[str, Any]) -> dict[str, Any] | None:
+  fallback = keypoint.get("visualFallback") or keypoint.get("visual_fallback")
+  if not isinstance(fallback, dict):
+    return None
+
+  point = fallback.get("point")
+  if isinstance(point, dict):
+    x = point.get("x")
+    y = point.get("y")
+  else:
+    x = fallback.get("x")
+    y = fallback.get("y")
+  if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+    return None
+
+  return {
+    **keypoint,
+    "x": x,
+    "y": y,
+    "confidence": fallback.get("confidence", keypoint.get("confidence")),
+    "trackingState": fallback.get("trackingState") or fallback.get("tracking_state") or "estimated",
+    "manualSource": (
+      fallback.get("manualSource")
+      or fallback.get("manual_source")
+      or "pin_visual_fallback"
+    ),
+    "userPinned": True,
+  }
+
+
 def _overlay_keypoints(
   frame: dict[str, Any] | None,
   camera_view: str | None,
@@ -75,20 +105,15 @@ def _overlay_keypoints(
   for keypoint in frame.get("keypoints") or []:
     if keypoint.get("name") not in SQUAT_LANDMARKS:
       continue
+    fallback = _visual_fallback_point(keypoint)
+    if bool(keypoint.get("preferVisualFallback")) and fallback is not None:
+      keypoints.append(fallback)
+      continue
     if float(keypoint.get("confidence") or 0) >= CONFIDENCE_THRESHOLD:
       keypoints.append(keypoint)
       continue
-    fallback = keypoint.get("visualFallback")
-    if isinstance(fallback, dict):
-      keypoints.append({
-        **keypoint,
-        "x": fallback.get("x", keypoint.get("x")),
-        "y": fallback.get("y", keypoint.get("y")),
-        "confidence": fallback.get("confidence", keypoint.get("confidence")),
-        "trackingState": "estimated",
-        "manualSource": fallback.get("manualSource", "pin_visual_fallback"),
-        "userPinned": True,
-      })
+    if fallback is not None:
+      keypoints.append(fallback)
       continue
     if bool(keypoint.get("userPinned")) or keypoint.get("manualSource") == "pin_estimated":
       keypoints.append(keypoint)

@@ -180,6 +180,7 @@ export function findInterpolatedPoseFrame(frames: VideoPoseFrame[] | undefined, 
           ? previous.acceptedSource
           : previous.acceptedSource ?? next.acceptedSource,
         userPinned: previous.userPinned || next.userPinned,
+        preferVisualFallback: previous.preferVisualFallback || next.preferVisualFallback,
         visualFallback: previous.visualFallback && next.visualFallback
           ? {
             x: previous.visualFallback.x + ((next.visualFallback.x - previous.visualFallback.x) * progress),
@@ -277,11 +278,23 @@ export function filterSquatKeypoints(
       return [];
     }
 
+    const fallback = keypoint.visualFallback;
+    if (keypoint.preferVisualFallback && fallback) {
+      return [{
+        ...keypoint,
+        x: fallback.x,
+        y: fallback.y,
+        confidence: fallback.confidence,
+        trackingState: 'estimated' as const,
+        manualSource: fallback.manualSource ?? 'pin_visual_fallback',
+        userPinned: true,
+      }];
+    }
+
     if (keypoint.confidence >= confidenceThreshold) {
       return [keypoint];
     }
 
-    const fallback = keypoint.visualFallback;
     if (fallback) {
       return [{
         ...keypoint,

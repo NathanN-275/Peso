@@ -639,27 +639,25 @@ class BarbellTrackerTest(unittest.TestCase):
         pose_frame(index, x=(center[0] - 42) / 320, y=center[1] / 240)
         for index, center in enumerate(plate_centers)
       ]
-      with patch.object(
-        BarbellTracker,
-        "_visible_hub_for_manual_proposal",
-        side_effect=AssertionError("pin-assisted primary path should not use visual replacement"),
-      ):
-        result = BarbellTracker().track(
-          str(path),
-          pose_frames=pose_frames,
-          frame_step=1,
-          processed_width=320,
-          processed_height=240,
-          selected_side="left",
-          manual_barbell_priors=manual_priors,
-        )
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+        selected_side="left",
+        manual_barbell_priors=manual_priors,
+      )
 
     self.assertTrue(result["barbellPath"]["available"])
     diagnostics = result["diagnostics"]
-    self.assertTrue(diagnostics["pin_assisted_primary"])
-    self.assertEqual(diagnostics["tracking_mode"], "pin_assisted_roi")
+    pin_bootstrap = diagnostics["bootstrap_diagnostics"]["pin_assisted"]
+    self.assertFalse(pin_bootstrap["pin_assisted_primary"])
+    self.assertEqual(pin_bootstrap["pin_assisted_fallback_reason"], "delegated_to_robust_tracker")
+    self.assertEqual(diagnostics["tracking_mode"], "manual_collar")
     self.assertEqual(diagnostics["automatic_point_count"], 0)
-    self.assertEqual(diagnostics["selected_candidate_type"], "manual_pin_roi")
+    self.assertEqual(diagnostics["selected_candidate_type"], "plate")
+    self.assertEqual(diagnostics["manual_prior_index_matching"]["exact_match_count"], len(expected_pin_points))
     points = result["barbellPath"]["points"]
     self.assertEqual(len(points), len(expected_pin_points))
     self.assertAlmostEqual(points[0]["x"] * 320, expected_pin_points[0][0], delta=0.01)
@@ -699,9 +697,86 @@ class BarbellTrackerTest(unittest.TestCase):
       if point.get("trackingState") == "estimated"
     ]
     self.assertEqual(len(estimated_points), 2)
-    self.assertTrue(all(point.get("manual_assisted") for point in estimated_points))
-    self.assertEqual(result["diagnostics"]["pin_source_counts"]["pin_estimated"], 2)
     self.assertEqual(result["diagnostics"]["automatic_point_count"], 0)
+    self.assertEqual(result["diagnostics"]["manual_point_count"], 6)
+    pin_bootstrap = result["diagnostics"]["bootstrap_diagnostics"]["pin_assisted"]
+    self.assertEqual(pin_bootstrap["pin_source_counts"]["pin_estimated"], 2)
+    self.assertEqual(result["diagnostics"]["manual_prior_index_matching"]["nearest_miss_count"], 2)
+    self.assertEqual(result["diagnostics"]["barbell_lane_fusion"]["source_counts"]["manual_pin_blend"], 6)
+
+  def test_pin_lane_continues_through_visual_validation_failures(self) -> None:
+    frame_count = 8
+    centers = [(184 + index * 3, 92 + index * 2) for index in range(frame_count)]
+    manual_priors = {
+      index: {
+        "x": center[0] / 320,
+        "y": center[1] / 240,
+        "confidence": 0.95,
+        "tracking_state": "reference" if index == 0 else "guided",
+      }
+      for index, center in enumerate(centers)
+    }
+
+    def mismatched_descriptor(*args, **kwargs) -> dict[str, object]:
+      manual_point = kwargs["manual_point"]
+      offset = 80.0 if manual_point[0] < centers[1][0] else -80.0
+      plate = Candidate(
+        x=manual_point[0] + offset,
+        y=manual_point[1] + 70.0,
+        radius=24.0,
+        confidence=0.92,
+      )
+      return {
+        "guided_target_point": (manual_point[0] + offset, manual_point[1] + 70.0),
+        "target_point": (manual_point[0] + offset, manual_point[1] + 70.0),
+        "plate": plate,
+        "sleeve_direction": (1.0, 0.0),
+        "predicted_collar": (manual_point[0] + offset, manual_point[1] + 70.0),
+        "refined_collar": (manual_point[0] + offset, manual_point[1] + 70.0),
+        "final_bar_point": (manual_point[0] + offset, manual_point[1] + 70.0),
+        "final_bar_confidence": 0.2,
+        "final_bar_reason": "forced_visual_failure",
+        "final_bar_source": "forced_visual_failure",
+        "fallback_used": False,
+        "hub_safe": False,
+        "collar_geometry_valid": False,
+        "collar_descriptor_score": 0.1,
+      }
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "manual-lane-visual-failure.mp4"
+      write_video(path, centers, fps=6.0)
+      pose_frames = [
+        pose_frame(index, x=(center[0] - 60) / 320, y=center[1] / 240)
+        for index, center in enumerate(centers)
+      ]
+      with patch.object(
+        BarbellTracker,
+        "_visible_hub_for_manual_proposal",
+        side_effect=mismatched_descriptor,
+      ):
+        result = BarbellTracker().track(
+          str(path),
+          pose_frames=pose_frames,
+          frame_step=1,
+          processed_width=320,
+          processed_height=240,
+          manual_barbell_priors=manual_priors,
+        )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    self.assertEqual(len(result["barbellPath"]["points"]), frame_count)
+    self.assertGreaterEqual(result["diagnostics"]["manual_visual_recovery_gap_count"], 1)
+    lane_fusion = result["diagnostics"]["barbell_lane_fusion"]
+    self.assertTrue(lane_fusion["enabled"])
+    self.assertEqual(
+      lane_fusion["source_counts"]["manual_pin_blend"]
+      + lane_fusion["source_counts"]["manual_pin_lane"],
+      frame_count,
+    )
+    for point, expected in zip(result["barbellPath"]["points"], centers):
+      self.assertAlmostEqual(float(point["x"]) * 320, expected[0], delta=3.0)
+      self.assertAlmostEqual(float(point["y"]) * 240, expected[1], delta=3.0)
 
   def test_pin_assisted_long_missing_prior_run_remains_estimated_pin_path(self) -> None:
     manual_priors = {

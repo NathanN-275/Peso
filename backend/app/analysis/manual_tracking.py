@@ -9,11 +9,13 @@ from typing import Any
 
 
 TRACKING_SETUP_VERSION = 1
-BODY_ANCHORS = ("shoulder", "hip", "knee", "ankle")
-UPPER_BACK_ANCHOR = "shoulder"
+LEGACY_UPPER_BACK_ANCHOR = "shoulder"
+UPPER_BACK_ANCHOR = "upper_back"
+USER_BODY_ANCHORS = (UPPER_BACK_ANCHOR, "hip", "knee", "ankle")
+BODY_ANCHORS = (LEGACY_UPPER_BACK_ANCHOR, "hip", "knee", "ankle")
 FUSED_BODY_ANCHORS = ("hip", "knee", "ankle")
 DISPLAY_BODY_ANCHORS = ("upper_back", *FUSED_BODY_ANCHORS)
-ALL_ANCHORS = (*BODY_ANCHORS, "barbell")
+ALL_ANCHORS = (*USER_BODY_ANCHORS, "barbell")
 MIN_TRACK_CONFIDENCE = 0.42
 MIN_MODEL_VISIBILITY = 0.15
 PIN_PERSISTENCE_CONFIDENCE = 0.24
@@ -29,19 +31,50 @@ SOURCE_NAMES = (
   "gap",
 )
 JOINT_DISPLACEMENT_RATIOS = {
-  "shoulder": 0.042,
+  UPPER_BACK_ANCHOR: 0.042,
+  LEGACY_UPPER_BACK_ANCHOR: 0.042,
   "hip": 0.036,
   "knee": 0.052,
   "ankle": 0.044,
 }
 JOINT_DISPLACEMENT_FLOORS_PX = {
-  "shoulder": 24.0,
+  UPPER_BACK_ANCHOR: 24.0,
+  LEGACY_UPPER_BACK_ANCHOR: 24.0,
   "hip": 22.0,
   "knee": 32.0,
   "ankle": 28.0,
 }
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_anchor_map(anchors: dict[str, Any]) -> dict[str, Any]:
+  normalized = dict(anchors)
+  if UPPER_BACK_ANCHOR not in normalized and LEGACY_UPPER_BACK_ANCHOR in normalized:
+    normalized[UPPER_BACK_ANCHOR] = normalized[LEGACY_UPPER_BACK_ANCHOR]
+  return normalized
+
+
+def _normalized_tracking_setup(setup: dict[str, Any]) -> dict[str, Any]:
+  anchors = setup.get("anchors")
+  if not isinstance(anchors, dict):
+    return setup
+  normalized_anchors = _normalize_anchor_map(anchors)
+  return {**setup, "anchors": normalized_anchors}
+
+
+def _anchor_track(
+  tracking: dict[str, Any],
+  name: str,
+) -> dict[int, dict[str, Any]]:
+  tracks = tracking.get("tracks") or {}
+  if name == UPPER_BACK_ANCHOR:
+    return (
+      tracks.get(UPPER_BACK_ANCHOR)
+      or tracks.get(LEGACY_UPPER_BACK_ANCHOR)
+      or {}
+    )
+  return tracks.get(name) or {}
 
 
 def validate_tracking_setup(value: Any, *, duration_ms: int | None = None) -> tuple[dict[str, Any] | None, str | None]:
@@ -64,6 +97,7 @@ def validate_tracking_setup(value: Any, *, duration_ms: int | None = None) -> tu
   if not isinstance(anchors, dict):
     return None, "missing_tracking_anchors"
 
+  anchors = _normalize_anchor_map(anchors)
   normalized_anchors: dict[str, dict[str, float]] = {}
   for name in ALL_ANCHORS:
     point = anchors.get(name)
@@ -77,11 +111,11 @@ def validate_tracking_setup(value: Any, *, duration_ms: int | None = None) -> tu
       return None, f"invalid_{name}_anchor"
     normalized_anchors[name] = {"x": float(x), "y": float(y)}
 
-  shoulder = normalized_anchors["shoulder"]
+  upper_back = normalized_anchors[UPPER_BACK_ANCHOR]
   hip = normalized_anchors["hip"]
   knee = normalized_anchors["knee"]
   ankle = normalized_anchors["ankle"]
-  if not (shoulder["y"] < hip["y"] < ankle["y"]):
+  if not (upper_back["y"] < hip["y"] < ankle["y"]):
     return None, "invalid_body_anchor_order"
   if knee["y"] <= hip["y"] - 0.04 or knee["y"] >= ankle["y"] + 0.04:
     return None, "invalid_knee_anchor_order"
@@ -96,6 +130,25 @@ def validate_tracking_setup(value: Any, *, duration_ms: int | None = None) -> tu
 
 def _point_distance(first: dict[str, float], second: dict[str, float]) -> float:
   return math.hypot(first["x"] - second["x"], first["y"] - second["y"])
+
+
+def is_body_point_inside_barbell_occluder(
+  point: dict[str, float],
+  barbell_diagnostics: dict[str, float] | None,
+  margin_px: float = 0.0,
+) -> bool:
+  if not barbell_diagnostics:
+    return False
+  center_x = barbell_diagnostics.get("x")
+  center_y = barbell_diagnostics.get("y")
+  radius = barbell_diagnostics.get("radius")
+  scale = float(barbell_diagnostics.get("scale") or 1.0)
+  if not all(isinstance(value, (int, float)) for value in (center_x, center_y, radius)):
+    return False
+  effective_margin = float(margin_px) / max(scale, 1.0)
+  return math.hypot(float(point["x"]) - float(center_x), float(point["y"]) - float(center_y)) <= (
+    float(radius) + effective_margin
+  )
 
 
 def _landmark_point(
@@ -129,11 +182,12 @@ def _upper_back_proxy(
 
 
 def select_manual_tracking_side(reference_frame: dict[str, Any], anchors: dict[str, dict[str, float]]) -> str:
+  anchors = _normalize_anchor_map(anchors)
   landmarks = reference_frame.get("landmarks") or {}
   scores: dict[str, float] = {}
   for side in ("left", "right"):
     score = 0.0
-    for joint in BODY_ANCHORS:
+    for joint in USER_BODY_ANCHORS:
       model_point = (
         _upper_back_proxy(landmarks, side)
         if joint == UPPER_BACK_ANCHOR
@@ -308,7 +362,7 @@ def _template_settings(
       "search_radius_ratio": 0.070,
       "min_score": 0.50,
     }
-  if joint_name == "shoulder":
+  if joint_name in {UPPER_BACK_ANCHOR, LEGACY_UPPER_BACK_ANCHOR}:
     return {
       "patch_radius_ratio": 0.018,
       "search_radius_ratio": 0.062,
@@ -751,6 +805,8 @@ def track_manual_anchors(
 ) -> dict[str, Any]:
   import cv2
 
+  setup = _normalized_tracking_setup(setup)
+
   source_indices = sorted({int(frame["source_frame_index"]) for frame in pose_frames})
   if not source_indices or width <= 0 or height <= 0:
     return {
@@ -758,7 +814,7 @@ def track_manual_anchors(
       "reference_source_index": None,
       "coverage": {name: 0.0 for name in ALL_ANCHORS},
       "velocity_cap_count": 0,
-      "velocity_cap_counts": {name: 0 for name in BODY_ANCHORS},
+      "velocity_cap_counts": {name: 0 for name in USER_BODY_ANCHORS},
     }
 
   reference_index = select_reference_source_index(
@@ -772,7 +828,7 @@ def track_manual_anchors(
       "reference_source_index": None,
       "coverage": {name: 0.0 for name in ALL_ANCHORS},
       "velocity_cap_count": 0,
-      "velocity_cap_counts": {name: 0 for name in BODY_ANCHORS},
+      "velocity_cap_counts": {name: 0 for name in USER_BODY_ANCHORS},
     }
   gray_frames = _read_sampled_gray_frames(
     file_path,
@@ -787,13 +843,13 @@ def track_manual_anchors(
       "reference_source_index": reference_index,
       "coverage": {name: 0.0 for name in ALL_ANCHORS},
       "velocity_cap_count": 0,
-      "velocity_cap_counts": {name: 0 for name in BODY_ANCHORS},
+      "velocity_cap_counts": {name: 0 for name in USER_BODY_ANCHORS},
     }
 
   reference_position = available_indices.index(reference_index)
   tracks: dict[str, dict[int, dict[str, float]]] = {}
-  velocity_cap_counts = {name: 0 for name in BODY_ANCHORS}
-  stale_track_counts = {name: 0 for name in BODY_ANCHORS}
+  velocity_cap_counts = {name: 0 for name in USER_BODY_ANCHORS}
+  stale_track_counts = {name: 0 for name in USER_BODY_ANCHORS}
   for name in ALL_ANCHORS:
     anchor = setup["anchors"][name]
     initial_point = (anchor["x"] * width, anchor["y"] * height)
@@ -837,6 +893,11 @@ def track_manual_anchors(
       reference_index=reference_index,
     )
 
+  if UPPER_BACK_ANCHOR in tracks:
+    tracks[LEGACY_UPPER_BACK_ANCHOR] = tracks[UPPER_BACK_ANCHOR]
+    velocity_cap_counts[LEGACY_UPPER_BACK_ANCHOR] = velocity_cap_counts.get(UPPER_BACK_ANCHOR, 0)
+    stale_track_counts[LEGACY_UPPER_BACK_ANCHOR] = stale_track_counts.get(UPPER_BACK_ANCHOR, 0)
+
   coverage = {
     name: round(
       sum(1 for point in anchor_tracks.values() if _manual_track_is_usable(point)) / max(len(available_indices), 1),
@@ -861,6 +922,7 @@ def fuse_manual_body_tracks(
   setup: dict[str, Any],
   tracking: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+  setup = _normalized_tracking_setup(setup)
   base_diagnostics = {
     "upper_back_anchor_key": UPPER_BACK_ANCHOR,
     "upper_back_anchor_semantics": "upper_back_anchor",
@@ -868,6 +930,7 @@ def fuse_manual_body_tracks(
     "upper_back_anchor_used_count": 0,
     "pin_owned_landmark_count": 0,
     "model_divergence_accepted_count": 0,
+    "body_barbell_occluder_rejection_count": 0,
     "body_pin_frames": [],
     "source_counts": {
       name: {source: 0 for source in SOURCE_NAMES}
@@ -903,6 +966,7 @@ def fuse_manual_body_tracks(
   rejected_count = 0
   upper_back_anchor_used_count = 0
   model_divergence_accepted_count = 0
+  body_barbell_occluder_rejection_count = 0
   rejection_reasons: dict[str, int] = {}
   source_counts = {
     name: {source: 0 for source in SOURCE_NAMES}
@@ -917,11 +981,15 @@ def fuse_manual_body_tracks(
   valid_chains: dict[int, dict[str, dict[str, float]]] = {}
   unresolved_frame_positions: list[int] = []
   frame_diagnostics: list[dict[str, Any]] = []
-  torso_scale = max(_point_distance(setup["anchors"]["shoulder"], setup["anchors"]["hip"]), 0.08)
+  torso_scale = max(_point_distance(setup["anchors"][UPPER_BACK_ANCHOR], setup["anchors"]["hip"]), 0.08)
   reference_lengths = {
-    "torso": _point_distance(setup["anchors"]["shoulder"], setup["anchors"]["hip"]),
+    "torso": _point_distance(setup["anchors"][UPPER_BACK_ANCHOR], setup["anchors"]["hip"]),
     "thigh": _point_distance(setup["anchors"]["hip"], setup["anchors"]["knee"]),
     "shin": _point_distance(setup["anchors"]["knee"], setup["anchors"]["ankle"]),
+  }
+  reference_torso_vector = {
+    "x": setup["anchors"][UPPER_BACK_ANCHOR]["x"] - setup["anchors"]["hip"]["x"],
+    "y": setup["anchors"][UPPER_BACK_ANCHOR]["y"] - setup["anchors"]["hip"]["y"],
   }
 
   def reject(joint: str, reason: str) -> None:
@@ -937,6 +1005,41 @@ def fuse_manual_body_tracks(
     rejected_count += 1
     fallback_count += 1
     rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
+
+  def barbell_occluder_for_frame(source_index: int) -> dict[str, float] | None:
+    barbell_track = _anchor_track(tracking, "barbell").get(source_index)
+    if not barbell_track:
+      return None
+    x = barbell_track.get("x")
+    y = barbell_track.get("y")
+    if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+      return None
+    if not math.isfinite(float(x)) or not math.isfinite(float(y)):
+      return None
+    return {
+      "x": float(x),
+      "y": float(y),
+      "radius": max(0.075, torso_scale * 0.68),
+      "scale": 1.0,
+    }
+
+  def point_in_barbell_occluder(
+    joint: str,
+    point: dict[str, float],
+    source_index: int,
+  ) -> bool:
+    if joint not in {UPPER_BACK_ANCHOR, "hip"}:
+      return False
+    return is_body_point_inside_barbell_occluder(
+      point,
+      barbell_occluder_for_frame(source_index),
+      margin_px=0.0,
+    )
+
+  def note_barbell_occluder_rejection(joint: str) -> None:
+    nonlocal body_barbell_occluder_rejection_count
+    body_barbell_occluder_rejection_count += 1
+    note_rejection(f"{joint}_plate_latch_or_occlusion")
 
   def record_source(joint: str, source: str) -> None:
     if joint not in source_counts:
@@ -1000,13 +1103,13 @@ def fuse_manual_body_tracks(
 
   def chain_lengths(chain: dict[str, dict[str, float]]) -> dict[str, float]:
     return {
-      "torso": _point_distance(chain["shoulder"], chain["hip"]),
+      "torso": _point_distance(chain[UPPER_BACK_ANCHOR], chain["hip"]),
       "thigh": _point_distance(chain["hip"], chain["knee"]),
       "shin": _point_distance(chain["knee"], chain["ankle"]),
     }
 
   def chain_is_valid(chain: dict[str, dict[str, float]]) -> bool:
-    if chain["hip"]["y"] < chain["shoulder"]["y"] - 0.10:
+    if chain["hip"]["y"] < chain[UPPER_BACK_ANCHOR]["y"] - 0.10:
       return False
     if chain["ankle"]["y"] < chain["knee"]["y"] + 0.01:
       return False
@@ -1121,6 +1224,14 @@ def fuse_manual_body_tracks(
           "y": contextual_prediction["y"],
           "visibility": PIN_PERSISTENCE_CONFIDENCE,
         }
+    if joint == UPPER_BACK_ANCHOR:
+      hip_track = _anchor_track(tracking, "hip").get(source_index)
+      if _manual_track_is_usable(hip_track):
+        return {
+          "x": float(hip_track["x"]) + reference_torso_vector["x"],
+          "y": float(hip_track["y"]) + reference_torso_vector["y"],
+          "visibility": PIN_PERSISTENCE_CONFIDENCE,
+        }
 
     if raw_track and not track_is_stale:
       x = raw_track.get("x")
@@ -1169,6 +1280,7 @@ def fuse_manual_body_tracks(
     reason: str,
   ) -> dict[str, float]:
     estimate = persistent_anchor_estimate(joint, source_index, raw_track=raw_track)
+    landmark["prefer_visual_fallback"] = True
     landmark["visual_fallback"] = {
       "source": "pin_visual_fallback",
       "reason": reason,
@@ -1188,14 +1300,36 @@ def fuse_manual_body_tracks(
     landmarks = frame.get("landmarks") or {}
     model_upper_back = _upper_back_proxy(landmarks, selected_side)
     raw_model_shoulder = _landmark_point(landmarks, selected_side, "shoulder")
-    upper_back_track = (tracking["tracks"].get(UPPER_BACK_ANCHOR) or {}).get(source_index)
+    upper_back_track = _anchor_track(tracking, UPPER_BACK_ANCHOR).get(source_index)
     upper_back_point = model_upper_back
     upper_back_source = "automatic"
-    if _manual_track_is_usable(upper_back_track):
-      upper_back_point = {
+    upper_back_track_point = (
+      {
         "x": float(upper_back_track["x"]),
         "y": float(upper_back_track["y"]),
         "visibility": min(float(upper_back_track.get("confidence") or 0.0), 0.92),
+      }
+      if _manual_track_is_usable(upper_back_track)
+      else None
+    )
+    upper_back_reference_frame = (
+      reference_source_index is not None
+      and source_index == int(reference_source_index)
+    )
+    upper_back_raw_track_for_fallback = upper_back_track
+    if (
+      upper_back_track_point is not None
+      and not upper_back_reference_frame
+      and point_in_barbell_occluder(UPPER_BACK_ANCHOR, upper_back_track_point, source_index)
+    ):
+      note_barbell_occluder_rejection("upper_back")
+      upper_back_track_point = None
+      upper_back_raw_track_for_fallback = None
+    if upper_back_track_point is not None:
+      upper_back_point = {
+        "x": upper_back_track_point["x"],
+        "y": upper_back_track_point["y"],
+        "visibility": upper_back_track_point["visibility"],
       }
       upper_back_source = (
         "reference"
@@ -1210,19 +1344,44 @@ def fuse_manual_body_tracks(
         raw_shoulder=raw_model_shoulder,
       )
     elif model_upper_back is not None:
-      upper_back_point = model_upper_back
-      upper_back_source = "automatic"
-      write_upper_back_landmark(
-        landmarks,
-        upper_back_point,
-        source="automatic",
-        raw_shoulder=raw_model_shoulder,
+      fallback_estimate = persistent_anchor_estimate(
+        UPPER_BACK_ANCHOR,
+        source_index,
+        raw_track=upper_back_raw_track_for_fallback,
       )
+      model_residual = _point_distance(model_upper_back, fallback_estimate)
+      upper_back_inside_occluder = point_in_barbell_occluder(
+        UPPER_BACK_ANCHOR,
+        model_upper_back,
+        source_index,
+      )
+      if upper_back_inside_occluder or model_residual > max(0.16, torso_scale * 1.15):
+        if upper_back_inside_occluder:
+          note_barbell_occluder_rejection("upper_back")
+        else:
+          note_rejection("upper_back_outside_dynamic_envelope")
+        upper_back_point = fallback_estimate
+        upper_back_source = "pin_visual_fallback"
+        write_upper_back_landmark(
+          landmarks,
+          upper_back_point,
+          source="pin_visual_fallback",
+          raw_shoulder=raw_model_shoulder,
+        )
+      else:
+        upper_back_point = model_upper_back
+        upper_back_source = "automatic"
+        write_upper_back_landmark(
+          landmarks,
+          upper_back_point,
+          source="automatic",
+          raw_shoulder=raw_model_shoulder,
+        )
     else:
       upper_back_point = persistent_anchor_estimate(
         UPPER_BACK_ANCHOR,
         source_index,
-        raw_track=upper_back_track,
+        raw_track=upper_back_raw_track_for_fallback,
       )
       upper_back_source = "pin_visual_fallback"
       write_upper_back_landmark(
@@ -1284,6 +1443,7 @@ def fuse_manual_body_tracks(
           "tracking_state": "estimated",
           "manual_source": "pin_visual_fallback",
           "user_pinned": True,
+          "prefer_visual_fallback": True,
           "accepted_source": "gap",
           "visual_fallback": {
             "source": "pin_visual_fallback",
@@ -1299,14 +1459,27 @@ def fuse_manual_body_tracks(
         continue
       model_visibility = float(landmark.get("visibility") or 0.0)
       model_point = {"x": float(landmark["x"]), "y": float(landmark["y"])}
-      options_by_joint[joint] = [
-        {
-          "source": "automatic",
-          "point": model_point,
-          "visibility": model_visibility,
-          "score": 0.25 + (model_visibility * 0.35),
-        }
-      ]
+      model_inside_occluder = point_in_barbell_occluder(joint, model_point, source_index)
+      if model_inside_occluder:
+        note_barbell_occluder_rejection(joint)
+        attach_visual_fallback(
+          landmark,
+          joint,
+          source_index,
+          raw_track=raw_points.get(joint),
+          reason="plate_latch_or_occlusion",
+        )
+        record_source(joint, "pin_visual_fallback")
+        options_by_joint[joint] = []
+      else:
+        options_by_joint[joint] = [
+          {
+            "source": "automatic",
+            "point": model_point,
+            "visibility": model_visibility,
+            "score": 0.25 + (model_visibility * 0.35),
+          }
+        ]
       raw_track = raw_points.get(joint)
       track = available_points.get(joint)
       if not track:
@@ -1488,6 +1661,43 @@ def fuse_manual_body_tracks(
             },
             "residual": round(_point_distance(track, model_point), 4),
             "rejection_reason": "manual_reentry_wait",
+          }
+        continue
+      track_point = {
+        "x": float(track["x"]),
+        "y": float(track["y"]),
+      }
+      if (
+        not force_reference_anchor
+        and point_in_barbell_occluder(joint, track_point, source_index)
+      ):
+        note_barbell_occluder_rejection(joint)
+        manual_active[joint] = False
+        manual_reentry_streak[joint] = 0
+        attach_visual_fallback(
+          landmark,
+          joint,
+          source_index,
+          raw_track=None,
+          reason="plate_latch_or_occlusion",
+        )
+        record_source(joint, "pin_visual_fallback")
+        if frame_diagnostic is not None:
+          frame_diagnostic["joints"][joint] = {
+            "source": "pin_visual_fallback",
+            "raw_model": {
+              "x": round(model_point["x"], 4),
+              "y": round(model_point["y"], 4),
+              "visibility": round(model_visibility, 3),
+            },
+            "raw_pin": {
+              "x": round(track_point["x"], 4),
+              "y": round(track_point["y"], 4),
+              "confidence": round(float(track.get("confidence") or 0.0), 3),
+            },
+            "residual": None,
+            "rejection_reason": "plate_latch_or_occlusion",
+            "inside_barbell_occluder": True,
           }
         continue
       model_distance = _point_distance(track, model_point)
@@ -1816,6 +2026,7 @@ def fuse_manual_body_tracks(
           "tracking_state": "estimated",
           "manual_source": "pin_visual_fallback",
           "user_pinned": True,
+          "prefer_visual_fallback": True,
           "accepted_source": "gap",
           "visual_fallback": {
             "source": "pin_visual_fallback",
@@ -1831,13 +2042,14 @@ def fuse_manual_body_tracks(
         continue
       estimate = estimated_chain_point(joint)
       if estimate is None:
-        attach_visual_fallback(
-          landmark,
-          joint,
-          current_source_index,
-          raw_track=(tracking["tracks"].get(joint) or {}).get(current_source_index),
-          reason="long_pin_track_loss",
-        )
+        if not isinstance(landmark.get("visual_fallback"), dict):
+          attach_visual_fallback(
+            landmark,
+            joint,
+            current_source_index,
+            raw_track=(tracking["tracks"].get(joint) or {}).get(current_source_index),
+            reason="long_pin_track_loss",
+          )
         record_source(joint, "pin_visual_fallback")
         continue
       landmark["x"] = estimate["x"]
@@ -1870,6 +2082,7 @@ def fuse_manual_body_tracks(
     "upper_back_anchor_coverage": (tracking.get("coverage") or {}).get(UPPER_BACK_ANCHOR, 0.0),
     "pin_owned_landmark_count": pin_owned_count,
     "model_divergence_accepted_count": model_divergence_accepted_count,
+    "body_barbell_occluder_rejection_count": body_barbell_occluder_rejection_count,
     "body_pin_frames": frame_diagnostics,
     "source_counts": source_counts,
   }

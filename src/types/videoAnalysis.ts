@@ -144,6 +144,7 @@ export type VideoPoseKeypoint = {
   manualSource?: string;
   acceptedSource?: string;
   userPinned?: boolean;
+  preferVisualFallback?: boolean;
   visualFallback?: {
     x: number;
     y: number;

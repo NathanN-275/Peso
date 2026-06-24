@@ -268,6 +268,65 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertEqual(landmarks["left_upper_back"]["manual_source"], "pin_guided")
     self.assertEqual(diagnostics["source_counts"]["upper_back"]["pin_guided"], 1)
 
+  def test_upper_back_inside_barbell_occluder_uses_estimated_fallback(self) -> None:
+    frame = pose_frame(2)
+    frame["landmarks"]["left_shoulder"].update({"x": 0.51, "y": 0.27, "visibility": 0.95})
+    frame["landmarks"]["left_hip"].update({"x": 0.49, "y": 0.28, "visibility": 0.95})
+    tracks = {
+      joint: {
+        2: {
+          **tracking_setup()["anchors"][joint],
+          "confidence": 0.9,
+          "tracking_state": "guided",
+        }
+      }
+      for joint in ("hip", "knee", "ankle")
+    }
+    tracks["barbell"] = {2: {"x": 0.50, "y": 0.27, "confidence": 0.95}}
+
+    fused, diagnostics = fuse_manual_body_tracks(
+      [frame],
+      setup=tracking_setup(),
+      tracking={"tracks": tracks, "reference_source_index": 1, "coverage": {}},
+    )
+
+    upper_back = fused[0]["landmarks"]["left_upper_back"]
+    self.assertEqual(upper_back["tracking_state"], "estimated")
+    self.assertEqual(upper_back["manual_source"], "pin_visual_fallback")
+    self.assertNotAlmostEqual(upper_back["x"], 0.50, delta=0.02)
+    self.assertGreaterEqual(diagnostics["body_barbell_occluder_rejection_count"], 1)
+    self.assertGreaterEqual(diagnostics["rejection_reasons"]["upper_back_plate_latch_or_occlusion"], 1)
+
+  def test_hip_inside_barbell_occluder_renders_visual_fallback(self) -> None:
+    frame = pose_frame(2)
+    frame["landmarks"]["left_hip"].update({"x": 0.50, "y": 0.27, "visibility": 0.95})
+    tracks = {
+      joint: {
+        2: {
+          **tracking_setup()["anchors"][joint],
+          "confidence": 0.9,
+          "tracking_state": "guided",
+        }
+      }
+      for joint in ("shoulder", "knee", "ankle")
+    }
+    tracks["barbell"] = {2: {"x": 0.50, "y": 0.27, "confidence": 0.95}}
+
+    fused, diagnostics = fuse_manual_body_tracks(
+      [frame],
+      setup=tracking_setup(),
+      tracking={"tracks": tracks, "reference_source_index": 1, "coverage": {}},
+    )
+
+    hip = fused[0]["landmarks"]["left_hip"]
+    self.assertTrue(hip["prefer_visual_fallback"])
+    self.assertEqual(hip["visual_fallback"]["manual_source"], "pin_visual_fallback")
+    self.assertEqual(hip["visual_fallback"]["reason"], "plate_latch_or_occlusion")
+    self.assertNotAlmostEqual(hip["visual_fallback"]["point"]["x"], 0.50, delta=0.02)
+    self.assertIn("left_knee", fused[0]["landmarks"])
+    self.assertIn("left_ankle", fused[0]["landmarks"])
+    self.assertGreaterEqual(diagnostics["body_barbell_occluder_rejection_count"], 1)
+
   def test_valid_knee_pin_is_not_dragged_to_bad_automatic_pose(self) -> None:
     frame = pose_frame(2)
     frame["landmarks"]["left_knee"].update({"x": 0.63, "y": 0.53, "visibility": 0.82})

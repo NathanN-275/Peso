@@ -64,6 +64,161 @@ UNSAFE_HUB_REASONS = {
 }
 
 
+def _time_key(point: dict[str, Any]) -> float:
+  return round(float(point.get("time") or 0.0), 4)
+
+
+def _distance_px(
+  first: dict[str, Any],
+  second: dict[str, Any],
+  *,
+  width: float,
+  height: float,
+) -> float:
+  return math.hypot(
+    (float(first["x"]) - float(second["x"])) * width,
+    (float(first["y"]) - float(second["y"])) * height,
+  )
+
+
+def _fuse_barbell_lanes(
+  automatic_points: list[dict[str, Any]],
+  manual_points: list[dict[str, Any]],
+  *,
+  width: float,
+  height: float,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+  if not manual_points:
+    return automatic_points, {
+      "enabled": False,
+      "reason": "missing_manual_lane",
+      "frames": [],
+    }
+
+  auto_by_time = {_time_key(point): point for point in automatic_points}
+  manual_by_time = {_time_key(point): point for point in manual_points}
+  fused: list[dict[str, Any]] = []
+  frames: list[dict[str, Any]] = []
+  source_counts: dict[str, int] = {}
+  previous_manual: dict[str, Any] | None = None
+  previous_emitted: dict[str, Any] | None = None
+  consecutive_manual_failures = 0
+  consecutive_auto_failures = 0
+  agreement_limit_px = max(18.0, max(width, height) * 0.035)
+  manual_jump_limit_px = max(70.0, max(width, height) * 0.14)
+
+  for key in sorted(set(auto_by_time) | set(manual_by_time)):
+    manual = manual_by_time.get(key)
+    automatic = auto_by_time.get(key)
+    manual_confidence = float(manual.get("confidence") or 0.0) if manual else 0.0
+    automatic_confidence = float(automatic.get("confidence") or 0.0) if automatic else 0.0
+    manual_valid = manual is not None and manual_confidence >= 0.20
+    auto_valid = automatic is not None and automatic_confidence >= 0.15
+    manual_jump_px = (
+      _distance_px(manual, previous_manual, width=width, height=height)
+      if manual_valid and previous_manual is not None
+      else None
+    )
+    manual_stale = bool(manual_jump_px is not None and manual_jump_px > manual_jump_limit_px)
+    agreement_px = (
+      _distance_px(manual, automatic, width=width, height=height)
+      if manual_valid and auto_valid
+      else None
+    )
+    selected_source = "gap"
+    rejection_reason: str | None = None
+    emitted: dict[str, Any] | None = None
+
+    if manual_valid and not manual_stale:
+      consecutive_manual_failures = 0
+      if auto_valid and agreement_px is not None and agreement_px <= agreement_limit_px:
+        manual_weight = 0.78
+        auto_weight = 0.22
+        emitted = {
+          **manual,
+          "x": (float(manual["x"]) * manual_weight) + (float(automatic["x"]) * auto_weight),
+          "y": (float(manual["y"]) * manual_weight) + (float(automatic["y"]) * auto_weight),
+          "confidence": max(manual_confidence, min(automatic_confidence, 0.85)),
+          "manual_assisted": True,
+          "selectedSource": "manual_pin_blend",
+        }
+        selected_source = "manual_pin_blend"
+      else:
+        emitted = {
+          **manual,
+          "manual_assisted": True,
+          "selectedSource": "manual_pin_lane",
+        }
+        selected_source = "manual_pin_lane"
+        if auto_valid and agreement_px is not None:
+          rejection_reason = "automatic_disagrees_with_manual_lane"
+    else:
+      consecutive_manual_failures += 1
+      if manual_stale:
+        rejection_reason = "manual_lane_temporal_jump"
+
+    if emitted is None and auto_valid:
+      consecutive_auto_failures = 0
+      emitted = {
+        **automatic,
+        "selectedSource": "automatic_lane",
+      }
+      emitted.pop("manual_assisted", None)
+      selected_source = "automatic_lane"
+    elif emitted is None:
+      consecutive_auto_failures += 1
+
+    if emitted is None and previous_emitted is not None and consecutive_manual_failures <= 2:
+      emitted = {
+        **previous_emitted,
+        "time": key,
+        "confidence": min(float(previous_emitted.get("confidence") or 0.0) * 0.75, 0.42),
+        "trackingState": "estimated",
+        "manual_assisted": True,
+        "selectedSource": "kinematic_coast",
+      }
+      selected_source = "kinematic_coast"
+
+    if emitted is not None:
+      source_counts[selected_source] = source_counts.get(selected_source, 0) + 1
+      fused.append(emitted)
+      previous_emitted = emitted
+    else:
+      source_counts["gap"] = source_counts.get("gap", 0) + 1
+
+    if manual_valid and not manual_stale:
+      previous_manual = manual
+
+    if len(frames) < 120:
+      frames.append({
+        "time": key,
+        "manual_pin_x": round(float(manual["x"]) * width, 2) if manual else None,
+        "manual_pin_y": round(float(manual["y"]) * height, 2) if manual else None,
+        "manual_pin_confidence": round(manual_confidence, 3) if manual else 0.0,
+        "automatic_x": round(float(automatic["x"]) * width, 2) if automatic else None,
+        "automatic_y": round(float(automatic["y"]) * height, 2) if automatic else None,
+        "automatic_confidence": round(automatic_confidence, 3) if automatic else 0.0,
+        "emitted_x": round(float(emitted["x"]) * width, 2) if emitted else None,
+        "emitted_y": round(float(emitted["y"]) * height, 2) if emitted else None,
+        "emitted_confidence": round(float(emitted.get("confidence") or 0.0), 3) if emitted else 0.0,
+        "selected_source": selected_source,
+        "rejection_reason": rejection_reason,
+        "visual_agreement_px": round(agreement_px, 2) if agreement_px is not None else None,
+        "path_residual_px": round(manual_jump_px, 2) if manual_jump_px is not None else None,
+        "consecutive_manual_failures": consecutive_manual_failures,
+        "consecutive_auto_failures": consecutive_auto_failures,
+      })
+
+  return fused, {
+    "enabled": True,
+    "manual_lane_point_count": len(manual_points),
+    "automatic_lane_point_count": len(automatic_points),
+    "emitted_point_count": len(fused),
+    "source_counts": source_counts,
+    "frames": frames,
+  }
+
+
 class BarbellTracker:
   def __init__(self) -> None:
     self.bootstrap_diagnostics: dict[str, Any] = {"frames": []}
@@ -809,6 +964,7 @@ class BarbellTracker:
       prior.get("tracking_state") == "reference"
       for prior in normalized_manual_priors.values()
     )
+    pin_lane_result: dict[str, Any] | None = None
     started = time.perf_counter()
     if not Path(file_path).is_file():
       return _empty_result("video_unavailable")
@@ -905,20 +1061,76 @@ class BarbellTracker:
         coordinate_space=coordinate_space,
         started_at=started,
       )
+      pin_lane_result = pin_result
       self.bootstrap_diagnostics["pin_assisted"] = pin_diagnostics
       if pin_result is not None:
         pin_tracking_diagnostics = pin_result.get("diagnostics") or {}
-        self.manual_point_count = int(pin_tracking_diagnostics.get("manual_point_count") or 0)
-        self.automatic_point_count = int(pin_tracking_diagnostics.get("automatic_point_count") or 0)
-        self.manual_accepted_count = int(pin_tracking_diagnostics.get("manual_accepted_count") or 0)
-        self.manual_blended_count = int(pin_tracking_diagnostics.get("manual_blended_count") or 0)
-        self.manual_rejected_count = int(pin_tracking_diagnostics.get("manual_rejected_count") or 0)
-        self.manual_fallback_count = int(pin_tracking_diagnostics.get("manual_fallback_count") or 0)
-        pin_tracking_diagnostics["bootstrap_diagnostics"] = self.bootstrap_diagnostics
-        capture.release()
-        return pin_result
+        pin_diagnostics["pin_assisted_primary"] = False
+        pin_diagnostics["pin_assisted_fallback_reason"] = "delegated_to_robust_tracker"
+        pin_diagnostics["raw_pin_only_point_count"] = len(pin_result.get("barbellPath", {}).get("points") or [])
+        pin_diagnostics["raw_pin_only_coverage"] = pin_tracking_diagnostics.get("coverage")
       pin_source_counts = pin_diagnostics.setdefault("pin_source_counts", {})
       pin_source_counts["automatic_fallback"] = int(pin_source_counts.get("automatic_fallback") or 0) + 1
+
+    manual_prior_indices = sorted(int(index) for index in normalized_manual_priors)
+    manual_prior_search_radius = max(0, int(math.floor(tracking_frame_step / 2)))
+    manual_prior_index_diagnostics: dict[str, Any] = {
+      "manual_prior_min_index": manual_prior_indices[0] if manual_prior_indices else None,
+      "manual_prior_max_index": manual_prior_indices[-1] if manual_prior_indices else None,
+      "pose_source_min_index": pose_source_indices[0] if pose_source_indices else None,
+      "pose_source_max_index": pose_source_indices[-1] if pose_source_indices else None,
+      "tracking_frame_step": tracking_frame_step,
+      "nearest_search_radius": manual_prior_search_radius,
+      "exact_match_count": 0,
+      "nearest_match_count": 0,
+      "nearest_miss_count": 0,
+      "nearest_prior_max_distance": 0,
+      "frames": [],
+    }
+
+    def manual_prior_for_frame(frame_index: int) -> dict[str, Any] | None:
+      if frame_index in normalized_manual_priors:
+        manual_prior_index_diagnostics["exact_match_count"] += 1
+        prior = dict(normalized_manual_priors[frame_index])
+        prior["_matched_prior_index"] = frame_index
+        prior["_prior_frame_distance"] = 0
+        return prior
+      if not manual_prior_indices:
+        return None
+
+      insertion = bisect_left(manual_prior_indices, frame_index)
+      candidate_indices: list[int] = []
+      if insertion < len(manual_prior_indices):
+        candidate_indices.append(manual_prior_indices[insertion])
+      if insertion > 0:
+        candidate_indices.append(manual_prior_indices[insertion - 1])
+      nearest_index = min(
+        candidate_indices,
+        key=lambda index: abs(index - frame_index),
+      ) if candidate_indices else None
+      if nearest_index is None:
+        manual_prior_index_diagnostics["nearest_miss_count"] += 1
+        return None
+      distance = abs(nearest_index - frame_index)
+      if distance > manual_prior_search_radius:
+        manual_prior_index_diagnostics["nearest_miss_count"] += 1
+        return None
+
+      manual_prior_index_diagnostics["nearest_match_count"] += 1
+      manual_prior_index_diagnostics["nearest_prior_max_distance"] = max(
+        int(manual_prior_index_diagnostics["nearest_prior_max_distance"] or 0),
+        distance,
+      )
+      if len(manual_prior_index_diagnostics["frames"]) < 120:
+        manual_prior_index_diagnostics["frames"].append({
+          "frame_index": frame_index,
+          "matched_prior_index": nearest_index,
+          "distance": distance,
+        })
+      prior = dict(normalized_manual_priors[nearest_index])
+      prior["_matched_prior_index"] = nearest_index
+      prior["_prior_frame_distance"] = distance
+      return prior
 
     samples: list[dict[str, Any] | None] = []
     non_interpolable_gap_indices: set[int] = set()
@@ -1151,7 +1363,7 @@ class BarbellTracker:
         )
         candidate_bounds = bounds[:4]
 
-        manual_prior = normalized_manual_priors.get(frame_index)
+        manual_prior = manual_prior_for_frame(frame_index)
         manual_prior_is_plausible = self._manual_prior_is_plausible(
           manual_prior,
           bounds=candidate_bounds,
@@ -1299,6 +1511,8 @@ class BarbellTracker:
             if len(manual_frames) < 120:
               manual_frames.append({
                 "frame_index": frame_index,
+                "matched_prior_index": manual_prior.get("_matched_prior_index"),
+                "prior_frame_distance": manual_prior.get("_prior_frame_distance"),
                 "state": "reacquiring",
                 "raw_pin_x": round(manual_point[0], 2),
                 "raw_pin_y": round(manual_point[1], 2),
@@ -1447,6 +1661,8 @@ class BarbellTracker:
           if len(manual_frames) < 120:
             manual_frames.append({
               "frame_index": frame_index,
+              "matched_prior_index": manual_prior.get("_matched_prior_index"),
+              "prior_frame_distance": manual_prior.get("_prior_frame_distance"),
               "state": tracking_state,
               "raw_pin_x": round(manual_point[0], 2),
               "raw_pin_y": round(manual_point[1], 2),
@@ -2552,6 +2768,7 @@ class BarbellTracker:
         manual_rejection_reason_counts=self.manual_rejection_reason_counts,
       )
       result["diagnostics"]["bootstrap_diagnostics"] = self.bootstrap_diagnostics
+      result["diagnostics"]["manual_prior_index_matching"] = manual_prior_index_diagnostics
       return result
 
     points, interpolated_count = _interpolate_missing(
@@ -2559,6 +2776,27 @@ class BarbellTracker:
       blocked_gap_indices=non_interpolable_gap_indices,
     )
     points, outlier_removed_count = _remove_motion_outliers(points)
+    manual_lane_points = (
+      list((pin_lane_result.get("barbellPath") or {}).get("points") or [])
+      if pin_lane_result
+      else []
+    )
+    lane_fusion_diagnostics: dict[str, Any] = {
+      "enabled": False,
+      "reason": "missing_manual_lane",
+      "frames": [],
+    }
+    if manual_lane_points:
+      points, lane_fusion_diagnostics = _fuse_barbell_lanes(
+        points,
+        manual_lane_points,
+        width=width,
+        height=height,
+      )
+      sampled_count = max(
+        sampled_count,
+        int((pin_lane_result.get("diagnostics") or {}).get("sampled_frame_count") or 0),
+      )
     if normalized_rep_windows:
       points = [
         point
@@ -2656,6 +2894,8 @@ class BarbellTracker:
         manual_rejection_reason_counts=self.manual_rejection_reason_counts,
       )
       result["diagnostics"]["bootstrap_diagnostics"] = self.bootstrap_diagnostics
+      result["diagnostics"]["manual_prior_index_matching"] = manual_prior_index_diagnostics
+      result["diagnostics"]["barbell_lane_fusion"] = lane_fusion_diagnostics
       return result
 
     if shoulder_vertical_range_px >= 18.0 and bar_vertical_range_px < max(5.0, shoulder_vertical_range_px * 0.2):
@@ -2725,6 +2965,8 @@ class BarbellTracker:
         manual_rejection_reason_counts=self.manual_rejection_reason_counts,
       )
       result["diagnostics"]["bootstrap_diagnostics"] = self.bootstrap_diagnostics
+      result["diagnostics"]["manual_prior_index_matching"] = manual_prior_index_diagnostics
+      result["diagnostics"]["barbell_lane_fusion"] = lane_fusion_diagnostics
       return result
 
     smoothed_points, smoothing_diagnostics = _smooth_points_with_diagnostics(
@@ -2818,6 +3060,8 @@ class BarbellTracker:
         "manual_visual_match_streak": manual_visual_match_streak,
         "manual_visual_recovery_emitted_count": manual_visual_recovery_emitted_count,
         "manual_visual_recovery_gap_count": manual_visual_recovery_gap_count,
+        "manual_prior_index_matching": manual_prior_index_diagnostics,
+        "barbell_lane_fusion": lane_fusion_diagnostics,
         "source_switch_count": source_switch_count,
         "source_state_counts": source_state_counts,
         "smoothing": smoothing_diagnostics,

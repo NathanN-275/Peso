@@ -11,6 +11,7 @@ export type TrackingBodySource =
   | 'stale_pin_rejected'
   | 'gap';
 export type TrackingBodySourceName = 'upper_back' | 'hip' | 'knee' | 'ankle';
+export type TrackingDiagnosticPinName = TrackingPinName | 'upper_back';
 
 export type NormalizedTrackingPoint = {
   x: number;
@@ -44,17 +45,18 @@ export type TrackingAssistance = {
   rejectedTrackCount?: number;
   rejectionReasons?: Record<string, number>;
   velocityCapCount?: number;
-  velocityCapCounts?: Partial<Record<TrackingPinName, number>>;
-  coverage?: Partial<Record<TrackingPinName, number>>;
+  velocityCapCounts?: Partial<Record<TrackingDiagnosticPinName, number>>;
+  coverage?: Partial<Record<TrackingDiagnosticPinName, number>>;
   barbellSeedUsed?: boolean;
   manualBarbellPointCount?: number;
   automaticBarbellPointCount?: number;
-  upperBackAnchorKey?: 'shoulder';
+  upperBackAnchorKey?: 'shoulder' | 'upper_back';
   upperBackAnchorSemantics?: 'upper_back_anchor';
   upperBackAnchorUsedCount?: number;
   upperBackAnchorCoverage?: number;
   pinOwnedLandmarkCount?: number;
   modelDivergenceAcceptedCount?: number;
+  bodyBarbellOccluderRejectionCount?: number;
   sourceCounts?: Partial<Record<TrackingBodySourceName, Partial<Record<TrackingBodySource, number>>>>;
   bodyPinFrames?: Array<Record<string, unknown>>;
   reference?: TrackingReference | null;

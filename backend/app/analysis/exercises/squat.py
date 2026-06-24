@@ -77,6 +77,7 @@ def _build_pose_frames(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
         else {}
       ),
       **({"userPinned": True} if user_pinned else {}),
+      **({"preferVisualFallback": True} if point.get("prefer_visual_fallback") else {}),
       **(
         {
           "visualFallback": {

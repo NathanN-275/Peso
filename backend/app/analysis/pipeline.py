@@ -69,12 +69,13 @@ def _apply_tracking_assistance(
     "barbellSeedUsed": False,
     "manualBarbellPointCount": 0,
     "automaticBarbellPointCount": 0,
-    "upperBackAnchorKey": "shoulder",
+    "upperBackAnchorKey": "upper_back",
     "upperBackAnchorSemantics": "upper_back_anchor",
     "upperBackAnchorUsedCount": 0,
     "upperBackAnchorCoverage": 0.0,
     "pinOwnedLandmarkCount": 0,
     "modelDivergenceAcceptedCount": 0,
+    "bodyBarbellOccluderRejectionCount": 0,
     "bodyPinFrames": [],
     "sourceCounts": {},
     "reference": None,
@@ -123,19 +124,27 @@ def _apply_tracking_assistance(
         "coverage": fusion.get("coverage") or {},
         "velocityCapCount": int(tracking.get("velocity_cap_count") or 0),
         "velocityCapCounts": tracking.get("velocity_cap_counts") or {},
-        "upperBackAnchorKey": fusion.get("upper_back_anchor_key") or "shoulder",
+        "upperBackAnchorKey": fusion.get("upper_back_anchor_key") or "upper_back",
         "upperBackAnchorSemantics": fusion.get("upper_back_anchor_semantics") or "upper_back_anchor",
         "upperBackAnchorUsedCount": int(fusion.get("upper_back_anchor_used_count") or 0),
         "upperBackAnchorCoverage": float(fusion.get("upper_back_anchor_coverage") or 0.0),
         "pinOwnedLandmarkCount": int(fusion.get("pin_owned_landmark_count") or 0),
         "modelDivergenceAcceptedCount": int(fusion.get("model_divergence_accepted_count") or 0),
+        "bodyBarbellOccluderRejectionCount": int(fusion.get("body_barbell_occluder_rejection_count") or 0),
         "bodyPinFrames": fusion.get("body_pin_frames") or [],
         "sourceCounts": fusion.get("source_counts") or {},
         "reference": {
           "version": validated_setup["version"],
           "timeMs": validated_setup["reference_time_ms"],
           "selectedSide": fusion.get("selected_side"),
-          "anchors": copy.deepcopy(validated_setup["anchors"]),
+          "anchors": {
+            **{
+              name: copy.deepcopy(point)
+              for name, point in validated_setup["anchors"].items()
+              if name != "upper_back"
+            },
+            "shoulder": copy.deepcopy(validated_setup["anchors"]["upper_back"]),
+          },
         },
       }
     )
@@ -162,7 +171,8 @@ def _barbell_pose_frames_with_upper_back_context(
   if selected_side not in {"left", "right"}:
     return frames, 0
 
-  upper_back_tracks = (manual_tracking.get("tracks") or {}).get("shoulder") or {}
+  tracks = manual_tracking.get("tracks") or {}
+  upper_back_tracks = tracks.get("upper_back") or tracks.get("shoulder") or {}
   if not upper_back_tracks:
     return frames, 0
 
