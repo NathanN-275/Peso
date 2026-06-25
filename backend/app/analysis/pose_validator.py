@@ -27,6 +27,17 @@ JOINT_JUMP_SCALE = {
 UPPER_BACK_RELATIVE_JUMP_SCALE = 0.16
 
 
+def is_body_point_occluded_by_plate(
+  point_px: tuple[float, float],
+  plate_center_px: tuple[float, float],
+  plate_radius_px: float,
+  margin_px: float = 0.0,
+) -> bool:
+  return math.hypot(point_px[0] - plate_center_px[0], point_px[1] - plate_center_px[1]) <= (
+    float(plate_radius_px) + float(margin_px)
+  )
+
+
 def _distance(first: dict[str, float], second: dict[str, float]) -> float:
   return math.hypot(first["x"] - second["x"], first["y"] - second["y"])
 
@@ -156,11 +167,73 @@ def _mark_invalid(
   invalid.setdefault((frame_index, joint), set()).add(reason)
 
 
+def _frame_dimensions(frame: dict[str, Any]) -> tuple[float, float]:
+  width = frame.get("processed_frame_width") or frame.get("frame_width") or 1.0
+  height = frame.get("processed_frame_height") or frame.get("frame_height") or 1.0
+  try:
+    width = float(width)
+    height = float(height)
+  except (TypeError, ValueError):
+    return 1.0, 1.0
+  return max(width, 1.0), max(height, 1.0)
+
+
+def _point_to_px(point: dict[str, float], *, width: float, height: float) -> tuple[float, float]:
+  return float(point["x"]) * width, float(point["y"]) * height
+
+
+def _occluder_for_frame(
+  barbell_occluders_by_frame: dict[int, dict[str, float]] | None,
+  *,
+  frame: dict[str, Any],
+  frame_index: int,
+) -> dict[str, float] | None:
+  if not barbell_occluders_by_frame:
+    return None
+  source_index = frame.get("source_frame_index")
+  keys = []
+  if isinstance(source_index, (int, float)):
+    keys.append(int(source_index))
+  keys.append(frame_index)
+  for key in keys:
+    occluder = barbell_occluders_by_frame.get(key)
+    if isinstance(occluder, dict):
+      return occluder
+  return None
+
+
+def _occluder_px(
+  occluder: dict[str, float],
+  *,
+  width: float,
+  height: float,
+) -> tuple[tuple[float, float], float] | None:
+  x = occluder.get("x")
+  y = occluder.get("y")
+  radius = occluder.get("radius")
+  if not all(isinstance(value, (int, float)) for value in (x, y, radius)):
+    return None
+  if not all(math.isfinite(float(value)) for value in (x, y, radius)):
+    return None
+  center_x = float(x)
+  center_y = float(y)
+  radius_px = float(radius)
+  if 0.0 <= center_x <= 1.0 and 0.0 <= center_y <= 1.0:
+    center_x *= width
+    center_y *= height
+  if 0.0 <= radius_px <= 1.0:
+    radius_px *= max(width, height)
+  if radius_px <= 0:
+    return None
+  return (center_x, center_y), radius_px
+
+
 def _find_invalid_landmarks(
   frames: list[dict[str, Any]],
   *,
   side: str,
   subject_height: float,
+  barbell_occluders_by_frame: dict[int, dict[str, float]] | None = None,
 ) -> dict[tuple[int, str], set[str]]:
   invalid: dict[tuple[int, str], set[str]] = {}
   median_lengths = _median_segment_lengths(frames, side)
@@ -197,6 +270,29 @@ def _find_invalid_landmarks(
             and _distance(previous_point, following_point) < jump_threshold
           ):
             _mark_invalid(invalid, frame_index, joint, "temporal_jump")
+
+    occluder = _occluder_for_frame(
+      barbell_occluders_by_frame,
+      frame=frame,
+      frame_index=frame_index,
+    )
+    if occluder:
+      width, height = _frame_dimensions(frame)
+      occluder_geometry = _occluder_px(occluder, width=width, height=height)
+      if occluder_geometry is not None:
+        plate_center_px, plate_radius_px = occluder_geometry
+        margin_px = max(4.0, max(width, height) * 0.008)
+        for joint in ("shoulder", "hip", "knee"):
+          point = point_for_side(frame, side, joint)
+          if point.get("visibility", 0.0) < 0.35:
+            continue
+          if is_body_point_occluded_by_plate(
+            _point_to_px(point, width=width, height=height),
+            plate_center_px,
+            plate_radius_px,
+            margin_px,
+          ):
+            _mark_invalid(invalid, frame_index, joint, "barbell_plate_occlusion")
 
     lengths = _segment_lengths(frame, side)
     shin_length = max(lengths["shin"], 1e-6)
@@ -494,6 +590,7 @@ def validate_squat_pose_frames(
   frames: list[dict[str, Any]],
   *,
   selected_side_override: str | None = None,
+  barbell_occluders_by_frame: dict[int, dict[str, float]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
   # Downgrade or interpolate squat-critical landmarks that are anatomically or temporally implausible.
   if not frames:
@@ -504,6 +601,7 @@ def validate_squat_pose_frames(
       "smoothed_landmark_count": 0,
       "hysteresis_rejected_jump_count": 0,
       "occluded_landmark_count": 0,
+      "barbell_plate_occlusion_count": 0,
       "interpolated_landmark_count": 0,
       "rejected_landmark_count": 0,
       "unreliable_landmarks": [],
@@ -516,6 +614,7 @@ def validate_squat_pose_frames(
     frames,
     side=selected_side,
     subject_height=subject_height,
+    barbell_occluders_by_frame=barbell_occluders_by_frame,
   )
   invalid_keys = set(invalid)
   validated_frames = copy.deepcopy(frames)
@@ -524,6 +623,7 @@ def validate_squat_pose_frames(
   interpolated_count = 0
   rejected_count = 0
   occluded_count = 0
+  barbell_plate_occlusion_count = 0
 
   for frame_index, joint in sorted(invalid_keys):
     target = point_for_side(validated_frames[frame_index], selected_side, joint)
@@ -546,6 +646,9 @@ def validate_squat_pose_frames(
     reasons = sorted(invalid[(frame_index, joint)])
     if "low_visibility" in reasons:
       occluded_count += 1
+    if "barbell_plate_occlusion" in reasons:
+      occluded_count += 1
+      barbell_plate_occlusion_count += 1
 
     if previous and following:
       target["x"] = (previous["x"] + following["x"]) / 2
@@ -594,6 +697,7 @@ def validate_squat_pose_frames(
     "smoothed_landmark_count": smoothed_count,
     "hysteresis_rejected_jump_count": hysteresis_count,
     "occluded_landmark_count": occluded_count,
+    "barbell_plate_occlusion_count": barbell_plate_occlusion_count,
     "interpolated_landmark_count": interpolated_count,
     "rejected_landmark_count": rejected_count,
     "unreliable_landmarks": unreliable_landmarks,

@@ -19,6 +19,7 @@ from app.analysis.manual_tracking import (
   validate_tracking_setup,
 )
 from app.analysis.pipeline import (
+  _apply_barbell_occlusion_pose_overlay,
   _apply_tracking_assistance,
   _attach_barbell_tracking,
   _barbell_pose_frames_with_upper_back_context,
@@ -327,6 +328,36 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertIn("left_ankle", fused[0]["landmarks"])
     self.assertGreaterEqual(diagnostics["body_barbell_occluder_rejection_count"], 1)
 
+  def test_knee_inside_barbell_occluder_renders_visual_fallback(self) -> None:
+    frame = pose_frame(2)
+    frame["landmarks"]["left_knee"].update({"x": 0.50, "y": 0.31, "visibility": 0.95})
+    tracks = {
+      joint: {
+        2: {
+          **tracking_setup()["anchors"][joint],
+          "confidence": 0.9,
+          "tracking_state": "guided",
+        }
+      }
+      for joint in ("shoulder", "hip", "ankle")
+    }
+    tracks["knee"] = {2: {"x": 0.50, "y": 0.31, "confidence": 0.95, "tracking_state": "guided"}}
+    tracks["barbell"] = {2: {"x": 0.50, "y": 0.27, "confidence": 0.95}}
+
+    fused, diagnostics = fuse_manual_body_tracks(
+      [frame],
+      setup=tracking_setup(),
+      tracking={"tracks": tracks, "reference_source_index": 1, "coverage": {}},
+    )
+
+    knee = fused[0]["landmarks"]["left_knee"]
+    self.assertTrue(knee["prefer_visual_fallback"])
+    self.assertEqual(knee["visual_fallback"]["manual_source"], "pin_visual_fallback")
+    self.assertEqual(knee["visual_fallback"]["reason"], "plate_latch_or_occlusion")
+    self.assertNotAlmostEqual(knee["visual_fallback"]["point"]["y"], 0.31, delta=0.02)
+    self.assertGreaterEqual(diagnostics["body_barbell_occluder_rejection_count"], 1)
+    self.assertGreaterEqual(diagnostics["rejection_reasons"]["knee_plate_latch_or_occlusion"], 1)
+
   def test_valid_knee_pin_is_not_dragged_to_bad_automatic_pose(self) -> None:
     frame = pose_frame(2)
     frame["landmarks"]["left_knee"].update({"x": 0.63, "y": 0.53, "visibility": 0.82})
@@ -533,6 +564,60 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertEqual(contextual_shoulder["x"], 0.51)
     self.assertEqual(contextual_shoulder["y"], 0.33)
     self.assertTrue(contextual_shoulder["upper_back_context"])
+
+  def test_barbell_occlusion_overlay_replaces_automatic_upper_back_and_hip_latch(self) -> None:
+    result = {
+      "poseFrames": [
+        {
+          "time": 0.0,
+          "keypoints": [
+            {"name": "left_shoulder", "x": 0.42, "y": 0.25, "confidence": 0.95},
+            {"name": "left_hip", "x": 0.46, "y": 0.56, "confidence": 0.95},
+            {"name": "left_knee", "x": 0.56, "y": 0.72, "confidence": 0.95},
+          ],
+        },
+        {
+          "time": 0.1,
+          "keypoints": [
+            {"name": "left_shoulder", "x": 0.50, "y": 0.36, "confidence": 0.99},
+            {"name": "left_hip", "x": 0.50, "y": 0.44, "confidence": 0.99},
+            {"name": "left_knee", "x": 0.56, "y": 0.72, "confidence": 0.95},
+          ],
+        },
+        {
+          "time": 0.2,
+          "keypoints": [
+            {"name": "left_shoulder", "x": 0.43, "y": 0.26, "confidence": 0.95},
+            {"name": "left_hip", "x": 0.47, "y": 0.57, "confidence": 0.95},
+            {"name": "left_knee", "x": 0.56, "y": 0.72, "confidence": 0.95},
+          ],
+        },
+      ],
+      "barbellPath": {
+        "available": True,
+        "points": [
+          {"time": 0.1, "x": 0.50, "y": 0.40, "confidence": 0.8},
+        ],
+      },
+      "diagnostics": {"barbell_tracking": {"plate_radius": 70.0}},
+    }
+
+    diagnostics = _apply_barbell_occlusion_pose_overlay(
+      result,
+      selected_side="left",
+      width=1000,
+      height=1000,
+    )
+
+    middle_keypoints = {
+      keypoint["name"]: keypoint
+      for keypoint in result["poseFrames"][1]["keypoints"]
+    }
+    self.assertEqual(diagnostics["corrected_count"], 2)
+    self.assertEqual(middle_keypoints["left_shoulder"]["trackingState"], "estimated")
+    self.assertEqual(middle_keypoints["left_hip"]["acceptedSource"], "barbell_occlusion_estimate")
+    self.assertLess(middle_keypoints["left_shoulder"]["x"], 0.47)
+    self.assertGreater(middle_keypoints["left_hip"]["y"], 0.50)
 
   def test_fusion_selects_a_valid_complete_chain_when_automatic_ankle_is_inverted(self) -> None:
     frame = pose_frame(2)

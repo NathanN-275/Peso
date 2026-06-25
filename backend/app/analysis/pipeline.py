@@ -21,7 +21,7 @@ from .manual_tracking import (
 )
 from .pose_fallback import analysis_needs_pose_fallback
 from .pose_estimator import PoseEstimator
-from .pose_validator import validate_squat_pose_frames
+from .pose_validator import is_body_point_occluded_by_plate, validate_squat_pose_frames
 from ..services.config import get_settings
 from ..services.storage_service import IMMUTABLE_CACHE_CONTROL_SECONDS, StorageService
 from ..services.video_assets import (
@@ -198,6 +198,188 @@ def _barbell_pose_frames_with_upper_back_context(
     replaced_count += 1
 
   return contextual_frames, replaced_count
+
+
+def _apply_barbell_occlusion_pose_overlay(
+  result: dict[str, Any],
+  *,
+  selected_side: str | None,
+  width: int | None,
+  height: int | None,
+) -> dict[str, Any]:
+  if selected_side not in {"left", "right"}:
+    return {"corrected_count": 0, "frames": []}
+  pose_frames = result.get("poseFrames")
+  barbell_points = ((result.get("barbellPath") or {}).get("points") or [])
+  if not isinstance(pose_frames, list) or not pose_frames or not barbell_points:
+    return {"corrected_count": 0, "frames": []}
+
+  width_px = float(width or result.get("processedVideoWidth") or result.get("videoWidth") or 1)
+  height_px = float(height or result.get("processedVideoHeight") or result.get("videoHeight") or 1)
+  width_px = max(width_px, 1.0)
+  height_px = max(height_px, 1.0)
+  max_dimension = max(width_px, height_px)
+  tracking_diagnostics = (result.get("diagnostics") or {}).get("barbell_tracking") or {}
+  plate_radius_px = tracking_diagnostics.get("plate_radius")
+  if not isinstance(plate_radius_px, (int, float)) or float(plate_radius_px) <= 0:
+    plate_radius_px = max(28.0, max_dimension * 0.10)
+  else:
+    plate_radius_px = max(float(plate_radius_px), max_dimension * 0.075)
+  margin_px = max(6.0, max_dimension * 0.01)
+  sorted_barbell_points = sorted(
+    [
+      point for point in barbell_points
+      if isinstance(point, dict)
+      and isinstance(point.get("time"), (int, float))
+      and isinstance(point.get("x"), (int, float))
+      and isinstance(point.get("y"), (int, float))
+    ],
+    key=lambda point: float(point["time"]),
+  )
+  if not sorted_barbell_points:
+    return {"corrected_count": 0, "frames": []}
+
+  keypoint_names = [
+    f"{selected_side}_upper_back",
+    f"{selected_side}_shoulder",
+    f"{selected_side}_hip",
+    f"{selected_side}_knee",
+  ]
+
+  def nearest_barbell_point(time_seconds: float) -> dict[str, Any] | None:
+    nearest = min(
+      sorted_barbell_points,
+      key=lambda point: abs(float(point["time"]) - time_seconds),
+    )
+    if abs(float(nearest["time"]) - time_seconds) > 0.25:
+      return None
+    return nearest
+
+  def keypoint_by_name(frame: dict[str, Any], name: str) -> dict[str, Any] | None:
+    keypoints = frame.get("keypoints")
+    if not isinstance(keypoints, list):
+      return None
+    return next(
+      (
+        keypoint
+        for keypoint in keypoints
+        if isinstance(keypoint, dict) and keypoint.get("name") == name
+      ),
+      None,
+    )
+
+  occluded: set[tuple[int, str]] = set()
+  frame_barbell_points: dict[int, dict[str, Any]] = {}
+  for frame_index, frame in enumerate(pose_frames):
+    time_seconds = frame.get("time")
+    if not isinstance(time_seconds, (int, float)):
+      continue
+    barbell_point = nearest_barbell_point(float(time_seconds))
+    if barbell_point is None:
+      continue
+    frame_barbell_points[frame_index] = barbell_point
+    plate_center_px = (
+      float(barbell_point["x"]) * width_px,
+      float(barbell_point["y"]) * height_px,
+    )
+    for name in keypoint_names:
+      keypoint = keypoint_by_name(frame, name)
+      if not keypoint or not isinstance(keypoint.get("x"), (int, float)) or not isinstance(keypoint.get("y"), (int, float)):
+        continue
+      if is_body_point_occluded_by_plate(
+        (float(keypoint["x"]) * width_px, float(keypoint["y"]) * height_px),
+        plate_center_px,
+        float(plate_radius_px),
+        margin_px,
+      ):
+        occluded.add((frame_index, name))
+
+  def replacement_point(frame_index: int, name: str) -> dict[str, float] | None:
+    previous: tuple[int, dict[str, Any]] | None = None
+    following: tuple[int, dict[str, Any]] | None = None
+    for offset in range(1, 5):
+      candidate_index = frame_index - offset
+      if candidate_index < 0:
+        break
+      if (candidate_index, name) in occluded:
+        continue
+      keypoint = keypoint_by_name(pose_frames[candidate_index], name)
+      if keypoint and float(keypoint.get("confidence") or 0.0) >= 0.24:
+        previous = (candidate_index, keypoint)
+        break
+    for offset in range(1, 5):
+      candidate_index = frame_index + offset
+      if candidate_index >= len(pose_frames):
+        break
+      if (candidate_index, name) in occluded:
+        continue
+      keypoint = keypoint_by_name(pose_frames[candidate_index], name)
+      if keypoint and float(keypoint.get("confidence") or 0.0) >= 0.24:
+        following = (candidate_index, keypoint)
+        break
+    if previous and following:
+      span = max(following[0] - previous[0], 1)
+      progress = (frame_index - previous[0]) / span
+      return {
+        "x": float(previous[1]["x"]) + ((float(following[1]["x"]) - float(previous[1]["x"])) * progress),
+        "y": float(previous[1]["y"]) + ((float(following[1]["y"]) - float(previous[1]["y"])) * progress),
+        "confidence": min(float(previous[1].get("confidence") or 0.48), float(following[1].get("confidence") or 0.48), 0.48),
+      }
+    if previous:
+      return {
+        "x": float(previous[1]["x"]),
+        "y": float(previous[1]["y"]),
+        "confidence": min(float(previous[1].get("confidence") or 0.48), 0.36),
+      }
+    if following:
+      return {
+        "x": float(following[1]["x"]),
+        "y": float(following[1]["y"]),
+        "confidence": min(float(following[1].get("confidence") or 0.48), 0.36),
+      }
+    return None
+
+  corrected_frames: list[dict[str, Any]] = []
+  corrected_count = 0
+  for frame_index, name in sorted(occluded):
+    frame = pose_frames[frame_index]
+    keypoint = keypoint_by_name(frame, name)
+    if keypoint is None:
+      continue
+    replacement = replacement_point(frame_index, name)
+    if replacement is None:
+      keypoint["confidence"] = min(float(keypoint.get("confidence") or 0.0), 0.2)
+      keypoint["trackingState"] = "estimated"
+      keypoint["acceptedSource"] = "barbell_occlusion_rejected"
+    else:
+      keypoint["rawModelPoint"] = {
+        "x": keypoint["x"],
+        "y": keypoint["y"],
+        "confidence": keypoint.get("confidence"),
+      }
+      keypoint["x"] = replacement["x"]
+      keypoint["y"] = replacement["y"]
+      keypoint["confidence"] = max(min(replacement["confidence"], 0.48), 0.24)
+      keypoint["trackingState"] = "estimated"
+      keypoint["acceptedSource"] = "barbell_occlusion_estimate"
+    corrected_count += 1
+    if len(corrected_frames) < 120:
+      barbell_point = frame_barbell_points.get(frame_index)
+      corrected_frames.append({
+        "frame_index": frame_index,
+        "time": frame.get("time"),
+        "keypoint": name,
+        "barbell_x": round(float(barbell_point["x"]), 4) if barbell_point else None,
+        "barbell_y": round(float(barbell_point["y"]), 4) if barbell_point else None,
+        "reason": "barbell_plate_occlusion",
+      })
+
+  return {
+    "corrected_count": corrected_count,
+    "frames": corrected_frames,
+    "plate_radius_px": round(float(plate_radius_px), 2),
+    "margin_px": round(margin_px, 2),
+  }
 
 
 def build_limited_result(
@@ -701,6 +883,14 @@ def _attach_barbell_tracking(
     tracking_diagnostics["pose_context_validated"] = pose_context_validated
     tracking_diagnostics["pose_context_validation"] = pose_context_validation
     diagnostics["barbell_tracking"] = tracking_diagnostics
+    pose_overlay_occlusion = _apply_barbell_occlusion_pose_overlay(
+      result,
+      selected_side=selected_side,
+      width=estimation.get("processed_frame_width") or estimation.get("frame_width"),
+      height=estimation.get("processed_frame_height") or estimation.get("frame_height"),
+    )
+    if pose_overlay_occlusion.get("corrected_count"):
+      diagnostics["barbell_pose_occlusion_overlay"] = pose_overlay_occlusion
   except Exception as error:
     logger.warning("Barbell tracking failed for video %s: %s", video.get("id"), error)
     result["barbellPath"] = {

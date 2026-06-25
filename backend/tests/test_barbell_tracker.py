@@ -1529,6 +1529,54 @@ class BarbellTrackerTest(unittest.TestCase):
     self.assertAlmostEqual(points[-1]["x"], expected_final_collar[0] / 320, delta=0.06)
     self.assertAlmostEqual(points[-1]["y"], expected_final_collar[1] / 240, delta=0.06)
 
+  def test_short_local_tracking_failure_coasts_estimated_barbell_point(self) -> None:
+    plate_centers = [(178 + index * 3, 104 + index) for index in range(10)]
+    original_track_local_patch = tracker_module._track_local_patch
+    local_call_count = 0
+
+    def fail_once_then_track(*args, **kwargs):
+      nonlocal local_call_count
+      local_call_count += 1
+      if local_call_count == 1:
+        return None, {
+          "optical_flow_point_count": 0,
+          "optical_flow_inlier_count": 0,
+          "template_match_score": 0.0,
+          "local_tracking_confidence": 0.0,
+          "local_tracker_type": "forced_failure",
+          "fallback_used": False,
+          "collar_rejection_reason": "local_tracking_failed",
+        }
+      return original_track_local_patch(*args, **kwargs)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-short-local-failure.mp4"
+      write_plate_video(path, plate_centers)
+      pose_frames = [
+        pose_frame(index, x=(plate_center[0] - 42) / 320, y=0.43)
+        for index, plate_center in enumerate(plate_centers)
+      ]
+
+      with patch.object(tracker_module, "_track_local_patch", side_effect=fail_once_then_track):
+        result = BarbellTracker().track(
+          str(path),
+          pose_frames=pose_frames,
+          frame_step=1,
+          processed_width=320,
+          processed_height=240,
+        )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    self.assertGreaterEqual(result["diagnostics"]["coasted_estimated_point_count"], 1)
+    estimated_points = [
+      point
+      for point in result["barbellPath"]["points"]
+      if point.get("trackingState") == "estimated"
+    ]
+    self.assertTrue(estimated_points)
+    expected = collar_from_plate(plate_centers[3])
+    self.assertAlmostEqual(estimated_points[0]["x"], expected[0] / 320, delta=0.06)
+
   def test_returns_unavailable_without_pose_frames(self) -> None:
     centers = [(150, 78) for _ in range(20)]
 

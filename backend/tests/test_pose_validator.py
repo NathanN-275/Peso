@@ -17,6 +17,7 @@ def landmark(x: float, y: float, visibility: float = 0.95) -> dict[str, float]:
 def frame(
   timestamp_ms: int,
   *,
+  source_frame_index: int | None = None,
   left_shoulder: dict[str, float] | None = None,
   left_hip: dict[str, float] | None = None,
   left_knee: dict[str, float] | None = None,
@@ -24,6 +25,9 @@ def frame(
 ) -> dict[str, object]:
   return {
     "timestamp_ms": timestamp_ms,
+    **({"source_frame_index": source_frame_index} if source_frame_index is not None else {}),
+    "frame_width": 1000,
+    "frame_height": 1000,
     "landmarks": {
       "left_shoulder": left_shoulder or landmark(0.42, 0.25),
       "left_hip": left_hip or landmark(0.46, 0.56),
@@ -169,6 +173,40 @@ class PoseValidatorTest(unittest.TestCase):
       self.assertIn("chain_jumble", unreliable[joint]["reasons"])
       self.assertEqual(validated[2]["landmarks"][f"left_{joint}"]["tracking_state"], "estimated")
       self.assertLessEqual(validated[2]["landmarks"][f"left_{joint}"]["visibility"], 0.48)
+
+  def test_high_confidence_plate_occluded_upper_back_and_hip_are_rejected(self) -> None:
+    frames = [
+      frame(0, source_frame_index=0),
+      frame(
+        100,
+        source_frame_index=1,
+        left_shoulder=landmark(0.50, 0.34, 0.99),
+        left_hip=landmark(0.50, 0.43, 0.99),
+      ),
+      frame(200, source_frame_index=2),
+    ]
+
+    validated, report = validate_squat_pose_frames(
+      frames,
+      selected_side_override="left",
+      barbell_occluders_by_frame={
+        1: {"x": 0.50, "y": 0.38, "radius": 0.075},
+      },
+    )
+
+    unreliable = {
+      item["joint"]: item
+      for item in report["unreliable_landmarks"]
+      if item["frame_index"] == 1
+    }
+    self.assertIn("shoulder", unreliable)
+    self.assertIn("hip", unreliable)
+    self.assertIn("barbell_plate_occlusion", unreliable["shoulder"]["reasons"])
+    self.assertIn("barbell_plate_occlusion", unreliable["hip"]["reasons"])
+    self.assertEqual(validated[1]["landmarks"]["left_shoulder"]["tracking_state"], "estimated")
+    self.assertEqual(validated[1]["landmarks"]["left_hip"]["tracking_state"], "estimated")
+    self.assertLess(validated[1]["landmarks"]["left_shoulder"]["x"], 0.46)
+    self.assertGreaterEqual(report["barbell_plate_occlusion_count"], 2)
 
 
 if __name__ == "__main__":

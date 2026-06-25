@@ -1182,6 +1182,7 @@ class BarbellTracker:
     stationary_hardware_rejection_count = 0
     reacquisition_count = 0
     local_tracking_failure_count = 0
+    coasted_estimated_point_count = 0
     consecutive_local_failures = 0
     consecutive_fresh_validation_failures = 0
     local_descriptor_bridge_count = 0
@@ -1249,6 +1250,58 @@ class BarbellTracker:
         if target_dot < -1.0 and final_dot >= -1.0:
           return final_point
       return target_point
+
+    def estimated_barbell_coast_point(
+      *,
+      timestamp: float,
+      shoulder: tuple[float, float] | None,
+      reason: str | None,
+      failure_count: int,
+    ) -> dict[str, Any] | None:
+      if tracking_lock is None or failure_count > MAX_LOCAL_TRACKING_FAILURES:
+        return None
+
+      pose_prediction = self._pose_predicted_bar_point(tracking_lock, shoulder)
+      last_visible_px: tuple[float, float] | None = None
+      if samples and samples[-1] is not None:
+        previous_sample = samples[-1]
+        last_visible_px = (float(previous_sample["x"]) * width, float(previous_sample["y"]) * height)
+      elif accepted_points_px:
+        last_visible_px = accepted_points_px[-1]
+
+      velocity_prediction: tuple[float, float] | None = None
+      if len(accepted_points_px) >= 2:
+        velocity_prediction = (
+          accepted_points_px[-1][0] + (accepted_points_px[-1][0] - accepted_points_px[-2][0]),
+          accepted_points_px[-1][1] + (accepted_points_px[-1][1] - accepted_points_px[-2][1]),
+        )
+
+      predicted_px = pose_prediction or velocity_prediction or last_visible_px
+      if pose_prediction is not None and velocity_prediction is not None:
+        if math.hypot(
+          pose_prediction[0] - velocity_prediction[0],
+          pose_prediction[1] - velocity_prediction[1],
+        ) <= max(18.0, max(width, height) * 0.05):
+          predicted_px = (
+            (pose_prediction[0] * 0.65) + (velocity_prediction[0] * 0.35),
+            (pose_prediction[1] * 0.65) + (velocity_prediction[1] * 0.35),
+          )
+      if predicted_px is None:
+        return None
+      if not (0 <= predicted_px[0] < width and 0 <= predicted_px[1] < height):
+        return None
+
+      base_confidence = float(tracking_lock.get("final_bar_confidence") or final_bar_confidence or 0.42)
+      confidence = max(0.18, min(base_confidence * (0.55 ** max(failure_count, 1)), 0.38))
+      return {
+        "time": timestamp,
+        "x": predicted_px[0] / width,
+        "y": predicted_px[1] / height,
+        "confidence": confidence,
+        "trackingState": "estimated",
+        "estimatedSource": "kinematic_coast",
+        "rejectionReason": reason or "local_tracking_failed",
+      }
 
     if debug_output_path:
       debug_writer = cv2.VideoWriter(
@@ -2062,6 +2115,67 @@ class BarbellTracker:
             stationary_hardware_rejection_count += 1
           if consecutive_local_failures <= MAX_LOCAL_TRACKING_FAILURES:
             tracking_mode = "local_tracking"
+            coast_point = estimated_barbell_coast_point(
+              timestamp=timestamp,
+              shoulder=shoulder,
+              reason=collar_rejection_reason,
+              failure_count=consecutive_local_failures,
+            )
+            if coast_point is not None:
+              coasted_estimated_point_count += 1
+              self._record_tracking_frame_diagnostic(
+                frame_index=frame_index,
+                timestamp=timestamp,
+                tracking_mode=tracking_mode,
+                selected_plate=tracking_lock["plate"],
+                final_bar_point=(
+                  float(coast_point["x"]) * width,
+                  float(coast_point["y"]) * height,
+                ),
+                pose_predicted_point=self._pose_predicted_bar_point(tracking_lock, shoulder),
+                predicted_collar=tracking_lock.get("predicted_collar"),
+                refined_collar=None,
+                point=coast_point,
+                width=width,
+                height=height,
+                local_tracker_type=local_tracker_type,
+                optical_flow_inlier_count=optical_flow_inlier_count,
+                template_match_score=template_match_score,
+                collar_rejection_reason=collar_rejection_reason,
+                point_source="kinematic_coast",
+                final_bar_reason=collar_rejection_reason,
+                final_bar_confidence=float(coast_point["confidence"]),
+                final_bar_source=(hub_result_for_debug or {}).get("source"),
+                fallback_used=fallback_used,
+                path_residual_px=last_path_residual_px,
+              )
+              samples.append(coast_point)
+              if debug_writer:
+                coast_px = (
+                  float(coast_point["x"]) * width,
+                  float(coast_point["y"]) * height,
+                )
+                write_debug_frame(
+                  _draw_debug_frame(
+                    cv2,
+                    frame,
+                    bounds=bounds[:4],
+                    candidates=[],
+                    rejected=[],
+                    selected_plate=tracking_lock["plate"],
+                    hub_candidates=list((hub_result_for_debug or {}).get("candidates") or []),
+                    rejected_hub_candidates=list((hub_result_for_debug or {}).get("rejected_candidates") or []),
+                    final_bar_point=coast_px,
+                    pose_predicted_point=self._pose_predicted_bar_point(tracking_lock, shoulder),
+                    predicted_collar=tracking_lock.get("predicted_collar"),
+                    refined_collar=None,
+                    emitted_point=coast_px,
+                    rejection_reason=collar_rejection_reason,
+                    mode=f"{tracking_mode}:kinematic_coast",
+                  )
+                )
+              frame_index += 1
+              continue
             self._record_tracking_frame_diagnostic(
               frame_index=frame_index,
               timestamp=timestamp,
@@ -2751,6 +2865,7 @@ class BarbellTracker:
         stationary_hardware_rejection_count=stationary_hardware_rejection_count,
         reacquisition_count=reacquisition_count,
         local_tracking_failure_count=local_tracking_failure_count,
+        coasted_estimated_point_count=coasted_estimated_point_count,
         selected_side=normalized_selected_side,
         coordinate_space=coordinate_space,
         collar_candidate_count=collar_candidate_count,
@@ -2861,6 +2976,7 @@ class BarbellTracker:
         stationary_hardware_rejection_count=stationary_hardware_rejection_count,
         reacquisition_count=reacquisition_count,
         local_tracking_failure_count=local_tracking_failure_count,
+        coasted_estimated_point_count=coasted_estimated_point_count,
         interpolated_point_count=interpolated_count,
         outlier_removed_count=outlier_removed_count,
         bar_vertical_range_px=round(bar_vertical_range_px, 2),
@@ -2932,6 +3048,7 @@ class BarbellTracker:
         stationary_hardware_rejection_count=stationary_hardware_rejection_count,
         reacquisition_count=reacquisition_count,
         local_tracking_failure_count=local_tracking_failure_count,
+        coasted_estimated_point_count=coasted_estimated_point_count,
         interpolated_point_count=interpolated_count,
         outlier_removed_count=outlier_removed_count,
         bar_vertical_range_px=round(bar_vertical_range_px, 2),
@@ -3066,7 +3183,11 @@ class BarbellTracker:
         "source_state_counts": source_state_counts,
         "smoothing": smoothing_diagnostics,
         "interpolated_point_count": interpolated_count,
-        "rejected_frame_count": max(sampled_count - detected_count - interpolated_count, 0),
+        "coasted_estimated_point_count": coasted_estimated_point_count,
+        "rejected_frame_count": max(
+          sampled_count - detected_count - interpolated_count - coasted_estimated_point_count,
+          0,
+        ),
         "rejected_candidate_count": rejected_candidate_count,
         "rejection_reason_counts": rejection_reason_counts,
         "skipped_no_pose_frame_count": skipped_no_pose_frame_count,
