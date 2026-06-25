@@ -12,6 +12,7 @@ import numpy as np
 
 from app.analysis.manual_tracking import (
   BODY_ANCHORS,
+  _track_direction,
   fuse_manual_body_tracks,
   select_reference_source_index,
   select_manual_tracking_side,
@@ -413,7 +414,8 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertAlmostEqual(knee["x"], 0.39)
     self.assertAlmostEqual(knee["y"], tracking_setup()["anchors"]["knee"]["y"])
     self.assertNotAlmostEqual(knee["x"], 0.52)
-    self.assertEqual(diagnostics["source_counts"]["knee"]["pin_estimated"], 1)
+    self.assertEqual(knee["manual_source"], "kinematic_estimate")
+    self.assertEqual(diagnostics["source_counts"]["knee"]["kinematic_estimate"], 1)
     self.assertEqual(diagnostics["rejection_reasons"]["pin_track_missing_recent"], 1)
 
   def test_velocity_capped_knee_pin_is_not_rendered_as_guided(self) -> None:
@@ -450,7 +452,8 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertNotIn("manual_assisted", knee)
     self.assertAlmostEqual(knee["x"], tracking_setup()["anchors"]["knee"]["x"] + 0.03)
     self.assertEqual(diagnostics["source_counts"]["knee"]["stale_pin_rejected"], 1)
-    self.assertEqual(diagnostics["source_counts"]["knee"]["pin_estimated"], 1)
+    self.assertEqual(knee["manual_source"], "kinematic_estimate")
+    self.assertEqual(diagnostics["source_counts"]["knee"]["kinematic_estimate"], 1)
 
   def test_short_knee_dropout_estimates_from_hip_ankle_motion_without_following_chain(self) -> None:
     frames = [pose_frame(index) for index in (1, 2)]
@@ -480,7 +483,8 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertAlmostEqual(knee["x"], tracking_setup()["anchors"]["knee"]["x"] + 0.04)
     self.assertNotAlmostEqual(knee["x"], tracking_setup()["anchors"]["knee"]["x"])
     self.assertLessEqual(knee["visibility"], 0.48)
-    self.assertEqual(diagnostics["source_counts"]["knee"]["pin_estimated"], 1)
+    self.assertEqual(knee["manual_source"], "kinematic_estimate")
+    self.assertEqual(diagnostics["source_counts"]["knee"]["kinematic_estimate"], 1)
 
   def test_long_knee_dropout_keeps_visual_fallback_without_accepting_pin(self) -> None:
     frames = [pose_frame(index) for index in (1, 2, 3, 4)]
@@ -642,6 +646,93 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertGreater(landmarks["left_ankle"]["y"], landmarks["left_knee"]["y"])
     self.assertEqual(landmarks["left_ankle"]["tracking_state"], "guided")
     self.assertEqual(diagnostics["selected_side"], "left")
+
+  def test_fast_plausible_knee_displacement_uses_adaptive_velocity_cap(self) -> None:
+    frames = {
+      0: np.zeros((120, 120), dtype=np.uint8),
+      1: np.zeros((120, 120), dtype=np.uint8),
+    }
+
+    with patch(
+      "app.analysis.manual_tracking._track_step",
+      return_value=((74.0, 62.0), 0.78, {"template_score": 0.74}),
+    ):
+      tracks = _track_direction(
+        cv2,
+        frames,
+        [0, 1],
+        (28.0, 60.0),
+        joint_name="knee",
+        fps=30.0,
+      )
+
+    knee = tracks[1]
+    self.assertNotIn("velocity_cap_reused_previous", knee)
+    self.assertNotIn("stale_track", knee)
+    self.assertEqual(knee["fast_motion_frame"], 1.0)
+    self.assertGreater(knee["velocity_cap_px"], 40.0)
+    self.assertGreater(knee["motion_velocity_px_per_sec"], 1000.0)
+    self.assertAlmostEqual(knee["x"], 74.0)
+
+  def test_one_bad_knee_frame_predicts_instead_of_freezing_previous_point(self) -> None:
+    frames = {
+      0: np.zeros((120, 120), dtype=np.uint8),
+      1: np.zeros((120, 120), dtype=np.uint8),
+      2: np.zeros((120, 120), dtype=np.uint8),
+    }
+    calls = [
+      ((50.0, 62.0), 0.86, {"template_score": 0.82}),
+      (None, 0.0, {}),
+    ]
+
+    with patch("app.analysis.manual_tracking._track_step", side_effect=calls):
+      tracks = _track_direction(
+        cv2,
+        frames,
+        [0, 1, 2],
+        (40.0, 60.0),
+        joint_name="knee",
+        fps=30.0,
+      )
+
+    knee = tracks[2]
+    self.assertAlmostEqual(knee["x"], 60.0)
+    self.assertAlmostEqual(knee["y"], 64.0)
+    self.assertEqual(knee["kinematic_estimate"], 1.0)
+    self.assertEqual(knee["estimate_reason"], "local_tracking_failed_velocity_prediction")
+    self.assertNotIn("velocity_cap_reused_previous", knee)
+    self.assertNotIn("stale_track", knee)
+
+  def test_missing_knee_uses_hip_ankle_kinematic_estimate(self) -> None:
+    frames = [pose_frame(index) for index in (1, 2)]
+    frames[1]["landmarks"]["left_knee"].update({"x": 0.18, "y": 0.25, "visibility": 0.92})
+    tracks = {
+      joint: {
+        index: {
+          "x": tracking_setup()["anchors"][joint]["x"] + (0.04 if index == 2 else 0.0),
+          "y": tracking_setup()["anchors"][joint]["y"] + (0.03 if index == 2 and joint in {"hip", "ankle"} else 0.0),
+          "confidence": 0.9,
+          "tracking_state": "guided",
+        }
+        for index in (1, 2)
+      }
+      for joint in BODY_ANCHORS
+    }
+    del tracks["knee"][2]
+
+    fused, diagnostics = fuse_manual_body_tracks(
+      frames,
+      setup=tracking_setup(),
+      tracking={"tracks": tracks, "reference_source_index": 1, "coverage": {}},
+    )
+
+    knee = fused[1]["landmarks"]["left_knee"]
+    self.assertEqual(knee["tracking_state"], "estimated")
+    self.assertEqual(knee["manual_source"], "kinematic_estimate")
+    self.assertEqual(knee["accepted_source"], "kinematic_estimate")
+    self.assertNotAlmostEqual(knee["x"], 0.18)
+    self.assertNotAlmostEqual(knee["x"], tracking_setup()["anchors"]["knee"]["x"])
+    self.assertEqual(diagnostics["source_counts"]["knee"]["kinematic_estimate"], 1)
 
   def test_tracks_anchors_forward_and_backward_from_reference_frame(self) -> None:
     width, height, fps = 160, 120, 10.0

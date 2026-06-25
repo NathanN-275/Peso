@@ -48,6 +48,23 @@ JOINT_DISPLACEMENT_FLOORS_PX = {
 FAST_KNEE_CAP_MULTIPLIER = 2.35
 FAST_KNEE_VELOCITY_RATIO_PER_SECOND = 0.45
 MAX_SHORT_KNEE_ESTIMATE_FAILURES = 2
+BODY_PIN_DIAGNOSTIC_FRAME_LIMIT = 150
+KNEE_DEBUG_TRACK_FIELDS = (
+  "velocity_cap_px",
+  "actual_displacement_px",
+  "rejected_candidate_displacement_px",
+  "velocity_capped",
+  "velocity_cap_reused_previous",
+  "stale_track",
+  "fast_motion_frame",
+  "motion_velocity_px_per_sec",
+  "tracking_frame_gap",
+  "sampled_fps",
+  "prediction_error_px",
+  "smoothing_window_size",
+  "smoothing_displacement_px",
+  "fast_motion_smoothing_reduced",
+)
 
 logger = logging.getLogger(__name__)
 
@@ -638,7 +655,7 @@ def _track_direction(
     predicted_point: tuple[float, float] | None,
     candidate_point: tuple[float, float] | None,
     confidence: float,
-  ) -> tuple[float, dict[str, float]]:
+  ) -> tuple[float, dict[str, Any]]:
     normal_cap = _joint_displacement_cap_px(frame_shape, joint_name, frame_gap=frame_gap)
     elapsed_seconds = (
       abs(frame_gap) / float(fps)
@@ -669,7 +686,7 @@ def _track_direction(
     return velocity_cap_px, {
       "fast_motion_frame": 1.0 if fast_motion_frame else 0.0,
       "motion_velocity_px_per_sec": velocity_px_per_sec,
-      "motion_source": 1.0 if joint_name == "knee" else 0.0,
+      "motion_source": joint_name or "unknown",
       "tracking_frame_gap": float(abs(frame_gap)),
       "sampled_fps": sampled_fps,
       "velocity_cap_px": velocity_cap_px,
@@ -681,7 +698,7 @@ def _track_direction(
     fallback_point: tuple[float, float],
     *,
     confidence: float,
-    diagnostics: dict[str, float],
+    diagnostics: dict[str, Any],
     reason: str,
   ) -> None:
     nonlocal current_point, previous_index, accepted_history
@@ -906,15 +923,24 @@ def _smooth_anchor_track(
       or point.get("velocity_cap_reused_previous")
       or point.get("fast_motion_frame")
     ):
-      smoothed[source_index] = dict(point)
+      smoothed[source_index] = {
+        **point,
+        "smoothing_window_size": 1.0,
+        "smoothing_displacement_px": 0.0,
+        **({"fast_motion_smoothing_reduced": 1.0} if point.get("fast_motion_frame") else {}),
+      }
       continue
     neighbor_indices = ordered_indices[max(position - 1, 0):min(position + 2, len(ordered_indices))]
     neighbors = [tracks[index] for index in neighbor_indices]
+    smoothed_x = float(median(float(item["x"]) for item in neighbors))
+    smoothed_y = float(median(float(item["y"]) for item in neighbors))
     smoothed[source_index] = {
       **point,
-      "x": float(median(float(item["x"]) for item in neighbors)),
-      "y": float(median(float(item["y"]) for item in neighbors)),
+      "x": smoothed_x,
+      "y": smoothed_y,
       "confidence": float(point["confidence"]),
+      "smoothing_window_size": float(len(neighbor_indices)),
+      "smoothing_displacement_px": math.hypot(smoothed_x - float(point["x"]), smoothed_y - float(point["y"])),
     }
   return smoothed
 
@@ -1114,6 +1140,7 @@ def fuse_manual_body_tracks(
   manual_active = {joint: False for joint in FUSED_BODY_ANCHORS}
   manual_has_activated = {joint: False for joint in FUSED_BODY_ANCHORS}
   manual_reentry_streak = {joint: 0 for joint in FUSED_BODY_ANCHORS}
+  manual_loss_streak = {joint: 0 for joint in FUSED_BODY_ANCHORS}
   previous_manual_points: dict[str, dict[str, float]] = {}
   manual_history: dict[str, list[dict[str, float]]] = {joint: [] for joint in FUSED_BODY_ANCHORS}
   previous_valid_chain: dict[str, dict[str, float]] | None = None
@@ -1186,6 +1213,51 @@ def fuse_manual_body_tracks(
     if source not in source_counts[joint]:
       return
     source_counts[joint][source] += 1
+
+  def rounded_debug_value(value: Any, digits: int = 3) -> Any:
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+      return round(float(value), digits)
+    return value
+
+  def debug_pin_payload(raw_track: dict[str, Any] | None, *, stale: bool | None = None) -> dict[str, Any] | None:
+    if not raw_track:
+      return None
+    payload: dict[str, Any] = {
+      "x": round(float(raw_track["x"]), 4),
+      "y": round(float(raw_track["y"]), 4),
+      "confidence": round(float(raw_track.get("confidence") or 0.0), 3),
+    }
+    if stale is not None:
+      payload["stale"] = stale
+    for key in KNEE_DEBUG_TRACK_FIELDS:
+      if key in raw_track:
+        payload[key] = rounded_debug_value(raw_track.get(key))
+    if "predicted_point_x" in raw_track and "predicted_point_y" in raw_track:
+      payload["predicted_knee"] = {
+        "x": round(float(raw_track["predicted_point_x"]), 4),
+        "y": round(float(raw_track["predicted_point_y"]), 4),
+      }
+    if "estimate_reason" in raw_track:
+      payload["estimate_reason"] = raw_track["estimate_reason"]
+    return payload
+
+  def debug_recovery_payload(recovery: dict[str, Any] | None) -> dict[str, Any]:
+    if not recovery:
+      return {}
+    payload: dict[str, Any] = {}
+    prediction = recovery.get("prediction")
+    if prediction:
+      payload["predicted_knee"] = {
+        "x": round(float(prediction["x"]), 4),
+        "y": round(float(prediction["y"]), 4),
+      }
+    kinematic_point = recovery.get("kinematic_point")
+    if kinematic_point:
+      payload["kinematic_knee"] = {
+        "x": round(float(kinematic_point["x"]), 4),
+        "y": round(float(kinematic_point["y"]), 4),
+      }
+    return payload
 
   def write_upper_back_landmark(
     landmarks: dict[str, Any],
@@ -1420,6 +1492,7 @@ def fuse_manual_body_tracks(
       "manual_weight": 0.0,
       "tracking_state": "estimated",
       "prediction": predicted,
+      "kinematic_point": {"x": estimate["x"], "y": estimate["y"]},
     }
 
   def persistent_anchor_estimate(
@@ -1612,7 +1685,7 @@ def fuse_manual_body_tracks(
       )
 
     frame_diagnostic: dict[str, Any] | None = None
-    if len(frame_diagnostics) < 120:
+    if len(frame_diagnostics) < BODY_PIN_DIAGNOSTIC_FRAME_LIMIT:
       frame_diagnostic = {
         "source_index": source_index,
         "upper_back_source": upper_back_source,
@@ -1715,6 +1788,7 @@ def fuse_manual_body_tracks(
       raw_track = raw_points.get(joint)
       track = available_points.get(joint)
       if not track:
+        manual_loss_streak[joint] += 1
         track_stale = bool(
           raw_track
           and (
@@ -1734,33 +1808,35 @@ def fuse_manual_body_tracks(
             model_visibility=model_visibility,
           )
           if recovery is None:
-            recovery = kinematic_knee_option(
-              source_index=source_index,
-              hip_point=current_body_point("hip"),
-              ankle_point=current_body_point("ankle"),
+            recovery = (
+              kinematic_knee_option(
+                source_index=source_index,
+                hip_point=current_body_point("hip"),
+                ankle_point=current_body_point("ankle"),
+              )
+              if manual_loss_streak[joint] <= 2
+              and available_points.get("hip")
+              and available_points.get("ankle")
+              else None
             )
           if recovery is not None:
             options_by_joint[joint] = [recovery]
             if frame_diagnostic is not None:
               frame_diagnostic["joints"][joint] = {
-                "source": "automatic_recovery",
+                "source": recovery["source"],
                 "raw_model": {
                   "x": round(model_point["x"], 4),
                   "y": round(model_point["y"], 4),
                   "visibility": round(model_visibility, 3),
                 },
-                "raw_pin": {
-                  "x": round(float(raw_track["x"]), 4),
-                  "y": round(float(raw_track["y"]), 4),
-                  "confidence": round(float(raw_track.get("confidence") or 0.0), 3),
-                  "stale": True,
-                },
+                "raw_pin": debug_pin_payload(raw_track, stale=True),
                 "residual": (
                   round(float(recovery["model_distance"]), 4)
                   if recovery.get("model_distance") is not None
                   else None
                 ),
                 "rejection_reason": "stale_pin_rejected",
+                **debug_recovery_payload(recovery),
               }
             continue
           options_by_joint[joint] = []
@@ -1772,12 +1848,7 @@ def fuse_manual_body_tracks(
                 "y": round(model_point["y"], 4),
                 "visibility": round(model_visibility, 3),
               },
-              "raw_pin": {
-                "x": round(float(raw_track["x"]), 4),
-                "y": round(float(raw_track["y"]), 4),
-                "confidence": round(float(raw_track.get("confidence") or 0.0), 3),
-                "stale": True,
-              },
+              "raw_pin": debug_pin_payload(raw_track, stale=True),
               "residual": None,
               "rejection_reason": "stale_pin_rejected",
             }
@@ -1803,12 +1874,7 @@ def fuse_manual_body_tracks(
                 "y": round(model_point["y"], 4),
                 "visibility": round(model_visibility, 3),
               },
-              "raw_pin": {
-                "x": round(float(raw_track["x"]), 4),
-                "y": round(float(raw_track["y"]), 4),
-                "confidence": round(float(raw_track.get("confidence") or 0.0), 3),
-                "stale": True,
-              } if raw_track else None,
+              "raw_pin": debug_pin_payload(raw_track, stale=True),
               "residual": None,
               "rejection_reason": "stale_pin_rejected",
             }
@@ -1825,15 +1891,21 @@ def fuse_manual_body_tracks(
             model_visibility=model_visibility,
           )
           if recovery is None:
-            recovery = kinematic_knee_option(
-              source_index=source_index,
-              hip_point=current_body_point("hip"),
-              ankle_point=current_body_point("ankle"),
+            recovery = (
+              kinematic_knee_option(
+                source_index=source_index,
+                hip_point=current_body_point("hip"),
+                ankle_point=current_body_point("ankle"),
+              )
+              if manual_loss_streak[joint] <= 2
+              and available_points.get("hip")
+              and available_points.get("ankle")
+              else None
             )
           options_by_joint[joint] = [recovery] if recovery is not None else []
           if frame_diagnostic is not None:
             frame_diagnostic["joints"][joint] = {
-              "source": "automatic_recovery" if recovery is not None else "gap",
+              "source": recovery["source"] if recovery is not None else "gap",
               "raw_model": {
                 "x": round(model_point["x"], 4),
                 "y": round(model_point["y"], 4),
@@ -1846,6 +1918,7 @@ def fuse_manual_body_tracks(
                 else None
               ),
               "rejection_reason": "pin_track_missing_recent",
+              **debug_recovery_payload(recovery),
             }
           continue
         if manual_has_activated[joint] or previous_manual_points.get(joint) is not None:
@@ -1893,6 +1966,7 @@ def fuse_manual_body_tracks(
         reference_source_index is not None
         and source_index == int(reference_source_index)
       )
+      manual_loss_streak[joint] = 0
       use_manual_track = force_reference_anchor or not manual_has_activated[joint] or manual_active[joint]
       if not use_manual_track:
         manual_reentry_streak[joint] += 1
@@ -1906,11 +1980,7 @@ def fuse_manual_body_tracks(
               "y": round(model_point["y"], 4),
               "visibility": round(model_visibility, 3),
             },
-            "raw_pin": {
-              "x": round(float(track["x"]), 4),
-              "y": round(float(track["y"]), 4),
-              "confidence": round(float(track.get("confidence") or 0.0), 3),
-            },
+            "raw_pin": debug_pin_payload(track),
             "residual": round(_point_distance(track, model_point), 4),
             "rejection_reason": "manual_reentry_wait",
           }
@@ -1942,11 +2012,7 @@ def fuse_manual_body_tracks(
               "y": round(model_point["y"], 4),
               "visibility": round(model_visibility, 3),
             },
-            "raw_pin": {
-              "x": round(track_point["x"], 4),
-              "y": round(track_point["y"], 4),
-              "confidence": round(float(track.get("confidence") or 0.0), 3),
-            },
+            "raw_pin": debug_pin_payload(track),
             "residual": None,
             "rejection_reason": "plate_latch_or_occlusion",
             "inside_barbell_occluder": True,
@@ -1973,11 +2039,7 @@ def fuse_manual_body_tracks(
               "y": round(model_point["y"], 4),
               "visibility": round(model_visibility, 3),
             },
-            "raw_pin": {
-              "x": round(float(track["x"]), 4),
-              "y": round(float(track["y"]), 4),
-              "confidence": round(track_confidence, 3),
-            },
+            "raw_pin": debug_pin_payload(track),
             "residual": round(model_distance, 4),
             "rejection_reason": "pose_divergence",
           }
@@ -2000,11 +2062,7 @@ def fuse_manual_body_tracks(
               "y": round(model_point["y"], 4),
               "visibility": round(model_visibility, 3),
             },
-            "raw_pin": {
-              "x": round(float(track["x"]), 4),
-              "y": round(float(track["y"]), 4),
-              "confidence": round(track_confidence, 3),
-            },
+            "raw_pin": debug_pin_payload(track),
             "residual": round(model_distance, 4),
             "rejection_reason": "temporal_jump",
           }
@@ -2051,11 +2109,7 @@ def fuse_manual_body_tracks(
             "y": round(model_point["y"], 4),
             "visibility": round(model_visibility, 3),
           },
-          "raw_pin": {
-            "x": round(float(track["x"]), 4),
-            "y": round(float(track["y"]), 4),
-            "confidence": round(track_confidence, 3),
-          },
+          "raw_pin": debug_pin_payload(track),
           "residual": round(model_distance, 4),
           "rejection_reason": None,
           "pose_divergence_accepted": accept_pose_divergence and model_distance > max_model_distance,
@@ -2087,6 +2141,10 @@ def fuse_manual_body_tracks(
       continue
 
     _score, selected_options = max(combinations, key=lambda item: item[0])
+    chain_has_kinematic_estimate = any(
+      option["source"] == "kinematic_estimate"
+      for option in selected_options
+    )
     selected_chain: dict[str, dict[str, float]] = {}
     selected_chain[UPPER_BACK_ANCHOR] = dict(upper_back_point)
     for joint, option in zip(FUSED_BODY_ANCHORS, selected_options):
@@ -2167,8 +2225,9 @@ def fuse_manual_body_tracks(
         directly_anchored_count += 1
       else:
         blended_count += 1
-    valid_chains[frame_position] = selected_chain
-    previous_valid_chain = selected_chain
+    if not chain_has_kinematic_estimate:
+      valid_chains[frame_position] = selected_chain
+      previous_valid_chain = selected_chain
 
   for frame_position in unresolved_frame_positions:
     landmarks = fused_frames[frame_position].get("landmarks") or {}
