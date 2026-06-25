@@ -101,11 +101,47 @@ def _fuse_barbell_lanes(
   frames: list[dict[str, Any]] = []
   source_counts: dict[str, int] = {}
   previous_manual: dict[str, Any] | None = None
+  previous_automatic: dict[str, Any] | None = None
   previous_emitted: dict[str, Any] | None = None
+  emitted_history: list[dict[str, Any]] = []
   consecutive_manual_failures = 0
   consecutive_auto_failures = 0
+  stationary_manual_rejection_count = 0
   agreement_limit_px = max(18.0, max(width, height) * 0.035)
   manual_jump_limit_px = max(70.0, max(width, height) * 0.14)
+  stationary_motion_limit_px = max(2.5, max(width, height) * 0.004)
+  active_bar_motion_px = max(8.0, max(width, height) * 0.012)
+
+  def coast_from_history(time_key: float) -> dict[str, Any] | None:
+    if not emitted_history:
+      return None
+    last = emitted_history[-1]
+    if len(emitted_history) < 2:
+      return {
+        **last,
+        "time": time_key,
+      }
+    previous = emitted_history[-2]
+    previous_time = float(previous["time"])
+    last_time = float(last["time"])
+    if last_time <= previous_time:
+      return {
+        **last,
+        "time": time_key,
+      }
+    horizon = time_key - last_time
+    if horizon < 0 or horizon > (last_time - previous_time) * 2.5:
+      return {
+        **last,
+        "time": time_key,
+      }
+    scale = horizon / (last_time - previous_time)
+    return {
+      **last,
+      "time": time_key,
+      "x": min(max(float(last["x"]) + ((float(last["x"]) - float(previous["x"])) * scale), 0.0), 1.0),
+      "y": min(max(float(last["y"]) + ((float(last["y"]) - float(previous["y"])) * scale), 0.0), 1.0),
+    }
 
   for key in sorted(set(auto_by_time) | set(manual_by_time)):
     manual = manual_by_time.get(key)
@@ -120,6 +156,11 @@ def _fuse_barbell_lanes(
       else None
     )
     manual_stale = bool(manual_jump_px is not None and manual_jump_px > manual_jump_limit_px)
+    automatic_motion_px = (
+      _distance_px(automatic, previous_automatic, width=width, height=height)
+      if auto_valid and previous_automatic is not None
+      else None
+    )
     agreement_px = (
       _distance_px(manual, automatic, width=width, height=height)
       if manual_valid and auto_valid
@@ -128,6 +169,22 @@ def _fuse_barbell_lanes(
     selected_source = "gap"
     rejection_reason: str | None = None
     emitted: dict[str, Any] | None = None
+    rejected_stationary_hardware = False
+
+    if (
+      manual_valid
+      and not manual_stale
+      and manual_jump_px is not None
+      and automatic_motion_px is not None
+      and manual_jump_px <= stationary_motion_limit_px
+      and automatic_motion_px >= active_bar_motion_px
+      and agreement_px is not None
+      and agreement_px > agreement_limit_px
+    ):
+      manual_stale = True
+      rejected_stationary_hardware = True
+      stationary_manual_rejection_count += 1
+      rejection_reason = "manual_lane_stationary_hardware_like"
 
     if manual_valid and not manual_stale:
       consecutive_manual_failures = 0
@@ -154,7 +211,7 @@ def _fuse_barbell_lanes(
           rejection_reason = "automatic_disagrees_with_manual_lane"
     else:
       consecutive_manual_failures += 1
-      if manual_stale:
+      if manual_stale and rejection_reason is None:
         rejection_reason = "manual_lane_temporal_jump"
 
     if emitted is None and auto_valid:
@@ -169,10 +226,11 @@ def _fuse_barbell_lanes(
       consecutive_auto_failures += 1
 
     if emitted is None and previous_emitted is not None and consecutive_manual_failures <= 2:
+      coast_base = coast_from_history(key) or previous_emitted
       emitted = {
-        **previous_emitted,
+        **coast_base,
         "time": key,
-        "confidence": min(float(previous_emitted.get("confidence") or 0.0) * 0.75, 0.42),
+        "confidence": min(float(coast_base.get("confidence") or 0.0) * 0.75, 0.42),
         "trackingState": "estimated",
         "manual_assisted": True,
         "selectedSource": "kinematic_coast",
@@ -183,11 +241,16 @@ def _fuse_barbell_lanes(
       source_counts[selected_source] = source_counts.get(selected_source, 0) + 1
       fused.append(emitted)
       previous_emitted = emitted
+      emitted_history.append(emitted)
+      if len(emitted_history) > 4:
+        emitted_history = emitted_history[-4:]
     else:
       source_counts["gap"] = source_counts.get("gap", 0) + 1
 
     if manual_valid and not manual_stale:
       previous_manual = manual
+    if auto_valid:
+      previous_automatic = automatic
 
     if len(frames) < 120:
       frames.append({
@@ -203,8 +266,11 @@ def _fuse_barbell_lanes(
         "emitted_confidence": round(float(emitted.get("confidence") or 0.0), 3) if emitted else 0.0,
         "selected_source": selected_source,
         "rejection_reason": rejection_reason,
+        "rejected_stationary_hardware": rejected_stationary_hardware,
+        "coasting_frame": selected_source == "kinematic_coast",
         "visual_agreement_px": round(agreement_px, 2) if agreement_px is not None else None,
         "path_residual_px": round(manual_jump_px, 2) if manual_jump_px is not None else None,
+        "automatic_motion_px": round(automatic_motion_px, 2) if automatic_motion_px is not None else None,
         "consecutive_manual_failures": consecutive_manual_failures,
         "consecutive_auto_failures": consecutive_auto_failures,
       })
@@ -214,6 +280,7 @@ def _fuse_barbell_lanes(
     "manual_lane_point_count": len(manual_points),
     "automatic_lane_point_count": len(automatic_points),
     "emitted_point_count": len(fused),
+    "stationary_manual_rejection_count": stationary_manual_rejection_count,
     "source_counts": source_counts,
     "frames": frames,
   }

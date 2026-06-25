@@ -486,6 +486,36 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertEqual(knee["manual_source"], "kinematic_estimate")
     self.assertEqual(diagnostics["source_counts"]["knee"]["kinematic_estimate"], 1)
 
+  def test_stuck_knee_pin_is_replaced_by_kinematic_estimate_when_leg_moves(self) -> None:
+    frames = [pose_frame(index) for index in (1, 2, 3)]
+    tracks = {}
+    for joint in BODY_ANCHORS:
+      tracks[joint] = {}
+      for index in (1, 2, 3):
+        shift = (index - 1) * 0.04
+        tracks[joint][index] = {
+          "x": tracking_setup()["anchors"][joint]["x"] + (shift if joint in {"shoulder", "hip", "ankle"} else 0.0),
+          "y": tracking_setup()["anchors"][joint]["y"],
+          "confidence": 0.92,
+          "tracking_state": "guided",
+        }
+
+    fused, diagnostics = fuse_manual_body_tracks(
+      frames,
+      setup=tracking_setup(),
+      tracking={"tracks": tracks, "reference_source_index": 1, "coverage": {}},
+    )
+
+    knee = fused[2]["landmarks"]["left_knee"]
+    self.assertEqual(knee["tracking_state"], "estimated")
+    self.assertEqual(knee["manual_source"], "kinematic_estimate")
+    self.assertNotAlmostEqual(knee["x"], tracking_setup()["anchors"]["knee"]["x"])
+    self.assertEqual(diagnostics["source_counts"]["knee"]["stale_pin_stuck"], 1)
+    self.assertEqual(diagnostics["source_counts"]["knee"]["kinematic_estimate"], 1)
+    knee_debug = diagnostics["body_pin_frames"][2]["joints"]["knee"]
+    self.assertTrue(knee_debug["knee_pin_stuck"])
+    self.assertEqual(knee_debug["rejection_reason"], "stale_pin_stuck")
+
   def test_long_knee_dropout_keeps_visual_fallback_without_accepting_pin(self) -> None:
     frames = [pose_frame(index) for index in (1, 2, 3, 4)]
     tracks = {

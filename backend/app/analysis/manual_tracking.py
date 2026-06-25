@@ -29,6 +29,7 @@ SOURCE_NAMES = (
   "automatic",
   "automatic_recovery",
   "stale_pin_rejected",
+  "stale_pin_stuck",
   "gap",
 )
 JOINT_DISPLACEMENT_RATIOS = {
@@ -1141,6 +1142,7 @@ def fuse_manual_body_tracks(
   manual_has_activated = {joint: False for joint in FUSED_BODY_ANCHORS}
   manual_reentry_streak = {joint: 0 for joint in FUSED_BODY_ANCHORS}
   manual_loss_streak = {joint: 0 for joint in FUSED_BODY_ANCHORS}
+  knee_stuck_streak = 0
   previous_manual_points: dict[str, dict[str, float]] = {}
   manual_history: dict[str, list[dict[str, float]]] = {joint: [] for joint in FUSED_BODY_ANCHORS}
   previous_valid_chain: dict[str, dict[str, float]] | None = None
@@ -1413,6 +1415,38 @@ def fuse_manual_body_tracks(
       "prediction": prediction,
     }
 
+  def knee_pin_stuck_metrics(
+    *,
+    track_point: dict[str, float],
+    source_index: int,
+  ) -> dict[str, Any]:
+    if previous_valid_chain is None:
+      return {"stuck": False}
+    previous_knee = previous_valid_chain.get("knee")
+    previous_hip = previous_valid_chain.get("hip")
+    previous_ankle = previous_valid_chain.get("ankle")
+    if not previous_knee or not previous_hip or not previous_ankle:
+      return {"stuck": False}
+    hip_point = current_body_point("hip")
+    ankle_point = current_body_point("ankle")
+    if not hip_point or not ankle_point:
+      return {"stuck": False}
+
+    knee_displacement = _point_distance(track_point, previous_knee)
+    hip_displacement = _point_distance(hip_point, previous_hip)
+    ankle_displacement = _point_distance(ankle_point, previous_ankle)
+    context_displacement = max(hip_displacement, ankle_displacement)
+    active_motion_threshold = max(0.022, torso_scale * 0.13)
+    stuck_motion_limit = max(0.006, context_displacement * 0.28)
+    return {
+      "stuck": context_displacement >= active_motion_threshold and knee_displacement <= stuck_motion_limit,
+      "knee_actual_displacement": knee_displacement,
+      "hip_displacement": hip_displacement,
+      "ankle_displacement": ankle_displacement,
+      "context_displacement": context_displacement,
+      "stuck_motion_limit": stuck_motion_limit,
+    }
+
   def kinematic_knee_estimate(
     *,
     hip_point: dict[str, float] | None,
@@ -1483,6 +1517,8 @@ def fuse_manual_body_tracks(
       predicted_point=predicted,
     )
     if estimate is None:
+      return None
+    if point_in_barbell_occluder("knee", estimate, source_index):
       return None
     return {
       "source": "kinematic_estimate",
@@ -1989,6 +2025,58 @@ def fuse_manual_body_tracks(
         "x": float(track["x"]),
         "y": float(track["y"]),
       }
+      knee_stuck_debug: dict[str, Any] | None = None
+      if joint == "knee" and not force_reference_anchor:
+        knee_stuck_debug = knee_pin_stuck_metrics(
+          track_point=track_point,
+          source_index=source_index,
+        )
+        if knee_stuck_debug.get("stuck"):
+          knee_stuck_streak += 1
+        else:
+          knee_stuck_streak = 0
+
+        if knee_stuck_streak >= 2:
+          note_rejection("stale_pin_stuck")
+          record_source("knee", "stale_pin_stuck")
+          manual_active[joint] = False
+          manual_reentry_streak[joint] = 0
+          recovery = kinematic_knee_option(
+            source_index=source_index,
+            hip_point=current_body_point("hip"),
+            ankle_point=current_body_point("ankle"),
+          )
+          if recovery is None and not model_inside_occluder:
+            recovery = automatic_knee_recovery_option(
+              source_index=source_index,
+              model_point=model_point,
+              model_visibility=model_visibility,
+            )
+          if recovery is not None:
+            options_by_joint[joint] = [recovery]
+          if frame_diagnostic is not None:
+            frame_diagnostic["joints"][joint] = {
+              "source": recovery["source"] if recovery is not None else ("automatic" if options_by_joint.get(joint) else "gap"),
+              "raw_model": {
+                "x": round(model_point["x"], 4),
+                "y": round(model_point["y"], 4),
+                "visibility": round(model_visibility, 3),
+              },
+              "raw_pin": debug_pin_payload(track, stale=True),
+              "residual": (
+                round(float(recovery["model_distance"]), 4)
+                if recovery is not None and recovery.get("model_distance") is not None
+                else round(_point_distance(track_point, model_point), 4)
+              ),
+              "rejection_reason": "stale_pin_stuck",
+              "knee_pin_stuck": True,
+              "knee_actual_displacement": round(float(knee_stuck_debug.get("knee_actual_displacement") or 0.0), 4),
+              "hip_displacement": round(float(knee_stuck_debug.get("hip_displacement") or 0.0), 4),
+              "ankle_displacement": round(float(knee_stuck_debug.get("ankle_displacement") or 0.0), 4),
+              "knee_selected_source": recovery["source"] if recovery is not None else "automatic",
+              **debug_recovery_payload(recovery),
+            }
+          continue
       if (
         not force_reference_anchor
         and point_in_barbell_occluder(joint, track_point, source_index)
@@ -2119,6 +2207,12 @@ def fuse_manual_body_tracks(
       frame_diagnostics.append(frame_diagnostic)
 
     if upper_back_point is None or any(not options_by_joint.get(joint) for joint in FUSED_BODY_ANCHORS):
+      if frame_diagnostic is not None:
+        frame_diagnostic["chain"] = {
+          "selected_side": selected_side,
+          "valid": False,
+          "failure_reason": "missing_chain_candidate",
+        }
       unresolved_frame_positions.append(frame_position)
       continue
 
@@ -2135,6 +2229,12 @@ def fuse_manual_body_tracks(
         combinations.append((sum(float(option["score"]) for option in options), options))
 
     if not combinations:
+      if frame_diagnostic is not None:
+        frame_diagnostic["chain"] = {
+          "selected_side": selected_side,
+          "valid": False,
+          "failure_reason": "invalid_body_geometry",
+        }
       unresolved_frame_positions.append(frame_position)
       for joint in available_points:
         reject(joint, "invalid_body_geometry")
@@ -2153,6 +2253,16 @@ def fuse_manual_body_tracks(
       landmark["x"] = float(option["point"]["x"])
       landmark["y"] = float(option["point"]["y"])
       landmark["visibility"] = float(option["visibility"])
+      if frame_diagnostic is not None:
+        joint_debug = frame_diagnostic["joints"].setdefault(joint, {})
+        joint_debug["accepted"] = {
+          "x": round(float(option["point"]["x"]), 4),
+          "y": round(float(option["point"]["y"]), 4),
+          "confidence": round(float(option["visibility"]), 3),
+        }
+        joint_debug["accepted_source"] = option["source"]
+        if joint == "knee":
+          joint_debug["knee_selected_source"] = option["source"]
       if option["source"] == "automatic":
         landmark["tracking_state"] = "automatic"
         landmark.pop("manual_assisted", None)
@@ -2225,6 +2335,15 @@ def fuse_manual_body_tracks(
         directly_anchored_count += 1
       else:
         blended_count += 1
+    if frame_diagnostic is not None:
+      selected_lengths = chain_lengths(selected_chain)
+      frame_diagnostic["chain"] = {
+        "selected_side": selected_side,
+        "valid": True,
+        "torso_length_ratio": round(selected_lengths["torso"] / max(reference_lengths["torso"], 1e-5), 3),
+        "thigh_length_ratio": round(selected_lengths["thigh"] / max(reference_lengths["thigh"], 1e-5), 3),
+        "shin_length_ratio": round(selected_lengths["shin"] / max(reference_lengths["shin"], 1e-5), 3),
+      }
     if not chain_has_kinematic_estimate:
       valid_chains[frame_position] = selected_chain
       previous_valid_chain = selected_chain

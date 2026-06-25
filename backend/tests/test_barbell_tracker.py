@@ -778,6 +778,33 @@ class BarbellTrackerTest(unittest.TestCase):
       self.assertAlmostEqual(float(point["x"]) * 320, expected[0], delta=3.0)
       self.assertAlmostEqual(float(point["y"]) * 240, expected[1], delta=3.0)
 
+  def test_lane_fusion_rejects_stationary_manual_lane_when_automatic_moves(self) -> None:
+    manual_points = [
+      {"time": float(index), "x": 0.50, "y": 0.50, "confidence": 0.95}
+      for index in range(4)
+    ]
+    automatic_points = [
+      {"time": float(index), "x": 0.50, "y": 0.50 + (index * 0.05), "confidence": 0.82}
+      for index in range(4)
+    ]
+
+    fused, diagnostics = tracker_module._fuse_barbell_lanes(
+      automatic_points,
+      manual_points,
+      width=320,
+      height=240,
+    )
+
+    self.assertEqual(len(fused), 4)
+    self.assertGreaterEqual(diagnostics["stationary_manual_rejection_count"], 1)
+    self.assertGreaterEqual(diagnostics["source_counts"]["automatic_lane"], 1)
+    self.assertEqual(
+      diagnostics["frames"][2]["rejection_reason"],
+      "manual_lane_stationary_hardware_like",
+    )
+    self.assertTrue(diagnostics["frames"][2]["rejected_stationary_hardware"])
+    self.assertAlmostEqual(fused[2]["y"], automatic_points[2]["y"])
+
   def test_pin_assisted_long_missing_prior_run_remains_estimated_pin_path(self) -> None:
     manual_priors = {
       index: {
