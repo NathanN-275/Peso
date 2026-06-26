@@ -70,6 +70,67 @@ const SQUAT_LABELS: Record<SquatLandmarkName, string> = {
   right_ankle: 'Ankle',
 };
 
+function mergeChainValid(
+  previous?: boolean,
+  next?: boolean
+) {
+  if (previous === false || next === false) {
+    return false;
+  }
+
+  if (previous === true && next === true) {
+    return true;
+  }
+
+  return previous ?? next;
+}
+
+function interpolateSegmentLengthRatios(
+  previous: VideoPoseKeypoint['segmentLengthRatios'],
+  next: VideoPoseKeypoint['segmentLengthRatios'],
+  progress: number
+) {
+  if (!previous && !next) {
+    return undefined;
+  }
+
+  const ratios: NonNullable<VideoPoseKeypoint['segmentLengthRatios']> = {};
+  (['torso', 'thigh', 'shin'] as const).forEach((key) => {
+    const previousValue = previous?.[key];
+    const nextValue = next?.[key];
+    if (typeof previousValue === 'number' && typeof nextValue === 'number') {
+      ratios[key] = previousValue + ((nextValue - previousValue) * progress);
+    } else {
+      ratios[key] = previousValue ?? nextValue;
+    }
+  });
+
+  return ratios;
+}
+
+function interpolateBarbellLane(
+  previous: BarbellPathPoint['pinLane'],
+  next: BarbellPathPoint['pinLane'],
+  progress: number
+) {
+  if (!previous && !next) {
+    return undefined;
+  }
+
+  if (!previous || !next) {
+    return previous ?? next;
+  }
+
+  return {
+    x: previous.x + ((next.x - previous.x) * progress),
+    y: previous.y + ((next.y - previous.y) * progress),
+    confidence: Math.min(previous.confidence, next.confidence),
+    trackingState: previous.trackingState === next.trackingState
+      ? previous.trackingState
+      : 'estimated' as const,
+  };
+}
+
 export function findClosestPoseFrame(frames: VideoPoseFrame[] | undefined, currentTime: number) {
   // Binary search keeps pose lookup fast while the clip plays.
   if (!frames?.length) {
@@ -181,6 +242,19 @@ export function findInterpolatedPoseFrame(frames: VideoPoseFrame[] | undefined, 
           : previous.acceptedSource ?? next.acceptedSource,
         userPinned: previous.userPinned || next.userPinned,
         preferVisualFallback: previous.preferVisualFallback || next.preferVisualFallback,
+        chainValid: mergeChainValid(previous.chainValid, next.chainValid),
+        visualOnly: previous.visualOnly || next.visualOnly || undefined,
+        chainFailureReason: previous.chainFailureReason === next.chainFailureReason
+          ? previous.chainFailureReason
+          : previous.chainFailureReason ?? next.chainFailureReason,
+        occlusionReason: previous.occlusionReason === next.occlusionReason
+          ? previous.occlusionReason
+          : previous.occlusionReason ?? next.occlusionReason,
+        segmentLengthRatios: interpolateSegmentLengthRatios(
+          previous.segmentLengthRatios,
+          next.segmentLengthRatios,
+          progress
+        ),
         visualFallback: previous.visualFallback && next.visualFallback
           ? {
             x: previous.visualFallback.x + ((next.visualFallback.x - previous.visualFallback.x) * progress),
@@ -192,6 +266,8 @@ export function findInterpolatedPoseFrame(frames: VideoPoseFrame[] | undefined, 
             reason: previous.visualFallback.reason === next.visualFallback.reason
               ? previous.visualFallback.reason
               : previous.visualFallback.reason ?? next.visualFallback.reason,
+            visualOnly: previous.visualFallback.visualOnly || next.visualFallback.visualOnly || undefined,
+            chainValid: mergeChainValid(previous.visualFallback.chainValid, next.visualFallback.chainValid),
           }
           : previous.visualFallback ?? next.visualFallback,
       };
@@ -261,6 +337,21 @@ export function findInterpolatedBarbellPathPoint(
     trackingState: previousPoint.trackingState === nextPoint.trackingState
       ? previousPoint.trackingState
       : 'estimated',
+    selectedSource: previousPoint.selectedSource === nextPoint.selectedSource
+      ? previousPoint.selectedSource
+      : 'interpolated',
+    coastingFrame: previousPoint.coastingFrame || nextPoint.coastingFrame || undefined,
+    stationaryHardwareRejected: previousPoint.stationaryHardwareRejected
+      || nextPoint.stationaryHardwareRejected
+      || undefined,
+    pathResidualPx: typeof previousPoint.pathResidualPx === 'number' && typeof nextPoint.pathResidualPx === 'number'
+      ? Math.max(previousPoint.pathResidualPx, nextPoint.pathResidualPx)
+      : previousPoint.pathResidualPx ?? nextPoint.pathResidualPx,
+    rejectionReason: previousPoint.rejectionReason === nextPoint.rejectionReason
+      ? previousPoint.rejectionReason
+      : previousPoint.rejectionReason ?? nextPoint.rejectionReason,
+    pinLane: interpolateBarbellLane(previousPoint.pinLane, nextPoint.pinLane, progress),
+    automaticLane: interpolateBarbellLane(previousPoint.automaticLane, nextPoint.automaticLane, progress),
   };
 }
 
@@ -288,6 +379,10 @@ export function filterSquatKeypoints(
         trackingState: 'estimated' as const,
         manualSource: fallback.manualSource ?? 'pin_visual_fallback',
         userPinned: true,
+        acceptedSource: keypoint.acceptedSource ?? 'visual_fallback',
+        visualOnly: fallback.visualOnly ?? true,
+        chainValid: fallback.chainValid ?? false,
+        chainFailureReason: fallback.reason ?? keypoint.chainFailureReason,
       }];
     }
 
@@ -304,6 +399,10 @@ export function filterSquatKeypoints(
         trackingState: 'estimated' as const,
         manualSource: fallback.manualSource ?? 'pin_visual_fallback',
         userPinned: true,
+        acceptedSource: keypoint.acceptedSource ?? 'visual_fallback',
+        visualOnly: fallback.visualOnly ?? true,
+        chainValid: fallback.chainValid ?? false,
+        chainFailureReason: fallback.reason ?? keypoint.chainFailureReason,
       }];
     }
 

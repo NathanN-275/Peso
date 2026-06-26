@@ -64,10 +64,16 @@ class SquatAnalyzerTest(unittest.TestCase):
     source_frame = frame(0)
     left_knee = source_frame["landmarks"]["left_knee"]
     left_knee["accepted_source"] = "automatic"
+    left_knee["chain_valid"] = False
+    left_knee["visual_only"] = True
+    left_knee["chain_failure_reason"] = "long_pin_track_loss"
+    left_knee["segment_length_ratios"] = {"torso": 1.0, "thigh": 1.05, "shin": 0.97}
     left_knee["visual_fallback"] = {
       "manual_source": "pin_visual_fallback",
       "reason": "long_pin_track_loss",
       "confidence": 0.24,
+      "visual_only": True,
+      "chain_valid": False,
       "point": {"x": 0.42, "y": 0.66},
     }
 
@@ -81,8 +87,14 @@ class SquatAnalyzerTest(unittest.TestCase):
     self.assertEqual(public_knee["x"], 0.60)
     self.assertEqual(public_knee["y"], 0.68)
     self.assertEqual(public_knee["acceptedSource"], "automatic")
+    self.assertFalse(public_knee["chainValid"])
+    self.assertTrue(public_knee["visualOnly"])
+    self.assertEqual(public_knee["chainFailureReason"], "long_pin_track_loss")
+    self.assertEqual(public_knee["segmentLengthRatios"]["thigh"], 1.05)
     self.assertEqual(public_knee["visualFallback"]["x"], 0.42)
     self.assertEqual(public_knee["visualFallback"]["manualSource"], "pin_visual_fallback")
+    self.assertTrue(public_knee["visualFallback"]["visualOnly"])
+    self.assertFalse(public_knee["visualFallback"]["chainValid"])
 
   def test_pin_selected_side_remains_authoritative_for_rep_depth(self) -> None:
     frames = [

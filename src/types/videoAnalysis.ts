@@ -145,12 +145,23 @@ export type VideoPoseKeypoint = {
   acceptedSource?: string;
   userPinned?: boolean;
   preferVisualFallback?: boolean;
+  chainValid?: boolean;
+  chainFailureReason?: string;
+  occlusionReason?: string;
+  visualOnly?: boolean;
+  segmentLengthRatios?: {
+    torso?: number;
+    thigh?: number;
+    shin?: number;
+  };
   visualFallback?: {
     x: number;
     y: number;
     confidence: number;
     manualSource?: string;
     reason?: string;
+    visualOnly?: boolean;
+    chainValid?: boolean;
   };
 };
 
@@ -174,6 +185,23 @@ export type BarbellPathPoint = {
   y: number;
   confidence: number;
   trackingState?: 'reference' | 'guided' | 'automatic' | 'estimated';
+  selectedSource?: string;
+  coastingFrame?: boolean;
+  stationaryHardwareRejected?: boolean;
+  pathResidualPx?: number;
+  rejectionReason?: string;
+  pinLane?: {
+    x: number;
+    y: number;
+    confidence: number;
+    trackingState?: 'reference' | 'guided' | 'automatic' | 'estimated';
+  };
+  automaticLane?: {
+    x: number;
+    y: number;
+    confidence: number;
+    trackingState?: 'reference' | 'guided' | 'automatic' | 'estimated';
+  };
 };
 
 export type BarbellPath = {

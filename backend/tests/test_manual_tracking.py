@@ -294,7 +294,9 @@ class ManualTrackingTest(unittest.TestCase):
 
     upper_back = fused[0]["landmarks"]["left_upper_back"]
     self.assertEqual(upper_back["tracking_state"], "estimated")
-    self.assertEqual(upper_back["manual_source"], "pin_visual_fallback")
+    self.assertEqual(upper_back["manual_source"], "kinematic_estimate")
+    self.assertTrue(upper_back["chain_valid"])
+    self.assertFalse(upper_back["visual_only"])
     self.assertNotAlmostEqual(upper_back["x"], 0.50, delta=0.02)
     self.assertGreaterEqual(diagnostics["body_barbell_occluder_rejection_count"], 1)
     self.assertGreaterEqual(diagnostics["rejection_reasons"]["upper_back_plate_latch_or_occlusion"], 1)
@@ -322,8 +324,12 @@ class ManualTrackingTest(unittest.TestCase):
 
     hip = fused[0]["landmarks"]["left_hip"]
     self.assertTrue(hip["prefer_visual_fallback"])
+    self.assertFalse(hip["chain_valid"])
+    self.assertTrue(hip["visual_only"])
     self.assertEqual(hip["visual_fallback"]["manual_source"], "pin_visual_fallback")
     self.assertEqual(hip["visual_fallback"]["reason"], "plate_latch_or_occlusion")
+    self.assertFalse(hip["visual_fallback"]["chain_valid"])
+    self.assertTrue(hip["visual_fallback"]["visual_only"])
     self.assertNotAlmostEqual(hip["visual_fallback"]["point"]["x"], 0.50, delta=0.02)
     self.assertIn("left_knee", fused[0]["landmarks"])
     self.assertIn("left_ankle", fused[0]["landmarks"])
@@ -353,8 +359,12 @@ class ManualTrackingTest(unittest.TestCase):
 
     knee = fused[0]["landmarks"]["left_knee"]
     self.assertTrue(knee["prefer_visual_fallback"])
+    self.assertFalse(knee["chain_valid"])
+    self.assertTrue(knee["visual_only"])
     self.assertEqual(knee["visual_fallback"]["manual_source"], "pin_visual_fallback")
     self.assertEqual(knee["visual_fallback"]["reason"], "plate_latch_or_occlusion")
+    self.assertFalse(knee["visual_fallback"]["chain_valid"])
+    self.assertTrue(knee["visual_fallback"]["visual_only"])
     self.assertNotAlmostEqual(knee["visual_fallback"]["point"]["y"], 0.31, delta=0.02)
     self.assertGreaterEqual(diagnostics["body_barbell_occluder_rejection_count"], 1)
     self.assertGreaterEqual(diagnostics["rejection_reasons"]["knee_plate_latch_or_occlusion"], 1)
@@ -509,6 +519,8 @@ class ManualTrackingTest(unittest.TestCase):
     knee = fused[2]["landmarks"]["left_knee"]
     self.assertEqual(knee["tracking_state"], "estimated")
     self.assertEqual(knee["manual_source"], "kinematic_estimate")
+    self.assertTrue(knee["chain_valid"])
+    self.assertFalse(knee["visual_only"])
     self.assertNotAlmostEqual(knee["x"], tracking_setup()["anchors"]["knee"]["x"])
     self.assertEqual(diagnostics["source_counts"]["knee"]["stale_pin_stuck"], 1)
     self.assertEqual(diagnostics["source_counts"]["knee"]["kinematic_estimate"], 1)
@@ -542,6 +554,8 @@ class ManualTrackingTest(unittest.TestCase):
     knee = fused[3]["landmarks"]["left_knee"]
     self.assertNotEqual(knee.get("manual_source"), "pin_estimated")
     self.assertNotEqual(knee.get("accepted_source"), "pin_estimated")
+    self.assertFalse(knee["chain_valid"])
+    self.assertTrue(knee["visual_only"])
     self.assertEqual(knee["visual_fallback"]["manual_source"], "pin_visual_fallback")
     self.assertTrue(knee["visual_fallback"]["user_pinned"])
     self.assertGreaterEqual(knee["visual_fallback"]["confidence"], 0.15)

@@ -351,6 +351,10 @@ def _apply_barbell_occlusion_pose_overlay(
       keypoint["confidence"] = min(float(keypoint.get("confidence") or 0.0), 0.2)
       keypoint["trackingState"] = "estimated"
       keypoint["acceptedSource"] = "barbell_occlusion_rejected"
+      keypoint["chainValid"] = False
+      keypoint["visualOnly"] = True
+      keypoint["chainFailureReason"] = "barbell_plate_occlusion"
+      keypoint["occlusionReason"] = "barbell_plate_occlusion"
     else:
       keypoint["rawModelPoint"] = {
         "x": keypoint["x"],
@@ -362,6 +366,10 @@ def _apply_barbell_occlusion_pose_overlay(
       keypoint["confidence"] = max(min(replacement["confidence"], 0.48), 0.24)
       keypoint["trackingState"] = "estimated"
       keypoint["acceptedSource"] = "barbell_occlusion_estimate"
+      keypoint["chainValid"] = True
+      keypoint["visualOnly"] = False
+      keypoint["occlusionReason"] = "barbell_plate_occlusion"
+      keypoint.pop("chainFailureReason", None)
     corrected_count += 1
     if len(corrected_frames) < 120:
       barbell_point = frame_barbell_points.get(frame_index)

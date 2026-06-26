@@ -70,6 +70,8 @@ export default function BarbellPathOverlay({
       y: rect.y + (point.y * rect.height),
       time: point.time,
       trackingState: point.trackingState,
+      coastingFrame: point.coastingFrame,
+      stationaryHardwareRejected: point.stationaryHardwareRejected,
     }));
 
   if (mappedPoints.length < 1) {
@@ -94,7 +96,12 @@ export default function BarbellPathOverlay({
         <View
           style={[
             styles.currentPoint,
-            (currentPoint.trackingState === 'automatic' || currentPoint.trackingState === 'estimated')
+            (
+              currentPoint.trackingState === 'automatic'
+              || currentPoint.trackingState === 'estimated'
+              || currentPoint.coastingFrame === true
+              || currentPoint.stationaryHardwareRejected === true
+            )
               && styles.estimatedCurrentPoint,
             { left: lastPoint.x - 7, top: lastPoint.y - 7 },
           ]}

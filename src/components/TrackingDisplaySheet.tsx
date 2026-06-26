@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import tokens from '../theme/tokens';
 import type {
   TrackingAssistance,
+  TrackingBodySource,
   TrackingBodySourceName,
   TrackingPinName,
 } from '../types/trackingSetup';
@@ -41,10 +42,12 @@ const SOURCE_LABELS: Record<string, string> = {
   reference: 'reference',
   pin_guided: 'pin guided',
   pin_estimated: 'pin estimated',
+  kinematic_estimate: 'kinematic estimate',
   pin_visual_fallback: 'visual fallback',
   automatic: 'automatic',
   automatic_recovery: 'automatic recovery',
   stale_pin_rejected: 'stale pin rejected',
+  stale_pin_stuck: 'stale pin stuck',
   gap: 'gap',
 };
 
@@ -80,6 +83,25 @@ function formatSourceCounts(
   }
 
   return `${TRACKING_LABELS[name] ?? name}: ${parts.join(', ')}`;
+}
+
+function sumBodySources(
+  trackingAssistance: TrackingAssistance | null | undefined,
+  sources: string[]
+) {
+  if (!trackingAssistance?.sourceCounts) {
+    return 0;
+  }
+
+  return Object.values(trackingAssistance.sourceCounts).reduce((total, counts) => {
+    if (!counts) {
+      return total;
+    }
+
+    return total + sources.reduce((sourceTotal, source) => (
+      sourceTotal + Number(counts[source as TrackingBodySource] ?? 0)
+    ), 0);
+  }, 0);
 }
 
 function CollapsibleDetails({
@@ -182,6 +204,16 @@ export default function TrackingDisplaySheet({
       .map((name) => formatSourceCounts(name, trackingAssistance))
       .filter((line): line is string => Boolean(line))
     : [];
+  const connectedBodyPointCount = sumBodySources(trackingAssistance, [
+    'reference',
+    'pin_guided',
+    'pin_estimated',
+    'kinematic_estimate',
+    'automatic',
+    'automatic_recovery',
+  ]);
+  const visualOnlyBodyPointCount = sumBodySources(trackingAssistance, ['pin_visual_fallback']);
+  const gapBodyPointCount = sumBodySources(trackingAssistance, ['gap']);
   const rejectionEntries = Object.entries(trackingAssistance?.rejectionReasons ?? {});
 
   return (
@@ -230,6 +262,10 @@ export default function TrackingDisplaySheet({
               pin-owned, {trackingAssistance.fallbackLandmarkCount ?? 0} fallback/rejected
             </Text>
             <Text style={styles.assistanceDetail}>
+              Connected body: {connectedBodyPointCount} accepted/estimated,{' '}
+              {visualOnlyBodyPointCount} visual-only
+            </Text>
+            <Text style={styles.assistanceDetail}>
               Barbell points: {trackingAssistance.manualBarbellPointCount ?? 0} pin-assisted,{' '}
               {trackingAssistance.automaticBarbellPointCount ?? 0} automatic
             </Text>
@@ -260,6 +296,12 @@ export default function TrackingDisplaySheet({
               </Text>
               <Text style={styles.assistanceDetail}>
                 Automatic fallbacks: {trackingAssistance.fallbackLandmarkCount ?? 0}
+              </Text>
+              <Text style={styles.assistanceDetail}>
+                Visual-only fallbacks: {visualOnlyBodyPointCount}
+              </Text>
+              <Text style={styles.assistanceDetail}>
+                Gaps: {gapBodyPointCount}
               </Text>
               <Text style={styles.assistanceDetail}>
                 Rejected body points: {trackingAssistance.rejectedTrackCount ?? 0}

@@ -87,7 +87,17 @@ export default function PoseOverlay({
   const mappedKeypoints = new Map(
     squatKeypoints.map((keypoint) => {
       const mapped = mapNormalizedKeypoint(keypoint, containerSize, videoSize, contentFit);
-      return [mapped.name, { ...mapped, label: keypoint.label }];
+      return [
+        mapped.name,
+        {
+          ...mapped,
+          label: keypoint.label,
+          chainValid: keypoint.chainValid,
+          visualOnly: keypoint.visualOnly,
+          manualSource: keypoint.manualSource,
+          acceptedSource: keypoint.acceptedSource,
+        },
+      ];
     })
   );
   const labelLayout = layoutTrackingLabels(
@@ -114,6 +124,15 @@ export default function PoseOverlay({
           return null;
         }
 
+        if (
+          from.visualOnly === true
+          || to.visualOnly === true
+          || from.chainValid === false
+          || to.chainValid === false
+        ) {
+          return null;
+        }
+
         const isEstimated = [from.trackingState, to.trackingState].some(
           (state) => state === 'automatic' || state === 'estimated'
         );
@@ -125,10 +144,12 @@ export default function PoseOverlay({
         if (!label) {
           return null;
         }
+        const isVisualOnly = point.visualOnly === true || point.chainValid === false;
         const isEstimated = point.confidence < 0.5
           || point.trackingState === 'automatic'
-          || point.trackingState === 'estimated';
-        const pointOpacity = isEstimated ? 0.58 : 1;
+          || point.trackingState === 'estimated'
+          || isVisualOnly;
+        const pointOpacity = isVisualOnly ? 0.42 : isEstimated ? 0.58 : 1;
         const labelCenter = {
           x: label.labelX + (label.labelWidth / 2),
           y: label.labelY + (label.labelHeight / 2),
@@ -143,6 +164,7 @@ export default function PoseOverlay({
               style={[
                 styles.point,
                 isEstimated && styles.estimatedPoint,
+                isVisualOnly && styles.visualOnlyPoint,
                 {
                   left: point.x - (POINT_SIZE / 2),
                   top: point.y - (POINT_SIZE / 2),
@@ -155,6 +177,7 @@ export default function PoseOverlay({
               style={[
                 styles.label,
                 isEstimated && styles.estimatedLabel,
+                isVisualOnly && styles.visualOnlyLabel,
                 {
                   left: label.labelX,
                   top: label.labelY,
@@ -200,6 +223,10 @@ const styles = StyleSheet.create({
     borderColor: '#FFB020',
     borderStyle: 'dashed',
   },
+  visualOnlyPoint: {
+    backgroundColor: 'rgba(255, 255, 255, 0.72)',
+    borderColor: 'rgba(255, 176, 32, 0.72)',
+  },
   label: {
     position: 'absolute',
     width: LABEL_WIDTH,
@@ -214,5 +241,8 @@ const styles = StyleSheet.create({
   },
   estimatedLabel: {
     color: '#FFE4A3',
+  },
+  visualOnlyLabel: {
+    color: 'rgba(255, 228, 163, 0.72)',
   },
 });

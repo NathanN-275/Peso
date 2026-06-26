@@ -1288,6 +1288,11 @@ def fuse_manual_body_tracks(
       manual_source = "pin_estimated"
       confidence = max(min(confidence, 0.48), PIN_PERSISTENCE_CONFIDENCE)
       manual_assisted = False
+    elif source == "kinematic_estimate":
+      tracking_state = "estimated"
+      manual_source = "kinematic_estimate"
+      confidence = max(min(confidence, 0.48), PIN_PERSISTENCE_CONFIDENCE)
+      manual_assisted = False
     elif source == "pin_visual_fallback":
       tracking_state = "estimated"
       manual_source = "pin_visual_fallback"
@@ -1311,7 +1316,11 @@ def fuse_manual_body_tracks(
       "accepted_source": accepted_source,
       "tracking_state": tracking_state,
       "upper_back_anchor": True,
+      "chain_valid": source != "pin_visual_fallback",
+      "visual_only": source == "pin_visual_fallback",
     }
+    if source == "pin_visual_fallback":
+      landmarks[landmark_name]["chain_failure_reason"] = "visual_fallback"
     record_source("upper_back", source)
 
   def chain_lengths(chain: dict[str, dict[str, float]]) -> dict[str, float]:
@@ -1610,6 +1619,11 @@ def fuse_manual_body_tracks(
   ) -> dict[str, float]:
     estimate = persistent_anchor_estimate(joint, source_index, raw_track=raw_track)
     landmark["prefer_visual_fallback"] = True
+    landmark["visual_only"] = True
+    landmark["chain_valid"] = False
+    landmark["chain_failure_reason"] = reason
+    if "occlusion" in reason or "plate" in reason:
+      landmark["occlusion_reason"] = reason
     landmark["visual_fallback"] = {
       "source": "pin_visual_fallback",
       "reason": reason,
@@ -1617,12 +1631,39 @@ def fuse_manual_body_tracks(
       "manual_source": "pin_visual_fallback",
       "tracking_state": "estimated",
       "confidence": estimate["visibility"],
+      "visual_only": True,
+      "chain_valid": False,
       "point": {
         "x": estimate["x"],
         "y": estimate["y"],
       },
     }
     return estimate
+
+  def upper_back_kinematic_estimate(
+    landmarks: dict[str, Any],
+    source_index: int,
+  ) -> dict[str, float] | None:
+    hip_track = _anchor_track(tracking, "hip").get(source_index)
+    if _manual_track_is_usable(hip_track):
+      hip_point = {"x": float(hip_track["x"]), "y": float(hip_track["y"])}
+      confidence = min(float(hip_track.get("confidence") or 0.0), 0.48)
+    else:
+      hip_landmark = landmarks.get(f"{selected_side}_hip")
+      if (
+        not hip_landmark
+        or float(hip_landmark.get("visibility") or 0.0) < MIN_MODEL_VISIBILITY
+      ):
+        return None
+      hip_point = {"x": float(hip_landmark["x"]), "y": float(hip_landmark["y"])}
+      if point_in_barbell_occluder("hip", hip_point, source_index):
+        return None
+      confidence = min(float(hip_landmark.get("visibility") or 0.0), 0.48)
+    return {
+      "x": min(max(hip_point["x"] + reference_torso_vector["x"], 0.0), 1.0),
+      "y": min(max(hip_point["y"] + reference_torso_vector["y"], 0.0), 1.0),
+      "visibility": max(confidence, PIN_PERSISTENCE_CONFIDENCE),
+    }
 
   for frame_position, frame in enumerate(fused_frames):
     source_index = int(frame.get("source_frame_index", -1))
@@ -1689,12 +1730,14 @@ def fuse_manual_body_tracks(
           note_barbell_occluder_rejection("upper_back")
         else:
           note_rejection("upper_back_outside_dynamic_envelope")
-        upper_back_point = fallback_estimate
-        upper_back_source = "pin_visual_fallback"
+        upper_back_point = upper_back_kinematic_estimate(landmarks, source_index)
+        upper_back_source = "kinematic_estimate" if upper_back_point is not None else "pin_visual_fallback"
+        if upper_back_point is None:
+          upper_back_point = fallback_estimate
         write_upper_back_landmark(
           landmarks,
           upper_back_point,
-          source="pin_visual_fallback",
+          source=upper_back_source,
           raw_shoulder=raw_model_shoulder,
         )
       else:
@@ -1707,16 +1750,18 @@ def fuse_manual_body_tracks(
           raw_shoulder=raw_model_shoulder,
         )
     else:
-      upper_back_point = persistent_anchor_estimate(
-        UPPER_BACK_ANCHOR,
-        source_index,
-        raw_track=upper_back_raw_track_for_fallback,
-      )
-      upper_back_source = "pin_visual_fallback"
+      upper_back_point = upper_back_kinematic_estimate(landmarks, source_index)
+      upper_back_source = "kinematic_estimate" if upper_back_point is not None else "pin_visual_fallback"
+      if upper_back_point is None:
+        upper_back_point = persistent_anchor_estimate(
+          UPPER_BACK_ANCHOR,
+          source_index,
+          raw_track=upper_back_raw_track_for_fallback,
+        )
       write_upper_back_landmark(
         landmarks,
         upper_back_point,
-        source="pin_visual_fallback",
+        source=upper_back_source,
         raw_shoulder=raw_model_shoulder,
       )
 
@@ -1786,6 +1831,9 @@ def fuse_manual_body_tracks(
           "user_pinned": True,
           "prefer_visual_fallback": True,
           "accepted_source": "gap",
+          "chain_valid": False,
+          "visual_only": True,
+          "chain_failure_reason": "missing_pose_landmark",
           "visual_fallback": {
             "source": "pin_visual_fallback",
             "reason": "missing_pose_landmark",
@@ -1793,6 +1841,8 @@ def fuse_manual_body_tracks(
             "manual_source": "pin_visual_fallback",
             "tracking_state": "estimated",
             "confidence": estimate["visibility"],
+            "visual_only": True,
+            "chain_valid": False,
             "point": {"x": estimate["x"], "y": estimate["y"]},
           },
         }
@@ -2292,6 +2342,7 @@ def fuse_manual_body_tracks(
         landmark["manual_source"] = "pin_estimated"
         landmark["manual_weight"] = round(float(option["manual_weight"]), 3)
         landmark["user_pinned"] = True
+        landmark["accepted_source"] = "pin_estimated"
         record_source(joint, "pin_estimated")
         continue
 
@@ -2335,14 +2386,34 @@ def fuse_manual_body_tracks(
         directly_anchored_count += 1
       else:
         blended_count += 1
+
+    selected_lengths = chain_lengths(selected_chain)
+    selected_segment_ratios = {
+      "torso": selected_lengths["torso"] / max(reference_lengths["torso"], 1e-5),
+      "thigh": selected_lengths["thigh"] / max(reference_lengths["thigh"], 1e-5),
+      "shin": selected_lengths["shin"] / max(reference_lengths["shin"], 1e-5),
+    }
+    for joint in (UPPER_BACK_ANCHOR, *FUSED_BODY_ANCHORS):
+      landmark_name = f"{selected_side}_{joint}"
+      landmark = landmarks.get(landmark_name)
+      if not isinstance(landmark, dict):
+        continue
+      if landmark.get("manual_source") == "pin_visual_fallback":
+        landmark["chain_valid"] = False
+        landmark["visual_only"] = True
+        landmark["chain_failure_reason"] = landmark.get("chain_failure_reason") or "visual_fallback"
+        continue
+      landmark["chain_valid"] = True
+      landmark["visual_only"] = False
+      landmark["segment_length_ratios"] = selected_segment_ratios
+      landmark.pop("chain_failure_reason", None)
     if frame_diagnostic is not None:
-      selected_lengths = chain_lengths(selected_chain)
       frame_diagnostic["chain"] = {
         "selected_side": selected_side,
         "valid": True,
-        "torso_length_ratio": round(selected_lengths["torso"] / max(reference_lengths["torso"], 1e-5), 3),
-        "thigh_length_ratio": round(selected_lengths["thigh"] / max(reference_lengths["thigh"], 1e-5), 3),
-        "shin_length_ratio": round(selected_lengths["shin"] / max(reference_lengths["shin"], 1e-5), 3),
+        "torso_length_ratio": round(selected_segment_ratios["torso"], 3),
+        "thigh_length_ratio": round(selected_segment_ratios["thigh"], 3),
+        "shin_length_ratio": round(selected_segment_ratios["shin"], 3),
       }
     if not chain_has_kinematic_estimate:
       valid_chains[frame_position] = selected_chain
@@ -2474,6 +2545,9 @@ def fuse_manual_body_tracks(
           "user_pinned": True,
           "prefer_visual_fallback": True,
           "accepted_source": "gap",
+          "chain_valid": False,
+          "visual_only": True,
+          "chain_failure_reason": "missing_pose_landmark",
           "visual_fallback": {
             "source": "pin_visual_fallback",
             "reason": "missing_pose_landmark",
@@ -2481,6 +2555,8 @@ def fuse_manual_body_tracks(
             "manual_source": "pin_visual_fallback",
             "tracking_state": "estimated",
             "confidence": estimate["visibility"],
+            "visual_only": True,
+            "chain_valid": False,
             "point": {"x": estimate["x"], "y": estimate["y"]},
           },
         }
@@ -2509,6 +2585,9 @@ def fuse_manual_body_tracks(
       landmark["manual_source"] = "pin_estimated"
       landmark["user_pinned"] = True
       landmark["accepted_source"] = "pin_estimated"
+      landmark["chain_valid"] = True
+      landmark["visual_only"] = False
+      landmark.pop("chain_failure_reason", None)
       record_source(joint, "pin_estimated")
 
   return fused_frames, {

@@ -143,6 +143,20 @@ def _fuse_barbell_lanes(
       "y": min(max(float(last["y"]) + ((float(last["y"]) - float(previous["y"])) * scale), 0.0), 1.0),
     }
 
+  def lane_snapshot(point: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not point:
+      return None
+    return {
+      "x": float(point["x"]),
+      "y": float(point["y"]),
+      "confidence": float(point.get("confidence") or 0.0),
+      **(
+        {"trackingState": point["trackingState"]}
+        if isinstance(point.get("trackingState"), str)
+        else {}
+      ),
+    }
+
   for key in sorted(set(auto_by_time) | set(manual_by_time)):
     manual = manual_by_time.get(key)
     automatic = auto_by_time.get(key)
@@ -238,6 +252,29 @@ def _fuse_barbell_lanes(
       selected_source = "kinematic_coast"
 
     if emitted is not None:
+      emitted = {
+        **emitted,
+        "selectedSource": selected_source,
+        "coastingFrame": selected_source == "kinematic_coast",
+        "stationaryHardwareRejected": rejected_stationary_hardware,
+      }
+      if rejection_reason:
+        emitted["rejectionReason"] = rejection_reason
+      else:
+        emitted.pop("rejectionReason", None)
+      path_residual_px = agreement_px if rejected_stationary_hardware else manual_jump_px
+      if path_residual_px is not None:
+        emitted["pathResidualPx"] = float(path_residual_px)
+      else:
+        emitted.pop("pathResidualPx", None)
+      pin_lane = lane_snapshot(manual)
+      emitted.pop("pinLane", None)
+      if pin_lane is not None:
+        emitted["pinLane"] = pin_lane
+      automatic_lane = lane_snapshot(automatic)
+      emitted.pop("automaticLane", None)
+      if automatic_lane is not None:
+        emitted["automaticLane"] = automatic_lane
       source_counts[selected_source] = source_counts.get(selected_source, 0) + 1
       fused.append(emitted)
       previous_emitted = emitted

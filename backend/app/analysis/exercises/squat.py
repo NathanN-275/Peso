@@ -60,6 +60,7 @@ def _build_pose_frames(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
       or manual_source in {"reference_pin", "pin_guided", "pin_estimated", "pin_visual_fallback"}
     )
     visual_fallback = point.get("visual_fallback")
+    segment_length_ratios = point.get("segment_length_ratios")
     return {
       "name": name,
       "x": point["x"],
@@ -78,6 +79,23 @@ def _build_pose_frames(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
       ),
       **({"userPinned": True} if user_pinned else {}),
       **({"preferVisualFallback": True} if point.get("prefer_visual_fallback") else {}),
+      **({"chainValid": bool(point["chain_valid"])} if "chain_valid" in point else {}),
+      **({"visualOnly": bool(point["visual_only"])} if "visual_only" in point else {}),
+      **(
+        {"chainFailureReason": point["chain_failure_reason"]}
+        if isinstance(point.get("chain_failure_reason"), str)
+        else {}
+      ),
+      **(
+        {"occlusionReason": point["occlusion_reason"]}
+        if isinstance(point.get("occlusion_reason"), str)
+        else {}
+      ),
+      **(
+        {"segmentLengthRatios": segment_length_ratios}
+        if isinstance(segment_length_ratios, dict)
+        else {}
+      ),
       **(
         {
           "visualFallback": {
@@ -86,6 +104,16 @@ def _build_pose_frames(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "confidence": visual_fallback["confidence"],
             "manualSource": visual_fallback["manual_source"],
             "reason": visual_fallback["reason"],
+            **(
+              {"visualOnly": bool(visual_fallback["visual_only"])}
+              if "visual_only" in visual_fallback
+              else {}
+            ),
+            **(
+              {"chainValid": bool(visual_fallback["chain_valid"])}
+              if "chain_valid" in visual_fallback
+              else {}
+            ),
           }
         }
         if isinstance(visual_fallback, dict)

@@ -804,6 +804,12 @@ class BarbellTrackerTest(unittest.TestCase):
     )
     self.assertTrue(diagnostics["frames"][2]["rejected_stationary_hardware"])
     self.assertAlmostEqual(fused[2]["y"], automatic_points[2]["y"])
+    self.assertEqual(fused[2]["selectedSource"], "automatic_lane")
+    self.assertTrue(fused[2]["stationaryHardwareRejected"])
+    self.assertEqual(fused[2]["rejectionReason"], "manual_lane_stationary_hardware_like")
+    self.assertIn("pinLane", fused[2])
+    self.assertIn("automaticLane", fused[2])
+    self.assertGreater(fused[2]["pathResidualPx"], 0)
 
   def test_pin_assisted_long_missing_prior_run_remains_estimated_pin_path(self) -> None:
     manual_priors = {

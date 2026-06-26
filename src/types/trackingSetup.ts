@@ -5,10 +5,12 @@ export type TrackingBodySource =
   | 'reference'
   | 'pin_guided'
   | 'pin_estimated'
+  | 'kinematic_estimate'
   | 'pin_visual_fallback'
   | 'automatic'
   | 'automatic_recovery'
   | 'stale_pin_rejected'
+  | 'stale_pin_stuck'
   | 'gap';
 export type TrackingBodySourceName = 'upper_back' | 'hip' | 'knee' | 'ankle';
 export type TrackingDiagnosticPinName = TrackingPinName | 'upper_back';
