@@ -496,6 +496,42 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertEqual(knee["manual_source"], "kinematic_estimate")
     self.assertEqual(diagnostics["source_counts"]["knee"]["kinematic_estimate"], 1)
 
+  def test_occluded_kinematic_knee_estimate_stays_connected(self) -> None:
+    frames = [pose_frame(index) for index in (1, 2)]
+    frames[1]["landmarks"]["left_knee"].update({"x": 0.60, "y": 0.54, "visibility": 0.88})
+    tracks = {
+      joint: {
+        index: {
+          "x": tracking_setup()["anchors"][joint]["x"] + (0.04 if index == 2 else 0.0),
+          "y": tracking_setup()["anchors"][joint]["y"],
+          "confidence": 0.9,
+          "tracking_state": "guided",
+        }
+        for index in (1, 2)
+      }
+      for joint in BODY_ANCHORS
+    }
+    del tracks["knee"][2]
+    tracks["barbell"] = {
+      2: {
+        "x": tracking_setup()["anchors"]["knee"]["x"] + 0.04,
+        "y": tracking_setup()["anchors"]["knee"]["y"],
+        "confidence": 0.95,
+      }
+    }
+
+    fused, diagnostics = fuse_manual_body_tracks(
+      frames,
+      setup=tracking_setup(),
+      tracking={"tracks": tracks, "reference_source_index": 1, "coverage": {}},
+    )
+
+    knee = fused[1]["landmarks"]["left_knee"]
+    self.assertEqual(knee["manual_source"], "kinematic_estimate")
+    self.assertTrue(knee["chain_valid"])
+    self.assertFalse(knee["visual_only"])
+    self.assertEqual(diagnostics["source_counts"]["knee"]["kinematic_estimate"], 1)
+
   def test_stuck_knee_pin_is_replaced_by_kinematic_estimate_when_leg_moves(self) -> None:
     frames = [pose_frame(index) for index in (1, 2, 3)]
     tracks = {}

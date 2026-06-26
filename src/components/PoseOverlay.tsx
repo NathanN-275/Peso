@@ -101,13 +101,15 @@ export default function PoseOverlay({
     })
   );
   const labelLayout = layoutTrackingLabels(
-    [...mappedKeypoints.values()].map((point) => ({
-      id: point.name,
-      x: point.x,
-      y: point.y,
-      labelWidth: LABEL_WIDTH,
-      labelHeight: LABEL_HEIGHT,
-    })),
+    [...mappedKeypoints.values()]
+      .filter((point) => point.visualOnly !== true && point.chainValid !== false)
+      .map((point) => ({
+        id: point.name,
+        x: point.x,
+        y: point.y,
+        labelWidth: LABEL_WIDTH,
+        labelHeight: LABEL_HEIGHT,
+      })),
     containerSize,
     { gap: 8 }
   );
@@ -140,16 +142,33 @@ export default function PoseOverlay({
       })}
 
       {visiblePoints.map((point) => {
-        const label = labelsByName.get(point.name);
-        if (!label) {
-          return null;
-        }
         const isVisualOnly = point.visualOnly === true || point.chainValid === false;
         const isEstimated = point.confidence < 0.5
           || point.trackingState === 'automatic'
           || point.trackingState === 'estimated'
           || isVisualOnly;
         const pointOpacity = isVisualOnly ? 0.42 : isEstimated ? 0.58 : 1;
+        if (isVisualOnly) {
+          return (
+            <View
+              key={point.name}
+              style={[
+                styles.point,
+                styles.estimatedPoint,
+                styles.visualOnlyPoint,
+                {
+                  left: point.x - (POINT_SIZE / 2),
+                  top: point.y - (POINT_SIZE / 2),
+                  opacity: pointOpacity,
+                },
+              ]}
+            />
+          );
+        }
+        const label = labelsByName.get(point.name);
+        if (!label) {
+          return null;
+        }
         const labelCenter = {
           x: label.labelX + (label.labelWidth / 2),
           y: label.labelY + (label.labelHeight / 2),

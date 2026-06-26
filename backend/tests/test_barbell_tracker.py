@@ -30,7 +30,11 @@ from app.analysis.barbell_tracking.geometry import (
 from app.analysis.barbell_tracking.selection import _best_initial_plate
 from app.analysis.barbell_tracking.sleeve_tracker import track_unloaded_sleeve_end
 from app.analysis.barbell_tracking.local_tracker import _make_tracking_lock, _track_local_patch
-from app.analysis.barbell_tracking.postprocess import _smooth_points, _smooth_points_with_diagnostics
+from app.analysis.barbell_tracking.postprocess import (
+  _interpolate_missing,
+  _smooth_points,
+  _smooth_points_with_diagnostics,
+)
 from app.analysis.barbell_tracking.pin_tracker import build_pin_assisted_barbell_result
 
 TEST_COLLAR_OFFSET_RATIO = 0.28
@@ -795,23 +799,50 @@ class BarbellTrackerTest(unittest.TestCase):
       height=240,
     )
 
-    self.assertEqual(len(fused), 4)
+    self.assertEqual(len(fused), 3)
     self.assertGreaterEqual(diagnostics["stationary_manual_rejection_count"], 1)
-    self.assertGreaterEqual(diagnostics["source_counts"]["automatic_lane"], 1)
+    self.assertEqual(diagnostics["source_counts"]["kinematic_coast"], 1)
+    self.assertGreaterEqual(diagnostics["source_counts"]["gap"], 1)
     self.assertEqual(
       diagnostics["frames"][2]["rejection_reason"],
       "manual_lane_stationary_hardware_like",
     )
     self.assertTrue(diagnostics["frames"][2]["rejected_stationary_hardware"])
-    self.assertAlmostEqual(fused[2]["y"], automatic_points[2]["y"])
-    self.assertEqual(fused[2]["selectedSource"], "automatic_lane")
+    self.assertNotAlmostEqual(fused[2]["y"], automatic_points[2]["y"])
+    self.assertEqual(fused[2]["selectedSource"], "kinematic_coast")
+    self.assertTrue(fused[2]["coastingFrame"])
     self.assertTrue(fused[2]["stationaryHardwareRejected"])
     self.assertEqual(fused[2]["rejectionReason"], "manual_lane_stationary_hardware_like")
     self.assertIn("pinLane", fused[2])
     self.assertIn("automaticLane", fused[2])
     self.assertGreater(fused[2]["pathResidualPx"], 0)
 
-  def test_pin_assisted_long_missing_prior_run_remains_estimated_pin_path(self) -> None:
+  def test_lane_fusion_gaps_long_stationary_manual_lane_without_safe_recovery(self) -> None:
+    manual_points = [
+      {"time": float(index), "x": 0.50, "y": 0.50, "confidence": 0.95}
+      for index in range(6)
+    ]
+    automatic_points = [
+      {"time": float(index), "x": 0.50, "y": 0.50 + (index * 0.05), "confidence": 0.82}
+      for index in range(6)
+    ]
+
+    fused, diagnostics = tracker_module._fuse_barbell_lanes(
+      automatic_points,
+      manual_points,
+      width=320,
+      height=240,
+    )
+
+    self.assertLess(len(fused), 6)
+    self.assertEqual(diagnostics["source_counts"]["kinematic_coast"], 1)
+    self.assertGreaterEqual(diagnostics["source_counts"]["gap"], 1)
+    self.assertEqual(
+      diagnostics["frames"][4]["rejection_reason"],
+      "manual_lane_stationary_hardware_like",
+    )
+
+  def test_pin_assisted_long_missing_prior_run_remains_gap(self) -> None:
     manual_priors = {
       index: {
         "x": (184 + index * 3) / 320,
@@ -843,11 +874,25 @@ class BarbellTrackerTest(unittest.TestCase):
       for point in result["barbellPath"]["points"]
       if point.get("trackingState") == "estimated"
     ]
-    self.assertEqual(len(estimated_points), 3)
-    self.assertTrue(all(point.get("manual_assisted") for point in estimated_points))
-    self.assertEqual(result["diagnostics"]["pin_source_counts"].get("pin_estimated", 0), 3)
-    self.assertEqual(result["diagnostics"]["pin_source_counts"]["gap"], 0)
-    self.assertEqual(diagnostics["pin_source_counts"]["gap"], 0)
+    self.assertEqual(len(estimated_points), 0)
+    self.assertEqual(result["diagnostics"]["pin_source_counts"].get("pin_estimated", 0), 0)
+    self.assertEqual(result["diagnostics"]["pin_source_counts"]["gap"], 3)
+    self.assertEqual(diagnostics["pin_source_counts"]["gap"], 3)
+
+  def test_interpolation_skips_blocked_identity_loss_gap(self) -> None:
+    samples = [
+      {"time": 0.0, "x": 0.50, "y": 0.50, "confidence": 0.9},
+      None,
+      {"time": 0.2, "x": 0.50, "y": 0.58, "confidence": 0.9},
+    ]
+
+    points, interpolated_count = _interpolate_missing(
+      samples,
+      blocked_gap_indices={1},
+    )
+
+    self.assertEqual(interpolated_count, 0)
+    self.assertEqual(len(points), 2)
 
   def test_visible_hub_rejects_coordinated_manual_prior_drift(self) -> None:
     plate_centers = [(178 + index * 2, 96 + index * 2) for index in range(10)]

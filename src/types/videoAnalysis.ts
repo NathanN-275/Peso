@@ -170,7 +170,7 @@ export type PoseValidationLandmark = {
   timestamp_ms?: number;
   side: string;
   joint: string;
-  status: 'interpolated' | 'rejected';
+  status: 'interpolated' | 'kinematic_estimate' | 'rejected';
   reasons: string[];
 };
 
@@ -183,6 +183,8 @@ export type BarbellPathPoint = {
   time: number;
   x: number;
   y: number;
+  markerX?: number;
+  markerY?: number;
   confidence: number;
   trackingState?: 'reference' | 'guided' | 'automatic' | 'estimated';
   selectedSource?: string;

@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import tokens from '../theme/tokens';
 import type {
   TrackingAssistance,
+  TrackingBarbellSource,
   TrackingBodySource,
   TrackingBodySourceName,
   TrackingPinName,
@@ -51,6 +52,14 @@ const SOURCE_LABELS: Record<string, string> = {
   gap: 'gap',
 };
 
+const BARBELL_SOURCE_LABELS: Record<string, string> = {
+  manual_pin_lane: 'pin lane',
+  manual_pin_blend: 'pin blend',
+  automatic_lane: 'automatic recovery',
+  kinematic_coast: 'coasting',
+  gap: 'gap',
+};
+
 function formatPercent(value?: number | null) {
   if (typeof value !== 'number' || Number.isNaN(value)) {
     return 'n/a';
@@ -83,6 +92,22 @@ function formatSourceCounts(
   }
 
   return `${TRACKING_LABELS[name] ?? name}: ${parts.join(', ')}`;
+}
+
+function formatBarbellSourceCounts(trackingAssistance: TrackingAssistance) {
+  const counts = trackingAssistance.barbellSourceCounts;
+  if (!counts) {
+    return null;
+  }
+
+  const parts = Object.entries(counts)
+    .filter(([, count]) => Number(count) > 0)
+    .map(([source, count]) => {
+      const sourceName = source as TrackingBarbellSource;
+      return `${BARBELL_SOURCE_LABELS[sourceName] ?? source}: ${Number(count)}`;
+    });
+
+  return parts.length ? parts.join(', ') : null;
 }
 
 function sumBodySources(
@@ -214,6 +239,9 @@ export default function TrackingDisplaySheet({
   ]);
   const visualOnlyBodyPointCount = sumBodySources(trackingAssistance, ['pin_visual_fallback']);
   const gapBodyPointCount = sumBodySources(trackingAssistance, ['gap']);
+  const barbellSourceLine = trackingAssistance
+    ? formatBarbellSourceCounts(trackingAssistance)
+    : null;
   const rejectionEntries = Object.entries(trackingAssistance?.rejectionReasons ?? {});
 
   return (
@@ -269,6 +297,12 @@ export default function TrackingDisplaySheet({
               Barbell points: {trackingAssistance.manualBarbellPointCount ?? 0} pin-assisted,{' '}
               {trackingAssistance.automaticBarbellPointCount ?? 0} automatic
             </Text>
+            {trackingAssistance.barbellCoastingPointCount || trackingAssistance.barbellGapPointCount ? (
+              <Text style={styles.assistanceDetail}>
+                Barbell recovery: {trackingAssistance.barbellCoastingPointCount ?? 0} coasting,{' '}
+                {trackingAssistance.barbellGapPointCount ?? 0} gaps
+              </Text>
+            ) : null}
             {trackingAssistance.selectedSide ? (
               <Text style={styles.assistanceDetail}>
                 Body side: {trackingAssistance.selectedSide}
@@ -336,6 +370,11 @@ export default function TrackingDisplaySheet({
               <Text style={styles.assistanceDetail}>
                 Automatic barbell points: {trackingAssistance.automaticBarbellPointCount ?? 0}
               </Text>
+              {barbellSourceLine ? (
+                <Text style={styles.assistanceDetail}>
+                  Lane sources: {barbellSourceLine}
+                </Text>
+              ) : null}
             </CollapsibleDetails>
           </View>
         ) : null}

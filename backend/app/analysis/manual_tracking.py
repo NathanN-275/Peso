@@ -1527,8 +1527,6 @@ def fuse_manual_body_tracks(
     )
     if estimate is None:
       return None
-    if point_in_barbell_occluder("knee", estimate, source_index):
-      return None
     return {
       "source": "kinematic_estimate",
       "point": {"x": estimate["x"], "y": estimate["y"]},

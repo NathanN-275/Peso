@@ -174,6 +174,45 @@ class PoseValidatorTest(unittest.TestCase):
       self.assertEqual(validated[2]["landmarks"][f"left_{joint}"]["tracking_state"], "estimated")
       self.assertLessEqual(validated[2]["landmarks"][f"left_{joint}"]["visibility"], 0.48)
 
+  def test_multi_frame_direct_side_chain_jumble_is_rejected(self) -> None:
+    frames = [
+      frame(0),
+      frame(100),
+      frame(
+        200,
+        left_shoulder=landmark(0.64, 0.36),
+        left_hip=landmark(0.66, 0.55),
+        left_knee=landmark(0.68, 0.71),
+      ),
+      frame(
+        300,
+        left_shoulder=landmark(0.65, 0.37),
+        left_hip=landmark(0.67, 0.56),
+        left_knee=landmark(0.69, 0.72),
+      ),
+      frame(
+        400,
+        left_shoulder=landmark(0.64, 0.36),
+        left_hip=landmark(0.66, 0.55),
+        left_knee=landmark(0.68, 0.71),
+      ),
+      frame(500),
+      frame(600),
+    ]
+
+    validated, report = validate_squat_pose_frames(frames)
+    middle_unreliable = {
+      item["joint"]: item
+      for item in report["unreliable_landmarks"]
+      if item["frame_index"] == 3
+    }
+
+    for joint in ("shoulder", "hip", "knee"):
+      self.assertIn(joint, middle_unreliable)
+      self.assertIn("direct_side_chain_jumble", middle_unreliable[joint]["reasons"])
+      self.assertEqual(validated[3]["landmarks"][f"left_{joint}"]["tracking_state"], "estimated")
+      self.assertLessEqual(validated[3]["landmarks"][f"left_{joint}"]["visibility"], 0.48)
+
   def test_high_confidence_plate_occluded_upper_back_and_hip_are_rejected(self) -> None:
     frames = [
       frame(0, source_frame_index=0),
@@ -207,6 +246,62 @@ class PoseValidatorTest(unittest.TestCase):
     self.assertEqual(validated[1]["landmarks"]["left_hip"]["tracking_state"], "estimated")
     self.assertLess(validated[1]["landmarks"]["left_shoulder"]["x"], 0.46)
     self.assertGreaterEqual(report["barbell_plate_occlusion_count"], 2)
+
+  def test_automatic_plate_occlusion_without_recovery_becomes_visual_only(self) -> None:
+    frames = [
+      frame(
+        0,
+        source_frame_index=0,
+        left_shoulder=landmark(0.50, 0.34, 0.99),
+        left_hip=landmark(0.50, 0.43, 0.99),
+      ),
+    ]
+
+    validated, report = validate_squat_pose_frames(
+      frames,
+      selected_side_override="left",
+      barbell_occluders_by_frame={
+        0: {"x": 0.50, "y": 0.38, "radius": 0.075},
+      },
+    )
+
+    for joint in ("shoulder", "hip"):
+      point = validated[0]["landmarks"][f"left_{joint}"]
+      self.assertEqual(point["tracking_state"], "estimated")
+      self.assertEqual(point["accepted_source"], "gap")
+      self.assertFalse(point["chain_valid"])
+      self.assertTrue(point["visual_only"])
+      self.assertEqual(point["chain_failure_reason"], "barbell_plate_occlusion")
+
+    self.assertEqual(report["visual_only_landmark_count"], 2)
+    self.assertEqual(report["kinematic_estimated_landmark_count"], 0)
+
+  def test_automatic_occluded_upper_back_recovers_from_trusted_hip(self) -> None:
+    frames = [
+      frame(0, source_frame_index=0),
+      frame(
+        100,
+        source_frame_index=1,
+        left_shoulder=landmark(0.50, 0.34, 0.99),
+        left_hip=landmark(0.46, 0.56, 0.95),
+      ),
+    ]
+
+    validated, report = validate_squat_pose_frames(
+      frames,
+      selected_side_override="left",
+      barbell_occluders_by_frame={
+        1: {"x": 0.50, "y": 0.34, "radius": 0.04},
+      },
+    )
+
+    shoulder = validated[1]["landmarks"]["left_shoulder"]
+    self.assertEqual(shoulder["tracking_state"], "estimated")
+    self.assertEqual(shoulder["accepted_source"], "kinematic_estimate")
+    self.assertTrue(shoulder["chain_valid"])
+    self.assertFalse(shoulder["visual_only"])
+    self.assertLess(shoulder["x"], 0.49)
+    self.assertGreaterEqual(report["kinematic_estimated_landmark_count"], 1)
 
 
 if __name__ == "__main__":

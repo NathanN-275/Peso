@@ -70,6 +70,7 @@ export default function BarbellPathOverlay({
       y: rect.y + (point.y * rect.height),
       time: point.time,
       trackingState: point.trackingState,
+      selectedSource: point.selectedSource,
       coastingFrame: point.coastingFrame,
       stationaryHardwareRejected: point.stationaryHardwareRejected,
     }));
@@ -79,20 +80,34 @@ export default function BarbellPathOverlay({
   }
 
   const firstPoint = mappedPoints[0];
-  const lastPoint = mappedPoints[mappedPoints.length - 1];
+  const currentMarkerPoint = currentPoint
+    ? {
+      x: rect.x + ((currentPoint.markerX ?? currentPoint.x) * rect.width),
+      y: rect.y + ((currentPoint.markerY ?? currentPoint.y) * rect.height),
+    }
+    : null;
 
   return (
     <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.overlay]}>
       {mappedPoints.slice(1).map((point, index) => {
         const previous = mappedPoints[index];
-        if (!previous || point.time - previous.time > 0.5) {
+        if (
+          !previous
+          || point.time - previous.time > 0.25
+          || previous.coastingFrame === true
+          || point.coastingFrame === true
+          || previous.stationaryHardwareRejected === true
+          || point.stationaryHardwareRejected === true
+          || previous.selectedSource === 'gap'
+          || point.selectedSource === 'gap'
+        ) {
           return null;
         }
 
         return <Line key={`${previous.time}-${point.time}`} from={previous} to={point} />;
       })}
       <View style={[styles.startPoint, { left: firstPoint.x - 3, top: firstPoint.y - 3 }]} />
-      {currentPoint ? (
+      {currentPoint && currentMarkerPoint ? (
         <View
           style={[
             styles.currentPoint,
@@ -103,7 +118,7 @@ export default function BarbellPathOverlay({
               || currentPoint.stationaryHardwareRejected === true
             )
               && styles.estimatedCurrentPoint,
-            { left: lastPoint.x - 7, top: lastPoint.y - 7 },
+            { left: currentMarkerPoint.x - 7, top: currentMarkerPoint.y - 7 },
           ]}
         />
       ) : null}

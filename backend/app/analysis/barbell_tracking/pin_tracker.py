@@ -13,6 +13,7 @@ from .constants import (
 )
 PIN_ASSISTED_MIN_COVERAGE = max(MIN_TRACK_COVERAGE, 0.35)
 PIN_ESTIMATE_MAX_GAP_FRAMES = 2
+PIN_ESTIMATE_MAX_GAP_SECONDS = 0.35
 PIN_ESTIMATE_CONFIDENCE_CAP = 0.42
 PIN_PERSISTENCE_CONFIDENCE = 0.24
 PIN_PRIOR_MIN_CONFIDENCE = 0.42
@@ -135,6 +136,17 @@ def _pin_estimated_sample(
   *,
   fps: float,
 ) -> tuple[dict[str, Any] | None, str]:
+  gap_start = sample_index
+  while gap_start > 0 and samples[gap_start - 1] is None:
+    gap_start -= 1
+  gap_end = sample_index
+  while gap_end + 1 < len(samples) and samples[gap_end + 1] is None:
+    gap_end += 1
+  gap_length = gap_end - gap_start + 1
+  gap_seconds = gap_length / max(float(fps), 1.0)
+  if gap_length > PIN_ESTIMATE_MAX_GAP_FRAMES or gap_seconds > PIN_ESTIMATE_MAX_GAP_SECONDS:
+    return None, "pin_gap_too_long"
+
   previous = _neighbor_sample(samples, sample_index - 1, -1)
   following = _neighbor_sample(samples, sample_index + 1, 1)
   timestamp = _timestamp_for_index(expected_indices[sample_index], fps)

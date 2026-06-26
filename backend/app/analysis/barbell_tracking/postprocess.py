@@ -178,6 +178,8 @@ def _smooth_points_with_diagnostics(
           "time": round(float(point["time"]), 4),
           "x": round(float(point["x"]), 4),
           "y": round(float(point["y"]), 4),
+          "markerX": round(float(point.get("markerX", point["x"])), 4),
+          "markerY": round(float(point.get("markerY", point["y"])), 4),
           "confidence": round(float(point["confidence"]), 3),
           "manual_assisted": True,
         }
@@ -251,6 +253,8 @@ def _smooth_points_with_diagnostics(
         "time": round(float(point["time"]), 4),
         "x": round(target_x, 4),
         "y": round(target_y, 4),
+        "markerX": round(float(point.get("markerX", raw_x)), 4),
+        "markerY": round(float(point.get("markerY", raw_y)), 4),
         "confidence": round(float(point["confidence"]), 3),
       }
     )

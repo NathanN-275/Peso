@@ -106,6 +106,7 @@ def _fuse_barbell_lanes(
   emitted_history: list[dict[str, Any]] = []
   consecutive_manual_failures = 0
   consecutive_auto_failures = 0
+  automatic_recovery_streak = 0
   stationary_manual_rejection_count = 0
   agreement_limit_px = max(18.0, max(width, height) * 0.035)
   manual_jump_limit_px = max(70.0, max(width, height) * 0.14)
@@ -157,6 +158,17 @@ def _fuse_barbell_lanes(
       ),
     }
 
+  def point_near_expected_lane(
+    point: dict[str, Any],
+    *,
+    time_key: float,
+  ) -> bool:
+    predicted = coast_from_history(time_key) or previous_emitted
+    if predicted is None:
+      return True
+    distance_px = _distance_px(point, predicted, width=width, height=height)
+    return distance_px <= max(agreement_limit_px * 1.35, max(width, height) * 0.045)
+
   for key in sorted(set(auto_by_time) | set(manual_by_time)):
     manual = manual_by_time.get(key)
     automatic = auto_by_time.get(key)
@@ -202,6 +214,7 @@ def _fuse_barbell_lanes(
 
     if manual_valid and not manual_stale:
       consecutive_manual_failures = 0
+      automatic_recovery_streak = 0
       if auto_valid and agreement_px is not None and agreement_px <= agreement_limit_px:
         manual_weight = 0.78
         auto_weight = 0.22
@@ -229,17 +242,31 @@ def _fuse_barbell_lanes(
         rejection_reason = "manual_lane_temporal_jump"
 
     if emitted is None and auto_valid:
-      consecutive_auto_failures = 0
-      emitted = {
-        **automatic,
-        "selectedSource": "automatic_lane",
-      }
-      emitted.pop("manual_assisted", None)
-      selected_source = "automatic_lane"
+      automatic_needs_recovery = bool(previous_emitted is not None and (manual_stale or not manual_valid))
+      automatic_recovery_allowed = True
+      if automatic_needs_recovery:
+        if point_near_expected_lane(automatic, time_key=key):
+          automatic_recovery_streak += 1
+        else:
+          automatic_recovery_streak = 0
+          if rejection_reason is None:
+            rejection_reason = "automatic_outside_predicted_lane"
+        automatic_recovery_allowed = automatic_recovery_streak >= 3
+
+      if automatic_recovery_allowed:
+        consecutive_auto_failures = 0
+        emitted = {
+          **automatic,
+          "selectedSource": "automatic_lane",
+        }
+        emitted.pop("manual_assisted", None)
+        selected_source = "automatic_lane"
+      else:
+        consecutive_auto_failures += 1
     elif emitted is None:
       consecutive_auto_failures += 1
 
-    if emitted is None and previous_emitted is not None and consecutive_manual_failures <= 2:
+    if emitted is None and previous_emitted is not None and consecutive_manual_failures <= 1:
       coast_base = coast_from_history(key) or previous_emitted
       emitted = {
         **coast_base,
@@ -306,10 +333,14 @@ def _fuse_barbell_lanes(
         "rejected_stationary_hardware": rejected_stationary_hardware,
         "coasting_frame": selected_source == "kinematic_coast",
         "visual_agreement_px": round(agreement_px, 2) if agreement_px is not None else None,
-        "path_residual_px": round(manual_jump_px, 2) if manual_jump_px is not None else None,
+        "path_residual_px": round(
+          agreement_px if rejected_stationary_hardware else manual_jump_px,
+          2,
+        ) if (agreement_px if rejected_stationary_hardware else manual_jump_px) is not None else None,
         "automatic_motion_px": round(automatic_motion_px, 2) if automatic_motion_px is not None else None,
         "consecutive_manual_failures": consecutive_manual_failures,
         "consecutive_auto_failures": consecutive_auto_failures,
+        "automatic_recovery_streak": automatic_recovery_streak,
       })
 
   return fused, {

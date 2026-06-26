@@ -14,6 +14,12 @@ export type TrackingBodySource =
   | 'gap';
 export type TrackingBodySourceName = 'upper_back' | 'hip' | 'knee' | 'ankle';
 export type TrackingDiagnosticPinName = TrackingPinName | 'upper_back';
+export type TrackingBarbellSource =
+  | 'manual_pin_lane'
+  | 'manual_pin_blend'
+  | 'automatic_lane'
+  | 'kinematic_coast'
+  | 'gap';
 
 export type NormalizedTrackingPoint = {
   x: number;
@@ -52,6 +58,9 @@ export type TrackingAssistance = {
   barbellSeedUsed?: boolean;
   manualBarbellPointCount?: number;
   automaticBarbellPointCount?: number;
+  barbellCoastingPointCount?: number;
+  barbellGapPointCount?: number;
+  barbellSourceCounts?: Partial<Record<TrackingBarbellSource, number>>;
   upperBackAnchorKey?: 'shoulder' | 'upper_back';
   upperBackAnchorSemantics?: 'upper_back_anchor';
   upperBackAnchorUsedCount?: number;

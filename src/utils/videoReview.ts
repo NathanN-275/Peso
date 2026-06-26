@@ -333,6 +333,10 @@ export function findInterpolatedBarbellPathPoint(
     time: currentTime,
     x: previousPoint.x + ((nextPoint.x - previousPoint.x) * progress),
     y: previousPoint.y + ((nextPoint.y - previousPoint.y) * progress),
+    markerX: (previousPoint.markerX ?? previousPoint.x)
+      + (((nextPoint.markerX ?? nextPoint.x) - (previousPoint.markerX ?? previousPoint.x)) * progress),
+    markerY: (previousPoint.markerY ?? previousPoint.y)
+      + (((nextPoint.markerY ?? nextPoint.y) - (previousPoint.markerY ?? previousPoint.y)) * progress),
     confidence: Math.min(previousPoint.confidence, nextPoint.confidence),
     trackingState: previousPoint.trackingState === nextPoint.trackingState
       ? previousPoint.trackingState

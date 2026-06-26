@@ -233,6 +233,11 @@ def _apply_barbell_occlusion_pose_overlay(
       and isinstance(point.get("time"), (int, float))
       and isinstance(point.get("x"), (int, float))
       and isinstance(point.get("y"), (int, float))
+      and float(point.get("confidence") or 0.0) >= 0.35
+      and point.get("trackingState") != "estimated"
+      and point.get("coastingFrame") is not True
+      and point.get("stationaryHardwareRejected") is not True
+      and point.get("selectedSource") not in {"kinematic_coast", "gap"}
     ],
     key=lambda point: float(point["time"]),
   )
@@ -877,6 +882,12 @@ def _attach_barbell_tracking(
     assistance["barbellSeedUsed"] = manual_barbell_used
     assistance["manualBarbellPointCount"] = manual_point_count
     assistance["automaticBarbellPointCount"] = automatic_point_count
+    lane_fusion = tracking_diagnostics.get("barbell_lane_fusion") or {}
+    lane_source_counts = lane_fusion.get("source_counts") or {}
+    if isinstance(lane_source_counts, dict) and lane_source_counts:
+      assistance["barbellSourceCounts"] = dict(lane_source_counts)
+      assistance["barbellCoastingPointCount"] = int(lane_source_counts.get("kinematic_coast") or 0)
+      assistance["barbellGapPointCount"] = int(lane_source_counts.get("gap") or 0)
     if manual_barbell_used:
       assistance["used"] = True
       assistance["actualMode"] = "pin_assisted"
