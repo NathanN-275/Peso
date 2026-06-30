@@ -215,6 +215,12 @@ export default function ProfileScreen({
   const stats = useMemo(() => buildProfileStats(videos), [videos]);
   const displayName = getProfileDisplayName(profile, user);
   const username = profile?.username || deriveUsernameFromUser(user) || 'username';
+  const shouldAppendUsername = Boolean(
+    username &&
+      displayName.trim().split(/\s+/).length === 1 &&
+      displayName.toLowerCase() !== username.toLowerCase(),
+  );
+  const profileName = shouldAppendUsername ? `${displayName} ${username}` : displayName;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -234,8 +240,7 @@ export default function ProfileScreen({
                 )}
               </View>
               <View style={styles.identityCopy}>
-                <Text style={styles.displayName} numberOfLines={1}>{displayName}</Text>
-                <Text style={styles.usernameHandle} numberOfLines={1}>@{username}</Text>
+                <Text style={styles.displayName} numberOfLines={1}>{profileName}</Text>
               </View>
               <Pressable
                 accessibilityRole="button"
@@ -355,11 +360,6 @@ const styles = StyleSheet.create({
     fontSize: 25,
     lineHeight: 31,
     fontWeight: '800',
-  },
-  usernameHandle: {
-    color: tokens.colors.textMuted,
-    fontSize: 15,
-    lineHeight: 20,
   },
   section: {
     gap: 9,
