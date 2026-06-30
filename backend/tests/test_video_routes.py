@@ -9,6 +9,7 @@ from fastapi import BackgroundTasks, HTTPException
 
 from app.analysis.versioning import annotate_analysis_freshness, analysis_is_current
 from app.routes.videos import (
+  delete_account,
   discard_video,
   get_video_capabilities,
   get_storage_usage,
@@ -225,6 +226,7 @@ class VideoRoutesTest(unittest.TestCase):
         "coach_feedback": ["Stay tight."],
         "poseFrames": [{"time": 0, "keypoints": []}],
         "reps": [{"rep_index": 1}],
+        "rep_count": 1,
         "diagnostics": {},
       },
     }
@@ -241,7 +243,43 @@ class VideoRoutesTest(unittest.TestCase):
     self.assertEqual(response[0].analysis.coaching_feedback, ["Stay tight."])
     self.assertEqual(response[0].analysis.result_json["summary_flags"], ["inconsistent_depth"])
     self.assertNotIn("poseFrames", response[0].analysis.result_json)
-    self.assertEqual(response[0].analysis.rep_data, [])
+    self.assertEqual(response[0].analysis.rep_data[0]["rep_index"], 1)
+    self.assertEqual(response[0].analysis.result_json["rep_count"], 1)
+
+  def test_delete_account_removes_storage_profile_and_auth_user(self) -> None:
+    repository = MagicMock()
+    repository.list_user_videos.return_value = [
+      {
+        "id": str(VIDEO_ID),
+        "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+        "original_storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+        "playback_path": f"{USER_ID}/playback/{VIDEO_ID}.mp4",
+        "thumbnail_path": f"{USER_ID}/thumbnails/{VIDEO_ID}.jpg",
+      }
+    ]
+    video_storage = MagicMock()
+    video_storage.list_storage_prefix.return_value = [f"{USER_ID}/exports/{VIDEO_ID}-export.mp4"]
+    avatar_storage = MagicMock()
+    admin_client = MagicMock()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", side_effect=[video_storage, avatar_storage]),
+      patch("app.routes.videos.get_supabase_admin_client", return_value=admin_client),
+    ):
+      response = delete_account(USER_ID)
+
+    video_storage.delete_storage_paths.assert_called_once()
+    deleted_paths = video_storage.delete_storage_paths.call_args.args[0]
+    self.assertIn(f"{USER_ID}/uploads/{VIDEO_ID}.mov", deleted_paths)
+    self.assertIn(f"{USER_ID}/playback/{VIDEO_ID}.mp4", deleted_paths)
+    self.assertIn(f"{USER_ID}/thumbnails/{VIDEO_ID}.jpg", deleted_paths)
+    self.assertIn(f"{USER_ID}/exports/{VIDEO_ID}-export.mp4", deleted_paths)
+    avatar_storage.delete_storage_prefix.assert_called_once_with(f"{USER_ID}/")
+    admin_client.table.assert_called_once_with("profiles")
+    admin_client.table.return_value.delete.return_value.eq.assert_called_once_with("id", USER_ID)
+    admin_client.auth.admin.delete_user.assert_called_once_with(USER_ID)
+    self.assertTrue(response.deleted)
 
   def test_playback_url_signs_video_only_on_demand(self) -> None:
     repository = MagicMock()

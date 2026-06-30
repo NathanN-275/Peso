@@ -288,6 +288,25 @@ class VideoRepository:
 
     return response.data or []
 
+  def list_user_videos(self, user_id: str) -> list[dict[str, Any]]:
+    try:
+      response = (
+        self.client.table("videos")
+        .select(VIDEO_STORAGE_COLUMNS)
+        .eq("user_id", user_id)
+        .execute()
+      )
+    except Exception as error:
+      logger.warning("Falling back to legacy user-video query for user %s: %s", user_id, error)
+      response = (
+        self.client.table("videos")
+        .select(VIDEO_BASE_COLUMNS)
+        .eq("user_id", user_id)
+        .execute()
+      )
+
+    return response.data or []
+
   @staticmethod
   def video_is_saved(video: dict[str, Any]) -> bool:
     return video.get("save_state") == "saved" or video.get("is_saved") is True

@@ -330,6 +330,12 @@ export async function exportAnalyzedVideo(videoId: string, accessToken: string) 
   );
 }
 
+export async function deleteAccount(accessToken: string) {
+  return requestJson<{ deleted: boolean }>('/account', accessToken, {
+    method: 'DELETE',
+  });
+}
+
 export async function getSavedVideoPlaybackUrl(videoId: string, accessToken: string) {
   return requestJson<{
     video_id: string;

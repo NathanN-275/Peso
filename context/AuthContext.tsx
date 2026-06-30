@@ -127,6 +127,20 @@ function isMissingProfilesTableError(error: unknown) {
   );
 }
 
+function isProfileUsernameConflictError(error: unknown) {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const code = 'code' in error ? error.code : undefined;
+  const message = 'message' in error ? error.message : undefined;
+
+  return (
+    code === '23505' ||
+    (typeof message === 'string' && message.toLowerCase().includes('profiles_username'))
+  );
+}
+
 function deriveUsername(user: User) {
   // Fall back through metadata, email, then phone.
   const metadataUsername =
@@ -175,6 +189,22 @@ async function ensureProfile(user: User) {
         "Supabase table 'public.profiles' is missing. Continuing without profile sync."
       );
       return;
+    }
+
+    if (isProfileUsernameConflictError(error)) {
+      const { error: retryError } = await supabase.from('profiles').upsert(
+        {
+          id: user.id,
+          username: null,
+        },
+        {
+          onConflict: 'id',
+        }
+      );
+
+      if (!retryError) {
+        return;
+      }
     }
 
     logSupabaseError('ensureProfile failed', error, {

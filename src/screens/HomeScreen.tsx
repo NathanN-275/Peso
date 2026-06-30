@@ -23,6 +23,7 @@ type HomeScreenProps = {
   email?: string | null;
   refreshKey?: number;
   onNavigateToAddVideo?: () => void;
+  onNavigateToProfile?: () => void;
   onOpenSavedLiftFolder?: (exerciseType: string) => void;
   onSavedVideosLoaded?: (videos: SavedVideo[]) => void;
 };
@@ -109,6 +110,7 @@ function LiftFolderCard({
 export default function HomeScreen({
   refreshKey = 0,
   onNavigateToAddVideo,
+  onNavigateToProfile,
   onOpenSavedLiftFolder,
   onSavedVideosLoaded,
 }: HomeScreenProps) {
@@ -256,7 +258,12 @@ export default function HomeScreen({
           {logoutError ? <Text style={styles.errorText}>{logoutError}</Text> : null}
         </ScrollView>
 
-        <BottomNav activeTab="home" onHomePress={() => {}} onAddPress={onNavigateToAddVideo} />
+        <BottomNav
+          activeTab="home"
+          onHomePress={() => {}}
+          onAddPress={onNavigateToAddVideo}
+          onProfilePress={onNavigateToProfile}
+        />
       </View>
     </SafeAreaView>
   );

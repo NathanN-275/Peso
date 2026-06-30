@@ -65,9 +65,9 @@ def _storage_item_is_folder(item: dict[str, Any]) -> bool:
 
 
 class StorageService:
-  def __init__(self) -> None:
+  def __init__(self, bucket: str | None = None) -> None:
     settings = get_settings()
-    self.bucket = settings.video_bucket
+    self.bucket = bucket or settings.video_bucket
     self.max_video_upload_bytes = settings.max_video_upload_bytes
     self.client = get_supabase_admin_client()
 
