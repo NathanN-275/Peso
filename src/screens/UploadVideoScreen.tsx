@@ -130,6 +130,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   const analysisQueuedForVideoRef = useRef<string | null>(null);
   const analysisRunGenerationRef = useRef(0);
   const activeAnalysisRunRef = useRef<AnalysisRun | null>(null);
+  const analysisPollInFlightRef = useRef(false);
 
   const analysisRunIsCurrent = (run: AnalysisRun) => (
     isAnalysisRunCurrent(analysisRunGenerationRef.current, run)
@@ -145,6 +146,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     activeAnalysisRunRef.current = null;
     analysisStartInFlightRef.current = false;
     analysisQueuedForVideoRef.current = null;
+    analysisPollInFlightRef.current = false;
     setUploading(false);
     setAnalysisRunning(false);
     setAnalysisVideoId(null);
@@ -159,6 +161,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     cancelActiveAnalysis();
     analysisStartInFlightRef.current = false;
     analysisQueuedForVideoRef.current = null;
+    analysisPollInFlightRef.current = false;
     setSelectedVideo(asset);
     setTrackingSetup(null);
     setTrackingDetailsExpanded(false);
@@ -513,6 +516,11 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     const isCurrentPoll = () => active && analysisRunIsCurrent(run);
 
     const poll = async () => {
+      if (analysisPollInFlightRef.current) {
+        return;
+      }
+
+      analysisPollInFlightRef.current = true;
       try {
         const accessToken = await getFreshBackendAccessToken();
         if (!isCurrentPoll()) {
@@ -533,7 +541,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
           analysisQueuedForVideoRef.current = null;
           activeAnalysisRunRef.current = null;
           setAnalysisRunning(false);
-          setAnalysisStatus('failed');
+          setAnalysisStatus((current) => current === 'failed' ? current : 'failed');
           setStatusMessage(null);
           setErrorMessage('Analysis failed. Check the backend logs and try another upload.');
           return;
@@ -559,7 +567,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
             analysisQueuedForVideoRef.current = null;
             activeAnalysisRunRef.current = null;
             setAnalysisRunning(false);
-            setAnalysisStatus('completed');
+            setAnalysisStatus((current) => current === 'completed' ? current : 'completed');
             setAnalysisResult(analysisResponse.result_json);
           } catch (error) {
             if (__DEV__) {
@@ -569,7 +577,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
           return;
         }
 
-        setAnalysisStatus(statusResponse.status);
+        setAnalysisStatus((current) => current === statusResponse.status ? current : statusResponse.status);
       } catch (error) {
         if (!isCurrentPoll()) {
           return;
@@ -586,6 +594,10 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
           setStatusMessage(null);
           setErrorMessage('Your sign-in session expired while checking analysis status. Sign in again and reopen the upload.');
         }
+      } finally {
+        if (isCurrentPoll()) {
+          analysisPollInFlightRef.current = false;
+        }
       }
     };
 
@@ -596,6 +608,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
 
     return () => {
       active = false;
+      analysisPollInFlightRef.current = false;
       clearInterval(intervalId);
     };
   }, [analysisResult, analysisStatus, analysisVideoId, user]);
@@ -684,6 +697,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     cancelActiveAnalysis();
     analysisStartInFlightRef.current = false;
     analysisQueuedForVideoRef.current = null;
+    analysisPollInFlightRef.current = false;
     setSelectedVideo(null);
     setTrackingSetup(null);
     setTrackingDetailsExpanded(false);

@@ -167,7 +167,47 @@ pip install -r requirements.txt
 
 From the project root:
 
-Deletes explicit storage objects for the video and marks the row discarded.
+```bash
+npm start
+```
+
+To run the frontend and backend separately:
+
+```bash
+npm run start:frontend
+npm run start:backend
+```
+
+For Expo Go on a physical phone, the backend must bind to `0.0.0.0` so another device on the same network can reach it.
+
+### Static web hosting
+
+Expo web can be exported as static assets:
+
+```bash
+EXPO_PUBLIC_BACKEND_URL=https://api.example.com npm run web:export
+```
+
+The static build writes to `dist/`. `netlify.toml` publishes that folder, falls routes back to `index.html`, and marks immutable assets cacheable. Production web builds must set `EXPO_PUBLIC_BACKEND_URL` or `EXPO_PUBLIC_PRODUCTION_BACKEND_URL` to the deployed FastAPI backend.
+
+## Backend API overview
+
+Protected routes require a Supabase bearer token.
+
+```http
+Authorization: Bearer <supabase_access_token>
+```
+
+Main endpoints:
+
+* `POST /analyze/{video_id}` — queues analysis for an uploaded video
+* `GET /videos/{video_id}/status` — checks video processing status
+* `GET /analysis/{video_id}` — returns the latest analysis result
+* `POST /videos/{video_id}/save` — saves a video for later review
+* `POST /videos/{video_id}/discard` — discards a video
+* `GET /videos/saved` — lists saved videos
+* `GET /videos/{video_id}/playback-url` — returns a signed playback URL
+* `POST /videos/cleanup-expired` — cleans up expired or unused storage objects.
 
 ### `GET /videos/saved`
 
@@ -220,34 +260,6 @@ backend/.venv/bin/python scripts/cleanup_supabase_storage.py --dry-run
 ```
 
 ### Saved thumbnail backfill
-
-To run the frontend and backend separately:
-
-```bash
-npm run start:frontend
-npm run start:backend
-```
-
-For Expo Go on a physical phone, the backend must bind to `0.0.0.0` so another device on the same network can reach it.
-
-## Backend API overview
-
-Protected routes require a Supabase bearer token.
-
-```http
-Authorization: Bearer <supabase_access_token>
-```
-
-Main endpoints:
-
-* `POST /analyze/{video_id}` — queues analysis for an uploaded video
-* `GET /videos/{video_id}/status` — checks video processing status
-* `GET /analysis/{video_id}` — returns the latest analysis result
-* `POST /videos/{video_id}/save` — saves a video for later review
-* `POST /videos/{video_id}/discard` — discards a video
-* `GET /videos/saved` — lists saved videos
-* `GET /videos/{video_id}/playback-url` — returns a signed playback URL
-* `POST /videos/cleanup-expired` — cleans up expired or unused storage objects
 
 ## Project status
 
