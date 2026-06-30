@@ -85,6 +85,14 @@ function mergeChainValid(
   return previous ?? next;
 }
 
+function isBlockedBarbellPoint(point: BarbellPathPoint) {
+  return point.coastingFrame === true
+    || point.stationaryHardwareRejected === true
+    || point.hardwareRejected === true
+    || Boolean(point.gapReason)
+    || point.selectedSource === 'gap';
+}
+
 function interpolateSegmentLengthRatios(
   previous: VideoPoseKeypoint['segmentLengthRatios'],
   next: VideoPoseKeypoint['segmentLengthRatios'],
@@ -298,7 +306,9 @@ export function findInterpolatedBarbellPathPoint(
   const lastPoint = points[points.length - 1];
 
   if (currentTime >= lastPoint.time) {
-    return currentTime - lastPoint.time <= MAX_BARBELL_POINT_GAP_SECONDS ? lastPoint : null;
+    return currentTime - lastPoint.time <= MAX_BARBELL_POINT_GAP_SECONDS && !isBlockedBarbellPoint(lastPoint)
+      ? lastPoint
+      : null;
   }
 
   let low = 0;
@@ -323,7 +333,12 @@ export function findInterpolatedBarbellPathPoint(
 
   const pointGap = nextPoint.time - previousPoint.time;
 
-  if (pointGap <= 0 || pointGap > MAX_BARBELL_POINT_GAP_SECONDS) {
+  if (
+    pointGap <= 0
+    || pointGap > MAX_BARBELL_POINT_GAP_SECONDS
+    || isBlockedBarbellPoint(previousPoint)
+    || isBlockedBarbellPoint(nextPoint)
+  ) {
     return null;
   }
 
@@ -348,6 +363,19 @@ export function findInterpolatedBarbellPathPoint(
     stationaryHardwareRejected: previousPoint.stationaryHardwareRejected
       || nextPoint.stationaryHardwareRejected
       || undefined,
+    hardwareRejected: previousPoint.hardwareRejected || nextPoint.hardwareRejected || undefined,
+    gapReason: previousPoint.gapReason === nextPoint.gapReason
+      ? previousPoint.gapReason
+      : previousPoint.gapReason ?? nextPoint.gapReason,
+    trackId: previousPoint.trackId === nextPoint.trackId
+      ? previousPoint.trackId
+      : previousPoint.trackId ?? nextPoint.trackId,
+    identityState: previousPoint.identityState === nextPoint.identityState
+      ? previousPoint.identityState
+      : previousPoint.identityState ?? nextPoint.identityState,
+    objectClass: previousPoint.objectClass === nextPoint.objectClass
+      ? previousPoint.objectClass
+      : previousPoint.objectClass ?? nextPoint.objectClass,
     pathResidualPx: typeof previousPoint.pathResidualPx === 'number' && typeof nextPoint.pathResidualPx === 'number'
       ? Math.max(previousPoint.pathResidualPx, nextPoint.pathResidualPx)
       : previousPoint.pathResidualPx ?? nextPoint.pathResidualPx,

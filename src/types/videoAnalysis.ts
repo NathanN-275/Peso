@@ -143,6 +143,9 @@ export type VideoPoseKeypoint = {
   trackingState?: 'reference' | 'guided' | 'automatic' | 'estimated';
   manualSource?: string;
   acceptedSource?: string;
+  source?: string;
+  trackId?: string;
+  rejectionReason?: string;
   userPinned?: boolean;
   preferVisualFallback?: boolean;
   chainValid?: boolean;
@@ -188,6 +191,11 @@ export type BarbellPathPoint = {
   confidence: number;
   trackingState?: 'reference' | 'guided' | 'automatic' | 'estimated';
   selectedSource?: string;
+  trackId?: string;
+  identityState?: string;
+  objectClass?: string;
+  hardwareRejected?: boolean;
+  gapReason?: string;
   coastingFrame?: boolean;
   stationaryHardwareRejected?: boolean;
   pathResidualPx?: number;
@@ -235,6 +243,9 @@ export type VideoAnalysisDiagnostics = {
   pose_model_disagreement?: boolean;
   model_disagreement_reps?: number[];
   landmark_model?: string;
+  tracking_core?: 'legacy' | 'apache_v1' | string;
+  tracking_core_fallback?: 'legacy' | string;
+  apache_tracking_core?: Record<string, unknown>;
   quality_score?: number;
   pose_coverage?: number;
   lower_body_visibility?: number;

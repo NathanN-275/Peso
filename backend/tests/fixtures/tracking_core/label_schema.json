@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "license_policy": "apache_mit_compatible",
+  "object_classes": [
+    "barbell_collar",
+    "sleeve",
+    "plate_face",
+    "rack_upright",
+    "j_hook",
+    "storage_peg"
+  ],
+  "keypoints": [
+    "upper_back",
+    "hip",
+    "knee",
+    "ankle",
+    "barbell_collar_center"
+  ],
+  "coordinate_space": "processed_video_pixels",
+  "notes": [
+    "Use original source clips, not screen recordings.",
+    "Label dense keyframes across setup, descent, bottom, ascent, top, occlusion, and fastest motion.",
+    "Hardware labels are required so the tracker can reject rack/J-hook/storage latch candidates."
+  ]
+}

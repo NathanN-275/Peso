@@ -57,6 +57,10 @@ const BARBELL_SOURCE_LABELS: Record<string, string> = {
   manual_pin_blend: 'pin blend',
   automatic_lane: 'automatic recovery',
   kinematic_coast: 'coasting',
+  detector_tracklet: 'detector tracklet',
+  detector_pin_prior: 'detector + pin',
+  pending_lock: 'pending lock',
+  coast: 'coasting',
   gap: 'gap',
 };
 
@@ -220,6 +224,9 @@ export default function TrackingDisplaySheet({
     : trackingAssistance?.requestedMode === 'pins'
       ? 'Automatic fallback'
       : 'Automatic';
+  const trackingCoreLabel = trackingAssistance?.trackingCore === 'apache_v1'
+    ? 'Apache v1'
+    : 'Legacy';
   const coverageEntries = Object.entries(trackingAssistance?.coverage ?? {}) as Array<
     [TrackingPinName, number]
   >;
@@ -272,7 +279,7 @@ export default function TrackingDisplaySheet({
             onEnabledChange={onBarbellEnabledChange}
           />
         </View>
-        {trackingAssistance?.requestedMode === 'pins' ? (
+        {trackingAssistance ? (
           <View style={styles.assistancePanel}>
             <View style={styles.assistanceHeadingRow}>
               <Text style={styles.assistanceHeading}>Tracking assistance</Text>
@@ -285,6 +292,9 @@ export default function TrackingDisplaySheet({
                 {assistanceMode}
               </Text>
             </View>
+            <Text style={styles.assistanceDetail}>
+              Core: {trackingCoreLabel}
+            </Text>
             <Text style={styles.assistanceDetail}>
               Body: {trackingAssistance.pinOwnedLandmarkCount ?? trackingAssistance.fusedLandmarkCount ?? 0}{' '}
               pin-owned, {trackingAssistance.fallbackLandmarkCount ?? 0} fallback/rejected

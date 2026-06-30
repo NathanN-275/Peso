@@ -19,6 +19,10 @@ export type TrackingBarbellSource =
   | 'manual_pin_blend'
   | 'automatic_lane'
   | 'kinematic_coast'
+  | 'detector_tracklet'
+  | 'detector_pin_prior'
+  | 'pending_lock'
+  | 'coast'
   | 'gap';
 
 export type NormalizedTrackingPoint = {
@@ -43,6 +47,7 @@ export type TrackingReference = {
 export type TrackingAssistance = {
   requestedMode: 'automatic' | 'pins';
   actualMode: 'automatic' | 'pin_assisted' | 'automatic_fallback';
+  trackingCore?: 'legacy' | 'apache_v1' | string;
   used: boolean;
   fallbackReason?: string | null;
   selectedSide?: 'left' | 'right' | null;

@@ -22,6 +22,7 @@ from .manual_tracking import (
 from .pose_fallback import analysis_needs_pose_fallback
 from .pose_estimator import PoseEstimator
 from .pose_validator import is_body_point_occluded_by_plate, validate_squat_pose_frames
+from .tracking_core import run_apache_v1_tracking, tracking_core_config_from_env
 from ..services.config import get_settings
 from ..services.storage_service import IMMUTABLE_CACHE_CONTROL_SECONDS, StorageService
 from ..services.video_assets import (
@@ -814,6 +815,10 @@ def _attach_barbell_tracking(
     return
 
   diagnostics = result.setdefault("diagnostics", {})
+  tracking_core_config = tracking_core_config_from_env()
+  diagnostics["tracking_core_requested"] = tracking_core_config.core
+  if not tracking_core_config.enabled:
+    diagnostics["tracking_core"] = "legacy"
   selected_side = (
     (result.get("trackingAssistance") or {}).get("selectedSide")
     or (diagnostics.get("tracking_assistance") or {}).get("selectedSide")
@@ -833,7 +838,6 @@ def _attach_barbell_tracking(
     and (rep.get("bottomTimestampMs") is not None or rep.get("bottom_timestamp_ms") is not None)
   ]
   try:
-    tracker = BarbellTracker()
     pose_context_frames = estimation.get("frames") or []
     pose_context_validation: dict[str, Any] = {}
     pose_context_validated = False
@@ -852,6 +856,48 @@ def _attach_barbell_tracking(
       manual_tracking=estimation.get("manual_tracking") or {},
       selected_side=selected_side,
     )
+    if tracking_core_config.enabled:
+      apache_tracking = run_apache_v1_tracking(
+        video_path=file_path,
+        pose_frames=barbell_pose_frames,
+        processed_width=estimation.get("processed_frame_width") or estimation.get("frame_width"),
+        processed_height=estimation.get("processed_frame_height") or estimation.get("frame_height"),
+        manual_barbell_priors=barbell_track_priors(estimation.get("manual_tracking") or {}),
+        config=tracking_core_config,
+      )
+      apache_diagnostics = apache_tracking.get("diagnostics") or {}
+      diagnostics["apache_tracking_core"] = apache_diagnostics
+      if (apache_tracking.get("barbellPath") or {}).get("available"):
+        diagnostics["tracking_core"] = "apache_v1"
+        result["barbellPath"] = apache_tracking["barbellPath"]
+        assistance = result.get("trackingAssistance") or {}
+        assistance["trackingCore"] = "apache_v1"
+        source_counts = apache_diagnostics.get("source_counts") or {}
+        if isinstance(source_counts, dict) and source_counts:
+          assistance["barbellSourceCounts"] = dict(source_counts)
+          assistance["barbellCoastingPointCount"] = int(source_counts.get("coast") or 0)
+          assistance["barbellGapPointCount"] = int(source_counts.get("gap") or 0)
+        result["trackingAssistance"] = assistance
+        diagnostics["tracking_assistance"] = assistance
+        tracking_diagnostics = dict(apache_diagnostics)
+        tracking_diagnostics["upper_back_context_frame_count"] = upper_back_context_count
+        tracking_diagnostics["pose_context_validated"] = pose_context_validated
+        tracking_diagnostics["pose_context_validation"] = pose_context_validation
+        diagnostics["barbell_tracking"] = tracking_diagnostics
+        return
+      if not tracking_core_config.fallback_to_legacy:
+        result["barbellPath"] = apache_tracking["barbellPath"]
+        assistance = result.get("trackingAssistance") or {}
+        assistance["trackingCore"] = "apache_v1"
+        assistance["fallbackReason"] = str(apache_diagnostics.get("failure_reason") or "apache_v1_unavailable")
+        result["trackingAssistance"] = assistance
+        diagnostics["tracking_assistance"] = assistance
+        diagnostics["barbell_tracking"] = apache_diagnostics
+        return
+      diagnostics["tracking_core_fallback"] = "legacy"
+      diagnostics["tracking_core"] = "legacy"
+
+    tracker = BarbellTracker()
     tracking = tracker.track(
       file_path,
       pose_frames=barbell_pose_frames,
@@ -879,6 +925,7 @@ def _attach_barbell_tracking(
       and (tracking.get("barbellPath") or {}).get("available")
     )
     assistance = result.get("trackingAssistance") or {}
+    assistance["trackingCore"] = "legacy"
     assistance["barbellSeedUsed"] = manual_barbell_used
     assistance["manualBarbellPointCount"] = manual_point_count
     assistance["automaticBarbellPointCount"] = automatic_point_count

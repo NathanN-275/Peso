@@ -73,6 +73,8 @@ export default function BarbellPathOverlay({
       selectedSource: point.selectedSource,
       coastingFrame: point.coastingFrame,
       stationaryHardwareRejected: point.stationaryHardwareRejected,
+      hardwareRejected: point.hardwareRejected,
+      gapReason: point.gapReason,
     }));
 
   if (mappedPoints.length < 1) {
@@ -98,6 +100,10 @@ export default function BarbellPathOverlay({
           || point.coastingFrame === true
           || previous.stationaryHardwareRejected === true
           || point.stationaryHardwareRejected === true
+          || previous.hardwareRejected === true
+          || point.hardwareRejected === true
+          || Boolean(previous.gapReason)
+          || Boolean(point.gapReason)
           || previous.selectedSource === 'gap'
           || point.selectedSource === 'gap'
         ) {
@@ -116,6 +122,7 @@ export default function BarbellPathOverlay({
               || currentPoint.trackingState === 'estimated'
               || currentPoint.coastingFrame === true
               || currentPoint.stationaryHardwareRejected === true
+              || currentPoint.hardwareRejected === true
             )
               && styles.estimatedCurrentPoint,
             { left: currentMarkerPoint.x - 7, top: currentMarkerPoint.y - 7 },
