@@ -243,6 +243,7 @@ export type VideoAnalysisDiagnostics = {
   pose_model_disagreement?: boolean;
   model_disagreement_reps?: number[];
   landmark_model?: string;
+  tracking_core_requested?: 'legacy' | 'apache_v1' | string;
   tracking_core?: 'legacy' | 'apache_v1' | string;
   tracking_core_fallback?: 'legacy' | string;
   apache_tracking_core?: Record<string, unknown>;
