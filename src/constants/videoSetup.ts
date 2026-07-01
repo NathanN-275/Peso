@@ -22,3 +22,7 @@ export type VideoSetupSelection = {
   exercise: ExerciseOption;
   angle: CameraAngle;
 };
+
+export function supportsPinAssistedTracking(selection: VideoSetupSelection | null) {
+  return Boolean(selection?.angle === 'Side' && selection.exercise.endsWith('Squat'));
+}

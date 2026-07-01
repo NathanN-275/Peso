@@ -20,6 +20,7 @@ class VideoAssetFinalizationTest(unittest.TestCase):
       "id": VIDEO_ID,
       "user_id": USER_ID,
       "storage_path": ORIGINAL_PATH,
+      "tracking_setup": "compact-json-metadata-only",
     }
 
   def test_skips_playback_and_original_delete_when_thumbnail_save_fails(self) -> None:
@@ -82,6 +83,8 @@ class VideoAssetFinalizationTest(unittest.TestCase):
     self.assertEqual(playback_update[0], VIDEO_ID)
     self.assertEqual(playback_update[1]["playback_path"], PLAYBACK_PATH)
     self.assertEqual(playback_update[1]["original_storage_path"], ORIGINAL_PATH)
+    uploaded_paths = [call.args[0] for call in storage.upload_file.call_args_list]
+    self.assertEqual(uploaded_paths, [THUMBNAIL_PATH, PLAYBACK_PATH])
     storage.delete_storage_path.assert_called_once_with(ORIGINAL_PATH)
 
   def test_deletes_uploaded_playback_when_metadata_update_fails(self) -> None:

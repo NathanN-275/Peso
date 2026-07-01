@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "tracking_core": "apache_v1",
+  "label_schema": "label_schema.json",
+  "thresholds": {
+    "pin_assisted_collar_p95_px": 10,
+    "pin_assisted_collar_max_px": 18,
+    "automatic_collar_p95_px": 16,
+    "automatic_collar_max_px": 26,
+    "hardware_identity_switches": 0
+  },
+  "required_clip_categories": [
+    "direct_side_pinned",
+    "direct_side_automatic",
+    "angled_pinned",
+    "angled_automatic",
+    "last_rep_occlusion",
+    "fast_ascent_descent"
+  ],
+  "clips": []
+}

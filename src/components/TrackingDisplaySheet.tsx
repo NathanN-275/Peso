@@ -1,5 +1,13 @@
+import { useState } from 'react';
 import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import tokens from '../theme/tokens';
+import type {
+  TrackingAssistance,
+  TrackingBarbellSource,
+  TrackingBodySource,
+  TrackingBodySourceName,
+  TrackingPinName,
+} from '../types/trackingSetup';
 import ReviewBottomSheet from './ReviewBottomSheet';
 
 type TrackingDisplaySheetProps = {
@@ -8,6 +16,7 @@ type TrackingDisplaySheetProps = {
   poseEnabled: boolean;
   barbellAvailable: boolean;
   barbellEnabled: boolean;
+  trackingAssistance?: TrackingAssistance | null;
   onPoseEnabledChange: (enabled: boolean) => void;
   onBarbellEnabledChange: (enabled: boolean) => void;
   onClose: () => void;
@@ -20,6 +29,137 @@ type TrackingOptionProps = {
   enabled: boolean;
   onEnabledChange: (enabled: boolean) => void;
 };
+
+const TRACKING_LABELS: Record<string, string> = {
+  shoulder: 'Upper Back',
+  upper_back: 'Upper Back',
+  hip: 'Hip',
+  knee: 'Knee',
+  ankle: 'Ankle',
+  barbell: 'Barbell',
+};
+
+const SOURCE_LABELS: Record<string, string> = {
+  reference: 'reference',
+  pin_guided: 'pin guided',
+  pin_estimated: 'pin estimated',
+  kinematic_estimate: 'kinematic estimate',
+  pin_visual_fallback: 'visual fallback',
+  automatic: 'automatic',
+  automatic_recovery: 'automatic recovery',
+  stale_pin_rejected: 'stale pin rejected',
+  stale_pin_stuck: 'stale pin stuck',
+  gap: 'gap',
+};
+
+const BARBELL_SOURCE_LABELS: Record<string, string> = {
+  manual_pin_lane: 'pin lane',
+  manual_pin_blend: 'pin blend',
+  automatic_lane: 'automatic recovery',
+  kinematic_coast: 'coasting',
+  detector_tracklet: 'detector tracklet',
+  detector_pin_prior: 'detector + pin',
+  pending_lock: 'pending lock',
+  coast: 'coasting',
+  gap: 'gap',
+};
+
+function formatPercent(value?: number | null) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return 'n/a';
+  }
+  return `${Math.round(value * 100)}%`;
+}
+
+function formatReason(value: string) {
+  return value.split('_').join(' ');
+}
+
+function formatCoverageEntry([name, coverage]: [TrackingPinName, number]) {
+  return `${TRACKING_LABELS[name] ?? name}: ${formatPercent(coverage)}`;
+}
+
+function formatSourceCounts(
+  name: TrackingBodySourceName,
+  trackingAssistance: TrackingAssistance
+) {
+  const counts = trackingAssistance.sourceCounts?.[name];
+  if (!counts) {
+    return null;
+  }
+  const parts = Object.entries(counts)
+    .filter(([, count]) => Number(count) > 0)
+    .map(([source, count]) => `${SOURCE_LABELS[source] ?? source}: ${count}`);
+
+  if (!parts.length) {
+    return null;
+  }
+
+  return `${TRACKING_LABELS[name] ?? name}: ${parts.join(', ')}`;
+}
+
+function formatBarbellSourceCounts(trackingAssistance: TrackingAssistance) {
+  const counts = trackingAssistance.barbellSourceCounts;
+  if (!counts) {
+    return null;
+  }
+
+  const parts = Object.entries(counts)
+    .filter(([, count]) => Number(count) > 0)
+    .map(([source, count]) => {
+      const sourceName = source as TrackingBarbellSource;
+      return `${BARBELL_SOURCE_LABELS[sourceName] ?? source}: ${Number(count)}`;
+    });
+
+  return parts.length ? parts.join(', ') : null;
+}
+
+function sumBodySources(
+  trackingAssistance: TrackingAssistance | null | undefined,
+  sources: string[]
+) {
+  if (!trackingAssistance?.sourceCounts) {
+    return 0;
+  }
+
+  return Object.values(trackingAssistance.sourceCounts).reduce((total, counts) => {
+    if (!counts) {
+      return total;
+    }
+
+    return total + sources.reduce((sourceTotal, source) => (
+      sourceTotal + Number(counts[source as TrackingBodySource] ?? 0)
+    ), 0);
+  }, 0);
+}
+
+function CollapsibleDetails({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <View style={styles.detailSection}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        onPress={() => setExpanded((current) => !current)}
+        style={({ pressed }) => [
+          styles.detailHeader,
+          pressed && styles.detailHeaderPressed,
+        ]}
+      >
+        <Text style={styles.detailTitle}>{title}</Text>
+        <Text style={styles.detailToggle}>{expanded ? 'Hide' : 'Show'}</Text>
+      </Pressable>
+      {expanded ? <View style={styles.detailBody}>{children}</View> : null}
+    </View>
+  );
+}
 
 function TrackingOption({
   label,
@@ -74,12 +214,51 @@ export default function TrackingDisplaySheet({
   poseEnabled,
   barbellAvailable,
   barbellEnabled,
+  trackingAssistance,
   onPoseEnabledChange,
   onBarbellEnabledChange,
   onClose,
 }: TrackingDisplaySheetProps) {
+  const assistanceMode = trackingAssistance?.actualMode === 'pin_assisted'
+    ? 'Pin-assisted'
+    : trackingAssistance?.requestedMode === 'pins'
+      ? 'Automatic fallback'
+      : 'Automatic';
+  const trackingCoreLabel = trackingAssistance?.trackingCore === 'apache_v1'
+    ? 'Apache v1'
+    : 'Legacy';
+  const coverageEntries = Object.entries(trackingAssistance?.coverage ?? {}) as Array<
+    [TrackingPinName, number]
+  >;
+  const bodySourceNames: TrackingBodySourceName[] = ['upper_back', 'hip', 'knee', 'ankle'];
+  const bodySourceLines = trackingAssistance
+    ? bodySourceNames
+      .map((name) => formatSourceCounts(name, trackingAssistance))
+      .filter((line): line is string => Boolean(line))
+    : [];
+  const connectedBodyPointCount = sumBodySources(trackingAssistance, [
+    'reference',
+    'pin_guided',
+    'pin_estimated',
+    'kinematic_estimate',
+    'automatic',
+    'automatic_recovery',
+  ]);
+  const visualOnlyBodyPointCount = sumBodySources(trackingAssistance, ['pin_visual_fallback']);
+  const gapBodyPointCount = sumBodySources(trackingAssistance, ['gap']);
+  const barbellSourceLine = trackingAssistance
+    ? formatBarbellSourceCounts(trackingAssistance)
+    : null;
+  const rejectionEntries = Object.entries(trackingAssistance?.rejectionReasons ?? {});
+
   return (
-    <ReviewBottomSheet visible={visible} title="Tracking display" onClose={onClose}>
+    <ReviewBottomSheet
+      visible={visible}
+      title="Tracking display"
+      onClose={onClose}
+      scrollable
+      sheetStyle={styles.sheet}
+    >
       <View style={styles.content}>
         <Text style={styles.helperText}>
           Choose what appears over the video. Turn both off for a clean view.
@@ -100,12 +279,124 @@ export default function TrackingDisplaySheet({
             onEnabledChange={onBarbellEnabledChange}
           />
         </View>
+        {trackingAssistance ? (
+          <View style={styles.assistancePanel}>
+            <View style={styles.assistanceHeadingRow}>
+              <Text style={styles.assistanceHeading}>Tracking assistance</Text>
+              <Text
+                style={[
+                  styles.assistanceMode,
+                  trackingAssistance.used ? styles.assistanceModeUsed : styles.assistanceModeFallback,
+                ]}
+              >
+                {assistanceMode}
+              </Text>
+            </View>
+            <Text style={styles.assistanceDetail}>
+              Core: {trackingCoreLabel}
+            </Text>
+            <Text style={styles.assistanceDetail}>
+              Body: {trackingAssistance.pinOwnedLandmarkCount ?? trackingAssistance.fusedLandmarkCount ?? 0}{' '}
+              pin-owned, {trackingAssistance.fallbackLandmarkCount ?? 0} fallback/rejected
+            </Text>
+            <Text style={styles.assistanceDetail}>
+              Connected body: {connectedBodyPointCount} accepted/estimated,{' '}
+              {visualOnlyBodyPointCount} visual-only
+            </Text>
+            <Text style={styles.assistanceDetail}>
+              Barbell points: {trackingAssistance.manualBarbellPointCount ?? 0} pin-assisted,{' '}
+              {trackingAssistance.automaticBarbellPointCount ?? 0} automatic
+            </Text>
+            {trackingAssistance.barbellCoastingPointCount || trackingAssistance.barbellGapPointCount ? (
+              <Text style={styles.assistanceDetail}>
+                Barbell recovery: {trackingAssistance.barbellCoastingPointCount ?? 0} coasting,{' '}
+                {trackingAssistance.barbellGapPointCount ?? 0} gaps
+              </Text>
+            ) : null}
+            {trackingAssistance.selectedSide ? (
+              <Text style={styles.assistanceDetail}>
+                Body side: {trackingAssistance.selectedSide}
+              </Text>
+            ) : null}
+            {coverageEntries.length > 0 ? (
+              <Text style={styles.assistanceDetail}>
+                Coverage: {coverageEntries.map(formatCoverageEntry).join(', ')}
+              </Text>
+            ) : null}
+            {trackingAssistance.fallbackReason ? (
+              <Text style={styles.assistanceFallbackReason}>
+                Fallback reason: {formatReason(trackingAssistance.fallbackReason)}
+              </Text>
+            ) : null}
+            <CollapsibleDetails title="Body details">
+              <Text style={styles.assistanceDetail}>
+                Guided body points: {trackingAssistance.fusedLandmarkCount ?? 0}
+              </Text>
+              <Text style={styles.assistanceDetail}>
+                Reference anchors: {trackingAssistance.directlyAnchoredLandmarkCount ?? 0}
+              </Text>
+              <Text style={styles.assistanceDetail}>
+                Blended/guided: {trackingAssistance.blendedLandmarkCount ?? 0}
+              </Text>
+              <Text style={styles.assistanceDetail}>
+                Automatic fallbacks: {trackingAssistance.fallbackLandmarkCount ?? 0}
+              </Text>
+              <Text style={styles.assistanceDetail}>
+                Visual-only fallbacks: {visualOnlyBodyPointCount}
+              </Text>
+              <Text style={styles.assistanceDetail}>
+                Gaps: {gapBodyPointCount}
+              </Text>
+              <Text style={styles.assistanceDetail}>
+                Rejected body points: {trackingAssistance.rejectedTrackCount ?? 0}
+              </Text>
+              <Text style={styles.assistanceDetail}>
+                Upper Back anchor frames: {trackingAssistance.upperBackAnchorUsedCount ?? 0}{' '}
+                ({formatPercent(trackingAssistance.upperBackAnchorCoverage)})
+              </Text>
+              {trackingAssistance.velocityCapCount ? (
+                <Text style={styles.assistanceDetail}>
+                  Velocity caps: {trackingAssistance.velocityCapCount}
+                </Text>
+              ) : null}
+              {bodySourceLines.map((line) => (
+                <Text key={line} style={styles.assistanceDetail}>{line}</Text>
+              ))}
+              {rejectionEntries.length > 0 ? (
+                <Text style={styles.assistanceDetail}>
+                  Rejections: {rejectionEntries
+                    .map(([reason, count]) => `${formatReason(reason)}: ${count}`)
+                    .join(', ')}
+                </Text>
+              ) : null}
+            </CollapsibleDetails>
+            <CollapsibleDetails title="Barbell details">
+              <Text style={styles.assistanceDetail}>
+                Seed used: {trackingAssistance.barbellSeedUsed ? 'yes' : 'no'}
+              </Text>
+              <Text style={styles.assistanceDetail}>
+                Pin-assisted barbell points: {trackingAssistance.manualBarbellPointCount ?? 0}
+              </Text>
+              <Text style={styles.assistanceDetail}>
+                Automatic barbell points: {trackingAssistance.automaticBarbellPointCount ?? 0}
+              </Text>
+              {barbellSourceLine ? (
+                <Text style={styles.assistanceDetail}>
+                  Lane sources: {barbellSourceLine}
+                </Text>
+              ) : null}
+            </CollapsibleDetails>
+          </View>
+        ) : null}
       </View>
     </ReviewBottomSheet>
   );
 }
 
 const styles = StyleSheet.create({
+  sheet: {
+    maxHeight: '78%',
+  },
   content: {
     gap: 16,
   },
@@ -116,6 +407,77 @@ const styles = StyleSheet.create({
   },
   options: {
     gap: 10,
+  },
+  assistancePanel: {
+    gap: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: tokens.colors.inputBorder,
+    backgroundColor: '#0C1016',
+    padding: 14,
+  },
+  assistanceHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  assistanceHeading: {
+    color: tokens.colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  assistanceMode: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  assistanceModeUsed: {
+    color: '#8CC0FF',
+  },
+  assistanceModeFallback: {
+    color: '#FFD080',
+  },
+  assistanceDetail: {
+    color: tokens.colors.textMuted,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  assistanceFallbackReason: {
+    color: '#FFD080',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  detailSection: {
+    marginTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: tokens.colors.inputBorder,
+    paddingTop: 8,
+  },
+  detailHeader: {
+    minHeight: 34,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  detailHeaderPressed: {
+    opacity: 0.72,
+  },
+  detailTitle: {
+    color: tokens.colors.textPrimary,
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  detailToggle: {
+    color: tokens.colors.brand,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  detailBody: {
+    gap: 5,
+    paddingTop: 2,
   },
   option: {
     minHeight: 64,

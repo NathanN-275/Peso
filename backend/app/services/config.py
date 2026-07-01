@@ -22,12 +22,19 @@ LOCAL_DEV_CORS_ORIGIN_REGEX = (
   r"192\.168\.\d+\.\d+):\d+$"
 )
 DEFAULT_MAX_VIDEO_UPLOAD_BYTES = 50 * 1024 * 1024
-DEFAULT_MODEL_VERSION = "mediapipe-rtmpose-v2-hip-crease-depth"
+DEFAULT_MODEL_VERSION = "mediapipe-rtmpose-v3-pin-assisted"
 DEFAULT_SAVED_VIDEO_STORAGE_TTL_HOURS = 24
 DEFAULT_EXPORT_CACHE_TTL_HOURS = 6
 DEFAULT_EXPORT_STORAGE_TTL_HOURS = DEFAULT_EXPORT_CACHE_TTL_HOURS
 DEFAULT_ORPHAN_STORAGE_MIN_AGE_HOURS = 24
 DEFAULT_STALE_PROCESSING_HOURS = 6
+DEFAULT_OBJECT_STORAGE_LIMIT_BYTES = 1024 * 1024 * 1024
+DEFAULT_DATABASE_LIMIT_BYTES = 512 * 1024 * 1024
+DEFAULT_MONTHLY_EGRESS_LIMIT_BYTES = 5 * 1024 * 1024 * 1024
+DEFAULT_STORAGE_WARNING_RATIO = 0.80
+DEFAULT_STORAGE_BLOCK_RATIO = 0.95
+DEFAULT_PLAYBACK_STORAGE_ESTIMATE_RATIO = 1.0
+DEFAULT_THUMBNAIL_STORAGE_ALLOWANCE_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -49,6 +56,13 @@ class Settings:
   cors_origins: tuple[str, ...] = ()
   cors_origin_regex: str | None = None
   cors_allow_private_network: bool = False
+  object_storage_limit_bytes: int = DEFAULT_OBJECT_STORAGE_LIMIT_BYTES
+  database_limit_bytes: int = DEFAULT_DATABASE_LIMIT_BYTES
+  monthly_egress_limit_bytes: int = DEFAULT_MONTHLY_EGRESS_LIMIT_BYTES
+  storage_warning_ratio: float = DEFAULT_STORAGE_WARNING_RATIO
+  storage_block_ratio: float = DEFAULT_STORAGE_BLOCK_RATIO
+  playback_storage_estimate_ratio: float = DEFAULT_PLAYBACK_STORAGE_ESTIMATE_RATIO
+  thumbnail_storage_allowance_bytes: int = DEFAULT_THUMBNAIL_STORAGE_ALLOWANCE_BYTES
 
 
 def _parse_positive_int_env(name: str, default: int, *aliases: str) -> int:
@@ -70,6 +84,20 @@ def _parse_positive_int_env(name: str, default: int, *aliases: str) -> int:
 
   if parsed_value <= 0:
     raise RuntimeError(f"{name} must be a positive integer.")
+
+  return parsed_value
+
+
+def _parse_positive_float_env(name: str, default: float) -> float:
+  raw_value = os.getenv(name, str(default)).strip() or str(default)
+
+  try:
+    parsed_value = float(raw_value)
+  except ValueError as error:
+    raise RuntimeError(f"{name} must be a positive number.") from error
+
+  if parsed_value <= 0:
+    raise RuntimeError(f"{name} must be a positive number.")
 
   return parsed_value
 
@@ -107,6 +135,40 @@ def get_settings() -> Settings:
     "STALE_PROCESSING_HOURS",
     DEFAULT_STALE_PROCESSING_HOURS,
   )
+  object_storage_limit_bytes = _parse_positive_int_env(
+    "OBJECT_STORAGE_LIMIT_BYTES",
+    DEFAULT_OBJECT_STORAGE_LIMIT_BYTES,
+  )
+  database_limit_bytes = _parse_positive_int_env(
+    "DATABASE_LIMIT_BYTES",
+    DEFAULT_DATABASE_LIMIT_BYTES,
+  )
+  monthly_egress_limit_bytes = _parse_positive_int_env(
+    "MONTHLY_EGRESS_LIMIT_BYTES",
+    DEFAULT_MONTHLY_EGRESS_LIMIT_BYTES,
+  )
+  storage_warning_ratio = _parse_positive_float_env(
+    "STORAGE_WARNING_RATIO",
+    DEFAULT_STORAGE_WARNING_RATIO,
+  )
+  storage_block_ratio = _parse_positive_float_env(
+    "STORAGE_BLOCK_RATIO",
+    DEFAULT_STORAGE_BLOCK_RATIO,
+  )
+  playback_storage_estimate_ratio = _parse_positive_float_env(
+    "PLAYBACK_STORAGE_ESTIMATE_RATIO",
+    DEFAULT_PLAYBACK_STORAGE_ESTIMATE_RATIO,
+  )
+  thumbnail_storage_allowance_bytes = _parse_positive_int_env(
+    "THUMBNAIL_STORAGE_ALLOWANCE_BYTES",
+    DEFAULT_THUMBNAIL_STORAGE_ALLOWANCE_BYTES,
+  )
+
+  if storage_warning_ratio >= storage_block_ratio or storage_block_ratio > 1:
+    raise RuntimeError(
+      "Storage quota ratios must satisfy 0 < STORAGE_WARNING_RATIO < "
+      "STORAGE_BLOCK_RATIO <= 1."
+    )
 
   model_version = (
     os.getenv("MODEL_VERSION", DEFAULT_MODEL_VERSION).strip()
@@ -159,4 +221,11 @@ def get_settings() -> Settings:
     cors_origins=cors_origins,
     cors_origin_regex=cors_origin_regex,
     cors_allow_private_network=cors_allow_private_network,
+    object_storage_limit_bytes=object_storage_limit_bytes,
+    database_limit_bytes=database_limit_bytes,
+    monthly_egress_limit_bytes=monthly_egress_limit_bytes,
+    storage_warning_ratio=storage_warning_ratio,
+    storage_block_ratio=storage_block_ratio,
+    playback_storage_estimate_ratio=playback_storage_estimate_ratio,
+    thumbnail_storage_allowance_bytes=thumbnail_storage_allowance_bytes,
   )

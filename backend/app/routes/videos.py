@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel
 
 from ..analysis.pipeline import analyze_video
@@ -14,7 +14,9 @@ from ..analysis.versioning import annotate_analysis_freshness, analysis_is_curre
 from ..services.analyzed_video_renderer import render_analyzed_video
 from ..services.auth import get_current_user_id
 from ..services.config import get_settings
+from ..services.supabase_client import get_supabase_admin_client
 from ..services.storage_cleanup import StorageCleanupService, cleanup_requires_token
+from ..services.storage_quota import StorageQuotaService
 from ..services.storage_service import StorageService
 from ..services.video_repository import VideoRepository
 
@@ -108,6 +110,32 @@ class CleanupExpiredVideosResponse(BaseModel):
   details: CleanupDetailsResponse
 
 
+class StorageUsageResponse(BaseModel):
+  storage_limit_bytes: int
+  database_limit_bytes: int
+  monthly_egress_limit_bytes: int
+  current_storage_bytes: int
+  upload_size_bytes: int
+  playback_allowance_bytes: int
+  thumbnail_allowance_bytes: int
+  projected_peak_bytes: int
+  warning_threshold_bytes: int
+  block_threshold_bytes: int
+  status: str
+  blocked: bool
+  message: str
+
+
+class VideoCapabilitiesResponse(BaseModel):
+  pin_assisted_tracking: bool
+  tracking_setup_versions: list[int]
+  reason: str | None = None
+
+
+class AccountDeleteResponse(BaseModel):
+  deleted: bool
+
+
 def _authorize_cleanup(cleanup_token: str | None) -> None:
   settings = get_settings()
 
@@ -134,6 +162,8 @@ def _video_is_saved(video: dict) -> bool:
 def _summary_analysis_payload(result_json: dict) -> dict:
   summary = result_json.get("summary_flags") or result_json.get("summaryFlags") or []
   coaching_feedback = result_json.get("coach_feedback") or result_json.get("coachingFeedback") or []
+  reps = [_summary_rep_payload(rep) for rep in result_json.get("reps") or [] if isinstance(rep, dict)]
+  rep_count = int(result_json.get("rep_count") or len(reps))
   analysis_stale = result_json.get("analysis_stale") or result_json.get("diagnostics", {}).get("analysis_stale") or False
   analysis_incomplete = (
     result_json.get("analysis_incomplete")
@@ -153,9 +183,34 @@ def _summary_analysis_payload(result_json: dict) -> dict:
     "summaryFlags": summary,
     "coach_feedback": coaching_feedback,
     "coachingFeedback": coaching_feedback,
+    "rep_count": rep_count,
+    "reps": reps,
     "analysis_stale": analysis_stale,
     "analysis_incomplete": analysis_incomplete,
     "diagnostics": diagnostics,
+  }
+
+
+def _summary_rep_payload(rep: dict) -> dict:
+  velocity = rep.get("estimated_body_velocity") or {}
+
+  return {
+    "rep_index": rep.get("rep_index"),
+    "repIndex": rep.get("repIndex"),
+    "duration": rep.get("duration"),
+    "repSpeed": rep.get("repSpeed"),
+    "avgVelocity": rep.get("avgVelocity"),
+    "peakVelocity": rep.get("peakVelocity"),
+    "estimated_body_velocity": {
+      "avg_velocity": velocity.get("avg_velocity"),
+      "peak_velocity": velocity.get("peak_velocity"),
+    },
+    "depthScore": rep.get("depthScore"),
+    "depth_score": rep.get("depth_score"),
+    "depthStatus": rep.get("depthStatus"),
+    "depth_status": rep.get("depth_status"),
+    "flags": rep.get("flags") or [],
+    "timestamps_ms": rep.get("timestamps_ms"),
   }
 
 
@@ -190,6 +245,79 @@ def _run_analysis_job(video_id: str) -> None:
     analyze_video(video_id)
   except Exception:
     logger.exception("Background analysis failed for video %s", video_id)
+
+
+def _video_storage_paths(video: dict) -> list[str]:
+  return [
+    str(video.get("storage_path") or ""),
+    str(video.get("original_storage_path") or ""),
+    str(video.get("playback_path") or ""),
+    str(video.get("thumbnail_path") or ""),
+  ]
+
+
+def _delete_account_storage(user_id: str, repository: VideoRepository) -> None:
+  storage = StorageService()
+  owned_paths: list[str] = []
+
+  for video in repository.list_user_videos(user_id):
+    owned_paths.extend(
+      path for path in _video_storage_paths(video) if _path_belongs_to_user(path, user_id)
+    )
+    owned_paths.extend(storage.list_storage_prefix(f"{user_id}/exports/{video['id']}-"))
+
+  storage.delete_storage_paths(owned_paths)
+  StorageService(bucket="profile-avatars").delete_storage_prefix(f"{user_id}/")
+
+
+@router.delete("/account", response_model=AccountDeleteResponse)
+def delete_account(
+  user_id: str = Depends(get_current_user_id),
+) -> AccountDeleteResponse:
+  repository = VideoRepository()
+  client = get_supabase_admin_client()
+
+  try:
+    _delete_account_storage(user_id, repository)
+    client.table("profiles").delete().eq("id", user_id).execute()
+    client.auth.admin.delete_user(user_id)
+  except Exception as error:
+    logger.exception("Unable to delete account user_id=%s", user_id)
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail="Unable to delete account. Please try again.",
+    ) from error
+
+  return AccountDeleteResponse(deleted=True)
+
+
+@router.get("/videos/storage-usage", response_model=StorageUsageResponse)
+def get_storage_usage(
+  upload_size_bytes: int = Query(default=0, ge=0),
+  _user_id: str = Depends(get_current_user_id),
+) -> StorageUsageResponse:
+  report = StorageQuotaService().get_usage(upload_size_bytes)
+  return StorageUsageResponse(**report.to_dict())
+
+
+@router.get("/videos/capabilities", response_model=VideoCapabilitiesResponse)
+def get_video_capabilities(
+  _user_id: str = Depends(get_current_user_id),
+) -> VideoCapabilitiesResponse:
+  try:
+    pin_assisted_tracking = VideoRepository().supports_tracking_setup()
+  except Exception as error:
+    logger.exception("Unable to verify video tracking capabilities: %s", error)
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Unable to verify pin-assisted tracking database support.",
+    ) from error
+
+  return VideoCapabilitiesResponse(
+    pin_assisted_tracking=pin_assisted_tracking,
+    tracking_setup_versions=[1] if pin_assisted_tracking else [],
+    reason=None if pin_assisted_tracking else "tracking_setup_migration_missing",
+  )
 
 
 @router.post("/analyze/{video_id}", response_model=AnalyzeResponse)
@@ -285,7 +413,7 @@ def list_saved_videos(
         result_json=summary_payload,
         summary=summary_payload["summary_flags"],
         coaching_feedback=summary_payload["coach_feedback"],
-        rep_data=[],
+        rep_data=summary_payload["reps"],
       )
 
     thumbnail_path = video.get("thumbnail_path")

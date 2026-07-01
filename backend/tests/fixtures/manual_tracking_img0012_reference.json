@@ -1,0 +1,59 @@
+{
+  "video": "IMG_0012.MOV",
+  "coordinate_space": {
+    "width": 405,
+    "height": 720,
+    "rotation_degrees": -90,
+    "source": "orientation_corrected_processed_frame"
+  },
+  "fps": 59.2,
+  "selected_side": "right",
+  "reference_time_ms": 0,
+  "tolerance_px": 14,
+  "labels": [
+    {
+      "time_ms": 0,
+      "source_frame_index": 0,
+      "anchors": {
+        "shoulder": [184, 309],
+        "hip": [156, 446],
+        "knee": [174, 540],
+        "ankle": [179, 677],
+        "barbell": [263, 264]
+      }
+    },
+    {
+      "time_ms": 5000,
+      "source_frame_index": 296,
+      "anchors": {
+        "shoulder": [181, 307],
+        "hip": [156, 445],
+        "knee": [173, 539],
+        "ankle": [179, 676],
+        "barbell": [286, 229]
+      }
+    },
+    {
+      "time_ms": 10000,
+      "source_frame_index": 592,
+      "anchors": {
+        "shoulder": [182, 307],
+        "hip": [157, 445],
+        "knee": [173, 539],
+        "ankle": [179, 676],
+        "barbell": [282, 231]
+      }
+    },
+    {
+      "time_ms": 15000,
+      "source_frame_index": 888,
+      "anchors": {
+        "shoulder": [181, 307],
+        "hip": [161, 444],
+        "knee": [157, 535],
+        "ankle": [171, 668],
+        "barbell": [280, 229]
+      }
+    }
+  ]
+}

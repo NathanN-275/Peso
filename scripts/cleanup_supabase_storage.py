@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -12,6 +13,30 @@ BACKEND = ROOT / "backend"
 sys.path.insert(0, str(BACKEND))
 
 from app.services.storage_cleanup import StorageCleanupService  # noqa: E402
+
+
+def load_backend_env() -> None:
+  env_path = BACKEND / ".env"
+  if not env_path.exists():
+    return
+
+  for line in env_path.read_text().splitlines():
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+      continue
+
+    if stripped.startswith("export "):
+      stripped = stripped.removeprefix("export ").strip()
+
+    if "=" not in stripped:
+      continue
+
+    key, value = stripped.split("=", 1)
+    key = key.strip()
+    value = value.strip().strip('"').strip("'")
+
+    if key and key not in os.environ:
+      os.environ[key] = value
 
 
 def parse_args() -> argparse.Namespace:
@@ -33,6 +58,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
   args = parse_args()
+  load_backend_env()
   dry_run = args.dry_run or not args.confirm
   report = StorageCleanupService().run(dry_run=dry_run)
   print(json.dumps(report.to_dict(), indent=2, sort_keys=True))

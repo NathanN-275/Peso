@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from app.analysis.exercises.squat import SquatAnalyzer
+from app.analysis.exercises.squat import SquatAnalyzer, _build_pose_frames
 
 
 def landmark(x: float, y: float, visibility: float = 0.95) -> dict[str, float]:
@@ -46,6 +46,98 @@ def frame(
 
 
 class SquatAnalyzerTest(unittest.TestCase):
+  def test_public_pose_frames_do_not_emit_pin_metadata_for_automatic_points(self) -> None:
+    pose_frames = _build_pose_frames([frame(0)])
+
+    left_knee = next(
+      keypoint
+      for keypoint in pose_frames[0]["keypoints"]
+      if keypoint["name"] == "left_knee"
+    )
+
+    self.assertNotIn("manualSource", left_knee)
+    self.assertNotIn("userPinned", left_knee)
+    self.assertNotIn("acceptedSource", left_knee)
+    self.assertNotIn("visualFallback", left_knee)
+
+  def test_public_pose_frames_emit_visual_fallback_without_replacing_accepted_point(self) -> None:
+    source_frame = frame(0)
+    left_knee = source_frame["landmarks"]["left_knee"]
+    left_knee["accepted_source"] = "automatic"
+    left_knee["chain_valid"] = False
+    left_knee["visual_only"] = True
+    left_knee["chain_failure_reason"] = "long_pin_track_loss"
+    left_knee["segment_length_ratios"] = {"torso": 1.0, "thigh": 1.05, "shin": 0.97}
+    left_knee["visual_fallback"] = {
+      "manual_source": "pin_visual_fallback",
+      "reason": "long_pin_track_loss",
+      "confidence": 0.24,
+      "visual_only": True,
+      "chain_valid": False,
+      "point": {"x": 0.42, "y": 0.66},
+    }
+
+    pose_frames = _build_pose_frames([source_frame])
+    public_knee = next(
+      keypoint
+      for keypoint in pose_frames[0]["keypoints"]
+      if keypoint["name"] == "left_knee"
+    )
+
+    self.assertEqual(public_knee["x"], 0.60)
+    self.assertEqual(public_knee["y"], 0.68)
+    self.assertEqual(public_knee["acceptedSource"], "automatic")
+    self.assertFalse(public_knee["chainValid"])
+    self.assertTrue(public_knee["visualOnly"])
+    self.assertEqual(public_knee["chainFailureReason"], "long_pin_track_loss")
+    self.assertEqual(public_knee["segmentLengthRatios"]["thigh"], 1.05)
+    self.assertEqual(public_knee["visualFallback"]["x"], 0.42)
+    self.assertEqual(public_knee["visualFallback"]["manualSource"], "pin_visual_fallback")
+    self.assertTrue(public_knee["visualFallback"]["visualOnly"])
+    self.assertFalse(public_knee["visualFallback"]["chainValid"])
+
+  def test_pin_selected_side_remains_authoritative_for_rep_depth(self) -> None:
+    frames = [
+      frame(0, left_visibility=0.55, right_visibility=0.99),
+      frame(
+        500,
+        left_visibility=0.55,
+        right_visibility=0.99,
+        left_hip_y=0.74,
+        left_knee_y=0.58,
+        right_hip_y=0.46,
+        right_knee_y=0.70,
+      ),
+      frame(1000, left_visibility=0.55, right_visibility=0.99),
+    ]
+
+    with patch(
+      "app.analysis.exercises.squat.detect_reps",
+      return_value=(
+        [{
+          "start_index": 0,
+          "bottom_index": 1,
+          "end_index": 2,
+          "start_timestamp_ms": 0,
+          "bottom_timestamp_ms": 500,
+          "end_timestamp_ms": 1000,
+        }],
+        {"motion_amplitude": 0.5, "reason": None, "rep_count": 1},
+      ),
+    ):
+      result = SquatAnalyzer().analyze(
+        video_id="video-1",
+        exercise_type="squat",
+        view_type="side",
+        frames=frames,
+        sampled_frame_count=3,
+        selected_side_override="left",
+      )
+
+    self.assertEqual(result["diagnostics"]["selected_side"], "left")
+    self.assertEqual(result["diagnostics"]["pose_validation"]["selected_side"], "left")
+    self.assertEqual(result["reps"][0]["selected_side"], "left")
+
   def test_rep_summary_uses_selected_side_depth(self) -> None:
     frames = [
       frame(0, left_hip_y=0.46, left_knee_y=0.70, right_hip_y=0.46, right_knee_y=0.70),

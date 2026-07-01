@@ -14,10 +14,11 @@ VIDEO_BASE_COLUMNS = (
   "id,user_id,storage_path,source_type,exercise_type,view_type,status,duration_ms,"
   "save_state,saved_at,expires_at,created_at,updated_at"
 )
-VIDEO_STORAGE_COLUMNS = (
+VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING = (
   f"{VIDEO_BASE_COLUMNS},is_saved,discarded_at,thumbnail_path,playback_path,original_storage_path,"
   "storage_optimized_at,storage_optimization_error"
 )
+VIDEO_STORAGE_COLUMNS = f"{VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING},tracking_setup"
 ANALYSIS_RESULT_COLUMNS = "id,video_id,model_version,result_json,created_at"
 
 
@@ -37,16 +38,52 @@ class VideoRepository:
         .execute()
       )
     except Exception as error:
-      logger.warning("Falling back to legacy video query for video %s: %s", video_id, error)
-      response = (
+      logger.warning("Falling back to video query without tracking setup for video %s: %s", video_id, error)
+      try:
+        response = (
+          self.client.table("videos")
+          .select(VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING)
+          .eq("id", video_id)
+          .limit(1)
+          .execute()
+        )
+      except Exception as legacy_error:
+        logger.warning("Falling back to legacy video query for video %s: %s", video_id, legacy_error)
+        response = (
+          self.client.table("videos")
+          .select(VIDEO_BASE_COLUMNS)
+          .eq("id", video_id)
+          .limit(1)
+          .execute()
+        )
+
+    return response.data[0] if response.data else None
+
+  def supports_tracking_setup(self) -> bool:
+    # Selecting the nullable column verifies PostgREST schema support without mutating data.
+    try:
+      (
         self.client.table("videos")
-        .select(VIDEO_BASE_COLUMNS)
-        .eq("id", video_id)
+        .select("tracking_setup")
         .limit(1)
         .execute()
       )
+      return True
+    except Exception as error:
+      error_code = str(getattr(error, "code", "") or "")
+      error_message = str(error).lower()
+      missing_tracking_column = (
+        error_code == "42703"
+        or (
+          "tracking_setup" in error_message
+          and ("does not exist" in error_message or "could not find" in error_message)
+        )
+      )
 
-    return response.data[0] if response.data else None
+      if missing_tracking_column:
+        return False
+
+      raise
 
   def require_owned_video(self, video_id: str, user_id: str) -> dict[str, Any]:
     # Ownership checks keep user data isolated.
@@ -246,6 +283,25 @@ class VideoRepository:
         .eq("save_state", "saved")
         .order("saved_at", desc=True, nullsfirst=False)
         .order("created_at", desc=True)
+        .execute()
+      )
+
+    return response.data or []
+
+  def list_user_videos(self, user_id: str) -> list[dict[str, Any]]:
+    try:
+      response = (
+        self.client.table("videos")
+        .select(VIDEO_STORAGE_COLUMNS)
+        .eq("user_id", user_id)
+        .execute()
+      )
+    except Exception as error:
+      logger.warning("Falling back to legacy user-video query for user %s: %s", user_id, error)
+      response = (
+        self.client.table("videos")
+        .select(VIDEO_BASE_COLUMNS)
+        .eq("user_id", user_id)
         .execute()
       )
 

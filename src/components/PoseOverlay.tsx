@@ -1,4 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
+import { layoutTrackingLabels } from '../../lib/trackingOverlayPolicy';
 import { VideoPoseFrame } from '../types/videoAnalysis';
 import {
   ContentFit,
@@ -9,7 +10,7 @@ import {
 } from '../utils/videoReview';
 
 const POINT_SIZE = 12;
-const LABEL_WIDTH = 76;
+const LABEL_WIDTH = 104;
 const LABEL_HEIGHT = 22;
 
 type PoseOverlayProps = {
@@ -20,9 +21,18 @@ type PoseOverlayProps = {
   cameraView?: string;
   selectedSide?: string | null;
   confidenceThreshold?: number;
+  preferUpperBackKeypoint?: boolean;
 };
 
-function Line({ from, to }: { from: { x: number; y: number }; to: { x: number; y: number } }) {
+function Line({
+  from,
+  to,
+  estimated = false,
+}: {
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  estimated?: boolean;
+}) {
   // Draw each skeleton segment as a rotated line.
   const dx = to.x - from.x;
   const dy = to.y - from.y;
@@ -33,6 +43,7 @@ function Line({ from, to }: { from: { x: number; y: number }; to: { x: number; y
     <View
       style={[
         styles.line,
+        estimated && styles.estimatedLine,
         {
           left: from.x,
           top: from.y,
@@ -52,6 +63,7 @@ export default function PoseOverlay({
   cameraView,
   selectedSide,
   confidenceThreshold = 0.35,
+  preferUpperBackKeypoint = false,
 }: PoseOverlayProps) {
   // The overlay is pure rendering; it never handles touch input.
   if (!frame || containerSize.width <= 0 || containerSize.height <= 0) {
@@ -62,16 +74,46 @@ export default function PoseOverlay({
     frame,
     cameraView,
     confidenceThreshold,
-    selectedSide
+    selectedSide,
+    preferUpperBackKeypoint
   );
   // Map the normalized pose points into the rendered video rectangle.
-  const connections = getSquatPoseConnections(squatKeypoints, cameraView, selectedSide);
+  const connections = getSquatPoseConnections(
+    squatKeypoints,
+    cameraView,
+    selectedSide,
+    preferUpperBackKeypoint
+  );
   const mappedKeypoints = new Map(
     squatKeypoints.map((keypoint) => {
       const mapped = mapNormalizedKeypoint(keypoint, containerSize, videoSize, contentFit);
-      return [mapped.name, { ...mapped, label: keypoint.label }];
+      return [
+        mapped.name,
+        {
+          ...mapped,
+          label: keypoint.label,
+          chainValid: keypoint.chainValid,
+          visualOnly: keypoint.visualOnly,
+          manualSource: keypoint.manualSource,
+          acceptedSource: keypoint.acceptedSource,
+        },
+      ];
     })
   );
+  const labelLayout = layoutTrackingLabels(
+    [...mappedKeypoints.values()]
+      .filter((point) => point.visualOnly !== true && point.chainValid !== false)
+      .map((point) => ({
+        id: point.name,
+        x: point.x,
+        y: point.y,
+        labelWidth: LABEL_WIDTH,
+        labelHeight: LABEL_HEIGHT,
+      })),
+    containerSize,
+    { gap: 8 }
+  );
+  const labelsByName = new Map(labelLayout.map((point) => [point.id, point]));
   const visiblePoints = [...mappedKeypoints.values()];
 
   return (
@@ -84,27 +126,64 @@ export default function PoseOverlay({
           return null;
         }
 
-        return <Line key={`${fromName}-${toName}`} from={from} to={to} />;
+        if (
+          from.visualOnly === true
+          || to.visualOnly === true
+          || from.chainValid === false
+          || to.chainValid === false
+        ) {
+          return null;
+        }
+
+        const isEstimated = [from.trackingState, to.trackingState].some(
+          (state) => state === 'automatic' || state === 'estimated'
+        );
+        return <Line key={`${fromName}-${toName}`} from={from} to={to} estimated={isEstimated} />;
       })}
 
       {visiblePoints.map((point) => {
-        const labelLeft = Math.min(
-          Math.max(point.x + 10, 0),
-          Math.max(containerSize.width - LABEL_WIDTH, 0)
-        );
-        const labelTop = Math.min(
-          Math.max(point.y - LABEL_HEIGHT - 4, 0),
-          Math.max(containerSize.height - LABEL_HEIGHT, 0)
-        );
-        const isEstimated = point.confidence < 0.5;
-        const pointOpacity = isEstimated ? 0.58 : 1;
+        const isVisualOnly = point.visualOnly === true || point.chainValid === false;
+        const isEstimated = point.confidence < 0.5
+          || point.trackingState === 'automatic'
+          || point.trackingState === 'estimated'
+          || isVisualOnly;
+        const pointOpacity = isVisualOnly ? 0.42 : isEstimated ? 0.58 : 1;
+        if (isVisualOnly) {
+          return (
+            <View
+              key={point.name}
+              style={[
+                styles.point,
+                styles.estimatedPoint,
+                styles.visualOnlyPoint,
+                {
+                  left: point.x - (POINT_SIZE / 2),
+                  top: point.y - (POINT_SIZE / 2),
+                  opacity: pointOpacity,
+                },
+              ]}
+            />
+          );
+        }
+        const label = labelsByName.get(point.name);
+        if (!label) {
+          return null;
+        }
+        const labelCenter = {
+          x: label.labelX + (label.labelWidth / 2),
+          y: label.labelY + (label.labelHeight / 2),
+        };
 
         return (
           <View key={point.name}>
+            {label.displaced ? (
+              <Line from={point} to={labelCenter} estimated={isEstimated} />
+            ) : null}
             <View
               style={[
                 styles.point,
                 isEstimated && styles.estimatedPoint,
+                isVisualOnly && styles.visualOnlyPoint,
                 {
                   left: point.x - (POINT_SIZE / 2),
                   top: point.y - (POINT_SIZE / 2),
@@ -117,9 +196,10 @@ export default function PoseOverlay({
               style={[
                 styles.label,
                 isEstimated && styles.estimatedLabel,
+                isVisualOnly && styles.visualOnlyLabel,
                 {
-                  left: labelLeft,
-                  top: labelTop,
+                  left: label.labelX,
+                  top: label.labelY,
                   opacity: pointOpacity,
                 },
               ]}
@@ -141,6 +221,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(31, 107, 255, 0.92)',
     transformOrigin: '0px 1.5px',
   },
+  estimatedLine: {
+    height: 0,
+    backgroundColor: 'transparent',
+    borderTopWidth: 2,
+    borderStyle: 'dashed',
+    borderColor: 'rgba(255, 176, 32, 0.82)',
+  },
   point: {
     position: 'absolute',
     width: POINT_SIZE,
@@ -154,6 +241,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderColor: '#FFB020',
     borderStyle: 'dashed',
+  },
+  visualOnlyPoint: {
+    backgroundColor: 'rgba(255, 255, 255, 0.72)',
+    borderColor: 'rgba(255, 176, 32, 0.72)',
   },
   label: {
     position: 'absolute',
@@ -169,5 +260,8 @@ const styles = StyleSheet.create({
   },
   estimatedLabel: {
     color: '#FFE4A3',
+  },
+  visualOnlyLabel: {
+    color: 'rgba(255, 228, 163, 0.72)',
   },
 });

@@ -41,7 +41,7 @@ def _clean_depth_flags(rep_summaries: list[dict[str, Any]]) -> None:
     rep["flags"] = flags
 
 
-def _public_point(point: dict[str, float]) -> dict[str, float]:
+def _public_point(point: dict[str, Any]) -> dict[str, Any]:
   return {
     "x": round(point["x"], 4),
     "y": round(point["y"], 4),
@@ -52,16 +52,81 @@ def _public_point(point: dict[str, float]) -> dict[str, float]:
 
 def _build_pose_frames(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
   # Reformat backend frames into the shape the client expects.
+  def public_keypoint(name: str, point: dict[str, Any]) -> dict[str, Any]:
+    manual_source = point.get("manual_source")
+    user_pinned = bool(
+      point.get("user_pinned")
+      or point.get("manual_assisted")
+      or manual_source in {"reference_pin", "pin_guided", "pin_estimated", "pin_visual_fallback"}
+    )
+    visual_fallback = point.get("visual_fallback")
+    segment_length_ratios = point.get("segment_length_ratios")
+    return {
+      "name": name,
+      "x": point["x"],
+      "y": point["y"],
+      "confidence": point["visibility"],
+      **(
+        {"trackingState": point["tracking_state"]}
+        if point.get("tracking_state") in {"reference", "guided", "automatic", "estimated"}
+        else {}
+      ),
+      **({"manualSource": manual_source} if isinstance(manual_source, str) else {}),
+      **(
+        {"acceptedSource": point["accepted_source"]}
+        if isinstance(point.get("accepted_source"), str)
+        else {}
+      ),
+      **({"userPinned": True} if user_pinned else {}),
+      **({"preferVisualFallback": True} if point.get("prefer_visual_fallback") else {}),
+      **({"chainValid": bool(point["chain_valid"])} if "chain_valid" in point else {}),
+      **({"visualOnly": bool(point["visual_only"])} if "visual_only" in point else {}),
+      **(
+        {"chainFailureReason": point["chain_failure_reason"]}
+        if isinstance(point.get("chain_failure_reason"), str)
+        else {}
+      ),
+      **(
+        {"occlusionReason": point["occlusion_reason"]}
+        if isinstance(point.get("occlusion_reason"), str)
+        else {}
+      ),
+      **(
+        {"segmentLengthRatios": segment_length_ratios}
+        if isinstance(segment_length_ratios, dict)
+        else {}
+      ),
+      **(
+        {
+          "visualFallback": {
+            "x": visual_fallback["point"]["x"],
+            "y": visual_fallback["point"]["y"],
+            "confidence": visual_fallback["confidence"],
+            "manualSource": visual_fallback["manual_source"],
+            "reason": visual_fallback["reason"],
+            **(
+              {"visualOnly": bool(visual_fallback["visual_only"])}
+              if "visual_only" in visual_fallback
+              else {}
+            ),
+            **(
+              {"chainValid": bool(visual_fallback["chain_valid"])}
+              if "chain_valid" in visual_fallback
+              else {}
+            ),
+          }
+        }
+        if isinstance(visual_fallback, dict)
+        and isinstance(visual_fallback.get("point"), dict)
+        else {}
+      ),
+    }
+
   return [
     {
       "time": frame["timestamp_ms"] / 1000,
       "keypoints": [
-        {
-          "name": name,
-          "x": point["x"],
-          "y": point["y"],
-          "confidence": point["visibility"],
-        }
+        public_keypoint(name, point)
         for name, point in frame["landmarks"].items()
       ],
     }
@@ -172,6 +237,7 @@ def _rep_bottom_depth_assessment(
   frames: list[dict[str, Any]],
   bottom_index: int,
   pose_validation: dict[str, Any],
+  selected_side_override: str | None = None,
 ) -> tuple[dict[str, Any], int]:
   # Use a small window around the detected bottom so one noisy hip frame cannot fail depth.
   start_index = max(0, bottom_index - DEPTH_BOTTOM_WINDOW)
@@ -180,7 +246,14 @@ def _rep_bottom_depth_assessment(
 
   for frame_index in range(start_index, end_index + 1):
     frame = frames[frame_index]
-    selected_side, selected_score, alternate_score, side_clarity = select_depth_side(frame)
+    automatic_side, selected_score, alternate_score, side_clarity = select_depth_side(frame)
+    selected_side = (
+      selected_side_override
+      if selected_side_override in {"left", "right"}
+      else automatic_side
+    )
+    if selected_side != automatic_side:
+      selected_score, alternate_score = alternate_score, selected_score
     assessment = squat_depth_assessment(
       point_for_side(frame, selected_side, "shoulder"),
       point_for_side(frame, selected_side, "hip"),
@@ -465,9 +538,13 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
     view_type: str,
     frames: list[dict[str, Any]],
     sampled_frame_count: int | None = None,
+    selected_side_override: str | None = None,
   ) -> dict[str, Any]:
     # Squat analysis combines quality checks, rep detection, and feedback.
-    frames, pose_validation = validate_squat_pose_frames(frames)
+    frames, pose_validation = validate_squat_pose_frames(
+      frames,
+      selected_side_override=selected_side_override,
+    )
     diagnostics = self._build_quality_report(
       frames=frames,
       sampled_frame_count=sampled_frame_count,
@@ -541,6 +618,7 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
         frames=frames,
         bottom_index=rep["bottom_index"],
         pose_validation=pose_validation,
+        selected_side_override=selected_side,
       )
       rep_depth_side = depth_assessment.get("selected_side") or selected_side
       depth_score = depth_assessment["score"]

@@ -3,7 +3,16 @@ import type { ImagePickerAsset } from 'expo-image-picker';
 import { Platform } from 'react-native';
 import type { VideoCompressorType } from 'react-native-compressor';
 import { CameraAngle, ExerciseOption } from '../src/constants/videoSetup';
+import type { TrackingSetup } from '../src/types/trackingSetup';
+import { fetchStorageUsage, fetchVideoCapabilities } from './backendApi';
+import { getFreshBackendAccessToken } from './backendAuth';
+import {
+  shouldCheckPinTrackingCapability,
+  verifyPinTrackingCapability,
+} from './pinTrackingCapabilityPolicy';
 import { supabase, supabaseConfigError } from './supabase';
+import { getVideoInsertRetryMode, omitLegacyStorageMetadata } from './videoUploadInsertPolicy';
+import { withOptionalTrackingSetup } from './videoUploadPayload';
 
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = resolveFrontendMaxUploadBytes();
@@ -27,7 +36,9 @@ type UploadVideoForAnalysisArgs = {
   asset: ImagePickerAsset;
   exercise: ExerciseOption;
   angle: CameraAngle;
+  trackingSetup?: TrackingSetup | null;
   onStatusChange?: (message: string | null) => void;
+  onQuotaWarning?: (message: string) => void;
 };
 
 export type UploadVideoForAnalysisResult = {
@@ -510,19 +521,6 @@ function formatSupabaseError(error: unknown) {
   return segments.join(' | ') || 'Unknown Supabase error';
 }
 
-function isMissingStorageRetentionMigrationError(error: unknown) {
-  const message = formatSupabaseError(error).toLowerCase();
-  return (
-    message.includes('storage_state') ||
-    message.includes('original_size_bytes') ||
-    message.includes('uploaded_size_bytes') ||
-    message.includes('was_compressed')
-  ) && (
-    message.includes('does not exist') ||
-    message.includes('could not find')
-  );
-}
-
 async function resolveUploadSource(asset: UploadableVideoAsset): Promise<UploadSource> {
   // Convert the selected asset into the blob or file Supabase expects.
   const webAsset = asset as UploadableVideoAsset & WebImagePickerAsset;
@@ -652,7 +650,9 @@ export async function uploadVideoForAnalysis({
   asset,
   exercise,
   angle,
+  trackingSetup,
   onStatusChange,
+  onQuotaWarning,
 }: UploadVideoForAnalysisArgs): Promise<UploadVideoForAnalysisResult> {
   // Upload the video and create the DB row that analysis consumes.
   if (!supabase) {
@@ -672,6 +672,29 @@ export async function uploadVideoForAnalysis({
     throw new Error('You must be logged in to upload and analyze a video.');
   }
 
+  let accessToken: string | null = null;
+
+  if (shouldCheckPinTrackingCapability(trackingSetup)) {
+    onStatusChange?.('Checking pin tracking support...');
+    try {
+      accessToken = await verifyPinTrackingCapability({
+        trackingSetup,
+        getAccessToken: getFreshBackendAccessToken,
+        fetchCapabilities: fetchVideoCapabilities,
+      });
+    } catch (error) {
+      logVideoUploadWarning('Unable to verify pin tracking support before upload.', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (error instanceof Error && error.message.startsWith('Pin-assisted tracking')) {
+        throw error;
+      }
+      throw new Error(
+        'Unable to verify pin-assisted tracking support. Deploy the latest backend and tracking database migration, then try again.'
+      );
+    }
+  }
+
   validateInitialVideoMetadata(asset);
   const preparedVideo = await prepareVideoForUpload(asset, onStatusChange);
 
@@ -687,14 +710,25 @@ export async function uploadVideoForAnalysis({
     );
   }
 
-  onStatusChange?.('Uploading video...');
-
   const uploadSource = await resolveUploadSource(preparedVideo.asset);
   logVideoUploadDebug('Uploading prepared video file.', {
     originalSizeBytes: preparedVideo.originalSizeBytes,
     uploadedFileSizeBytes: uploadSource.sizeBytes,
     wasCompressed: preparedVideo.wasCompressed,
   });
+  onStatusChange?.('Checking storage capacity...');
+  accessToken ??= await getFreshBackendAccessToken();
+  const storageUsage = await fetchStorageUsage(uploadSource.sizeBytes, accessToken);
+
+  if (storageUsage.blocked || storageUsage.status === 'blocked') {
+    throw new Error(storageUsage.message);
+  }
+
+  if (storageUsage.status === 'warning') {
+    onQuotaWarning?.(storageUsage.message);
+  }
+
+  onStatusChange?.('Uploading video...');
   const storagePath = buildStoragePath(user.id, uploadSource.fileName);
 
   const { error: uploadError } = await supabase.storage.from('videos').upload(storagePath, uploadSource.body, {
@@ -716,7 +750,7 @@ export async function uploadVideoForAnalysis({
   const normalizedViewType = normalizeViewType(angle);
   const expiresAt = new Date(Date.now() + PENDING_VIDEO_TTL_MS).toISOString();
 
-  const insertPayload = {
+  const insertPayload = withOptionalTrackingSetup({
     id: videoId,
     user_id: user.id,
     storage_path: storagePath,
@@ -731,7 +765,7 @@ export async function uploadVideoForAnalysis({
     uploaded_size_bytes: uploadSource.sizeBytes,
     was_compressed: preparedVideo.wasCompressed,
     storage_state: 'available',
-  };
+  }, trackingSetup);
 
   const { error: insertError } = await supabase
     .from('videos')
@@ -739,14 +773,14 @@ export async function uploadVideoForAnalysis({
     ;
 
   if (insertError) {
-    if (isMissingStorageRetentionMigrationError(insertError)) {
-      const {
-        original_size_bytes: _originalSizeBytes,
-        uploaded_size_bytes: _uploadedSizeBytes,
-        was_compressed: _wasCompressed,
-        storage_state: _storageState,
-        ...legacyInsertPayload
-      } = insertPayload;
+    let finalInsertError = insertError;
+    const retryMode = getVideoInsertRetryMode(
+      formatSupabaseError(insertError),
+      Boolean(trackingSetup)
+    );
+
+    if (retryMode === 'retry_without_storage_metadata') {
+      const legacyInsertPayload = omitLegacyStorageMetadata(insertPayload);
       const { error: legacyInsertError } = await supabase
         .from('videos')
         .insert(legacyInsertPayload);
@@ -767,6 +801,24 @@ export async function uploadVideoForAnalysis({
           wasCompressed: preparedVideo.wasCompressed,
         };
       }
+      finalInsertError = legacyInsertError;
+
+      if (
+        getVideoInsertRetryMode(formatSupabaseError(legacyInsertError), Boolean(trackingSetup))
+        === 'tracking_unavailable'
+      ) {
+        await supabase.storage.from('videos').remove([storagePath]);
+        throw new Error(
+          'Pin-assisted tracking is unavailable because the tracking database migration has not been applied. Your pins were not submitted.'
+        );
+      }
+    }
+
+    if (retryMode === 'tracking_unavailable') {
+      await supabase.storage.from('videos').remove([storagePath]);
+      throw new Error(
+        'Pin-assisted tracking is unavailable because the tracking database migration has not been applied. Your pins were not submitted.'
+      );
     }
 
     console.error('[Supabase] uploadVideoForAnalysis insert failed', {
@@ -777,14 +829,14 @@ export async function uploadVideoForAnalysis({
       exerciseType: normalizedExerciseType,
       viewType: normalizedViewType,
       error: {
-        message: insertError.message,
-        code: insertError.code,
-        details: insertError.details,
-        hint: insertError.hint,
+        message: finalInsertError.message,
+        code: finalInsertError.code,
+        details: finalInsertError.details,
+        hint: finalInsertError.hint,
       },
     });
     await supabase.storage.from('videos').remove([storagePath]);
-    throw new Error(formatSupabaseError(insertError));
+    throw new Error(formatSupabaseError(finalInsertError));
   }
 
   return {

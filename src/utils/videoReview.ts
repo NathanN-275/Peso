@@ -19,6 +19,7 @@ export type MappedPoint = {
   x: number;
   y: number;
   confidence: number;
+  trackingState?: VideoPoseKeypoint['trackingState'];
 };
 
 export type SquatOverlayPoint = VideoPoseKeypoint & {
@@ -27,6 +28,8 @@ export type SquatOverlayPoint = VideoPoseKeypoint & {
 
 // Landmarks used by the review overlay and squat-specific summaries.
 export const SQUAT_LANDMARK_NAMES = [
+  'left_upper_back',
+  'right_upper_back',
   'left_shoulder',
   'right_shoulder',
   'left_hip',
@@ -55,8 +58,10 @@ const CONFIDENCE_THRESHOLD = 0.35;
 const ESTIMATED_CONFIDENCE_THRESHOLD = 0.15;
 const MAX_BARBELL_POINT_GAP_SECONDS = 0.5;
 const SQUAT_LABELS: Record<SquatLandmarkName, string> = {
-  left_shoulder: 'Shoulder',
-  right_shoulder: 'Shoulder',
+  left_upper_back: 'Upper Back',
+  right_upper_back: 'Upper Back',
+  left_shoulder: 'Upper Back',
+  right_shoulder: 'Upper Back',
   left_hip: 'Hip',
   right_hip: 'Hip',
   left_knee: 'Knee',
@@ -64,6 +69,75 @@ const SQUAT_LABELS: Record<SquatLandmarkName, string> = {
   left_ankle: 'Ankle',
   right_ankle: 'Ankle',
 };
+
+function mergeChainValid(
+  previous?: boolean,
+  next?: boolean
+) {
+  if (previous === false || next === false) {
+    return false;
+  }
+
+  if (previous === true && next === true) {
+    return true;
+  }
+
+  return previous ?? next;
+}
+
+function isBlockedBarbellPoint(point: BarbellPathPoint) {
+  return point.coastingFrame === true
+    || point.stationaryHardwareRejected === true
+    || point.hardwareRejected === true
+    || Boolean(point.gapReason)
+    || point.selectedSource === 'gap';
+}
+
+function interpolateSegmentLengthRatios(
+  previous: VideoPoseKeypoint['segmentLengthRatios'],
+  next: VideoPoseKeypoint['segmentLengthRatios'],
+  progress: number
+) {
+  if (!previous && !next) {
+    return undefined;
+  }
+
+  const ratios: NonNullable<VideoPoseKeypoint['segmentLengthRatios']> = {};
+  (['torso', 'thigh', 'shin'] as const).forEach((key) => {
+    const previousValue = previous?.[key];
+    const nextValue = next?.[key];
+    if (typeof previousValue === 'number' && typeof nextValue === 'number') {
+      ratios[key] = previousValue + ((nextValue - previousValue) * progress);
+    } else {
+      ratios[key] = previousValue ?? nextValue;
+    }
+  });
+
+  return ratios;
+}
+
+function interpolateBarbellLane(
+  previous: BarbellPathPoint['pinLane'],
+  next: BarbellPathPoint['pinLane'],
+  progress: number
+) {
+  if (!previous && !next) {
+    return undefined;
+  }
+
+  if (!previous || !next) {
+    return previous ?? next;
+  }
+
+  return {
+    x: previous.x + ((next.x - previous.x) * progress),
+    y: previous.y + ((next.y - previous.y) * progress),
+    confidence: Math.min(previous.confidence, next.confidence),
+    trackingState: previous.trackingState === next.trackingState
+      ? previous.trackingState
+      : 'estimated' as const,
+  };
+}
 
 export function findClosestPoseFrame(frames: VideoPoseFrame[] | undefined, currentTime: number) {
   // Binary search keeps pose lookup fast while the clip plays.
@@ -163,6 +237,47 @@ export function findInterpolatedPoseFrame(frames: VideoPoseFrame[] | undefined, 
         x: previous.x + ((next.x - previous.x) * progress),
         y: previous.y + ((next.y - previous.y) * progress),
         confidence: Math.min(previous.confidence, next.confidence),
+        trackingState: previous.trackingState === next.trackingState
+          ? previous.trackingState
+          : previous.userPinned || next.userPinned
+            ? 'estimated'
+            : undefined,
+        manualSource: previous.manualSource === next.manualSource
+          ? previous.manualSource
+          : previous.manualSource ?? next.manualSource,
+        acceptedSource: previous.acceptedSource === next.acceptedSource
+          ? previous.acceptedSource
+          : previous.acceptedSource ?? next.acceptedSource,
+        userPinned: previous.userPinned || next.userPinned,
+        preferVisualFallback: previous.preferVisualFallback || next.preferVisualFallback,
+        chainValid: mergeChainValid(previous.chainValid, next.chainValid),
+        visualOnly: previous.visualOnly || next.visualOnly || undefined,
+        chainFailureReason: previous.chainFailureReason === next.chainFailureReason
+          ? previous.chainFailureReason
+          : previous.chainFailureReason ?? next.chainFailureReason,
+        occlusionReason: previous.occlusionReason === next.occlusionReason
+          ? previous.occlusionReason
+          : previous.occlusionReason ?? next.occlusionReason,
+        segmentLengthRatios: interpolateSegmentLengthRatios(
+          previous.segmentLengthRatios,
+          next.segmentLengthRatios,
+          progress
+        ),
+        visualFallback: previous.visualFallback && next.visualFallback
+          ? {
+            x: previous.visualFallback.x + ((next.visualFallback.x - previous.visualFallback.x) * progress),
+            y: previous.visualFallback.y + ((next.visualFallback.y - previous.visualFallback.y) * progress),
+            confidence: Math.min(previous.visualFallback.confidence, next.visualFallback.confidence),
+            manualSource: previous.visualFallback.manualSource === next.visualFallback.manualSource
+              ? previous.visualFallback.manualSource
+              : previous.visualFallback.manualSource ?? next.visualFallback.manualSource,
+            reason: previous.visualFallback.reason === next.visualFallback.reason
+              ? previous.visualFallback.reason
+              : previous.visualFallback.reason ?? next.visualFallback.reason,
+            visualOnly: previous.visualFallback.visualOnly || next.visualFallback.visualOnly || undefined,
+            chainValid: mergeChainValid(previous.visualFallback.chainValid, next.visualFallback.chainValid),
+          }
+          : previous.visualFallback ?? next.visualFallback,
       };
     }),
   };
@@ -191,7 +306,9 @@ export function findInterpolatedBarbellPathPoint(
   const lastPoint = points[points.length - 1];
 
   if (currentTime >= lastPoint.time) {
-    return currentTime - lastPoint.time <= MAX_BARBELL_POINT_GAP_SECONDS ? lastPoint : null;
+    return currentTime - lastPoint.time <= MAX_BARBELL_POINT_GAP_SECONDS && !isBlockedBarbellPoint(lastPoint)
+      ? lastPoint
+      : null;
   }
 
   let low = 0;
@@ -216,7 +333,12 @@ export function findInterpolatedBarbellPathPoint(
 
   const pointGap = nextPoint.time - previousPoint.time;
 
-  if (pointGap <= 0 || pointGap > MAX_BARBELL_POINT_GAP_SECONDS) {
+  if (
+    pointGap <= 0
+    || pointGap > MAX_BARBELL_POINT_GAP_SECONDS
+    || isBlockedBarbellPoint(previousPoint)
+    || isBlockedBarbellPoint(nextPoint)
+  ) {
     return null;
   }
 
@@ -226,7 +348,42 @@ export function findInterpolatedBarbellPathPoint(
     time: currentTime,
     x: previousPoint.x + ((nextPoint.x - previousPoint.x) * progress),
     y: previousPoint.y + ((nextPoint.y - previousPoint.y) * progress),
+    markerX: (previousPoint.markerX ?? previousPoint.x)
+      + (((nextPoint.markerX ?? nextPoint.x) - (previousPoint.markerX ?? previousPoint.x)) * progress),
+    markerY: (previousPoint.markerY ?? previousPoint.y)
+      + (((nextPoint.markerY ?? nextPoint.y) - (previousPoint.markerY ?? previousPoint.y)) * progress),
     confidence: Math.min(previousPoint.confidence, nextPoint.confidence),
+    trackingState: previousPoint.trackingState === nextPoint.trackingState
+      ? previousPoint.trackingState
+      : 'estimated',
+    selectedSource: previousPoint.selectedSource === nextPoint.selectedSource
+      ? previousPoint.selectedSource
+      : 'interpolated',
+    coastingFrame: previousPoint.coastingFrame || nextPoint.coastingFrame || undefined,
+    stationaryHardwareRejected: previousPoint.stationaryHardwareRejected
+      || nextPoint.stationaryHardwareRejected
+      || undefined,
+    hardwareRejected: previousPoint.hardwareRejected || nextPoint.hardwareRejected || undefined,
+    gapReason: previousPoint.gapReason === nextPoint.gapReason
+      ? previousPoint.gapReason
+      : previousPoint.gapReason ?? nextPoint.gapReason,
+    trackId: previousPoint.trackId === nextPoint.trackId
+      ? previousPoint.trackId
+      : previousPoint.trackId ?? nextPoint.trackId,
+    identityState: previousPoint.identityState === nextPoint.identityState
+      ? previousPoint.identityState
+      : previousPoint.identityState ?? nextPoint.identityState,
+    objectClass: previousPoint.objectClass === nextPoint.objectClass
+      ? previousPoint.objectClass
+      : previousPoint.objectClass ?? nextPoint.objectClass,
+    pathResidualPx: typeof previousPoint.pathResidualPx === 'number' && typeof nextPoint.pathResidualPx === 'number'
+      ? Math.max(previousPoint.pathResidualPx, nextPoint.pathResidualPx)
+      : previousPoint.pathResidualPx ?? nextPoint.pathResidualPx,
+    rejectionReason: previousPoint.rejectionReason === nextPoint.rejectionReason
+      ? previousPoint.rejectionReason
+      : previousPoint.rejectionReason ?? nextPoint.rejectionReason,
+    pinLane: interpolateBarbellLane(previousPoint.pinLane, nextPoint.pinLane, progress),
+    automaticLane: interpolateBarbellLane(previousPoint.automaticLane, nextPoint.automaticLane, progress),
   };
 }
 
@@ -239,9 +396,52 @@ export function filterSquatKeypoints(
     return [];
   }
 
-  return frame.keypoints.filter(
-    (keypoint) => SQUAT_LANDMARK_SET.has(keypoint.name) && keypoint.confidence >= confidenceThreshold
-  );
+  return frame.keypoints.flatMap((keypoint) => {
+    if (!SQUAT_LANDMARK_SET.has(keypoint.name)) {
+      return [];
+    }
+
+    const fallback = keypoint.visualFallback;
+    if (keypoint.preferVisualFallback && fallback) {
+      return [{
+        ...keypoint,
+        x: fallback.x,
+        y: fallback.y,
+        confidence: fallback.confidence,
+        trackingState: 'estimated' as const,
+        manualSource: fallback.manualSource ?? 'pin_visual_fallback',
+        userPinned: true,
+        acceptedSource: keypoint.acceptedSource ?? 'visual_fallback',
+        visualOnly: fallback.visualOnly ?? true,
+        chainValid: fallback.chainValid ?? false,
+        chainFailureReason: fallback.reason ?? keypoint.chainFailureReason,
+      }];
+    }
+
+    if (keypoint.confidence >= confidenceThreshold) {
+      return [keypoint];
+    }
+
+    if (fallback) {
+      return [{
+        ...keypoint,
+        x: fallback.x,
+        y: fallback.y,
+        confidence: fallback.confidence,
+        trackingState: 'estimated' as const,
+        manualSource: fallback.manualSource ?? 'pin_visual_fallback',
+        userPinned: true,
+        acceptedSource: keypoint.acceptedSource ?? 'visual_fallback',
+        visualOnly: fallback.visualOnly ?? true,
+        chainValid: fallback.chainValid ?? false,
+        chainFailureReason: fallback.reason ?? keypoint.chainFailureReason,
+      }];
+    }
+
+    return keypoint.userPinned === true || keypoint.manualSource === 'pin_estimated'
+      ? [keypoint]
+      : [];
+  });
 }
 
 function getAverageConfidence(keypoints: VideoPoseKeypoint[], side: 'left' | 'right') {
@@ -272,8 +472,8 @@ export function shouldPreferSingleSideForSquat(keypoints: VideoPoseKeypoint[], c
 
   const leftHip = findKeypoint(keypoints, 'left_hip');
   const rightHip = findKeypoint(keypoints, 'right_hip');
-  const leftShoulder = findKeypoint(keypoints, 'left_shoulder');
-  const rightShoulder = findKeypoint(keypoints, 'right_shoulder');
+  const leftShoulder = findKeypoint(keypoints, 'left_upper_back') ?? findKeypoint(keypoints, 'left_shoulder');
+  const rightShoulder = findKeypoint(keypoints, 'right_upper_back') ?? findKeypoint(keypoints, 'right_shoulder');
 
   if (!leftHip || !rightHip || !leftShoulder || !rightShoulder) {
     return false;
@@ -295,29 +495,52 @@ export function selectVisibleSquatSide(keypoints: VideoPoseKeypoint[]) {
 export function getSquatPoseConnections(
   keypoints: VideoPoseKeypoint[],
   cameraView?: string,
-  lockedSide?: string | null
+  lockedSide?: string | null,
+  preferUpperBackKeypoint = false
 ) {
+  const torsoStart = (side: 'left' | 'right') => {
+    const upperBackName = `${side}_upper_back`;
+    if (keypoints.some((keypoint) => keypoint.name === upperBackName)) {
+      return upperBackName;
+    }
+    return preferUpperBackKeypoint ? null : `${side}_shoulder`;
+  };
+
   // Render either the full body or a single visible side.
   if (cameraView?.toLowerCase() !== 'side') {
-    return SQUAT_BODY_CONNECTIONS;
+    const leftTorso = torsoStart('left');
+    const rightTorso = torsoStart('right');
+    return [
+      ...(leftTorso ? [[leftTorso, 'left_hip']] : []),
+      ['left_hip', 'left_knee'],
+      ['left_knee', 'left_ankle'],
+      ...(rightTorso ? [[rightTorso, 'right_hip']] : []),
+      ['right_hip', 'right_knee'],
+      ['right_knee', 'right_ankle'],
+      ['left_hip', 'right_hip'],
+      ...(leftTorso && rightTorso ? [[leftTorso, rightTorso]] : []),
+    ] as Array<[string, string]>;
   }
 
   const side = lockedSide === 'left' || lockedSide === 'right'
     ? lockedSide
     : selectVisibleSquatSide(keypoints);
 
+  const sideTorso = torsoStart(side);
+
   return [
-    [`${side}_shoulder`, `${side}_hip`],
+    ...(sideTorso ? [[sideTorso, `${side}_hip`]] : []),
     [`${side}_hip`, `${side}_knee`],
     [`${side}_knee`, `${side}_ankle`],
-  ] as const;
+  ] as Array<[string, string]>;
 }
 
 export function getSquatOverlayKeypoints(
   frame: VideoPoseFrame | null,
   cameraView?: string,
   confidenceThreshold = CONFIDENCE_THRESHOLD,
-  lockedSide?: string | null
+  lockedSide?: string | null,
+  preferUpperBackKeypoint = false
 ): SquatOverlayPoint[] {
   const keypoints = filterSquatKeypoints(
     frame,
@@ -327,6 +550,11 @@ export function getSquatOverlayKeypoints(
   const selectedSide = normalizedLockedSide ?? (cameraView?.toLowerCase() === 'side'
     ? selectVisibleSquatSide(keypoints)
     : null);
+  const upperBackSides = new Set(
+    keypoints
+      .filter((keypoint) => keypoint.name === 'left_upper_back' || keypoint.name === 'right_upper_back')
+      .map((keypoint) => keypoint.name.split('_')[0])
+  );
 
   return keypoints
     .filter((keypoint) => {
@@ -334,7 +562,19 @@ export function getSquatOverlayKeypoints(
         return false;
       }
 
-      return !selectedSide || keypoint.name.startsWith(`${selectedSide}_`);
+      if (selectedSide && !keypoint.name.startsWith(`${selectedSide}_`)) {
+        return false;
+      }
+
+      const side = keypoint.name.startsWith('left_') ? 'left' : 'right';
+      if (
+        keypoint.name === `${side}_shoulder`
+        && (upperBackSides.has(side) || (preferUpperBackKeypoint && selectedSide === side))
+      ) {
+        return false;
+      }
+
+      return true;
     })
     .map((keypoint) => ({
       ...keypoint,
@@ -383,6 +623,7 @@ export function mapNormalizedKeypoint(
     x: rect.x + (keypoint.x * rect.width),
     y: rect.y + (keypoint.y * rect.height),
     confidence: keypoint.confidence,
+    trackingState: keypoint.trackingState,
   };
 }
 

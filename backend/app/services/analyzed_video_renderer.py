@@ -8,8 +8,10 @@ from typing import Any
 
 
 SQUAT_LABELS = {
-  "left_shoulder": "Shoulder",
-  "right_shoulder": "Shoulder",
+  "left_upper_back": "Upper Back",
+  "right_upper_back": "Upper Back",
+  "left_shoulder": "Upper Back",
+  "right_shoulder": "Upper Back",
   "left_hip": "Hip",
   "right_hip": "Hip",
   "left_knee": "Knee",
@@ -61,6 +63,36 @@ def _select_visible_side(keypoints: list[dict[str, Any]]) -> str:
   return "left" if _average_side_confidence(keypoints, "left") >= _average_side_confidence(keypoints, "right") else "right"
 
 
+def _visual_fallback_point(keypoint: dict[str, Any]) -> dict[str, Any] | None:
+  fallback = keypoint.get("visualFallback") or keypoint.get("visual_fallback")
+  if not isinstance(fallback, dict):
+    return None
+
+  point = fallback.get("point")
+  if isinstance(point, dict):
+    x = point.get("x")
+    y = point.get("y")
+  else:
+    x = fallback.get("x")
+    y = fallback.get("y")
+  if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+    return None
+
+  return {
+    **keypoint,
+    "x": x,
+    "y": y,
+    "confidence": fallback.get("confidence", keypoint.get("confidence")),
+    "trackingState": fallback.get("trackingState") or fallback.get("tracking_state") or "estimated",
+    "manualSource": (
+      fallback.get("manualSource")
+      or fallback.get("manual_source")
+      or "pin_visual_fallback"
+    ),
+    "userPinned": True,
+  }
+
+
 def _overlay_keypoints(
   frame: dict[str, Any] | None,
   camera_view: str | None,
@@ -69,12 +101,22 @@ def _overlay_keypoints(
   if not frame:
     return []
 
-  keypoints = [
-    keypoint
-    for keypoint in frame.get("keypoints") or []
-    if keypoint.get("name") in SQUAT_LANDMARKS
-    and float(keypoint.get("confidence") or 0) >= CONFIDENCE_THRESHOLD
-  ]
+  keypoints: list[dict[str, Any]] = []
+  for keypoint in frame.get("keypoints") or []:
+    if keypoint.get("name") not in SQUAT_LANDMARKS:
+      continue
+    fallback = _visual_fallback_point(keypoint)
+    if bool(keypoint.get("preferVisualFallback")) and fallback is not None:
+      keypoints.append(fallback)
+      continue
+    if float(keypoint.get("confidence") or 0) >= CONFIDENCE_THRESHOLD:
+      keypoints.append(keypoint)
+      continue
+    if fallback is not None:
+      keypoints.append(fallback)
+      continue
+    if bool(keypoint.get("userPinned")) or keypoint.get("manualSource") == "pin_estimated":
+      keypoints.append(keypoint)
   side = selected_side if selected_side in {"left", "right"} else None
 
   if camera_view == "side" and not side:
@@ -91,21 +133,28 @@ def _overlay_keypoints(
 
 
 def _connections(keypoints: list[dict[str, Any]], camera_view: str | None, selected_side: str | None) -> list[tuple[str, str]]:
+  def torso_start(side: str) -> str:
+    upper_back = f"{side}_upper_back"
+    names = {str(keypoint.get("name", "")) for keypoint in keypoints}
+    return upper_back if upper_back in names else f"{side}_shoulder"
+
   if camera_view != "side":
+    left_torso = torso_start("left")
+    right_torso = torso_start("right")
     return [
-      ("left_shoulder", "left_hip"),
+      (left_torso, "left_hip"),
       ("left_hip", "left_knee"),
       ("left_knee", "left_ankle"),
-      ("right_shoulder", "right_hip"),
+      (right_torso, "right_hip"),
       ("right_hip", "right_knee"),
       ("right_knee", "right_ankle"),
       ("left_hip", "right_hip"),
-      ("left_shoulder", "right_shoulder"),
+      (left_torso, right_torso),
     ]
 
   side = selected_side if selected_side in {"left", "right"} else _select_visible_side(keypoints)
   return [
-    (f"{side}_shoulder", f"{side}_hip"),
+    (torso_start(side), f"{side}_hip"),
     (f"{side}_hip", f"{side}_knee"),
     (f"{side}_knee", f"{side}_ankle"),
   ]

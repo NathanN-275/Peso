@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import ANY, Mock, patch
+
+import cv2
+import numpy as np
 
 from app.analysis.pose_estimator import (
   PoseEstimator,
@@ -122,6 +125,45 @@ class PoseEstimatorConfigTest(unittest.TestCase):
     self.assertEqual(landmarks["left_knee"]["visibility"], scores[13])
     self.assertEqual(landmarks["left_heel"]["visibility"], 0.0)
     self.assertEqual(landmarks["left_foot_index"]["visibility"], 0.0)
+
+  def test_backend_uses_decoded_frame_timestamp(self) -> None:
+    frame = np.zeros((24, 32, 3), dtype=np.uint8)
+
+    class Capture:
+      def __init__(self) -> None:
+        self.read_count = 0
+
+      def isOpened(self) -> bool:
+        return self.read_count == 0
+
+      def read(self):
+        self.read_count += 1
+        return True, frame
+
+      def get(self, property_id: int) -> float:
+        self.timestamp_property = property_id
+        return 123.4
+
+    backend = Mock()
+    backend.landmark_model = "test"
+    backend.process.return_value = {"left_hip": {"x": 0.5, "y": 0.5, "visibility": 1.0}}
+    estimator = PoseEstimator(config=PoseEstimatorConfig(pose_backend="mediapipe"))
+
+    with patch("app.analysis.pose_estimator._create_pose_backend", return_value=backend):
+      frames, sampled_count = estimator._run_backend(
+        capture=Capture(),
+        cv2=cv2,
+        fps=30.0,
+        frame_step=1,
+        processed_width=32,
+        processed_height=24,
+        backend_name="mediapipe",
+      )
+
+    self.assertEqual(sampled_count, 1)
+    self.assertEqual(frames[0]["timestamp_ms"], 123)
+    backend.process.assert_called_once_with(ANY, 123)
+    backend.close.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -31,6 +31,13 @@ function normalizeBackendApiUrl(value?: string | null) {
   return value?.trim().replace(/\/+$/, '') ?? '';
 }
 
+function getExplicitBackendUrl() {
+  return (
+    normalizeBackendApiUrl(process.env.EXPO_PUBLIC_BACKEND_URL)
+    || normalizeBackendApiUrl(process.env.EXPO_PUBLIC_PRODUCTION_BACKEND_URL)
+  );
+}
+
 function getBackendPort() {
   return process.env.EXPO_PUBLIC_BACKEND_PORT || DEFAULT_BACKEND_PORT;
 }
@@ -166,7 +173,7 @@ function shouldUseLanAutoForLoopback(target: BackendTarget) {
 }
 
 export function resolveBackendApiConfig(): BackendApiConfig {
-  const explicitUrl = normalizeBackendApiUrl(process.env.EXPO_PUBLIC_BACKEND_URL);
+  const explicitUrl = getExplicitBackendUrl();
 
   if (!__DEV__) {
     return {
@@ -255,7 +262,7 @@ export function getBackendApiUrl() {
 
 export function getBackendConnectionDiagnostics() {
   const resolved = resolveBackendApiConfig();
-  const explicitUrl = normalizeBackendApiUrl(process.env.EXPO_PUBLIC_BACKEND_URL);
+  const explicitUrl = getExplicitBackendUrl();
 
   return {
     url: resolved.url,

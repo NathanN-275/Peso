@@ -9,7 +9,10 @@ from fastapi import BackgroundTasks, HTTPException
 
 from app.analysis.versioning import annotate_analysis_freshness, analysis_is_current
 from app.routes.videos import (
+  delete_account,
   discard_video,
+  get_video_capabilities,
+  get_storage_usage,
   get_video_playback_url,
   list_saved_videos,
   queue_analysis,
@@ -52,6 +55,66 @@ class VideoRoutesTest(unittest.TestCase):
     )
     self.assertEqual(response.status, "queued")
     self.assertEqual(len(background_tasks.tasks), 1)
+
+  def test_storage_usage_endpoint_returns_quota_report_without_mutation(self) -> None:
+    quota_service = MagicMock()
+    quota_service.get_usage.return_value.to_dict.return_value = {
+      "storage_limit_bytes": 1024,
+      "database_limit_bytes": 512,
+      "monthly_egress_limit_bytes": 5120,
+      "current_storage_bytes": 100,
+      "upload_size_bytes": 50,
+      "playback_allowance_bytes": 50,
+      "thumbnail_allowance_bytes": 1,
+      "projected_peak_bytes": 201,
+      "warning_threshold_bytes": 819,
+      "block_threshold_bytes": 972,
+      "status": "ok",
+      "blocked": False,
+      "message": "Storage capacity is available for this upload.",
+    }
+
+    with patch("app.routes.videos.StorageQuotaService", return_value=quota_service):
+      response = get_storage_usage(50, USER_ID)
+
+    quota_service.get_usage.assert_called_once_with(50)
+    self.assertEqual(response.projected_peak_bytes, 201)
+    self.assertFalse(response.blocked)
+
+  def test_video_capabilities_reports_pin_tracking_support(self) -> None:
+    repository = MagicMock()
+    repository.supports_tracking_setup.return_value = True
+
+    with patch("app.routes.videos.VideoRepository", return_value=repository):
+      response = get_video_capabilities(USER_ID)
+
+    repository.supports_tracking_setup.assert_called_once_with()
+    self.assertTrue(response.pin_assisted_tracking)
+    self.assertEqual(response.tracking_setup_versions, [1])
+    self.assertIsNone(response.reason)
+
+  def test_video_capabilities_reports_missing_tracking_migration(self) -> None:
+    repository = MagicMock()
+    repository.supports_tracking_setup.return_value = False
+
+    with patch("app.routes.videos.VideoRepository", return_value=repository):
+      response = get_video_capabilities(USER_ID)
+
+    self.assertFalse(response.pin_assisted_tracking)
+    self.assertEqual(response.tracking_setup_versions, [])
+    self.assertEqual(response.reason, "tracking_setup_migration_missing")
+
+  def test_video_capabilities_returns_service_unavailable_for_database_errors(self) -> None:
+    repository = MagicMock()
+    repository.supports_tracking_setup.side_effect = RuntimeError("database unavailable")
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      get_video_capabilities(USER_ID)
+
+    self.assertEqual(raised.exception.status_code, 503)
 
   def test_queue_analysis_returns_idempotent_in_progress_status(self) -> None:
     repository = MagicMock()
@@ -163,6 +226,7 @@ class VideoRoutesTest(unittest.TestCase):
         "coach_feedback": ["Stay tight."],
         "poseFrames": [{"time": 0, "keypoints": []}],
         "reps": [{"rep_index": 1}],
+        "rep_count": 1,
         "diagnostics": {},
       },
     }
@@ -179,7 +243,43 @@ class VideoRoutesTest(unittest.TestCase):
     self.assertEqual(response[0].analysis.coaching_feedback, ["Stay tight."])
     self.assertEqual(response[0].analysis.result_json["summary_flags"], ["inconsistent_depth"])
     self.assertNotIn("poseFrames", response[0].analysis.result_json)
-    self.assertEqual(response[0].analysis.rep_data, [])
+    self.assertEqual(response[0].analysis.rep_data[0]["rep_index"], 1)
+    self.assertEqual(response[0].analysis.result_json["rep_count"], 1)
+
+  def test_delete_account_removes_storage_profile_and_auth_user(self) -> None:
+    repository = MagicMock()
+    repository.list_user_videos.return_value = [
+      {
+        "id": str(VIDEO_ID),
+        "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+        "original_storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+        "playback_path": f"{USER_ID}/playback/{VIDEO_ID}.mp4",
+        "thumbnail_path": f"{USER_ID}/thumbnails/{VIDEO_ID}.jpg",
+      }
+    ]
+    video_storage = MagicMock()
+    video_storage.list_storage_prefix.return_value = [f"{USER_ID}/exports/{VIDEO_ID}-export.mp4"]
+    avatar_storage = MagicMock()
+    admin_client = MagicMock()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", side_effect=[video_storage, avatar_storage]),
+      patch("app.routes.videos.get_supabase_admin_client", return_value=admin_client),
+    ):
+      response = delete_account(USER_ID)
+
+    video_storage.delete_storage_paths.assert_called_once()
+    deleted_paths = video_storage.delete_storage_paths.call_args.args[0]
+    self.assertIn(f"{USER_ID}/uploads/{VIDEO_ID}.mov", deleted_paths)
+    self.assertIn(f"{USER_ID}/playback/{VIDEO_ID}.mp4", deleted_paths)
+    self.assertIn(f"{USER_ID}/thumbnails/{VIDEO_ID}.jpg", deleted_paths)
+    self.assertIn(f"{USER_ID}/exports/{VIDEO_ID}-export.mp4", deleted_paths)
+    avatar_storage.delete_storage_prefix.assert_called_once_with(f"{USER_ID}/")
+    admin_client.table.assert_called_once_with("profiles")
+    admin_client.table.return_value.delete.return_value.eq.assert_called_once_with("id", USER_ID)
+    admin_client.auth.admin.delete_user.assert_called_once_with(USER_ID)
+    self.assertTrue(response.deleted)
 
   def test_playback_url_signs_video_only_on_demand(self) -> None:
     repository = MagicMock()

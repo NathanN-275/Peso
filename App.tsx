@@ -22,6 +22,8 @@ import AnalysisReviewScreen from './src/screens/AnalysisReviewScreen';
 import SavedLiftVideosScreen from './src/screens/SavedLiftVideosScreen';
 import UploadVideoScreen from './src/screens/UploadVideoScreen';
 import WelcomeScreen from './src/screens/WelcomeScreen';
+import ProfileScreen from './src/screens/ProfileScreen';
+import SettingsScreen from './src/screens/SettingsScreen';
 import { supabase } from './lib/supabase';
 import { deleteSavedVideo, fetchAnalysisResult, getVideoPlaybackUrl } from './lib/backendApi';
 import type { SavedVideo } from './lib/backendApi';
@@ -38,6 +40,8 @@ const AUTH_ROUTES = {
   uploadVideo: 'upload-video',
   savedLiftVideos: 'saved-lift-videos',
   savedVideoReview: 'saved-video-review',
+  profile: 'profile',
+  settings: 'settings',
   welcome: 'welcome',
   login: 'login',
   createAccount: 'create-account',
@@ -81,6 +85,8 @@ const WEB_ROUTE_HASHES: Record<AuthRoute, string> = {
   [AUTH_ROUTES.uploadVideo]: '#/upload-video',
   [AUTH_ROUTES.savedLiftVideos]: '#/saved-lift-videos',
   [AUTH_ROUTES.savedVideoReview]: '#/saved-video-review',
+  [AUTH_ROUTES.profile]: '#/profile',
+  [AUTH_ROUTES.settings]: '#/settings',
   [AUTH_ROUTES.welcome]: '#/welcome',
   [AUTH_ROUTES.login]: '#/login',
   [AUTH_ROUTES.createAccount]: '#/create-account',
@@ -126,6 +132,14 @@ function parseWebAuthRoute(hash: string): AuthRoute {
 
   if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.savedVideoReview]) {
     return AUTH_ROUTES.savedVideoReview;
+  }
+
+  if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.profile]) {
+    return AUTH_ROUTES.profile;
+  }
+
+  if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.settings]) {
+    return AUTH_ROUTES.settings;
   }
 
   if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.login]) {
@@ -525,6 +539,8 @@ function AppContent() {
     toHome: () => navigateToAuthRoute(AUTH_ROUTES.home),
     toAddVideo: () => navigateToAuthRoute(AUTH_ROUTES.addVideo),
     toUploadVideo: () => navigateToAuthRoute(AUTH_ROUTES.uploadVideo),
+    toProfile: () => navigateToAuthRoute(AUTH_ROUTES.profile),
+    toSettings: () => navigateToAuthRoute(AUTH_ROUTES.settings),
     toWelcome: () => navigateToAuthRoute(AUTH_ROUTES.welcome),
     toLogin: () => navigateToAuthRoute(AUTH_ROUTES.login),
     toCreateAccount: () => navigateToAuthRoute(AUTH_ROUTES.createAccount),
@@ -602,6 +618,13 @@ function AppContent() {
     setSelectedSavedVideoPlaybackUri(null);
     setSelectedSavedVideoAnalysisResult(null);
     authNavigation.toHome();
+  };
+  const handleProfileRoute = () => {
+    setSelectedSavedExerciseType(null);
+    setSelectedSavedVideo(null);
+    setSelectedSavedVideoPlaybackUri(null);
+    setSelectedSavedVideoAnalysisResult(null);
+    authNavigation.toProfile();
   };
   const handleWelcomeLoginPress = authNavigation.toLogin;
   const handleWelcomeCreateAccountPress = authNavigation.toCreateAccount;
@@ -732,6 +755,8 @@ function AppContent() {
         route !== AUTH_ROUTES.uploadVideo &&
         route !== AUTH_ROUTES.savedLiftVideos &&
         route !== AUTH_ROUTES.savedVideoReview &&
+        route !== AUTH_ROUTES.profile &&
+        route !== AUTH_ROUTES.settings &&
         !recoveryRouteActive
       ) {
         console.log('[AuthGuard] route chosen', {
@@ -748,7 +773,9 @@ function AppContent() {
       route === AUTH_ROUTES.addVideo ||
       route === AUTH_ROUTES.uploadVideo ||
       route === AUTH_ROUTES.savedLiftVideos ||
-      route === AUTH_ROUTES.savedVideoReview
+      route === AUTH_ROUTES.savedVideoReview ||
+      route === AUTH_ROUTES.profile ||
+      route === AUTH_ROUTES.settings
     ) {
       console.log('[AuthGuard] route chosen', {
         route: AUTH_ROUTES.welcome,
@@ -862,7 +889,32 @@ function AppContent() {
           <AddVideoScreen
             onHomePress={handleHomeRoute}
             onAddPress={authNavigation.toAddVideo}
+            onProfilePress={handleProfileRoute}
             onUploadVideoPress={authNavigation.toUploadVideo}
+          />
+        );
+      }
+
+      if (route === AUTH_ROUTES.profile) {
+        return (
+          <ProfileScreen
+            onHomePress={handleHomeRoute}
+            onAddPress={authNavigation.toAddVideo}
+            onSettingsPress={authNavigation.toSettings}
+            onSavedVideosLoaded={setSavedVideos}
+          />
+        );
+      }
+
+      if (route === AUTH_ROUTES.settings) {
+        return (
+          <SettingsScreen
+            onBack={handleProfileRoute}
+            onHomePress={handleHomeRoute}
+            onAddPress={authNavigation.toAddVideo}
+            onProfilePress={handleProfileRoute}
+            onManageSavedVideos={handleHomeRoute}
+            onAccountDeleted={authNavigation.toWelcome}
           />
         );
       }
@@ -872,6 +924,7 @@ function AppContent() {
           email={user.email}
           refreshKey={homeRefreshKey}
           onNavigateToAddVideo={authNavigation.toAddVideo}
+          onNavigateToProfile={handleProfileRoute}
           onOpenSavedLiftFolder={handleOpenSavedLiftFolder}
           onSavedVideosLoaded={setSavedVideos}
         />

@@ -29,6 +29,13 @@ from app.analysis.barbell_tracking.geometry import (
 )
 from app.analysis.barbell_tracking.selection import _best_initial_plate
 from app.analysis.barbell_tracking.sleeve_tracker import track_unloaded_sleeve_end
+from app.analysis.barbell_tracking.local_tracker import _make_tracking_lock, _track_local_patch
+from app.analysis.barbell_tracking.postprocess import (
+  _interpolate_missing,
+  _smooth_points,
+  _smooth_points_with_diagnostics,
+)
+from app.analysis.barbell_tracking.pin_tracker import build_pin_assisted_barbell_result
 
 TEST_COLLAR_OFFSET_RATIO = 0.28
 
@@ -153,6 +160,42 @@ def write_unloaded_sleeve_video(
 
 
 class BarbellTrackerTest(unittest.TestCase):
+  def test_target_hub_point_never_prefers_rejected_candidate(self) -> None:
+    plate = Candidate(x=200.0, y=100.0, radius=48.0, confidence=0.95)
+    confirmed_hub = (214.0, 112.0)
+    rejected_plate_detail = (184.0, 100.0)
+    result = {
+      "point": confirmed_hub,
+      "confidence": 0.86,
+      "reason": None,
+      "source": "hough_hub",
+      "candidates": [
+        {
+          "point": confirmed_hub,
+          "radius": 6.0,
+          "confidence": 0.86,
+          "reason": None,
+        }
+      ],
+      "rejected_candidates": [
+        {
+          "point": rejected_plate_detail,
+          "radius": 5.0,
+          "confidence": 0.79,
+          "reason": "low_confidence_hub",
+        }
+      ],
+    }
+
+    selected = BarbellTracker()._target_hub_point(
+      result,
+      plate=plate,
+      shoulder=(150.0, 100.0),
+      height=240,
+    )
+
+    self.assertEqual(selected, confirmed_hub)
+
   def test_multiclip_regression_manifest_covers_release_angles(self) -> None:
     fixture_path = Path(__file__).resolve().parent / "fixtures" / "barbell_multiclip_manifest.json"
     fixture = json.loads(fixture_path.read_text())
@@ -531,6 +574,400 @@ class BarbellTrackerTest(unittest.TestCase):
     self.assertTrue(result["barbellPath"]["available"])
     self.assert_points_follow_target_path(result["barbellPath"]["points"], centers, max_distance_px=14.0)
 
+  def test_reliable_manual_collar_priors_guide_a_visible_target(self) -> None:
+    frame_count = 8
+    stationary_rack = [(252, 102) for _ in range(frame_count)]
+    manual_centers = [(184 + (index * 3), 92 + (index * 2)) for index in range(frame_count)]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "manual-collar-priors.mp4"
+      write_video(
+        path,
+        manual_centers,
+        fps=6.0,
+        distractors=[[(center[0], center[1], 18)] for center in stationary_rack],
+      )
+      pose_frames = [
+        pose_frame(
+          index,
+          x=(center[0] - 60) / 320,
+          y=center[1] / 240,
+        )
+        for index, center in enumerate(manual_centers)
+      ]
+      manual_priors = {
+        index: {
+          "x": center[0] / 320,
+          "y": center[1] / 240,
+          "confidence": 0.95,
+        }
+        for index, center in enumerate(manual_centers)
+      }
+
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+        manual_barbell_priors=manual_priors,
+      )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    self.assertGreaterEqual(result["diagnostics"]["manual_point_count"], 1)
+    self.assertEqual(len(result["barbellPath"]["points"]), frame_count)
+    for point, expected in zip(result["barbellPath"]["points"], manual_centers):
+      self.assertAlmostEqual(float(point["x"]) * 320, expected[0], delta=2.0)
+      self.assertAlmostEqual(float(point["y"]) * 240, expected[1], delta=2.0)
+
+  def test_pin_assisted_barbell_priors_own_output_before_visual_recovery(self) -> None:
+    plate_centers = [(178 + index * 4, 96 + index * 2) for index in range(8)]
+    expected_pin_points = [
+      (collar_from_plate(center)[0] - 9, collar_from_plate(center)[1] + 5)
+      for center in plate_centers
+    ]
+    manual_priors = {
+      index: {
+        "x": pin[0] / 320,
+        "y": pin[1] / 240,
+        "confidence": 0.94,
+        "tracking_state": "reference" if index == 0 else "guided",
+      }
+      for index, pin in enumerate(expected_pin_points)
+    }
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "pin-assisted-primary.mp4"
+      write_plate_video(path, plate_centers, fps=6.0)
+      pose_frames = [
+        pose_frame(index, x=(center[0] - 42) / 320, y=center[1] / 240)
+        for index, center in enumerate(plate_centers)
+      ]
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+        selected_side="left",
+        manual_barbell_priors=manual_priors,
+      )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    diagnostics = result["diagnostics"]
+    pin_bootstrap = diagnostics["bootstrap_diagnostics"]["pin_assisted"]
+    self.assertFalse(pin_bootstrap["pin_assisted_primary"])
+    self.assertEqual(pin_bootstrap["pin_assisted_fallback_reason"], "delegated_to_robust_tracker")
+    self.assertEqual(diagnostics["tracking_mode"], "manual_collar")
+    self.assertEqual(diagnostics["automatic_point_count"], 0)
+    self.assertEqual(diagnostics["selected_candidate_type"], "plate")
+    self.assertEqual(diagnostics["manual_prior_index_matching"]["exact_match_count"], len(expected_pin_points))
+    points = result["barbellPath"]["points"]
+    self.assertEqual(len(points), len(expected_pin_points))
+    self.assertAlmostEqual(points[0]["x"] * 320, expected_pin_points[0][0], delta=0.01)
+    self.assertAlmostEqual(points[0]["y"] * 240, expected_pin_points[0][1], delta=0.01)
+    for point, expected in zip(points[1:], expected_pin_points[1:]):
+      self.assertAlmostEqual(float(point["x"]) * 320, expected[0], delta=3.0)
+      self.assertAlmostEqual(float(point["y"]) * 240, expected[1], delta=3.0)
+
+  def test_pin_assisted_short_missing_priors_emit_estimated_points(self) -> None:
+    centers = [(184 + index * 3, 92 + index * 2) for index in range(6)]
+    manual_priors = {
+      index: {
+        "x": centers[index][0] / 320,
+        "y": centers[index][1] / 240,
+        "confidence": 0.95,
+        "tracking_state": "reference" if index == 0 else "guided",
+      }
+      for index in (0, 1, 4, 5)
+    }
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "pin-assisted-estimated.mp4"
+      write_video(path, centers, fps=6.0)
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=[pose_frame(index, x=0.5, y=0.4) for index in range(len(centers))],
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+        manual_barbell_priors=manual_priors,
+      )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    estimated_points = [
+      point
+      for point in result["barbellPath"]["points"]
+      if point.get("trackingState") == "estimated"
+    ]
+    self.assertEqual(len(estimated_points), 2)
+    self.assertEqual(result["diagnostics"]["automatic_point_count"], 0)
+    self.assertEqual(result["diagnostics"]["manual_point_count"], 6)
+    pin_bootstrap = result["diagnostics"]["bootstrap_diagnostics"]["pin_assisted"]
+    self.assertEqual(pin_bootstrap["pin_source_counts"]["pin_estimated"], 2)
+    self.assertEqual(result["diagnostics"]["manual_prior_index_matching"]["nearest_miss_count"], 2)
+    self.assertEqual(result["diagnostics"]["barbell_lane_fusion"]["source_counts"]["manual_pin_blend"], 6)
+
+  def test_pin_lane_continues_through_visual_validation_failures(self) -> None:
+    frame_count = 8
+    centers = [(184 + index * 3, 92 + index * 2) for index in range(frame_count)]
+    manual_priors = {
+      index: {
+        "x": center[0] / 320,
+        "y": center[1] / 240,
+        "confidence": 0.95,
+        "tracking_state": "reference" if index == 0 else "guided",
+      }
+      for index, center in enumerate(centers)
+    }
+
+    def mismatched_descriptor(*args, **kwargs) -> dict[str, object]:
+      manual_point = kwargs["manual_point"]
+      offset = 80.0 if manual_point[0] < centers[1][0] else -80.0
+      plate = Candidate(
+        x=manual_point[0] + offset,
+        y=manual_point[1] + 70.0,
+        radius=24.0,
+        confidence=0.92,
+      )
+      return {
+        "guided_target_point": (manual_point[0] + offset, manual_point[1] + 70.0),
+        "target_point": (manual_point[0] + offset, manual_point[1] + 70.0),
+        "plate": plate,
+        "sleeve_direction": (1.0, 0.0),
+        "predicted_collar": (manual_point[0] + offset, manual_point[1] + 70.0),
+        "refined_collar": (manual_point[0] + offset, manual_point[1] + 70.0),
+        "final_bar_point": (manual_point[0] + offset, manual_point[1] + 70.0),
+        "final_bar_confidence": 0.2,
+        "final_bar_reason": "forced_visual_failure",
+        "final_bar_source": "forced_visual_failure",
+        "fallback_used": False,
+        "hub_safe": False,
+        "collar_geometry_valid": False,
+        "collar_descriptor_score": 0.1,
+      }
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "manual-lane-visual-failure.mp4"
+      write_video(path, centers, fps=6.0)
+      pose_frames = [
+        pose_frame(index, x=(center[0] - 60) / 320, y=center[1] / 240)
+        for index, center in enumerate(centers)
+      ]
+      with patch.object(
+        BarbellTracker,
+        "_visible_hub_for_manual_proposal",
+        side_effect=mismatched_descriptor,
+      ):
+        result = BarbellTracker().track(
+          str(path),
+          pose_frames=pose_frames,
+          frame_step=1,
+          processed_width=320,
+          processed_height=240,
+          manual_barbell_priors=manual_priors,
+        )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    self.assertEqual(len(result["barbellPath"]["points"]), frame_count)
+    self.assertGreaterEqual(result["diagnostics"]["manual_visual_recovery_gap_count"], 1)
+    lane_fusion = result["diagnostics"]["barbell_lane_fusion"]
+    self.assertTrue(lane_fusion["enabled"])
+    self.assertEqual(
+      lane_fusion["source_counts"]["manual_pin_blend"]
+      + lane_fusion["source_counts"]["manual_pin_lane"],
+      frame_count,
+    )
+    for point, expected in zip(result["barbellPath"]["points"], centers):
+      self.assertAlmostEqual(float(point["x"]) * 320, expected[0], delta=3.0)
+      self.assertAlmostEqual(float(point["y"]) * 240, expected[1], delta=3.0)
+
+  def test_lane_fusion_rejects_stationary_manual_lane_when_automatic_moves(self) -> None:
+    manual_points = [
+      {"time": float(index), "x": 0.50, "y": 0.50, "confidence": 0.95}
+      for index in range(4)
+    ]
+    automatic_points = [
+      {"time": float(index), "x": 0.50, "y": 0.50 + (index * 0.05), "confidence": 0.82}
+      for index in range(4)
+    ]
+
+    fused, diagnostics = tracker_module._fuse_barbell_lanes(
+      automatic_points,
+      manual_points,
+      width=320,
+      height=240,
+    )
+
+    self.assertEqual(len(fused), 3)
+    self.assertGreaterEqual(diagnostics["stationary_manual_rejection_count"], 1)
+    self.assertEqual(diagnostics["source_counts"]["kinematic_coast"], 1)
+    self.assertGreaterEqual(diagnostics["source_counts"]["gap"], 1)
+    self.assertEqual(
+      diagnostics["frames"][2]["rejection_reason"],
+      "manual_lane_stationary_hardware_like",
+    )
+    self.assertTrue(diagnostics["frames"][2]["rejected_stationary_hardware"])
+    self.assertNotAlmostEqual(fused[2]["y"], automatic_points[2]["y"])
+    self.assertEqual(fused[2]["selectedSource"], "kinematic_coast")
+    self.assertTrue(fused[2]["coastingFrame"])
+    self.assertTrue(fused[2]["stationaryHardwareRejected"])
+    self.assertEqual(fused[2]["rejectionReason"], "manual_lane_stationary_hardware_like")
+    self.assertIn("pinLane", fused[2])
+    self.assertIn("automaticLane", fused[2])
+    self.assertGreater(fused[2]["pathResidualPx"], 0)
+
+  def test_lane_fusion_gaps_long_stationary_manual_lane_without_safe_recovery(self) -> None:
+    manual_points = [
+      {"time": float(index), "x": 0.50, "y": 0.50, "confidence": 0.95}
+      for index in range(6)
+    ]
+    automatic_points = [
+      {"time": float(index), "x": 0.50, "y": 0.50 + (index * 0.05), "confidence": 0.82}
+      for index in range(6)
+    ]
+
+    fused, diagnostics = tracker_module._fuse_barbell_lanes(
+      automatic_points,
+      manual_points,
+      width=320,
+      height=240,
+    )
+
+    self.assertLess(len(fused), 6)
+    self.assertEqual(diagnostics["source_counts"]["kinematic_coast"], 1)
+    self.assertGreaterEqual(diagnostics["source_counts"]["gap"], 1)
+    self.assertEqual(
+      diagnostics["frames"][4]["rejection_reason"],
+      "manual_lane_stationary_hardware_like",
+    )
+
+  def test_pin_assisted_long_missing_prior_run_remains_gap(self) -> None:
+    manual_priors = {
+      index: {
+        "x": (184 + index * 3) / 320,
+        "y": (92 + index * 2) / 240,
+        "confidence": 0.95,
+        "tracking_state": "reference" if index == 0 else "guided",
+      }
+      for index in (0, 1, 5, 6, 7, 8)
+    }
+
+    result, diagnostics = build_pin_assisted_barbell_result(
+      manual_priors=manual_priors,
+      pose_source_indices=list(range(9)),
+      fps=6.0,
+      width=320,
+      height=240,
+      tracking_frame_step=1,
+      rep_windows=[],
+      selected_side="left",
+      coordinate_space={"width": 320, "height": 240, "source": "processed_frame"},
+      started_at=0.0,
+    )
+
+    self.assertIsNotNone(result)
+    assert result is not None
+    self.assertTrue(result["diagnostics"]["pin_assisted_primary"])
+    estimated_points = [
+      point
+      for point in result["barbellPath"]["points"]
+      if point.get("trackingState") == "estimated"
+    ]
+    self.assertEqual(len(estimated_points), 0)
+    self.assertEqual(result["diagnostics"]["pin_source_counts"].get("pin_estimated", 0), 0)
+    self.assertEqual(result["diagnostics"]["pin_source_counts"]["gap"], 3)
+    self.assertEqual(diagnostics["pin_source_counts"]["gap"], 3)
+
+  def test_interpolation_skips_blocked_identity_loss_gap(self) -> None:
+    samples = [
+      {"time": 0.0, "x": 0.50, "y": 0.50, "confidence": 0.9},
+      None,
+      {"time": 0.2, "x": 0.50, "y": 0.58, "confidence": 0.9},
+    ]
+
+    points, interpolated_count = _interpolate_missing(
+      samples,
+      blocked_gap_indices={1},
+    )
+
+    self.assertEqual(interpolated_count, 0)
+    self.assertEqual(len(points), 2)
+
+  def test_visible_hub_rejects_coordinated_manual_prior_drift(self) -> None:
+    plate_centers = [(178 + index * 2, 96 + index * 2) for index in range(10)]
+    expected_collars = [collar_from_plate(center) for center in plate_centers]
+    manual_priors = {
+      index: {
+        "x": (collar[0] + index * 7) / 320,
+        "y": (collar[1] + index * 6) / 240,
+        "confidence": 0.98,
+      }
+      for index, collar in enumerate(expected_collars)
+    }
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "manual-collar-drift.mp4"
+      write_plate_video(path, plate_centers, fps=6.0)
+      pose_frames = [
+        pose_frame(index, x=(center[0] - 42) / 320, y=center[1] / 240)
+        for index, center in enumerate(plate_centers)
+      ]
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+        selected_side="left",
+        manual_barbell_priors=manual_priors,
+      )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    self.assert_points_follow_target_path(
+      result["barbellPath"]["points"],
+      plate_centers,
+      max_distance_px=14.0,
+    )
+    self.assertGreater(result["diagnostics"]["manual_rejected_count"], 0)
+    self.assertGreater(result["diagnostics"]["manual_fallback_count"], 0)
+
+  def test_manual_collar_reentry_requires_two_consecutive_valid_frames(self) -> None:
+    frame_count = 6
+    centers = [(184 + (index * 3), 92 + index) for index in range(frame_count)]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "manual-collar-reentry.mp4"
+      write_video(path, centers, fps=6.0)
+      pose_frames = [pose_frame(index, x=0.55, y=0.40) for index in range(frame_count)]
+      manual_priors = {
+        index: {
+          "x": centers[index][0] / 320,
+          "y": centers[index][1] / 240,
+          "confidence": 0.95,
+        }
+        for index in (0, 1, 3, 4, 5)
+      }
+
+      result = BarbellTracker().track(
+        str(path),
+        pose_frames=pose_frames,
+        frame_step=1,
+        processed_width=320,
+        processed_height=240,
+        manual_barbell_priors=manual_priors,
+      )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    self.assertEqual(result["diagnostics"]["manual_point_count"], 4)
+    manual_times = [
+      round(float(point["time"]), 3)
+      for point in result["barbellPath"]["points"]
+      if point.get("manual_assisted")
+    ]
+    self.assertNotIn(round(3 / 6, 3), manual_times)
+    self.assertIn(round(4 / 6, 3), manual_times)
+
   def test_plate_first_tracker_outputs_collar_target(self) -> None:
     plate_centers = [(178 + index * 3, 104) for index in range(8)]
     distractors = [[(238, 104, 34)] for _ in plate_centers]
@@ -702,7 +1139,7 @@ class BarbellTrackerTest(unittest.TestCase):
     self.assertEqual(result["source"], "no_hub")
     self.assertIn(result["reason"], ("moments_fallback_uncertain", "no_hub_candidates"))
 
-  def test_detection_crop_is_anchored_to_shoulder(self) -> None:
+  def test_detection_crop_is_anchored_to_upper_back_proxy(self) -> None:
     shoulder = (136.0, 103.2)
     wrist = (260.0, 200.0)
     landmarks = {
@@ -720,7 +1157,7 @@ class BarbellTrackerTest(unittest.TestCase):
 
     crop_x0, crop_y0, crop_x1, crop_y1 = diagnostics["crop_bounds"]
     crop_center_x = (crop_x0 + crop_x1) / 2
-    self.assertEqual(diagnostics["anchor_landmark"], "shoulder")
+    self.assertEqual(diagnostics["anchor_landmark"], "upper_back_proxy")
     self.assertAlmostEqual(crop_center_x, shoulder[0], delta=8.0)
     self.assertLess(abs(crop_center_x - shoulder[0]), abs(crop_center_x - wrist[0]))
 
@@ -800,7 +1237,7 @@ class BarbellTrackerTest(unittest.TestCase):
       frame_index=4,
       tracking_mode="initializing",
       detection_diagnostics={
-        "anchor_landmark": "shoulder",
+        "anchor_landmark": "upper_back_proxy",
         "crop_bounds": (27.0, 45.0, 245.0, 152.0),
         "wrist_rejected_count": 1,
       },
@@ -810,7 +1247,7 @@ class BarbellTrackerTest(unittest.TestCase):
     )
 
     self.assertIs(diagnostic, tracker.bootstrap_diagnostics["frames"][0])
-    self.assertEqual(tracker.bootstrap_diagnostics["frames"][0]["crop_anchor_landmark"], "shoulder")
+    self.assertEqual(tracker.bootstrap_diagnostics["frames"][0]["crop_anchor_landmark"], "upper_back_proxy")
     self.assertEqual(tracker.bootstrap_diagnostics["frames"][0]["winning_candidate_x"], 226.0)
     self.assertEqual(tracker.bootstrap_diagnostics["frames"][0]["winning_candidate_y"], 72.0)
     self.assertEqual(tracker.bootstrap_diagnostics["frames"][0]["wrist_rejected_count"], 1)
@@ -945,6 +1382,81 @@ class BarbellTrackerTest(unittest.TestCase):
 
     self.assertEqual(removed_count, 1)
     self.assertNotIn(points[2], filtered)
+
+  def test_centered_outlier_filter_removes_spike_that_is_below_pairwise_limit(self) -> None:
+    points = [
+      {"time": 0.0, "x": 0.62, "y": 0.43, "confidence": 1.0},
+      {"time": 0.1, "x": 0.82, "y": 0.43, "confidence": 1.0},
+      {"time": 0.2, "x": 0.63, "y": 0.42, "confidence": 1.0},
+      {"time": 0.3, "x": 0.64, "y": 0.41, "confidence": 1.0},
+    ]
+
+    filtered, removed_count = _remove_motion_outliers(points)
+
+    self.assertEqual(removed_count, 1)
+    self.assertNotIn(points[1], filtered)
+
+  def test_smoothing_reduces_manual_jitter_but_preserves_reference_pin(self) -> None:
+    points = [
+      {"time": 0.0, "x": 0.50, "y": 0.50, "confidence": 1.0, "manual_assisted": True, "trackingState": "reference"},
+      {"time": 0.1, "x": 0.54, "y": 0.48, "confidence": 0.8, "manual_assisted": True, "trackingState": "guided"},
+      {"time": 0.2, "x": 0.50, "y": 0.52, "confidence": 0.9, "manual_assisted": True, "trackingState": "guided"},
+    ]
+
+    smoothed = _smooth_points(points)
+
+    self.assertEqual((smoothed[0]["x"], smoothed[0]["y"]), (0.5, 0.5))
+    self.assertLess(abs(smoothed[1]["x"] - 0.5), abs(points[1]["x"] - 0.5))
+    self.assertLess(abs(smoothed[1]["y"] - 0.5), abs(points[1]["y"] - 0.5))
+
+  def test_velocity_aware_smoothing_preserves_fast_automatic_motion(self) -> None:
+    points = [
+      {"time": 0.0, "x": 0.50, "y": 0.24, "confidence": 0.9, "trackingState": "automatic"},
+      {"time": 0.1, "x": 0.50, "y": 0.38, "confidence": 0.9, "trackingState": "automatic"},
+      {"time": 0.2, "x": 0.50, "y": 0.52, "confidence": 0.9, "trackingState": "automatic"},
+      {"time": 0.3, "x": 0.50, "y": 0.66, "confidence": 0.9, "trackingState": "automatic"},
+      {"time": 0.4, "x": 0.50, "y": 0.80, "confidence": 0.9, "trackingState": "automatic"},
+    ]
+
+    smoothed, diagnostics = _smooth_points_with_diagnostics(points, width=320, height=240)
+
+    for raw, point in zip(points, smoothed):
+      self.assertLessEqual(abs(point["y"] - raw["y"]) * 240, 4.0)
+    self.assertLessEqual(diagnostics["max_along_path_lag_px"], 4.0)
+
+  def test_local_tracking_uses_velocity_prediction_for_template_search(self) -> None:
+    previous_gray = np.zeros((120, 160), dtype=np.uint8)
+    gray = np.zeros((120, 160), dtype=np.uint8)
+    cv2.rectangle(previous_gray, (48, 48), (60, 60), 255, -1)
+    cv2.rectangle(gray, (78, 48), (90, 60), 255, -1)
+    plate = Candidate(x=54, y=54, radius=24, confidence=0.95)
+    lock = _make_tracking_lock(
+      cv2,
+      previous_gray,
+      plate=plate,
+      collar=(54, 54),
+      sleeve_direction=(1.0, 0.0),
+      final_bar_point=(54, 54),
+      display_target_point=(54, 54),
+      final_bar_confidence=0.9,
+      shoulder=(38, 54),
+    )
+
+    next_lock, stats = _track_local_patch(
+      cv2,
+      previous_gray,
+      gray,
+      lock,
+      shoulder=(68, 54),
+      width=160,
+      height=120,
+      predicted_point=(84, 54),
+    )
+
+    self.assertIsNotNone(next_lock)
+    self.assertEqual(stats["local_tracker_type"], "template_matching")
+    self.assertTrue(stats["prediction_assisted"])
+    self.assertAlmostEqual(next_lock["display_target_point"][0], 84, delta=3)
 
   def test_shoulder_motion_with_stationary_plate_marks_frames_missing(self) -> None:
     plate_centers = [(178, 104) for _ in range(8)]
@@ -1094,6 +1606,54 @@ class BarbellTrackerTest(unittest.TestCase):
     expected_final_collar = collar_from_plate(plate_centers[-1])
     self.assertAlmostEqual(points[-1]["x"], expected_final_collar[0] / 320, delta=0.06)
     self.assertAlmostEqual(points[-1]["y"], expected_final_collar[1] / 240, delta=0.06)
+
+  def test_short_local_tracking_failure_coasts_estimated_barbell_point(self) -> None:
+    plate_centers = [(178 + index * 3, 104 + index) for index in range(10)]
+    original_track_local_patch = tracker_module._track_local_patch
+    local_call_count = 0
+
+    def fail_once_then_track(*args, **kwargs):
+      nonlocal local_call_count
+      local_call_count += 1
+      if local_call_count == 1:
+        return None, {
+          "optical_flow_point_count": 0,
+          "optical_flow_inlier_count": 0,
+          "template_match_score": 0.0,
+          "local_tracking_confidence": 0.0,
+          "local_tracker_type": "forced_failure",
+          "fallback_used": False,
+          "collar_rejection_reason": "local_tracking_failed",
+        }
+      return original_track_local_patch(*args, **kwargs)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "barbell-short-local-failure.mp4"
+      write_plate_video(path, plate_centers)
+      pose_frames = [
+        pose_frame(index, x=(plate_center[0] - 42) / 320, y=0.43)
+        for index, plate_center in enumerate(plate_centers)
+      ]
+
+      with patch.object(tracker_module, "_track_local_patch", side_effect=fail_once_then_track):
+        result = BarbellTracker().track(
+          str(path),
+          pose_frames=pose_frames,
+          frame_step=1,
+          processed_width=320,
+          processed_height=240,
+        )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    self.assertGreaterEqual(result["diagnostics"]["coasted_estimated_point_count"], 1)
+    estimated_points = [
+      point
+      for point in result["barbellPath"]["points"]
+      if point.get("trackingState") == "estimated"
+    ]
+    self.assertTrue(estimated_points)
+    expected = collar_from_plate(plate_centers[3])
+    self.assertAlmostEqual(estimated_points[0]["x"], expected[0] / 320, delta=0.06)
 
   def test_returns_unavailable_without_pose_frames(self) -> None:
     centers = [(150, 78) for _ in range(20)]

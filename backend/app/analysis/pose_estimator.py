@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import time
 from dataclasses import dataclass
@@ -529,7 +530,12 @@ class PoseEstimator:
           processed_width=processed_width,
           processed_height=processed_height,
         )
-        timestamp_ms = int((frame_index / fps) * 1000) if fps > 0 else sampled_index * 67
+        decoded_timestamp_ms = float(capture.get(cv2.CAP_PROP_POS_MSEC))
+        timestamp_ms = (
+          int(round(decoded_timestamp_ms))
+          if math.isfinite(decoded_timestamp_ms) and decoded_timestamp_ms >= 0
+          else int((frame_index / fps) * 1000) if fps > 0 else sampled_index * 67
+        )
         landmarks = backend.process(inference_frame, timestamp_ms)
 
         if landmarks:

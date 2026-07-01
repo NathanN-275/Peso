@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import logging
 import tempfile
 import time
@@ -12,8 +13,16 @@ from typing import Any
 from .barbell_tracker import BarbellTracker
 from .feedback_engine import build_depth_summary_debug, build_feedback
 from .exercises.squat import SquatAnalyzer
+from .manual_tracking import (
+  barbell_track_priors,
+  fuse_manual_body_tracks,
+  track_manual_anchors,
+  validate_tracking_setup,
+)
 from .pose_fallback import analysis_needs_pose_fallback
 from .pose_estimator import PoseEstimator
+from .pose_validator import is_body_point_occluded_by_plate, validate_squat_pose_frames
+from .tracking_core import run_apache_v1_tracking, tracking_core_config_from_env
 from ..services.config import get_settings
 from ..services.storage_service import IMMUTABLE_CACHE_CONTROL_SECONDS, StorageService
 from ..services.video_assets import (
@@ -30,6 +39,361 @@ logger = logging.getLogger(__name__)
 
 def _is_squat_variation(exercise_type: str) -> bool:
   return exercise_type.strip().lower().endswith("squat")
+
+
+def _apply_tracking_assistance(
+  *,
+  file_path: str,
+  video: dict[str, Any],
+  estimation: dict[str, Any],
+) -> dict[str, Any]:
+  requested_setup = video.get("tracking_setup")
+  validated_setup, validation_error = validate_tracking_setup(
+    requested_setup,
+    duration_ms=estimation.get("duration_ms"),
+  )
+  assistance: dict[str, Any] = {
+    "requestedMode": "pins" if requested_setup is not None else "automatic",
+    "actualMode": "automatic",
+    "used": False,
+    "fallbackReason": validation_error,
+    "selectedSide": None,
+    "fusedLandmarkCount": 0,
+    "directlyAnchoredLandmarkCount": 0,
+    "blendedLandmarkCount": 0,
+    "fallbackLandmarkCount": 0,
+    "rejectedTrackCount": 0,
+    "rejectionReasons": {},
+    "coverage": {},
+    "velocityCapCount": 0,
+    "velocityCapCounts": {},
+    "barbellSeedUsed": False,
+    "manualBarbellPointCount": 0,
+    "automaticBarbellPointCount": 0,
+    "upperBackAnchorKey": "upper_back",
+    "upperBackAnchorSemantics": "upper_back_anchor",
+    "upperBackAnchorUsedCount": 0,
+    "upperBackAnchorCoverage": 0.0,
+    "pinOwnedLandmarkCount": 0,
+    "modelDivergenceAcceptedCount": 0,
+    "bodyBarbellOccluderRejectionCount": 0,
+    "bodyPinFrames": [],
+    "sourceCounts": {},
+    "reference": None,
+  }
+  assisted_estimation = dict(estimation)
+  assisted_estimation["tracking_assistance"] = assistance
+  assisted_estimation["manual_tracking"] = {"tracks": {}}
+
+  if validated_setup is None:
+    if requested_setup is not None:
+      assistance["actualMode"] = "automatic_fallback"
+    return assisted_estimation
+
+  try:
+    width = int(estimation.get("processed_frame_width") or estimation.get("frame_width") or 0)
+    height = int(estimation.get("processed_frame_height") or estimation.get("frame_height") or 0)
+    tracking = track_manual_anchors(
+      file_path,
+      setup=validated_setup,
+      pose_frames=estimation.get("frames") or [],
+      fps=estimation.get("fps"),
+      width=width,
+      height=height,
+    )
+    fused_frames, fusion = fuse_manual_body_tracks(
+      estimation.get("frames") or [],
+      setup=validated_setup,
+      tracking=tracking,
+    )
+    assisted_estimation["frames"] = fused_frames
+    assisted_estimation["manual_tracking"] = tracking
+    assistance.update(
+      {
+        "actualMode": "pin_assisted" if fusion["used"] else "automatic_fallback",
+        "used": bool(fusion["used"]),
+        "fallbackReason": None if fusion["used"] else "manual_tracks_unavailable",
+        "selectedSide": fusion.get("selected_side"),
+        "fusedLandmarkCount": int(fusion.get("fused_landmark_count") or 0),
+        "directlyAnchoredLandmarkCount": int(
+          fusion.get("directly_anchored_landmark_count") or 0
+        ),
+        "blendedLandmarkCount": int(fusion.get("blended_landmark_count") or 0),
+        "fallbackLandmarkCount": int(fusion.get("fallback_landmark_count") or 0),
+        "rejectedTrackCount": int(fusion.get("rejected_track_count") or 0),
+        "rejectionReasons": fusion.get("rejection_reasons") or {},
+        "coverage": fusion.get("coverage") or {},
+        "velocityCapCount": int(tracking.get("velocity_cap_count") or 0),
+        "velocityCapCounts": tracking.get("velocity_cap_counts") or {},
+        "upperBackAnchorKey": fusion.get("upper_back_anchor_key") or "upper_back",
+        "upperBackAnchorSemantics": fusion.get("upper_back_anchor_semantics") or "upper_back_anchor",
+        "upperBackAnchorUsedCount": int(fusion.get("upper_back_anchor_used_count") or 0),
+        "upperBackAnchorCoverage": float(fusion.get("upper_back_anchor_coverage") or 0.0),
+        "pinOwnedLandmarkCount": int(fusion.get("pin_owned_landmark_count") or 0),
+        "modelDivergenceAcceptedCount": int(fusion.get("model_divergence_accepted_count") or 0),
+        "bodyBarbellOccluderRejectionCount": int(fusion.get("body_barbell_occluder_rejection_count") or 0),
+        "bodyPinFrames": fusion.get("body_pin_frames") or [],
+        "sourceCounts": fusion.get("source_counts") or {},
+        "reference": {
+          "version": validated_setup["version"],
+          "timeMs": validated_setup["reference_time_ms"],
+          "selectedSide": fusion.get("selected_side"),
+          "anchors": {
+            **{
+              name: copy.deepcopy(point)
+              for name, point in validated_setup["anchors"].items()
+              if name != "upper_back"
+            },
+            "shoulder": copy.deepcopy(validated_setup["anchors"]["upper_back"]),
+          },
+        },
+      }
+    )
+  except Exception as error:
+    logger.warning("Pin-assisted tracking fell back to automatic analysis for video %s: %s", video.get("id"), error)
+    assistance["actualMode"] = "automatic_fallback"
+    assistance["fallbackReason"] = "manual_tracking_error"
+    assistance["error"] = str(error)
+  return assisted_estimation
+
+
+def _attach_tracking_assistance(result: dict[str, Any], estimation: dict[str, Any]) -> None:
+  assistance = dict(estimation.get("tracking_assistance") or {})
+  result["trackingAssistance"] = assistance
+  result.setdefault("diagnostics", {})["tracking_assistance"] = assistance
+
+
+def _barbell_pose_frames_with_upper_back_context(
+  frames: list[dict[str, Any]],
+  *,
+  manual_tracking: dict[str, Any],
+  selected_side: str | None,
+) -> tuple[list[dict[str, Any]], int]:
+  if selected_side not in {"left", "right"}:
+    return frames, 0
+
+  tracks = manual_tracking.get("tracks") or {}
+  upper_back_tracks = tracks.get("upper_back") or tracks.get("shoulder") or {}
+  if not upper_back_tracks:
+    return frames, 0
+
+  contextual_frames = copy.deepcopy(frames)
+  replaced_count = 0
+  for frame in contextual_frames:
+    source_index = frame.get("source_frame_index")
+    if source_index is None:
+      continue
+    track = upper_back_tracks.get(int(source_index))
+    if not track or float(track.get("confidence") or 0.0) < 0.42:
+      continue
+    landmark = (frame.get("landmarks") or {}).get(f"{selected_side}_shoulder")
+    if not landmark:
+      continue
+    landmark["x"] = float(track["x"])
+    landmark["y"] = float(track["y"])
+    landmark["visibility"] = max(
+      float(landmark.get("visibility") or 0.0),
+      min(float(track.get("confidence") or 0.0), 0.92),
+    )
+    landmark["upper_back_context"] = True
+    replaced_count += 1
+
+  return contextual_frames, replaced_count
+
+
+def _apply_barbell_occlusion_pose_overlay(
+  result: dict[str, Any],
+  *,
+  selected_side: str | None,
+  width: int | None,
+  height: int | None,
+) -> dict[str, Any]:
+  if selected_side not in {"left", "right"}:
+    return {"corrected_count": 0, "frames": []}
+  pose_frames = result.get("poseFrames")
+  barbell_points = ((result.get("barbellPath") or {}).get("points") or [])
+  if not isinstance(pose_frames, list) or not pose_frames or not barbell_points:
+    return {"corrected_count": 0, "frames": []}
+
+  width_px = float(width or result.get("processedVideoWidth") or result.get("videoWidth") or 1)
+  height_px = float(height or result.get("processedVideoHeight") or result.get("videoHeight") or 1)
+  width_px = max(width_px, 1.0)
+  height_px = max(height_px, 1.0)
+  max_dimension = max(width_px, height_px)
+  tracking_diagnostics = (result.get("diagnostics") or {}).get("barbell_tracking") or {}
+  plate_radius_px = tracking_diagnostics.get("plate_radius")
+  if not isinstance(plate_radius_px, (int, float)) or float(plate_radius_px) <= 0:
+    plate_radius_px = max(28.0, max_dimension * 0.10)
+  else:
+    plate_radius_px = max(float(plate_radius_px), max_dimension * 0.075)
+  margin_px = max(6.0, max_dimension * 0.01)
+  sorted_barbell_points = sorted(
+    [
+      point for point in barbell_points
+      if isinstance(point, dict)
+      and isinstance(point.get("time"), (int, float))
+      and isinstance(point.get("x"), (int, float))
+      and isinstance(point.get("y"), (int, float))
+      and float(point.get("confidence") or 0.0) >= 0.35
+      and point.get("trackingState") != "estimated"
+      and point.get("coastingFrame") is not True
+      and point.get("stationaryHardwareRejected") is not True
+      and point.get("selectedSource") not in {"kinematic_coast", "gap"}
+    ],
+    key=lambda point: float(point["time"]),
+  )
+  if not sorted_barbell_points:
+    return {"corrected_count": 0, "frames": []}
+
+  keypoint_names = [
+    f"{selected_side}_upper_back",
+    f"{selected_side}_shoulder",
+    f"{selected_side}_hip",
+    f"{selected_side}_knee",
+  ]
+
+  def nearest_barbell_point(time_seconds: float) -> dict[str, Any] | None:
+    nearest = min(
+      sorted_barbell_points,
+      key=lambda point: abs(float(point["time"]) - time_seconds),
+    )
+    if abs(float(nearest["time"]) - time_seconds) > 0.25:
+      return None
+    return nearest
+
+  def keypoint_by_name(frame: dict[str, Any], name: str) -> dict[str, Any] | None:
+    keypoints = frame.get("keypoints")
+    if not isinstance(keypoints, list):
+      return None
+    return next(
+      (
+        keypoint
+        for keypoint in keypoints
+        if isinstance(keypoint, dict) and keypoint.get("name") == name
+      ),
+      None,
+    )
+
+  occluded: set[tuple[int, str]] = set()
+  frame_barbell_points: dict[int, dict[str, Any]] = {}
+  for frame_index, frame in enumerate(pose_frames):
+    time_seconds = frame.get("time")
+    if not isinstance(time_seconds, (int, float)):
+      continue
+    barbell_point = nearest_barbell_point(float(time_seconds))
+    if barbell_point is None:
+      continue
+    frame_barbell_points[frame_index] = barbell_point
+    plate_center_px = (
+      float(barbell_point["x"]) * width_px,
+      float(barbell_point["y"]) * height_px,
+    )
+    for name in keypoint_names:
+      keypoint = keypoint_by_name(frame, name)
+      if not keypoint or not isinstance(keypoint.get("x"), (int, float)) or not isinstance(keypoint.get("y"), (int, float)):
+        continue
+      if is_body_point_occluded_by_plate(
+        (float(keypoint["x"]) * width_px, float(keypoint["y"]) * height_px),
+        plate_center_px,
+        float(plate_radius_px),
+        margin_px,
+      ):
+        occluded.add((frame_index, name))
+
+  def replacement_point(frame_index: int, name: str) -> dict[str, float] | None:
+    previous: tuple[int, dict[str, Any]] | None = None
+    following: tuple[int, dict[str, Any]] | None = None
+    for offset in range(1, 5):
+      candidate_index = frame_index - offset
+      if candidate_index < 0:
+        break
+      if (candidate_index, name) in occluded:
+        continue
+      keypoint = keypoint_by_name(pose_frames[candidate_index], name)
+      if keypoint and float(keypoint.get("confidence") or 0.0) >= 0.24:
+        previous = (candidate_index, keypoint)
+        break
+    for offset in range(1, 5):
+      candidate_index = frame_index + offset
+      if candidate_index >= len(pose_frames):
+        break
+      if (candidate_index, name) in occluded:
+        continue
+      keypoint = keypoint_by_name(pose_frames[candidate_index], name)
+      if keypoint and float(keypoint.get("confidence") or 0.0) >= 0.24:
+        following = (candidate_index, keypoint)
+        break
+    if previous and following:
+      span = max(following[0] - previous[0], 1)
+      progress = (frame_index - previous[0]) / span
+      return {
+        "x": float(previous[1]["x"]) + ((float(following[1]["x"]) - float(previous[1]["x"])) * progress),
+        "y": float(previous[1]["y"]) + ((float(following[1]["y"]) - float(previous[1]["y"])) * progress),
+        "confidence": min(float(previous[1].get("confidence") or 0.48), float(following[1].get("confidence") or 0.48), 0.48),
+      }
+    if previous:
+      return {
+        "x": float(previous[1]["x"]),
+        "y": float(previous[1]["y"]),
+        "confidence": min(float(previous[1].get("confidence") or 0.48), 0.36),
+      }
+    if following:
+      return {
+        "x": float(following[1]["x"]),
+        "y": float(following[1]["y"]),
+        "confidence": min(float(following[1].get("confidence") or 0.48), 0.36),
+      }
+    return None
+
+  corrected_frames: list[dict[str, Any]] = []
+  corrected_count = 0
+  for frame_index, name in sorted(occluded):
+    frame = pose_frames[frame_index]
+    keypoint = keypoint_by_name(frame, name)
+    if keypoint is None:
+      continue
+    replacement = replacement_point(frame_index, name)
+    if replacement is None:
+      keypoint["confidence"] = min(float(keypoint.get("confidence") or 0.0), 0.2)
+      keypoint["trackingState"] = "estimated"
+      keypoint["acceptedSource"] = "barbell_occlusion_rejected"
+      keypoint["chainValid"] = False
+      keypoint["visualOnly"] = True
+      keypoint["chainFailureReason"] = "barbell_plate_occlusion"
+      keypoint["occlusionReason"] = "barbell_plate_occlusion"
+    else:
+      keypoint["rawModelPoint"] = {
+        "x": keypoint["x"],
+        "y": keypoint["y"],
+        "confidence": keypoint.get("confidence"),
+      }
+      keypoint["x"] = replacement["x"]
+      keypoint["y"] = replacement["y"]
+      keypoint["confidence"] = max(min(replacement["confidence"], 0.48), 0.24)
+      keypoint["trackingState"] = "estimated"
+      keypoint["acceptedSource"] = "barbell_occlusion_estimate"
+      keypoint["chainValid"] = True
+      keypoint["visualOnly"] = False
+      keypoint["occlusionReason"] = "barbell_plate_occlusion"
+      keypoint.pop("chainFailureReason", None)
+    corrected_count += 1
+    if len(corrected_frames) < 120:
+      barbell_point = frame_barbell_points.get(frame_index)
+      corrected_frames.append({
+        "frame_index": frame_index,
+        "time": frame.get("time"),
+        "keypoint": name,
+        "barbell_x": round(float(barbell_point["x"]), 4) if barbell_point else None,
+        "barbell_y": round(float(barbell_point["y"]), 4) if barbell_point else None,
+        "reason": "barbell_plate_occlusion",
+      })
+
+  return {
+    "corrected_count": corrected_count,
+    "frames": corrected_frames,
+    "plate_radius_px": round(float(plate_radius_px), 2),
+    "margin_px": round(margin_px, 2),
+  }
 
 
 def build_limited_result(
@@ -321,12 +685,19 @@ def _analyze_squat_result(
     return result
 
   analyzer = SquatAnalyzer()
+  assistance = estimation.get("tracking_assistance") or {}
+  selected_side_override = (
+    assistance.get("selectedSide")
+    if assistance.get("actualMode") == "pin_assisted"
+    else None
+  )
   return analyzer.analyze(
     video_id=video_id,
     exercise_type=video["exercise_type"],
     view_type=video["view_type"],
     frames=estimation["frames"],
     sampled_frame_count=estimation.get("sampled_frame_count"),
+    selected_side_override=selected_side_override,
   )
 
 def _finalize_storage_assets(
@@ -444,8 +815,14 @@ def _attach_barbell_tracking(
     return
 
   diagnostics = result.setdefault("diagnostics", {})
+  tracking_core_config = tracking_core_config_from_env()
+  diagnostics["tracking_core_requested"] = tracking_core_config.core
+  if not tracking_core_config.enabled:
+    diagnostics["tracking_core"] = "legacy"
   selected_side = (
-    (diagnostics.get("pose_validation") or {}).get("selected_side")
+    (result.get("trackingAssistance") or {}).get("selectedSide")
+    or (diagnostics.get("tracking_assistance") or {}).get("selectedSide")
+    or (diagnostics.get("pose_validation") or {}).get("selected_side")
     or diagnostics.get("selected_side")
   )
   rep_windows = [
@@ -461,17 +838,125 @@ def _attach_barbell_tracking(
     and (rep.get("bottomTimestampMs") is not None or rep.get("bottom_timestamp_ms") is not None)
   ]
   try:
-    tracking = BarbellTracker().track(
+    pose_context_frames = estimation.get("frames") or []
+    pose_context_validation: dict[str, Any] = {}
+    pose_context_validated = False
+    if pose_context_frames:
+      try:
+        pose_context_frames, pose_context_validation = validate_squat_pose_frames(
+          pose_context_frames,
+          selected_side_override=selected_side,
+        )
+        pose_context_validated = True
+      except Exception as validation_error:
+        pose_context_frames = estimation.get("frames") or []
+        pose_context_validation = {"error": str(validation_error), "failed_open": True}
+    barbell_pose_frames, upper_back_context_count = _barbell_pose_frames_with_upper_back_context(
+      pose_context_frames,
+      manual_tracking=estimation.get("manual_tracking") or {},
+      selected_side=selected_side,
+    )
+    if tracking_core_config.enabled:
+      apache_tracking = run_apache_v1_tracking(
+        video_path=file_path,
+        pose_frames=barbell_pose_frames,
+        processed_width=estimation.get("processed_frame_width") or estimation.get("frame_width"),
+        processed_height=estimation.get("processed_frame_height") or estimation.get("frame_height"),
+        manual_barbell_priors=barbell_track_priors(estimation.get("manual_tracking") or {}),
+        config=tracking_core_config,
+      )
+      apache_diagnostics = apache_tracking.get("diagnostics") or {}
+      diagnostics["apache_tracking_core"] = apache_diagnostics
+      if (apache_tracking.get("barbellPath") or {}).get("available"):
+        diagnostics["tracking_core"] = "apache_v1"
+        result["barbellPath"] = apache_tracking["barbellPath"]
+        assistance = result.get("trackingAssistance") or {}
+        assistance["trackingCore"] = "apache_v1"
+        source_counts = apache_diagnostics.get("source_counts") or {}
+        if isinstance(source_counts, dict) and source_counts:
+          assistance["barbellSourceCounts"] = dict(source_counts)
+          assistance["barbellCoastingPointCount"] = int(source_counts.get("coast") or 0)
+          assistance["barbellGapPointCount"] = int(source_counts.get("gap") or 0)
+        result["trackingAssistance"] = assistance
+        diagnostics["tracking_assistance"] = assistance
+        tracking_diagnostics = dict(apache_diagnostics)
+        tracking_diagnostics["upper_back_context_frame_count"] = upper_back_context_count
+        tracking_diagnostics["pose_context_validated"] = pose_context_validated
+        tracking_diagnostics["pose_context_validation"] = pose_context_validation
+        diagnostics["barbell_tracking"] = tracking_diagnostics
+        return
+      if not tracking_core_config.fallback_to_legacy:
+        result["barbellPath"] = apache_tracking["barbellPath"]
+        assistance = result.get("trackingAssistance") or {}
+        assistance["trackingCore"] = "apache_v1"
+        assistance["fallbackReason"] = str(apache_diagnostics.get("failure_reason") or "apache_v1_unavailable")
+        result["trackingAssistance"] = assistance
+        diagnostics["tracking_assistance"] = assistance
+        diagnostics["barbell_tracking"] = apache_diagnostics
+        return
+      diagnostics["tracking_core_fallback"] = "legacy"
+      diagnostics["tracking_core"] = "legacy"
+
+    tracker = BarbellTracker()
+    tracking = tracker.track(
       file_path,
-      pose_frames=estimation.get("frames") or [],
+      pose_frames=barbell_pose_frames,
       frame_step=int(estimation.get("frame_step") or 1),
       processed_width=estimation.get("processed_frame_width") or estimation.get("frame_width"),
       processed_height=estimation.get("processed_frame_height") or estimation.get("frame_height"),
       selected_side=selected_side,
       rep_windows=rep_windows,
+      manual_barbell_priors=barbell_track_priors(estimation.get("manual_tracking") or {}),
     )
+    manual_seed_count = tracker.manual_seed_count if isinstance(tracker.manual_seed_count, int) else 0
+    tracking_diagnostics = tracking.get("diagnostics") or {}
+    manual_point_count = int(
+      tracking_diagnostics.get("manual_point_count")
+      or getattr(tracker, "manual_point_count", 0)
+      or 0
+    )
+    automatic_point_count = int(
+      tracking_diagnostics.get("automatic_point_count")
+      or getattr(tracker, "automatic_point_count", 0)
+      or 0
+    )
+    manual_barbell_used = bool(
+      manual_point_count > 0
+      and (tracking.get("barbellPath") or {}).get("available")
+    )
+    assistance = result.get("trackingAssistance") or {}
+    assistance["trackingCore"] = "legacy"
+    assistance["barbellSeedUsed"] = manual_barbell_used
+    assistance["manualBarbellPointCount"] = manual_point_count
+    assistance["automaticBarbellPointCount"] = automatic_point_count
+    lane_fusion = tracking_diagnostics.get("barbell_lane_fusion") or {}
+    lane_source_counts = lane_fusion.get("source_counts") or {}
+    if isinstance(lane_source_counts, dict) and lane_source_counts:
+      assistance["barbellSourceCounts"] = dict(lane_source_counts)
+      assistance["barbellCoastingPointCount"] = int(lane_source_counts.get("kinematic_coast") or 0)
+      assistance["barbellGapPointCount"] = int(lane_source_counts.get("gap") or 0)
+    if manual_barbell_used:
+      assistance["used"] = True
+      assistance["actualMode"] = "pin_assisted"
+      assistance["fallbackReason"] = None
+    result["trackingAssistance"] = assistance
+    diagnostics["tracking_assistance"] = assistance
     result["barbellPath"] = tracking["barbellPath"]
-    diagnostics["barbell_tracking"] = tracking["diagnostics"]
+    tracking_diagnostics["manual_seed_count"] = manual_seed_count
+    tracking_diagnostics["manual_point_count"] = manual_point_count
+    tracking_diagnostics["automatic_point_count"] = automatic_point_count
+    tracking_diagnostics["upper_back_context_frame_count"] = upper_back_context_count
+    tracking_diagnostics["pose_context_validated"] = pose_context_validated
+    tracking_diagnostics["pose_context_validation"] = pose_context_validation
+    diagnostics["barbell_tracking"] = tracking_diagnostics
+    pose_overlay_occlusion = _apply_barbell_occlusion_pose_overlay(
+      result,
+      selected_side=selected_side,
+      width=estimation.get("processed_frame_width") or estimation.get("frame_width"),
+      height=estimation.get("processed_frame_height") or estimation.get("frame_height"),
+    )
+    if pose_overlay_occlusion.get("corrected_count"):
+      diagnostics["barbell_pose_occlusion_overlay"] = pose_overlay_occlusion
   except Exception as error:
     logger.warning("Barbell tracking failed for video %s: %s", video.get("id"), error)
     result["barbellPath"] = {
@@ -520,7 +1005,11 @@ def analyze_video(video_id: str) -> None:
     # Pose estimation is the first stage of the backend analysis flow.
     estimator = PoseEstimator()
     stage_started = time.perf_counter()
-    estimation = estimator.run(str(temp_file))
+    estimation = _apply_tracking_assistance(
+      file_path=str(temp_file),
+      video=video,
+      estimation=estimator.run(str(temp_file)),
+    )
     logger.info(
       "Estimated pose for video %s in %sms.",
       video_id,
@@ -536,6 +1025,7 @@ def analyze_video(video_id: str) -> None:
 
     stage_started = time.perf_counter()
     result = _analyze_squat_result(video_id=video_id, video=video, estimation=estimation)
+    _attach_tracking_assistance(result, estimation)
     _annotate_pose_backend(
       result,
       estimation,
@@ -573,13 +1063,18 @@ def analyze_video(video_id: str) -> None:
       fallback_config = replace(estimator.config, pose_backend="rtmpose")
       fallback_attempted = True
       try:
-        fallback_estimation = PoseEstimator(config=fallback_config).run(str(temp_file))
+        fallback_estimation = _apply_tracking_assistance(
+          file_path=str(temp_file),
+          video=video,
+          estimation=PoseEstimator(config=fallback_config).run(str(temp_file)),
+        )
         if fallback_estimation["frames"]:
           fallback_result = _analyze_squat_result(
             video_id=video_id,
             video=video,
             estimation=fallback_estimation,
           )
+          _attach_tracking_assistance(fallback_result, fallback_estimation)
           fallback_selected = _should_select_fallback_result(
             primary_result=result,
             fallback_result=fallback_result,

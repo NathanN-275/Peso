@@ -7,6 +7,7 @@ import {
   ViewStyle,
 } from 'react-native';
 import tokens from '../theme/tokens';
+import { getButtonVariantColors } from '../../lib/buttonStylePolicy';
 
 type ButtonProps = {
   label: string;
@@ -23,9 +24,14 @@ export default function Button({
   variant = 'primary',
   disabled = false,
 }: ButtonProps) {
+  const variantColors = getButtonVariantColors(variant, tokens.colors);
   const buttonStyles = [
     styles.button,
-    variant === 'primary' ? styles.primaryButton : styles.primaryButton,
+    {
+      backgroundColor: variantColors.backgroundColor,
+      borderColor: variantColors.borderColor,
+      borderWidth: variantColors.borderWidth,
+    },
     disabled ? styles.disabledButton : null,
     style,
   ];
@@ -41,7 +47,7 @@ export default function Button({
       activeOpacity={0.85}
       style={buttonStyles}
     >
-      <Text style={styles.label}>
+      <Text style={[styles.label, { color: variantColors.textColor }]}>
         {label}
       </Text>
     </TouchableOpacity>
@@ -60,14 +66,10 @@ const styles = StyleSheet.create({
     borderRadius: tokens.radii.button,
     overflow: 'hidden',
   },
-  primaryButton: {
-    backgroundColor: tokens.colors.brand,
-  },
   disabledButton: {
     opacity: 0.6,
   },
   label: {
-    color: tokens.colors.textPrimary,
     fontSize: 16,
     lineHeight: 22,
     fontWeight: '600',

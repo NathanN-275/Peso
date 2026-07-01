@@ -1,3 +1,5 @@
+import type { TrackingAssistance } from './trackingSetup';
+
 export type VideoAnalysisStatus = 'uploaded' | 'queued' | 'processing' | 'completed' | 'failed';
 
 export type SaveState = 'pending' | 'saved';
@@ -138,6 +140,32 @@ export type VideoPoseKeypoint = {
   x: number;
   y: number;
   confidence: number;
+  trackingState?: 'reference' | 'guided' | 'automatic' | 'estimated';
+  manualSource?: string;
+  acceptedSource?: string;
+  source?: string;
+  trackId?: string;
+  rejectionReason?: string;
+  userPinned?: boolean;
+  preferVisualFallback?: boolean;
+  chainValid?: boolean;
+  chainFailureReason?: string;
+  occlusionReason?: string;
+  visualOnly?: boolean;
+  segmentLengthRatios?: {
+    torso?: number;
+    thigh?: number;
+    shin?: number;
+  };
+  visualFallback?: {
+    x: number;
+    y: number;
+    confidence: number;
+    manualSource?: string;
+    reason?: string;
+    visualOnly?: boolean;
+    chainValid?: boolean;
+  };
 };
 
 export type PoseValidationLandmark = {
@@ -145,7 +173,7 @@ export type PoseValidationLandmark = {
   timestamp_ms?: number;
   side: string;
   joint: string;
-  status: 'interpolated' | 'rejected';
+  status: 'interpolated' | 'kinematic_estimate' | 'rejected';
   reasons: string[];
 };
 
@@ -158,7 +186,32 @@ export type BarbellPathPoint = {
   time: number;
   x: number;
   y: number;
+  markerX?: number;
+  markerY?: number;
   confidence: number;
+  trackingState?: 'reference' | 'guided' | 'automatic' | 'estimated';
+  selectedSource?: string;
+  trackId?: string;
+  identityState?: string;
+  objectClass?: string;
+  hardwareRejected?: boolean;
+  gapReason?: string;
+  coastingFrame?: boolean;
+  stationaryHardwareRejected?: boolean;
+  pathResidualPx?: number;
+  rejectionReason?: string;
+  pinLane?: {
+    x: number;
+    y: number;
+    confidence: number;
+    trackingState?: 'reference' | 'guided' | 'automatic' | 'estimated';
+  };
+  automaticLane?: {
+    x: number;
+    y: number;
+    confidence: number;
+    trackingState?: 'reference' | 'guided' | 'automatic' | 'estimated';
+  };
 };
 
 export type BarbellPath = {
@@ -190,6 +243,10 @@ export type VideoAnalysisDiagnostics = {
   pose_model_disagreement?: boolean;
   model_disagreement_reps?: number[];
   landmark_model?: string;
+  tracking_core_requested?: 'legacy' | 'apache_v1' | string;
+  tracking_core?: 'legacy' | 'apache_v1' | string;
+  tracking_core_fallback?: 'legacy' | string;
+  apache_tracking_core?: Record<string, unknown>;
   quality_score?: number;
   pose_coverage?: number;
   lower_body_visibility?: number;
@@ -201,6 +258,7 @@ export type VideoAnalysisDiagnostics = {
   pose_validation?: {
     selected_side?: string | null;
     tracking_side_confidence?: number;
+    selected_side_overridden?: boolean;
     subject_height?: number;
     corrected_landmark_count?: number;
     smoothed_landmark_count?: number;
@@ -285,7 +343,11 @@ export type VideoAnalysisDiagnostics = {
     fresh_hough_correction_count?: number;
     max_point_gap_seconds?: number;
     effective_tracking_fps?: number;
+    manual_seed_count?: number;
+    manual_point_count?: number;
+    automatic_point_count?: number;
   };
+  tracking_assistance?: TrackingAssistance;
 };
 
 export type VideoAnalysisResult = {
@@ -301,6 +363,7 @@ export type VideoAnalysisResult = {
   processedVideoHeight?: number | null;
   poseFrames?: VideoPoseFrame[];
   barbellPath?: BarbellPath;
+  trackingAssistance?: TrackingAssistance;
   analysis_limited?: boolean;
   rep_count: number;
   reps: VideoAnalysisRep[];

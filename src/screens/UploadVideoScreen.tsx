@@ -3,7 +3,18 @@ import * as ImagePicker from 'expo-image-picker';
 import Constants, { AppOwnership } from 'expo-constants';
 import { useEffect, useRef, useState } from 'react';
 import { LayoutChangeEvent } from 'react-native';
-import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -22,13 +33,22 @@ import {
   uploadVideoForAnalysis,
 } from '../../lib/videoUpload';
 import type { UploadVideoForAnalysisResult } from '../../lib/videoUpload';
+import {
+  cancelAnalysisRun,
+  createAnalysisRun,
+  isAnalysisRunCurrent,
+} from '../../lib/analysisRunPolicy';
+import type { AnalysisRun } from '../../lib/analysisRunPolicy';
 import Button from '../components/Button';
+import ConfirmationDialog from '../components/ConfirmationDialog';
 import SelectedVideoPreview from '../components/SelectedVideoPreview';
+import TrackingPinSetupModal from '../components/TrackingPinSetupModal';
 import VideoSetupModal from '../components/VideoSetupModal';
-import { VideoSetupSelection } from '../constants/videoSetup';
+import { supportsPinAssistedTracking, VideoSetupSelection } from '../constants/videoSetup';
 import AnalysisReviewScreen from './AnalysisReviewScreen';
 import { VideoAnalysisResult, VideoAnalysisStatus } from '../types/videoAnalysis';
 import tokens from '../theme/tokens';
+import type { TrackingSetup } from '../types/trackingSetup';
 import { createLocalVideoThumbnail, getUriScheme } from '../utils/localVideoThumbnail';
 
 type UploadVideoScreenProps = {
@@ -91,28 +111,68 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   const [setupModalVisible, setSetupModalVisible] = useState(true);
   const [videoSetup, setVideoSetup] = useState<VideoSetupSelection | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [trackingSetup, setTrackingSetup] = useState<TrackingSetup | null>(null);
+  const [trackingDetailsExpanded, setTrackingDetailsExpanded] = useState(false);
+  const [trackingPinModalVisible, setTrackingPinModalVisible] = useState(false);
+  const [removePinsDialogVisible, setRemovePinsDialogVisible] = useState(false);
   const [screenLayout, setScreenLayout] = useState({ width: 0, height: 0 });
   const [uploading, setUploading] = useState(false);
+  const [analysisRunning, setAnalysisRunning] = useState(false);
   const [analysisVideoId, setAnalysisVideoId] = useState<string | null>(null);
   const [analysisStatus, setAnalysisStatus] = useState<VideoAnalysisStatus | null>(null);
   const [analysisResult, setAnalysisResult] = useState<VideoAnalysisResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [quotaWarningMessage, setQuotaWarningMessage] = useState<string | null>(null);
   const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
   const [displayedVideoSizeBytes, setDisplayedVideoSizeBytes] = useState<number | null>(null);
   const analysisStartInFlightRef = useRef(false);
   const analysisQueuedForVideoRef = useRef<string | null>(null);
+  const analysisRunGenerationRef = useRef(0);
+  const activeAnalysisRunRef = useRef<AnalysisRun | null>(null);
+  const analysisPollInFlightRef = useRef(false);
+
+  const analysisRunIsCurrent = (run: AnalysisRun) => (
+    isAnalysisRunCurrent(analysisRunGenerationRef.current, run)
+  );
+
+  const cancelActiveAnalysis = () => {
+    const run = activeAnalysisRunRef.current;
+    if (run) {
+      analysisRunGenerationRef.current = cancelAnalysisRun(analysisRunGenerationRef.current, run);
+    } else {
+      analysisRunGenerationRef.current += 1;
+    }
+    activeAnalysisRunRef.current = null;
+    analysisStartInFlightRef.current = false;
+    analysisQueuedForVideoRef.current = null;
+    analysisPollInFlightRef.current = false;
+    setUploading(false);
+    setAnalysisRunning(false);
+    setAnalysisVideoId(null);
+    setAnalysisStatus(null);
+    setAnalysisResult(null);
+    setStatusMessage(null);
+    setErrorMessage(null);
+  };
 
   const handleSelectedVideo = (asset: ImagePicker.ImagePickerAsset) => {
     // Selecting a new asset clears any old analysis state.
+    cancelActiveAnalysis();
     analysisStartInFlightRef.current = false;
     analysisQueuedForVideoRef.current = null;
+    analysisPollInFlightRef.current = false;
     setSelectedVideo(asset);
+    setTrackingSetup(null);
+    setTrackingDetailsExpanded(false);
+    setTrackingPinModalVisible(false);
+    setRemovePinsDialogVisible(false);
     setAnalysisVideoId(null);
     setAnalysisStatus(null);
     setAnalysisResult(null);
     setErrorMessage(null);
     setStatusMessage(null);
+    setQuotaWarningMessage(null);
     setDisplayedVideoSizeBytes(
       typeof asset.fileSize === 'number' && !Number.isNaN(asset.fileSize) ? asset.fileSize : null
     );
@@ -155,34 +215,78 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
 
     setErrorMessage(null);
     setStatusMessage(null);
+    setQuotaWarningMessage(null);
     setUploading(true);
+    setAnalysisRunning(true);
     analysisStartInFlightRef.current = true;
+    const run = createAnalysisRun(analysisRunGenerationRef.current);
+    analysisRunGenerationRef.current = run.generation;
+    activeAnalysisRunRef.current = run;
     let uploadedVideo: UploadVideoForAnalysisResult | null = null;
 
     try {
       // Start with a backend health check so failures are clearer.
       setStatusMessage('Checking backend connection...');
-      await testBackendConnection();
+      await testBackendConnection(run.controller.signal);
+
+      if (!analysisRunIsCurrent(run)) {
+        return;
+      }
 
       const uploadResult = await uploadVideoForAnalysis({
         asset: selectedVideo,
         exercise: videoSetup.exercise,
         angle: videoSetup.angle,
-        onStatusChange: setStatusMessage,
+        trackingSetup,
+        onStatusChange: (message) => {
+          if (analysisRunIsCurrent(run)) {
+            setStatusMessage(message);
+          }
+        },
+        onQuotaWarning: (message) => {
+          if (analysisRunIsCurrent(run)) {
+            setQuotaWarningMessage(message);
+          }
+        },
       });
       uploadedVideo = uploadResult;
+
+      if (!analysisRunIsCurrent(run)) {
+        void cleanupUploadedVideoForAnalysis({
+          videoId: uploadResult.videoId,
+          storagePath: uploadResult.storagePath,
+        });
+        return;
+      }
 
       setDisplayedVideoSizeBytes(uploadResult.uploadedFileSizeBytes);
 
       setStatusMessage('Starting analysis...');
       console.log('[analysis] starting backend analysis', uploadResult.videoId);
       const accessToken = await getFreshBackendAccessToken();
-      const queuedResponse = await triggerVideoAnalysis(uploadResult.videoId, accessToken);
+      if (!analysisRunIsCurrent(run)) {
+        void cleanupUploadedVideoForAnalysis({
+          videoId: uploadResult.videoId,
+          storagePath: uploadResult.storagePath,
+        });
+        return;
+      }
+      const queuedResponse = await triggerVideoAnalysis(
+        uploadResult.videoId,
+        accessToken,
+        run.controller.signal
+      );
+      if (!analysisRunIsCurrent(run)) {
+        return;
+      }
       analysisQueuedForVideoRef.current = uploadResult.videoId;
       setAnalysisVideoId(uploadResult.videoId);
       setAnalysisStatus(queuedResponse.status);
       setStatusMessage(null);
     } catch (error) {
+      if (!analysisRunIsCurrent(run)) {
+        return;
+      }
       const message = error instanceof Error ? error.message : 'Unable to upload and analyze this video.';
       const triggerFailedAfterUpload = Boolean(uploadedVideo);
 
@@ -201,6 +305,9 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
           videoId: uploadedVideo.videoId,
           storagePath: uploadedVideo.storagePath,
         });
+        if (!analysisRunIsCurrent(run)) {
+          return;
+        }
         setAnalysisVideoId(null);
         setAnalysisStatus(null);
       }
@@ -216,8 +323,12 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
           : message
       );
       analysisStartInFlightRef.current = false;
+      activeAnalysisRunRef.current = null;
+      setAnalysisRunning(false);
     } finally {
-      setUploading(false);
+      if (analysisRunIsCurrent(run)) {
+        setUploading(false);
+      }
     }
   };
 
@@ -328,6 +439,14 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     void syncPermissionStatus();
   }, []);
 
+  useEffect(() => () => {
+    const run = activeAnalysisRunRef.current;
+    if (run) {
+      analysisRunGenerationRef.current = cancelAnalysisRun(analysisRunGenerationRef.current, run);
+      activeAnalysisRunRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     // Generate a thumbnail for the selected clip when possible.
     if (!selectedVideo?.uri) {
@@ -389,22 +508,40 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
       return;
     }
 
+    const run = activeAnalysisRunRef.current;
+    if (!run || !analysisRunIsCurrent(run)) {
+      return;
+    }
     let active = true;
+    const isCurrentPoll = () => active && analysisRunIsCurrent(run);
 
     const poll = async () => {
+      if (analysisPollInFlightRef.current) {
+        return;
+      }
+
+      analysisPollInFlightRef.current = true;
       try {
         const accessToken = await getFreshBackendAccessToken();
-        const statusResponse = await fetchVideoStatus(analysisVideoId, accessToken);
-
-        if (!active) {
+        if (!isCurrentPoll()) {
           return;
         }
+        const statusResponse = await fetchVideoStatus(
+          analysisVideoId,
+          accessToken,
+          run.controller.signal
+        );
 
-        setAnalysisStatus(statusResponse.status);
+        if (!isCurrentPoll()) {
+          return;
+        }
 
         if (statusResponse.status === 'failed') {
           analysisStartInFlightRef.current = false;
           analysisQueuedForVideoRef.current = null;
+          activeAnalysisRunRef.current = null;
+          setAnalysisRunning(false);
+          setAnalysisStatus((current) => current === 'failed' ? current : 'failed');
           setStatusMessage(null);
           setErrorMessage('Analysis failed. Check the backend logs and try another upload.');
           return;
@@ -413,28 +550,53 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
         if (statusResponse.status === 'completed') {
           try {
             const analysisAccessToken = await getFreshBackendAccessToken();
-            const analysisResponse = await fetchAnalysisResult(analysisVideoId, analysisAccessToken);
+            if (!isCurrentPoll()) {
+              return;
+            }
+            const analysisResponse = await fetchAnalysisResult(
+              analysisVideoId,
+              analysisAccessToken,
+              run.controller.signal
+            );
 
-            if (!active) {
+            if (!isCurrentPoll()) {
               return;
             }
 
+            analysisStartInFlightRef.current = false;
+            analysisQueuedForVideoRef.current = null;
+            activeAnalysisRunRef.current = null;
+            setAnalysisRunning(false);
+            setAnalysisStatus((current) => current === 'completed' ? current : 'completed');
             setAnalysisResult(analysisResponse.result_json);
           } catch (error) {
             if (__DEV__) {
               console.warn('Analysis result not ready yet.', error);
             }
           }
+          return;
         }
+
+        setAnalysisStatus((current) => current === statusResponse.status ? current : statusResponse.status);
       } catch (error) {
+        if (!isCurrentPoll()) {
+          return;
+        }
         if (__DEV__) {
           console.warn('Polling video analysis status failed.', error);
         }
 
-        if (active && isBackendAuthError(error)) {
+        if (isBackendAuthError(error)) {
           analysisStartInFlightRef.current = false;
+          analysisQueuedForVideoRef.current = null;
+          activeAnalysisRunRef.current = null;
+          setAnalysisRunning(false);
           setStatusMessage(null);
           setErrorMessage('Your sign-in session expired while checking analysis status. Sign in again and reopen the upload.');
+        }
+      } finally {
+        if (isCurrentPoll()) {
+          analysisPollInFlightRef.current = false;
         }
       }
     };
@@ -446,13 +608,20 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
 
     return () => {
       active = false;
+      analysisPollInFlightRef.current = false;
       clearInterval(intervalId);
     };
   }, [analysisResult, analysisStatus, analysisVideoId, user]);
 
   const handleModalContinue = async (selection: VideoSetupSelection) => {
     // Persist the exercise and view selection before upload starts.
+    const setupChanged = videoSetup?.exercise !== selection.exercise || videoSetup?.angle !== selection.angle;
     setVideoSetup(selection);
+    if (setupChanged) {
+      setTrackingSetup(null);
+      setTrackingDetailsExpanded(false);
+      setRemovePinsDialogVisible(false);
+    }
     setSetupModalVisible(false);
     setErrorMessage(null);
     setStatusMessage(null);
@@ -508,6 +677,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     // Only a fully configured, idle upload can be sent to analysis.
     Boolean(selectedVideo && videoSetup) &&
     !uploading &&
+    !analysisRunning &&
     !isAnalysisInProgress(analysisStatus) &&
     analysisStatus !== 'completed';
 
@@ -524,14 +694,21 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
 
   const handleReviewDiscarded = () => {
     // Clearing the review screen resets the upload flow.
+    cancelActiveAnalysis();
     analysisStartInFlightRef.current = false;
     analysisQueuedForVideoRef.current = null;
+    analysisPollInFlightRef.current = false;
     setSelectedVideo(null);
+    setTrackingSetup(null);
+    setTrackingDetailsExpanded(false);
+    setTrackingPinModalVisible(false);
+    setRemovePinsDialogVisible(false);
     setAnalysisVideoId(null);
     setAnalysisStatus(null);
     setAnalysisResult(null);
     setErrorMessage(null);
     setStatusMessage(null);
+    setQuotaWarningMessage(null);
     setThumbnailUri(null);
     setDisplayedVideoSizeBytes(null);
   };
@@ -559,13 +736,44 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
         }}
         onCancel={handleModalCancel}
       />
+      <ConfirmationDialog
+        visible={removePinsDialogVisible}
+        title="Remove saved pins?"
+        message="This video will use automatic tracking unless you place the pins again."
+        confirmLabel="Remove Pins"
+        destructive
+        onConfirm={() => {
+          setTrackingSetup(null);
+          setRemovePinsDialogVisible(false);
+          setErrorMessage(null);
+          setStatusMessage(null);
+        }}
+        onCancel={() => setRemovePinsDialogVisible(false)}
+      />
+      {selectedVideo ? (
+        <TrackingPinSetupModal
+          visible={trackingPinModalVisible}
+          videoUri={selectedVideo.uri}
+          videoSize={{
+            width: selectedVideo.width || 1080,
+            height: selectedVideo.height || 1920,
+          }}
+          videoDurationMs={selectedVideo.duration ?? undefined}
+          initialSetup={trackingSetup}
+          onSave={(setup) => {
+            setTrackingSetup(setup);
+            setTrackingPinModalVisible(false);
+          }}
+          onCancel={() => setTrackingPinModalVisible(false)}
+        />
+      ) : null}
 
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        <Button label="Back" onPress={onBack} style={styles.backButton} />
+        <Button label="Back" onPress={onBack} variant="secondary" style={styles.backButton} />
 
         <View style={styles.content}>
           <Ionicons name="cloud-upload-outline" size={72} color={tokens.colors.textPrimary} />
@@ -596,7 +804,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
                   <Text style={styles.videoCardName}>{resolvedVideoName}</Text>
                   {resolvedFileSize ? <Text style={styles.videoCardMeta}>{resolvedFileSize}</Text> : null}
                   {analysisVideoId ? <Text style={styles.videoCardMeta}>Video ID: {analysisVideoId}</Text> : null}
-                  {analysisStatus ? (
+                  {analysisStatus && !(analysisRunning && isAnalysisInProgress(analysisStatus)) ? (
                     <Text style={styles.statusText}>Status: {formatStatusLabel(analysisStatus)}</Text>
                   ) : null}
                 </View>
@@ -611,17 +819,95 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
             </View>
           ) : null}
 
-          {canStartAnalysis ? (
-            <Button
-              label="Start Analysis"
-              onPress={() => {
-                void handleStartAnalysis();
-              }}
-              style={styles.startAnalysisButton}
-            />
+          {selectedVideo && supportsPinAssistedTracking(videoSetup) ? (
+            <View style={styles.trackingSetupSection}>
+              <View style={[styles.trackingSplitButton, uploading && styles.trackingSplitButtonDisabled]}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={trackingSetup ? 'Edit Pins' : 'Place Pins, optional'}
+                  onPress={() => setTrackingPinModalVisible(true)}
+                  disabled={uploading}
+                  style={styles.trackingSplitMain}
+                >
+                  {trackingSetup ? (
+                    <Ionicons name="checkmark-circle" size={20} color={tokens.colors.textPrimary} />
+                  ) : null}
+                  <Text style={styles.trackingSplitLabel}>
+                    {trackingSetup ? 'Edit Pins' : 'Place Pins (Optional)'}
+                  </Text>
+                </Pressable>
+                <View style={styles.trackingSplitDivider} />
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={trackingDetailsExpanded ? 'Hide pin details' : 'Show pin details'}
+                  accessibilityState={{ expanded: trackingDetailsExpanded }}
+                  onPress={() => setTrackingDetailsExpanded((value) => !value)}
+                  disabled={uploading}
+                  style={styles.trackingSplitToggle}
+                >
+                  <Ionicons
+                    name={trackingDetailsExpanded ? 'chevron-up' : 'chevron-down'}
+                    size={22}
+                    color={tokens.colors.textPrimary}
+                  />
+                </Pressable>
+              </View>
+              {trackingDetailsExpanded ? (
+                <View style={styles.trackingDetails}>
+                  <Text style={styles.trackingSetupDescription}>
+                    Place five pins on one clear frame to help the pose and barbell trackers stay locked on you.
+                  </Text>
+                  <Text style={styles.accuracyDisclaimer}>
+                    Automatic tracking may be less accurate when joints or the barbell are obscured.
+                  </Text>
+                  {trackingSetup ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => setRemovePinsDialogVisible(true)}
+                      disabled={uploading}
+                      style={styles.removePinsButton}
+                    >
+                      <Text style={styles.removePinsText}>Remove saved pins</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
+            </View>
           ) : null}
 
-          {inlineMessage ? (
+          {selectedVideo ? (
+            <View style={styles.actions}>
+              <Button
+                label="Choose Another Video"
+                onPress={handlePickVideoPress}
+                disabled={uploading}
+                variant="secondary"
+                style={styles.primaryAction}
+              />
+              <Button
+                label="Edit Video Setup"
+                onPress={() => setSetupModalVisible(true)}
+                disabled={uploading}
+                variant="secondary"
+                style={styles.primaryAction}
+              />
+              {canStartAnalysis ? (
+                <Button
+                  label="Start Analysis"
+                  onPress={() => {
+                    void handleStartAnalysis();
+                  }}
+                  style={styles.primaryAction}
+                />
+              ) : null}
+            </View>
+          ) : null}
+
+          {quotaWarningMessage ? (
+            <Text style={styles.quotaWarningText}>{quotaWarningMessage}</Text>
+          ) : null}
+
+          {inlineMessage && !analysisRunning ? (
             <Text style={errorMessage ? styles.errorText : styles.inlineStatusText}>{inlineMessage}</Text>
           ) : null}
 
@@ -685,26 +971,53 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
             </View>
           ) : null}
 
-          <View style={styles.actions}>
-            {/* The main action switches between picking and re-picking a clip. */}
-            <Button
-              label={selectedVideo ? 'Choose Another Video' : 'Choose Video'}
-              onPress={handlePickVideoPress}
-              disabled={uploading}
-              style={styles.primaryAction}
-            />
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setSetupModalVisible(true)}
-              style={styles.secondaryAction}
-            >
-              <Text style={styles.secondaryActionText}>
-                {videoSetup ? 'Edit Video Setup' : 'Open Video Setup'}
-              </Text>
-            </Pressable>
-          </View>
+          {!selectedVideo ? (
+            <View style={styles.actions}>
+              <Button
+                label="Choose Video"
+                onPress={handlePickVideoPress}
+                disabled={uploading}
+                variant="secondary"
+                style={styles.primaryAction}
+              />
+              <Button
+                label={videoSetup ? 'Edit Video Setup' : 'Open Video Setup'}
+                onPress={() => setSetupModalVisible(true)}
+                disabled={uploading}
+                variant="secondary"
+                style={styles.primaryAction}
+              />
+            </View>
+          ) : null}
         </View>
       </ScrollView>
+      <Modal
+        visible={analysisRunning}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={cancelActiveAnalysis}
+      >
+        <View
+          accessibilityViewIsModal
+          accessibilityLabel="Video analysis in progress"
+          style={styles.analysisOverlay}
+        >
+          <View style={styles.analysisPanel}>
+            <ActivityIndicator size="large" color={tokens.colors.brand} />
+            <Text style={styles.analysisOverlayTitle}>Analyzing video…</Text>
+            <Text style={styles.analysisOverlayHelper}>
+              We’re processing your lift. This may take a minute.
+            </Text>
+            <Button
+              label="Cancel"
+              onPress={cancelActiveAnalysis}
+              variant="secondary"
+              style={styles.analysisCancelButton}
+            />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -732,7 +1045,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 8,
-    backgroundColor: '#3B6EEA',
   },
   content: {
     flex: 1,
@@ -849,10 +1161,78 @@ const styles = StyleSheet.create({
     backgroundColor: '#151A22',
     flexShrink: 0,
   },
-  startAnalysisButton: {
+  trackingSetupSection: {
     width: '100%',
-    maxWidth: 320,
-    marginTop: 12,
+    marginTop: 16,
+    gap: 10,
+  },
+  trackingSplitButton: {
+    width: '100%',
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    borderRadius: tokens.radii.button,
+    backgroundColor: tokens.colors.secondarySurface,
+    borderWidth: 1,
+    borderColor: tokens.colors.secondaryBorder,
+    overflow: 'hidden',
+  },
+  trackingSplitButtonDisabled: { opacity: 0.6 },
+  trackingSplitMain: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  trackingSplitLabel: {
+    color: tokens.colors.textPrimary,
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  trackingSplitDivider: {
+    width: StyleSheet.hairlineWidth,
+    backgroundColor: tokens.colors.secondaryBorder,
+    marginVertical: 9,
+  },
+  trackingSplitToggle: {
+    width: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  trackingDetails: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: tokens.colors.inputBorder,
+    backgroundColor: '#12161D',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 10,
+  },
+  trackingSetupDescription: {
+    color: tokens.colors.textMuted,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  accuracyDisclaimer: {
+    color: tokens.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  removePinsButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+  },
+  removePinsText: {
+    color: '#FF9A9A',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
   },
   errorText: {
     width: '100%',
@@ -865,6 +1245,50 @@ const styles = StyleSheet.create({
     width: '100%',
     marginTop: 16,
     color: tokens.colors.textMuted,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  analysisOverlay: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.58)',
+    paddingHorizontal: 24,
+  },
+  analysisPanel: {
+    width: '100%',
+    maxWidth: 360,
+    alignItems: 'center',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: tokens.colors.secondaryBorder,
+    backgroundColor: '#0F141C',
+    paddingHorizontal: 24,
+    paddingVertical: 28,
+  },
+  analysisOverlayTitle: {
+    marginTop: 18,
+    color: tokens.colors.textPrimary,
+    fontSize: 20,
+    lineHeight: 26,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  analysisOverlayHelper: {
+    marginTop: 8,
+    color: tokens.colors.textMuted,
+    fontSize: 14,
+    lineHeight: 21,
+    textAlign: 'center',
+  },
+  analysisCancelButton: {
+    width: '100%',
+    marginTop: 22,
+  },
+  quotaWarningText: {
+    width: '100%',
+    marginTop: 16,
+    color: '#F4C66A',
     fontSize: 14,
     lineHeight: 20,
   },
@@ -912,16 +1336,5 @@ const styles = StyleSheet.create({
   },
   primaryAction: {
     width: '100%',
-    maxWidth: 320,
-  },
-  secondaryAction: {
-    alignSelf: 'center',
-    paddingVertical: 8,
-  },
-  secondaryActionText: {
-    color: tokens.colors.textMuted,
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '600',
   },
 });
