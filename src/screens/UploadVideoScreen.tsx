@@ -387,6 +387,11 @@ export default function UploadVideoScreen({
   };
 
   const launchCamera = async () => {
+    if (isWeb) {
+      await launchPicker();
+      return;
+    }
+
     if (pickerOpen || uploading) {
       return;
     }
@@ -511,7 +516,7 @@ export default function UploadVideoScreen({
 
   const requestCameraPermission = async (forcePrompt = false) => {
     if (isWeb) {
-      await launchCamera();
+      await launchPicker();
       return;
     }
 
@@ -776,6 +781,11 @@ export default function UploadVideoScreen({
       return;
     }
 
+    if (isWeb) {
+      void launchPicker();
+      return;
+    }
+
     if (cameraPermissionStatus === 'granted') {
       void launchCamera();
       return;
@@ -788,6 +798,15 @@ export default function UploadVideoScreen({
     selectedVideo?.fileName ?? selectedVideo?.uri.split('/').pop() ?? 'Selected video';
   const resolvedFileSize = formatFileSize(displayedVideoSizeBytes ?? selectedVideo?.fileSize);
   const inlineMessage = errorMessage ?? statusMessage;
+  const isCameraMode = sourceMode === 'camera';
+  const screenTitle = isCameraMode ? (isWeb ? 'Test Recorded Video' : 'Record Video') : 'Upload Video';
+  const screenCopy = isCameraMode
+    ? isWeb
+      ? 'Confirm the exercise and camera angle, then choose a recorded video to test the recording flow.'
+      : 'Confirm the exercise and camera angle, then record and trim your lift.'
+    : 'Confirm the exercise and camera angle, then select a video from your camera roll.';
+  const chooseVideoLabel = isCameraMode ? (isWeb ? 'Choose Recorded Video' : 'Record Video') : 'Choose Video';
+  const changeVideoLabel = isCameraMode ? (isWeb ? 'Choose Another Recording' : 'Record Again') : 'Choose Another Video';
   const diagnostics = analysisResult?.diagnostics;
   const videoQualityRows = diagnostics
     ? [
@@ -907,16 +926,12 @@ export default function UploadVideoScreen({
 
         <View style={styles.content}>
           <Ionicons
-            name={sourceMode === 'camera' ? 'videocam-outline' : 'cloud-upload-outline'}
+            name={isCameraMode ? 'videocam-outline' : 'cloud-upload-outline'}
             size={72}
             color={tokens.colors.textPrimary}
           />
-          <Text style={styles.title}>{sourceMode === 'camera' ? 'Record Video' : 'Upload Video'}</Text>
-          <Text style={styles.copy}>
-            {sourceMode === 'camera'
-              ? 'Confirm the exercise and camera angle, then record and trim your lift.'
-              : 'Confirm the exercise and camera angle, then select a video from your camera roll.'}
-          </Text>
+          <Text style={styles.title}>{screenTitle}</Text>
+          <Text style={styles.copy}>{screenCopy}</Text>
 
           {videoSetup ? (
             <View style={styles.summaryCard}>
@@ -1014,7 +1029,7 @@ export default function UploadVideoScreen({
           {selectedVideo ? (
             <View style={styles.actions}>
               <Button
-                label={sourceMode === 'camera' ? 'Record Again' : 'Choose Another Video'}
+                label={changeVideoLabel}
                 onPress={sourceMode === 'camera' ? handleRecordVideoPress : handlePickVideoPress}
                 disabled={uploading}
                 variant="secondary"
@@ -1110,7 +1125,7 @@ export default function UploadVideoScreen({
           {!selectedVideo ? (
             <View style={styles.actions}>
               <Button
-                label={sourceMode === 'camera' ? 'Record Video' : 'Choose Video'}
+                label={chooseVideoLabel}
                 onPress={sourceMode === 'camera' ? handleRecordVideoPress : handlePickVideoPress}
                 disabled={uploading}
                 variant="secondary"

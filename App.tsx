@@ -563,6 +563,40 @@ function AppContent() {
     toResetPasswordForm: () => navigateToAuthRoute(AUTH_ROUTES.resetPasswordForm),
   };
 
+  const handleRecordedVideoAsset = (asset?: ImagePicker.ImagePickerAsset | null) => {
+    if (!asset) {
+      return;
+    }
+
+    setRecordedUploadVideo(asset);
+    setUploadSourceMode('camera');
+    authNavigation.toUploadVideo();
+  };
+
+  const launchRecordingWebFallback = async () => {
+    if (recordingLauncherOpen) {
+      return;
+    }
+
+    setRecordingLauncherOpen(true);
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['videos'],
+        allowsEditing: false,
+        quality: 1,
+      });
+
+      if (result.canceled) {
+        return;
+      }
+
+      handleRecordedVideoAsset(result.assets[0]);
+    } finally {
+      setRecordingLauncherOpen(false);
+    }
+  };
+
   const launchRecordingCamera = async () => {
     if (recordingLauncherOpen) {
       return;
@@ -589,15 +623,7 @@ function AppContent() {
         return;
       }
 
-      const nextAsset = result.assets[0];
-
-      if (!nextAsset) {
-        return;
-      }
-
-      setRecordedUploadVideo(nextAsset);
-      setUploadSourceMode('camera');
-      authNavigation.toUploadVideo();
+      handleRecordedVideoAsset(result.assets[0]);
     } finally {
       setRecordingLauncherOpen(false);
     }
@@ -627,7 +653,7 @@ function AppContent() {
 
   const requestCameraPermissionAndRecord = async (forcePrompt = false) => {
     if (Platform.OS === 'web') {
-      await launchRecordingCamera();
+      await launchRecordingWebFallback();
       return;
     }
 
