@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
-import { getSavedVideos } from '../../lib/backendApi';
+import { describeBackendRequestFailure, getSavedVideos } from '../../lib/backendApi';
 import { deriveUsernameFromUser, getProfileDisplayName, loadOwnProfile } from '../../lib/profile';
 import BottomNav, { NAV_HEIGHT } from '../components/BottomNav';
 import tokens from '../theme/tokens';
@@ -23,6 +23,8 @@ type ProfileScreenProps = {
   onHomePress?: () => void;
   onAddPress?: () => void;
   onSettingsPress?: () => void;
+  cachedSavedVideos?: SavedVideo[];
+  savedVideosLoaded?: boolean;
   onSavedVideosLoaded?: (videos: SavedVideo[]) => void;
 };
 
@@ -160,13 +162,17 @@ export default function ProfileScreen({
   onHomePress,
   onAddPress,
   onSettingsPress,
+  cachedSavedVideos = [],
+  savedVideosLoaded = false,
   onSavedVideosLoaded,
 }: ProfileScreenProps) {
   const { session, user } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [videos, setVideos] = useState<SavedVideo[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [videos, setVideos] = useState<SavedVideo[]>(cachedSavedVideos);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [videosLoading, setVideosLoading] = useState(!savedVideosLoaded);
+  const [profileErrorMessage, setProfileErrorMessage] = useState<string | null>(null);
+  const [videosErrorMessage, setVideosErrorMessage] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
@@ -174,33 +180,28 @@ export default function ProfileScreen({
 
     const loadProfile = async () => {
       if (!session?.access_token || !user) {
-        setLoading(false);
+        setProfileLoading(false);
         return;
       }
 
-      setLoading(true);
-      setErrorMessage(null);
+      setProfileLoading(true);
+      setProfileErrorMessage(null);
 
       try {
-        const [nextProfile, savedVideos] = await Promise.all([
-          loadOwnProfile(user),
-          getSavedVideos(session.access_token),
-        ]);
+        const nextProfile = await loadOwnProfile(user);
 
         if (cancelled) {
           return;
         }
 
         setProfile(nextProfile);
-        setVideos(savedVideos);
-        onSavedVideosLoaded?.(savedVideos);
       } catch (error) {
         if (!cancelled) {
-          setErrorMessage(error instanceof Error ? error.message : 'Unable to load profile.');
+          setProfileErrorMessage(error instanceof Error ? error.message : 'Unable to load profile.');
         }
       } finally {
         if (!cancelled) {
-          setLoading(false);
+          setProfileLoading(false);
         }
       }
     };
@@ -212,6 +213,74 @@ export default function ProfileScreen({
     };
   }, [session?.access_token, user, reloadKey]);
 
+  useEffect(() => {
+    if (!savedVideosLoaded) {
+      return;
+    }
+
+    setVideos(cachedSavedVideos);
+    setVideosErrorMessage(null);
+    setVideosLoading(false);
+  }, [cachedSavedVideos, savedVideosLoaded]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const loadSavedVideoStats = async () => {
+      if (!session?.access_token) {
+        setVideos([]);
+        setVideosLoading(false);
+        onSavedVideosLoaded?.([]);
+        return;
+      }
+
+      if (savedVideosLoaded && reloadKey === 0) {
+        setVideosLoading(false);
+        setVideosErrorMessage(null);
+        return;
+      }
+
+      setVideosLoading(true);
+      setVideosErrorMessage(null);
+
+      try {
+        const savedVideos = await getSavedVideos(session.access_token, controller.signal);
+
+        if (cancelled) {
+          return;
+        }
+
+        setVideos(savedVideos);
+        onSavedVideosLoaded?.(savedVideos);
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          return;
+        }
+
+        const message = await describeBackendRequestFailure(
+          error,
+          'Unable to load saved video stats.'
+        );
+
+        if (!cancelled) {
+          setVideosErrorMessage(message);
+        }
+      } finally {
+        if (!cancelled) {
+          setVideosLoading(false);
+        }
+      }
+    };
+
+    void loadSavedVideoStats();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [session?.access_token, reloadKey, savedVideosLoaded]);
+
   const stats = useMemo(() => buildProfileStats(videos), [videos]);
   const displayName = getProfileDisplayName(profile, user);
   const username = profile?.username || deriveUsernameFromUser(user) || 'username';
@@ -221,6 +290,8 @@ export default function ProfileScreen({
       displayName.toLowerCase() !== username.toLowerCase(),
   );
   const profileName = shouldAppendUsername ? `${displayName} ${username}` : displayName;
+  const showInitialStatsLoading = videosLoading && videos.length === 0;
+  const showStats = !showInitialStatsLoading && (!videosErrorMessage || videos.length > 0);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -254,42 +325,59 @@ export default function ProfileScreen({
             </View>
           </View>
 
-          {loading ? (
+          {profileLoading ? (
             <View style={styles.stateBlock}>
               <ActivityIndicator color={tokens.colors.brand} />
               <Text style={styles.stateText}>Loading profile...</Text>
             </View>
           ) : null}
 
-          {!loading && errorMessage ? (
+          {!profileLoading && profileErrorMessage ? (
             <View style={styles.stateBlock}>
-              <Text style={styles.errorText}>{errorMessage}</Text>
+              <Text style={styles.errorText}>{profileErrorMessage}</Text>
               <Pressable accessibilityRole="button" onPress={() => setReloadKey((key) => key + 1)}>
                 <Text style={styles.retryText}>Try Again</Text>
               </Pressable>
             </View>
           ) : null}
 
-          {!loading && !errorMessage ? (
-            <>
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Training Dashboard</Text>
-                <View style={styles.metricsGrid}>
-                  {stats.metrics.map((metric) => (
-                    <DashboardCard key={metric.label} metric={metric} />
-                  ))}
-                </View>
-              </View>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Training Dashboard</Text>
 
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Achievements</Text>
-                <View style={styles.achievementList}>
-                  {stats.achievements.map((achievement) => (
-                    <AchievementRow key={achievement.label} achievement={achievement} />
-                  ))}
-                </View>
+            {showInitialStatsLoading ? (
+              <View style={styles.inlineStateBlock}>
+                <ActivityIndicator color={tokens.colors.brand} />
+                <Text style={styles.stateText}>Loading saved video stats...</Text>
               </View>
-            </>
+            ) : null}
+
+            {videosErrorMessage ? (
+              <View style={styles.inlineStateBlock}>
+                <Text style={styles.errorText}>{videosErrorMessage}</Text>
+                <Pressable accessibilityRole="button" onPress={() => setReloadKey((key) => key + 1)}>
+                  <Text style={styles.retryText}>Try Again</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {showStats ? (
+              <View style={styles.metricsGrid}>
+                {stats.metrics.map((metric) => (
+                  <DashboardCard key={metric.label} metric={metric} />
+                ))}
+              </View>
+            ) : null}
+          </View>
+
+          {showStats ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Achievements</Text>
+              <View style={styles.achievementList}>
+                {stats.achievements.map((achievement) => (
+                  <AchievementRow key={achievement.label} achievement={achievement} />
+                ))}
+              </View>
+            </View>
           ) : null}
         </ScrollView>
 
@@ -449,6 +537,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 10,
+    paddingHorizontal: 4,
+  },
+  inlineStateBlock: {
+    minHeight: 76,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 10,
   },
   stateText: {
     color: tokens.colors.textMuted,

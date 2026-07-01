@@ -192,6 +192,7 @@ async function requestJson<T>(path: string, accessToken?: string, init: BackendR
     headers: initHeaders,
     ...fetchInit
   } = init;
+  const externalSignal = signal ?? undefined;
   const method = fetchInit.method ?? 'GET';
   const hasBody = typeof fetchInit.body !== 'undefined';
   let response: Response;
@@ -224,9 +225,9 @@ async function requestJson<T>(path: string, accessToken?: string, init: BackendR
 
     try {
       // Try the configured backend URL first.
-      response = await fetchWithTimeout(requestUrl, requestOptions, timeoutMs, signal);
+      response = await fetchWithTimeout(requestUrl, requestOptions, timeoutMs, externalSignal);
     } catch (error) {
-      if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+      if (externalSignal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
         throw error;
       }
       const fallbackUrl = getWebLoopbackFallbackUrl(requestUrl);
@@ -243,10 +244,10 @@ async function requestJson<T>(path: string, accessToken?: string, init: BackendR
         });
       }
 
-      response = await fetchWithTimeout(fallbackUrl, requestOptions, timeoutMs, signal);
+      response = await fetchWithTimeout(fallbackUrl, requestOptions, timeoutMs, externalSignal);
     }
   } catch (error) {
-    if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+    if (externalSignal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
       throw error;
     }
     // Expand network failures with the exact URL and environment details.

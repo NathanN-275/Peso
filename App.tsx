@@ -403,6 +403,7 @@ function AppContent() {
   const [recordedUploadVideo, setRecordedUploadVideo] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [recordingLauncherOpen, setRecordingLauncherOpen] = useState(false);
   const [savedVideos, setSavedVideos] = useState<SavedVideo[]>([]);
+  const [savedVideosLoaded, setSavedVideosLoaded] = useState(false);
   const [selectedSavedExerciseType, setSelectedSavedExerciseType] = useState<string | null>(null);
   const [selectedSavedVideo, setSelectedSavedVideo] = useState<SavedVideo | null>(null);
   const [selectedSavedVideoPlaybackUri, setSelectedSavedVideoPlaybackUri] = useState<string | null>(null);
@@ -415,6 +416,15 @@ function AppContent() {
     // Keep the current route in a ref for async deep-link handlers.
     routeRef.current = route;
   }, [route]);
+
+  useEffect(() => {
+    if (session?.access_token) {
+      return;
+    }
+
+    setSavedVideos([]);
+    setSavedVideosLoaded(false);
+  }, [session?.access_token]);
 
   useEffect(() => {
     // Native links are parsed here so recovery sessions can be hydrated early.
@@ -652,8 +662,13 @@ function AppContent() {
     setRecordedUploadVideo(null);
     authNavigation.toAddVideo();
   };
+  const handleSavedVideosLoaded = (videos: SavedVideo[]) => {
+    setSavedVideos(videos);
+    setSavedVideosLoaded(true);
+  };
   const handleAnalysisSaved = () => {
     setRecordedUploadVideo(null);
+    setSavedVideosLoaded(false);
     setHomeRefreshKey((key) => key + 1);
     authNavigation.toHome();
   };
@@ -702,12 +717,12 @@ function AppContent() {
 
     if (deletedIds.size > 0) {
       setSavedVideos((currentVideos) => currentVideos.filter((video) => !deletedIds.has(video.id)));
+      setSavedVideosLoaded(true);
       setSelectedSavedVideo((currentVideo) => currentVideo && deletedIds.has(currentVideo.id) ? null : currentVideo);
       setSelectedSavedVideoPlaybackUri((currentUri) => deletedIds.has(selectedSavedVideo?.id ?? '') ? null : currentUri);
       setSelectedSavedVideoAnalysisResult((currentResult) =>
         deletedIds.has(selectedSavedVideo?.id ?? '') ? null : currentResult
       );
-      setHomeRefreshKey((key) => key + 1);
     }
 
     if (failedIds.size > 0) {
@@ -1015,7 +1030,9 @@ function AppContent() {
             onHomePress={handleHomeRoute}
             onAddPress={authNavigation.toAddVideo}
             onSettingsPress={authNavigation.toSettings}
-            onSavedVideosLoaded={setSavedVideos}
+            cachedSavedVideos={savedVideos}
+            savedVideosLoaded={savedVideosLoaded}
+            onSavedVideosLoaded={handleSavedVideosLoaded}
           />
         );
       }
@@ -1040,7 +1057,9 @@ function AppContent() {
           onNavigateToAddVideo={authNavigation.toAddVideo}
           onNavigateToProfile={handleProfileRoute}
           onOpenSavedLiftFolder={handleOpenSavedLiftFolder}
-          onSavedVideosLoaded={setSavedVideos}
+          cachedSavedVideos={savedVideos}
+          savedVideosLoaded={savedVideosLoaded}
+          onSavedVideosLoaded={handleSavedVideosLoaded}
         />
       );
     }
