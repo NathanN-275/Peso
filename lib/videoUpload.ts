@@ -36,6 +36,7 @@ type UploadVideoForAnalysisArgs = {
   asset: ImagePickerAsset;
   exercise: ExerciseOption;
   angle: CameraAngle;
+  sourceType?: 'camera' | 'camera_roll';
   trackingSetup?: TrackingSetup | null;
   onStatusChange?: (message: string | null) => void;
   onQuotaWarning?: (message: string) => void;
@@ -650,6 +651,7 @@ export async function uploadVideoForAnalysis({
   asset,
   exercise,
   angle,
+  sourceType = 'camera_roll',
   trackingSetup,
   onStatusChange,
   onQuotaWarning,
@@ -754,7 +756,7 @@ export async function uploadVideoForAnalysis({
     id: videoId,
     user_id: user.id,
     storage_path: storagePath,
-    source_type: 'camera_roll',
+    source_type: sourceType,
     exercise_type: normalizedExerciseType,
     view_type: normalizedViewType,
     status: 'uploaded',

@@ -52,6 +52,8 @@ import type { TrackingSetup } from '../types/trackingSetup';
 import { createLocalVideoThumbnail, getUriScheme } from '../utils/localVideoThumbnail';
 
 type UploadVideoScreenProps = {
+  sourceMode?: 'camera' | 'library';
+  initialSelectedVideo?: ImagePicker.ImagePickerAsset | null;
   onBack?: () => void;
   onAnalysisSaved?: () => void;
 };
@@ -102,11 +104,17 @@ function formatPercent(value?: number | null) {
   return `${Math.round(value * 100)}%`;
 }
 
-export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVideoScreenProps) {
+export default function UploadVideoScreen({
+  sourceMode = 'library',
+  initialSelectedVideo = null,
+  onBack,
+  onAnalysisSaved,
+}: UploadVideoScreenProps) {
   // This screen handles selection, upload, queueing, and polling.
   const { user } = useAuth();
   const isWeb = Platform.select<boolean>({ web: true, default: false }) ?? false;
   const [permissionStatus, setPermissionStatus] = useState<ImagePicker.PermissionStatus | null>(null);
+  const [cameraPermissionStatus, setCameraPermissionStatus] = useState<ImagePicker.PermissionStatus | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [setupModalVisible, setSetupModalVisible] = useState(true);
   const [videoSetup, setVideoSetup] = useState<VideoSetupSelection | null>(null);
@@ -131,6 +139,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   const analysisRunGenerationRef = useRef(0);
   const activeAnalysisRunRef = useRef<AnalysisRun | null>(null);
   const analysisPollInFlightRef = useRef(false);
+  const initializedVideoUriRef = useRef<string | null>(null);
 
   const analysisRunIsCurrent = (run: AnalysisRun) => (
     isAnalysisRunCurrent(analysisRunGenerationRef.current, run)
@@ -177,6 +186,16 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
       typeof asset.fileSize === 'number' && !Number.isNaN(asset.fileSize) ? asset.fileSize : null
     );
   };
+
+  useEffect(() => {
+    if (!initialSelectedVideo?.uri || initializedVideoUriRef.current === initialSelectedVideo.uri) {
+      return;
+    }
+
+    initializedVideoUriRef.current = initialSelectedVideo.uri;
+    handleSelectedVideo(initialSelectedVideo);
+    setSetupModalVisible(true);
+  }, [initialSelectedVideo?.uri]);
 
   const handleStartAnalysis = async () => {
     // Upload first, then ask the backend to begin analysis.
@@ -237,6 +256,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
         asset: selectedVideo,
         exercise: videoSetup.exercise,
         angle: videoSetup.angle,
+        sourceType: sourceMode === 'camera' ? 'camera' : 'camera_roll',
         trackingSetup,
         onStatusChange: (message) => {
           if (analysisRunIsCurrent(run)) {
@@ -366,6 +386,42 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     }
   };
 
+  const launchCamera = async () => {
+    if (pickerOpen || uploading) {
+      return;
+    }
+
+    setPickerOpen(true);
+
+    try {
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['videos'],
+        allowsEditing: true,
+        quality: 1,
+        videoMaxDuration: 0,
+        cameraType: ImagePicker.CameraType.back,
+        ...(Platform.OS === 'ios'
+          ? {
+              videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
+              videoQuality: ImagePicker.UIImagePickerControllerQualityType.High,
+            }
+          : {}),
+      });
+
+      if (result.canceled) {
+        return;
+      }
+
+      const nextAsset = result.assets[0];
+
+      if (nextAsset) {
+        handleSelectedVideo(nextAsset);
+      }
+    } finally {
+      setPickerOpen(false);
+    }
+  };
+
   const promptForSettings = () => {
     // Fall back to settings when the app cannot prompt again.
     Alert.alert(
@@ -389,10 +445,38 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     );
   };
 
+  const promptForCameraSettings = () => {
+    Alert.alert(
+      'Camera access needed',
+      'Peso needs camera access to record lift videos.',
+      [
+        {
+          text: 'Accept',
+          onPress: () => {
+            void requestCameraPermission(true);
+          },
+        },
+        {
+          text: 'Settings',
+          onPress: () => {
+            void Linking.openSettings();
+          },
+        },
+      ],
+      { cancelable: true }
+    );
+  };
+
   const syncPermissionStatus = async () => {
     // Keep the cached gallery permission in sync with the OS.
     const currentPermission = await ImagePicker.getMediaLibraryPermissionsAsync();
     setPermissionStatus(currentPermission.status);
+    return currentPermission;
+  };
+
+  const syncCameraPermissionStatus = async () => {
+    const currentPermission = await ImagePicker.getCameraPermissionsAsync();
+    setCameraPermissionStatus(currentPermission.status);
     return currentPermission;
   };
 
@@ -425,6 +509,34 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     }
   };
 
+  const requestCameraPermission = async (forcePrompt = false) => {
+    if (isWeb) {
+      await launchCamera();
+      return;
+    }
+
+    const currentPermission = await syncCameraPermissionStatus();
+
+    if (currentPermission.granted) {
+      await launchCamera();
+      return;
+    }
+
+    if (currentPermission.canAskAgain || forcePrompt) {
+      const requestedPermission = await ImagePicker.requestCameraPermissionsAsync();
+      setCameraPermissionStatus(requestedPermission.status);
+
+      if (requestedPermission.granted) {
+        await launchCamera();
+        return;
+      }
+    }
+
+    if (!isWeb) {
+      promptForCameraSettings();
+    }
+  };
+
   useEffect(() => {
     // Emit a warning if native compression is being tested in Expo Go.
     if (__DEV__ && Platform.OS === 'ios' && Constants.appOwnership === AppOwnership.Expo) {
@@ -437,6 +549,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   useEffect(() => {
     // Read the current permission once when the screen mounts.
     void syncPermissionStatus();
+    void syncCameraPermissionStatus();
   }, []);
 
   useEffect(() => () => {
@@ -627,7 +740,11 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     setStatusMessage(null);
 
     if (!selectedVideo) {
-      await requestPermission(true);
+      if (sourceMode === 'camera') {
+        await requestCameraPermission(true);
+      } else {
+        await requestPermission(true);
+      }
     }
   };
 
@@ -652,6 +769,19 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     }
 
     void requestPermission(true);
+  };
+
+  const handleRecordVideoPress = () => {
+    if (uploading) {
+      return;
+    }
+
+    if (cameraPermissionStatus === 'granted') {
+      void launchCamera();
+      return;
+    }
+
+    void requestCameraPermission(true);
   };
 
   const resolvedVideoName =
@@ -776,10 +906,16 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
         <Button label="Back" onPress={onBack} variant="secondary" style={styles.backButton} />
 
         <View style={styles.content}>
-          <Ionicons name="cloud-upload-outline" size={72} color={tokens.colors.textPrimary} />
-          <Text style={styles.title}>Upload Video</Text>
+          <Ionicons
+            name={sourceMode === 'camera' ? 'videocam-outline' : 'cloud-upload-outline'}
+            size={72}
+            color={tokens.colors.textPrimary}
+          />
+          <Text style={styles.title}>{sourceMode === 'camera' ? 'Record Video' : 'Upload Video'}</Text>
           <Text style={styles.copy}>
-            Confirm the exercise and camera angle, then select a video from your camera roll.
+            {sourceMode === 'camera'
+              ? 'Confirm the exercise and camera angle, then record and trim your lift.'
+              : 'Confirm the exercise and camera angle, then select a video from your camera roll.'}
           </Text>
 
           {videoSetup ? (
@@ -878,8 +1014,8 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
           {selectedVideo ? (
             <View style={styles.actions}>
               <Button
-                label="Choose Another Video"
-                onPress={handlePickVideoPress}
+                label={sourceMode === 'camera' ? 'Record Again' : 'Choose Another Video'}
+                onPress={sourceMode === 'camera' ? handleRecordVideoPress : handlePickVideoPress}
                 disabled={uploading}
                 variant="secondary"
                 style={styles.primaryAction}
@@ -974,8 +1110,8 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
           {!selectedVideo ? (
             <View style={styles.actions}>
               <Button
-                label="Choose Video"
-                onPress={handlePickVideoPress}
+                label={sourceMode === 'camera' ? 'Record Video' : 'Choose Video'}
+                onPress={sourceMode === 'camera' ? handleRecordVideoPress : handlePickVideoPress}
                 disabled={uploading}
                 variant="secondary"
                 style={styles.primaryAction}

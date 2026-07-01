@@ -1,7 +1,9 @@
 import './global.css';
 
+import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   Linking,
   LogBox,
   Platform,
@@ -397,6 +399,9 @@ function AppContent() {
     return parseWebAuthLink(window.location.search, window.location.hash).errorMessage;
   });
   const [homeRefreshKey, setHomeRefreshKey] = useState(0);
+  const [uploadSourceMode, setUploadSourceMode] = useState<'camera' | 'library'>('library');
+  const [recordedUploadVideo, setRecordedUploadVideo] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [recordingLauncherOpen, setRecordingLauncherOpen] = useState(false);
   const [savedVideos, setSavedVideos] = useState<SavedVideo[]>([]);
   const [selectedSavedExerciseType, setSelectedSavedExerciseType] = useState<string | null>(null);
   const [selectedSavedVideo, setSelectedSavedVideo] = useState<SavedVideo | null>(null);
@@ -547,7 +552,108 @@ function AppContent() {
     toResetPassword: () => navigateToAuthRoute(AUTH_ROUTES.resetPassword),
     toResetPasswordForm: () => navigateToAuthRoute(AUTH_ROUTES.resetPasswordForm),
   };
+
+  const launchRecordingCamera = async () => {
+    if (recordingLauncherOpen) {
+      return;
+    }
+
+    setRecordingLauncherOpen(true);
+
+    try {
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['videos'],
+        allowsEditing: true,
+        quality: 1,
+        videoMaxDuration: 0,
+        cameraType: ImagePicker.CameraType.back,
+        ...(Platform.OS === 'ios'
+          ? {
+              videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
+              videoQuality: ImagePicker.UIImagePickerControllerQualityType.High,
+            }
+          : {}),
+      });
+
+      if (result.canceled) {
+        return;
+      }
+
+      const nextAsset = result.assets[0];
+
+      if (!nextAsset) {
+        return;
+      }
+
+      setRecordedUploadVideo(nextAsset);
+      setUploadSourceMode('camera');
+      authNavigation.toUploadVideo();
+    } finally {
+      setRecordingLauncherOpen(false);
+    }
+  };
+
+  const promptForCameraSettings = () => {
+    Alert.alert(
+      'Camera access needed',
+      'Peso needs camera access to record lift videos.',
+      [
+        {
+          text: 'Accept',
+          onPress: () => {
+            void requestCameraPermissionAndRecord(true);
+          },
+        },
+        {
+          text: 'Settings',
+          onPress: () => {
+            void Linking.openSettings();
+          },
+        },
+      ],
+      { cancelable: true }
+    );
+  };
+
+  const requestCameraPermissionAndRecord = async (forcePrompt = false) => {
+    if (Platform.OS === 'web') {
+      await launchRecordingCamera();
+      return;
+    }
+
+    const currentPermission = await ImagePicker.getCameraPermissionsAsync();
+
+    if (currentPermission.granted) {
+      await launchRecordingCamera();
+      return;
+    }
+
+    if (currentPermission.canAskAgain || forcePrompt) {
+      const requestedPermission = await ImagePicker.requestCameraPermissionsAsync();
+
+      if (requestedPermission.granted) {
+        await launchRecordingCamera();
+        return;
+      }
+    }
+
+    promptForCameraSettings();
+  };
+
+  const handleRecordVideoRoute = () => {
+    void requestCameraPermissionAndRecord(true);
+  };
+  const handleUploadVideoRoute = () => {
+    setRecordedUploadVideo(null);
+    setUploadSourceMode('library');
+    authNavigation.toUploadVideo();
+  };
+  const handleUploadBack = () => {
+    setRecordedUploadVideo(null);
+    authNavigation.toAddVideo();
+  };
   const handleAnalysisSaved = () => {
+    setRecordedUploadVideo(null);
     setHomeRefreshKey((key) => key + 1);
     authNavigation.toHome();
   };
@@ -848,7 +954,14 @@ function AppContent() {
 
     if (session && user) {
       if (route === AUTH_ROUTES.uploadVideo) {
-        return <UploadVideoScreen onBack={authNavigation.toAddVideo} onAnalysisSaved={handleAnalysisSaved} />;
+        return (
+          <UploadVideoScreen
+            sourceMode={uploadSourceMode}
+            initialSelectedVideo={recordedUploadVideo}
+            onBack={handleUploadBack}
+            onAnalysisSaved={handleAnalysisSaved}
+          />
+        );
       }
 
       if (
@@ -890,7 +1003,8 @@ function AppContent() {
             onHomePress={handleHomeRoute}
             onAddPress={authNavigation.toAddVideo}
             onProfilePress={handleProfileRoute}
-            onUploadVideoPress={authNavigation.toUploadVideo}
+            onRecordVideoPress={handleRecordVideoRoute}
+            onUploadVideoPress={handleUploadVideoRoute}
           />
         );
       }

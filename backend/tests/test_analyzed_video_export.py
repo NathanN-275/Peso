@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException, status
 
-from app.routes.videos import export_analyzed_video
+from app.routes.videos import AnalyzedVideoExportRequest, export_analyzed_video
 from app.services.analyzed_video_renderer import _resolve_ffmpeg_binary, render_analyzed_video
 
 
@@ -29,11 +29,25 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
     repository.get_analysis_result.return_value = {
       "id": str(ANALYSIS_ID),
       "model_version": "test-model",
-      "result_json": {
-        "video_id": str(VIDEO_ID),
-        "poseFrames": [],
-        "diagnostics": {},
-      },
+        "result_json": {
+          "video_id": str(VIDEO_ID),
+          "poseFrames": [
+            {
+              "time": 0,
+              "keypoints": [
+                {"name": "left_shoulder", "x": 0.5, "y": 0.2, "confidence": 0.9},
+              ],
+            }
+          ],
+          "barbellPath": {
+            "available": True,
+            "points": [
+              {"time": 0, "x": 0.4, "y": 0.3, "confidence": 0.9},
+              {"time": 0.2, "x": 0.5, "y": 0.4, "confidence": 0.9},
+            ],
+          },
+          "diagnostics": {},
+        },
     }
     return repository
 
@@ -49,7 +63,7 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
       patch("app.routes.videos.StorageService"),
       self.assertRaises(HTTPException) as raised,
     ):
-      export_analyzed_video(VIDEO_ID, USER_ID)
+      export_analyzed_video(VIDEO_ID, user_id=USER_ID)
 
     self.assertEqual(raised.exception.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -62,7 +76,7 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
       patch("app.routes.videos.StorageService"),
       self.assertRaises(HTTPException) as raised,
     ):
-      export_analyzed_video(VIDEO_ID, USER_ID)
+      export_analyzed_video(VIDEO_ID, user_id=USER_ID)
 
     self.assertEqual(raised.exception.status_code, status.HTTP_404_NOT_FOUND)
     self.assertEqual(raised.exception.detail, "Analysis result not available for export.")
@@ -76,7 +90,7 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
       patch("app.routes.videos.StorageService"),
       self.assertRaises(HTTPException) as raised,
     ):
-      export_analyzed_video(VIDEO_ID, USER_ID)
+      export_analyzed_video(VIDEO_ID, user_id=USER_ID)
 
     self.assertEqual(raised.exception.status_code, status.HTTP_409_CONFLICT)
     self.assertEqual(raised.exception.detail, "Only saved videos can be exported.")
@@ -90,7 +104,7 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
       patch("app.routes.videos.StorageService"),
       self.assertRaises(HTTPException) as raised,
     ):
-      export_analyzed_video(VIDEO_ID, USER_ID)
+      export_analyzed_video(VIDEO_ID, user_id=USER_ID)
 
     self.assertEqual(raised.exception.status_code, status.HTTP_409_CONFLICT)
     self.assertEqual(
@@ -110,9 +124,9 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
       patch("app.routes.videos.annotate_analysis_freshness", side_effect=lambda result, analysis: result),
       patch("app.routes.videos.render_analyzed_video") as renderer,
     ):
-      response = export_analyzed_video(VIDEO_ID, USER_ID)
+      response = export_analyzed_video(VIDEO_ID, user_id=USER_ID)
 
-    expected_path = f"{USER_ID}/exports/{VIDEO_ID}-{ANALYSIS_ID}-h264-v1.mp4"
+    expected_path = f"{USER_ID}/exports/{VIDEO_ID}-{ANALYSIS_ID}-pose-h264-v1.mp4"
     renderer.assert_not_called()
     storage.download_to_tempfile.assert_not_called()
     storage.upload_file.assert_not_called()
@@ -133,13 +147,86 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
       patch("app.routes.videos.annotate_analysis_freshness", side_effect=lambda result, analysis: result),
       patch("app.routes.videos.render_analyzed_video") as renderer,
     ):
-      response = export_analyzed_video(VIDEO_ID, USER_ID)
+      response = export_analyzed_video(VIDEO_ID, user_id=USER_ID)
 
-    expected_path = f"{USER_ID}/exports/{VIDEO_ID}-{ANALYSIS_ID}-h264-v1.mp4"
+    expected_path = f"{USER_ID}/exports/{VIDEO_ID}-{ANALYSIS_ID}-pose-h264-v1.mp4"
     renderer.assert_called_once()
     storage.upload_file.assert_called_once()
     storage.create_signed_url.assert_called_once_with(expected_path)
     self.assertEqual(response.storage_path, expected_path)
+    self.assertEqual(response.variant, "pose")
+
+  def test_export_clean_returns_playback_url_without_rendering(self) -> None:
+    repository = self._repository()
+    repository.require_owned_video.return_value["playback_path"] = f"{USER_ID}/playback/{VIDEO_ID}.mp4"
+    storage = MagicMock()
+    storage.create_signed_url.return_value = "https://example.test/clean"
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.render_analyzed_video") as renderer,
+    ):
+      response = export_analyzed_video(
+        VIDEO_ID,
+        AnalyzedVideoExportRequest(pose=False, barbell=False),
+        user_id=USER_ID,
+      )
+
+    expected_path = f"{USER_ID}/playback/{VIDEO_ID}.mp4"
+    renderer.assert_not_called()
+    storage.storage_path_exists.assert_not_called()
+    storage.download_to_tempfile.assert_not_called()
+    storage.upload_file.assert_not_called()
+    storage.create_signed_url.assert_called_once_with(expected_path)
+    self.assertEqual(response.storage_path, expected_path)
+    self.assertEqual(response.variant, "clean")
+
+  def test_export_uses_barbell_variant_cache_path(self) -> None:
+    repository = self._repository()
+    storage = MagicMock()
+    storage.storage_path_exists.return_value = True
+    storage.create_signed_url.return_value = "https://example.test/barbell"
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.render_analyzed_video") as renderer,
+    ):
+      response = export_analyzed_video(
+        VIDEO_ID,
+        AnalyzedVideoExportRequest(pose=False, barbell=True),
+        user_id=USER_ID,
+      )
+
+    expected_path = f"{USER_ID}/exports/{VIDEO_ID}-{ANALYSIS_ID}-barbell-h264-v1.mp4"
+    renderer.assert_not_called()
+    storage.create_signed_url.assert_called_once_with(expected_path)
+    self.assertEqual(response.storage_path, expected_path)
+    self.assertEqual(response.variant, "barbell")
+
+  def test_export_uses_pose_barbell_variant_cache_path(self) -> None:
+    repository = self._repository()
+    storage = MagicMock()
+    storage.storage_path_exists.return_value = True
+    storage.create_signed_url.return_value = "https://example.test/both"
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.render_analyzed_video") as renderer,
+    ):
+      response = export_analyzed_video(
+        VIDEO_ID,
+        AnalyzedVideoExportRequest(pose=True, barbell=True),
+        user_id=USER_ID,
+      )
+
+    expected_path = f"{USER_ID}/exports/{VIDEO_ID}-{ANALYSIS_ID}-pose-barbell-h264-v1.mp4"
+    renderer.assert_not_called()
+    storage.create_signed_url.assert_called_once_with(expected_path)
+    self.assertEqual(response.storage_path, expected_path)
+    self.assertEqual(response.variant, "pose-barbell")
 
 
 class AnalyzedVideoRendererTest(unittest.TestCase):
@@ -207,6 +294,52 @@ class AnalyzedVideoRendererTest(unittest.TestCase):
         output_bytes = output_file.read()
 
       self.assertIn(b"avc1", output_bytes)
+
+  def test_renderer_creates_output_file_with_barbell_overlay(self) -> None:
+    import cv2
+    import numpy as np
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+      source_path = Path(temp_dir) / "source.mp4"
+      output_path = Path(temp_dir) / "output.mp4"
+      writer = cv2.VideoWriter(
+        str(source_path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        5,
+        (160, 120),
+      )
+
+      for _ in range(5):
+        writer.write(np.zeros((120, 160, 3), dtype=np.uint8))
+
+      writer.release()
+
+      render_analyzed_video(
+        source_path=source_path,
+        output_path=output_path,
+        result_json={
+          "barbellPath": {
+            "available": True,
+            "points": [
+              {"time": 0, "x": 0.25, "y": 0.3, "confidence": 0.9},
+              {"time": 0.2, "x": 0.35, "y": 0.4, "confidence": 0.9},
+              {"time": 0.4, "x": 0.45, "y": 0.5, "confidence": 0.9},
+            ],
+          },
+        },
+        include_pose=False,
+        include_barbell=True,
+      )
+
+      self.assertTrue(output_path.exists())
+      self.assertGreater(output_path.stat().st_size, 0)
+
+      capture = cv2.VideoCapture(str(output_path))
+      success, frame = capture.read()
+      capture.release()
+
+      self.assertTrue(success)
+      self.assertGreater(int(frame.sum()), 0)
 
 
 if __name__ == "__main__":

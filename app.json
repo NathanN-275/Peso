@@ -16,6 +16,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.anonymous.peso-app",
       "infoPlist": {
+        "NSCameraUsageDescription": "Allow Peso to record lift videos for analysis.",
         "NSPhotoLibraryAddUsageDescription": "Allow Peso to save exported lift videos to your photo library.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true

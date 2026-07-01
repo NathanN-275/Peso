@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
 import { exportAnalyzedVideo } from '../../lib/backendApi';
+import type { AnalyzedVideoExportOptions } from '../../lib/backendApi';
 import type { SavedVideo } from '../../lib/backendApi';
 import tokens from '../theme/tokens';
 import {
@@ -26,6 +27,7 @@ import {
 } from '../utils/savedVideos';
 
 type SortOrder = 'newest' | 'oldest';
+type ExportVariant = 'clean' | 'pose' | 'barbell' | 'pose-barbell';
 
 type SavedLiftVideosScreenProps = {
   exerciseType: string;
@@ -44,9 +46,29 @@ function getSelectionLabel(count: number) {
   return `${count} ${count === 1 ? 'Video' : 'Videos'} Selected`;
 }
 
-function getExportFileName(video: SavedVideo, index: number) {
+function getExportVariant(options: AnalyzedVideoExportOptions): ExportVariant {
+  if (options.pose && options.barbell) {
+    return 'pose-barbell';
+  }
+  if (options.pose) {
+    return 'pose';
+  }
+  if (options.barbell) {
+    return 'barbell';
+  }
+  return 'clean';
+}
+
+function getExportFileName(video: SavedVideo, index: number, variant: ExportVariant) {
   const exercise = formatExerciseLabel(video.exercise_type).replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
-  return `peso-${exercise || 'video'}-${video.id.slice(0, 8)}-${index + 1}.mp4`;
+  return `peso-${exercise || 'video'}-${variant}-${video.id.slice(0, 8)}-${index + 1}.mp4`;
+}
+
+function selectedExportAvailability(videos: SavedVideo[]) {
+  return {
+    pose: videos.length > 0 && videos.every((video) => video.export_options?.pose === true),
+    barbell: videos.length > 0 && videos.every((video) => video.export_options?.barbell === true),
+  };
 }
 
 function SavedVideoThumb({ video }: { video: SavedVideo }) {
@@ -83,6 +105,11 @@ export default function SavedLiftVideosScreen({
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportOptions, setExportOptions] = useState<AnalyzedVideoExportOptions>({
+    pose: false,
+    barbell: false,
+  });
   const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -98,6 +125,10 @@ export default function SavedLiftVideosScreen({
     () => sortedVideos.filter((video) => selectedIds.has(video.id)),
     [selectedIds, sortedVideos]
   );
+  const exportAvailability = useMemo(
+    () => selectedExportAvailability(selectedVideos),
+    [selectedVideos]
+  );
 
   useEffect(() => {
     setSelectedIds((currentIds) => {
@@ -110,6 +141,7 @@ export default function SavedLiftVideosScreen({
   const clearSelection = () => {
     setSelecting(false);
     setSelectedIds(new Set());
+    setShowExportModal(false);
     setActionMessage(null);
   };
 
@@ -143,6 +175,20 @@ export default function SavedLiftVideosScreen({
     }
   };
 
+  const openExportModal = () => {
+    if (exporting || selectedVideos.length === 0) {
+      return;
+    }
+
+    const availability = selectedExportAvailability(selectedVideos);
+    setExportOptions({
+      pose: availability.pose,
+      barbell: availability.barbell,
+    });
+    setActionMessage(null);
+    setShowExportModal(true);
+  };
+
   const handleExportSelected = async () => {
     if (exporting || selectedVideos.length === 0) {
       return;
@@ -156,17 +202,20 @@ export default function SavedLiftVideosScreen({
         throw new Error('You need to be signed in to export saved videos.');
       }
 
+      const variant = getExportVariant(exportOptions);
+
       if (Platform.OS === 'web') {
         const webGlobal = globalThis as typeof globalThis & {
           open?: (url?: string | URL, target?: string) => Window | null;
         };
 
         for (const video of selectedVideos) {
-          const exportResponse = await exportAnalyzedVideo(video.id, session.access_token);
+          const exportResponse = await exportAnalyzedVideo(video.id, session.access_token, exportOptions);
           webGlobal.open?.(exportResponse.export_url, '_blank');
         }
 
-        setActionMessage(`Opened ${selectedVideos.length} analyzed ${selectedVideos.length === 1 ? 'video' : 'videos'} for download.`);
+        setShowExportModal(false);
+        setActionMessage(`Opened ${selectedVideos.length} ${variant} ${selectedVideos.length === 1 ? 'video' : 'videos'} for download.`);
         return;
       }
 
@@ -187,8 +236,8 @@ export default function SavedLiftVideosScreen({
       }
 
       for (const [index, video] of selectedVideos.entries()) {
-        const exportResponse = await exportAnalyzedVideo(video.id, session.access_token);
-        const destination = new File(Paths.cache, getExportFileName(video, index));
+        const exportResponse = await exportAnalyzedVideo(video.id, session.access_token, exportOptions);
+        const destination = new File(Paths.cache, getExportFileName(video, index, variant));
         const downloadedFile = await File.downloadFileAsync(exportResponse.export_url, destination, {
           idempotent: true,
         });
@@ -202,6 +251,7 @@ export default function SavedLiftVideosScreen({
         }
       }
 
+      setShowExportModal(false);
       setActionMessage(`Saved ${selectedVideos.length} ${selectedVideos.length === 1 ? 'video' : 'videos'} to your device.`);
     } catch (error) {
       setActionMessage(error instanceof Error ? error.message : 'Unable to export selected videos.');
@@ -337,9 +387,7 @@ export default function SavedLiftVideosScreen({
           <View style={styles.selectionBar}>
             <Pressable
               accessibilityRole="button"
-              onPress={() => {
-                void handleExportSelected();
-              }}
+              onPress={openExportModal}
               disabled={exporting || selectedVideos.length === 0}
               style={[styles.selectionIconButton, (exporting || selectedVideos.length === 0) && styles.disabledButton]}
             >
@@ -366,6 +414,100 @@ export default function SavedLiftVideosScreen({
             </Pressable>
           </View>
         ) : null}
+
+        <Modal
+          animationType="fade"
+          transparent
+          visible={showExportModal}
+          onRequestClose={() => {
+            if (!exporting) {
+              setShowExportModal(false);
+            }
+          }}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.confirmModal}>
+              <Text style={styles.confirmTitle}>Export Video</Text>
+              <Text style={styles.confirmCopy}>
+                Choose the overlays to include. Leave both unchecked for a clean video.
+              </Text>
+              <Pressable
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: exportOptions.pose, disabled: !exportAvailability.pose }}
+                onPress={() => {
+                  if (exportAvailability.pose) {
+                    setExportOptions((current) => ({ ...current, pose: !current.pose }));
+                  }
+                }}
+                disabled={!exportAvailability.pose || exporting}
+                style={[
+                  styles.checkboxRow,
+                  (!exportAvailability.pose || exporting) && styles.disabledButton,
+                ]}
+              >
+                <View style={[styles.squareCheckbox, exportOptions.pose && styles.squareCheckboxChecked]}>
+                  {exportOptions.pose ? (
+                    <Ionicons name="checkmark" size={18} color={tokens.colors.textPrimary} />
+                  ) : null}
+                </View>
+                <View style={styles.checkboxTextWrap}>
+                  <Text style={styles.checkboxLabel}>Pose model</Text>
+                  {!exportAvailability.pose ? (
+                    <Text style={styles.checkboxHelp}>Unavailable for one or more selected videos.</Text>
+                  ) : null}
+                </View>
+              </Pressable>
+              <Pressable
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: exportOptions.barbell, disabled: !exportAvailability.barbell }}
+                onPress={() => {
+                  if (exportAvailability.barbell) {
+                    setExportOptions((current) => ({ ...current, barbell: !current.barbell }));
+                  }
+                }}
+                disabled={!exportAvailability.barbell || exporting}
+                style={[
+                  styles.checkboxRow,
+                  (!exportAvailability.barbell || exporting) && styles.disabledButton,
+                ]}
+              >
+                <View style={[styles.squareCheckbox, exportOptions.barbell && styles.squareCheckboxChecked]}>
+                  {exportOptions.barbell ? (
+                    <Ionicons name="checkmark" size={18} color={tokens.colors.textPrimary} />
+                  ) : null}
+                </View>
+                <View style={styles.checkboxTextWrap}>
+                  <Text style={styles.checkboxLabel}>Barbell tracking</Text>
+                  {!exportAvailability.barbell ? (
+                    <Text style={styles.checkboxHelp}>Unavailable for one or more selected videos.</Text>
+                  ) : null}
+                </View>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  void handleExportSelected();
+                }}
+                disabled={exporting}
+                style={[styles.confirmExportButton, exporting && styles.disabledButton]}
+              >
+                {exporting ? (
+                  <ActivityIndicator color={tokens.colors.textPrimary} />
+                ) : (
+                  <Text style={styles.confirmDeleteText}>Download</Text>
+                )}
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setShowExportModal(false)}
+                disabled={exporting}
+                style={[styles.confirmCancelButton, exporting && styles.disabledButton]}
+              >
+                <Text style={styles.confirmCancelText}>Cancel</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
 
         <Modal
           animationType="fade"
@@ -688,6 +830,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#D93025',
     paddingHorizontal: 16,
   },
+  confirmExportButton: {
+    minHeight: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    backgroundColor: tokens.colors.brand,
+    paddingHorizontal: 16,
+  },
   confirmDeleteText: {
     color: tokens.colors.textPrimary,
     fontSize: 16,
@@ -709,5 +859,47 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 20,
     fontWeight: '700',
+  },
+  checkboxRow: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#363D4D',
+    backgroundColor: '#151923',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  squareCheckbox: {
+    width: 26,
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: tokens.colors.textMuted,
+    backgroundColor: '#050505',
+  },
+  squareCheckboxChecked: {
+    borderColor: tokens.colors.brand,
+    backgroundColor: tokens.colors.brand,
+  },
+  checkboxTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  checkboxLabel: {
+    color: tokens.colors.textPrimary,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '800',
+  },
+  checkboxHelp: {
+    marginTop: 2,
+    color: tokens.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 16,
   },
 });
