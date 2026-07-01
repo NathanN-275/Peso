@@ -319,7 +319,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingTop: 18,
+    paddingTop: 42,
     paddingBottom: NAV_HEIGHT + 36,
     gap: 22,
   },

@@ -677,10 +677,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   topBar: {
-    minHeight: 54,
+    minHeight: 72,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
+    paddingTop: 16,
   },
   backButton: {
     width: 42,

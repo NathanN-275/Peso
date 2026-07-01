@@ -114,12 +114,10 @@ export default function HomeScreen({
   onOpenSavedLiftFolder,
   onSavedVideosLoaded,
 }: HomeScreenProps) {
-  const { session, signOut } = useAuth();
-  const [submitting, setSubmitting] = useState(false);
+  const { session } = useAuth();
   const [loading, setLoading] = useState(true);
   const [savedVideos, setSavedVideos] = useState<SavedVideo[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [logoutError, setLogoutError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
@@ -178,33 +176,9 @@ export default function HomeScreen({
 
   const groups = useMemo(() => groupSavedVideos(savedVideos), [savedVideos]);
 
-  const handleLogout = async () => {
-    setSubmitting(true);
-    setLogoutError(null);
-
-    try {
-      await signOut();
-    } catch (error) {
-      setLogoutError(error instanceof Error ? error.message : 'Unable to log out.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        <View style={styles.header}>
-          <Pressable
-            onPress={handleLogout}
-            disabled={submitting}
-            accessibilityRole="button"
-            style={[styles.logoutButton, submitting && styles.disabledButton]}
-          >
-            <Text style={styles.logoutText}>{submitting ? 'Logging Out...' : 'Log Out'}</Text>
-          </Pressable>
-        </View>
-
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
@@ -255,7 +229,6 @@ export default function HomeScreen({
             </View>
           ) : null}
 
-          {logoutError ? <Text style={styles.errorText}>{logoutError}</Text> : null}
         </ScrollView>
 
         <BottomNav
@@ -278,34 +251,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000',
   },
-  header: {
-    minHeight: 58,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    paddingHorizontal: 18,
-    paddingTop: 6,
-  },
-  logoutButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: tokens.colors.brand,
-    borderRadius: 999,
-  },
-  logoutText: {
-    color: tokens.colors.brand,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  disabledButton: {
-    opacity: 0.6,
-  },
   scroll: {
     flex: 1,
   },
   scrollContent: {
     paddingHorizontal: 0,
+    paddingTop: 40,
     paddingBottom: NAV_HEIGHT + 34,
   },
   pageTitle: {
