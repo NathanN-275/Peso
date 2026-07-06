@@ -36,6 +36,11 @@ type TrimThumbnail = {
   time: number;
 };
 
+type CorrectedRecordingStream = {
+  stream: MediaStream;
+  cleanup: () => void;
+};
+
 const MIN_TRIM_SECONDS = 0.5;
 const RECORDING_FRAME_RATE = 30;
 const THUMBNAIL_COUNT = 10;
@@ -91,6 +96,86 @@ function buildRecordingFile(blob: Blob, startedAt: number) {
   const mimeType = getBaseMimeType(blob.type);
   const extension = getRecordingExtension(mimeType);
   return new File([blob], `peso-recording-${startedAt}.${extension}`, { type: mimeType });
+}
+
+function getBrowserVideoStyle(shouldFlipHorizontally: boolean): React.CSSProperties {
+  return {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+    backgroundColor: '#000',
+    transform: shouldFlipHorizontally ? 'scaleX(-1)' : undefined,
+  };
+}
+
+function shouldCorrectCameraHorizontally(stream: MediaStream) {
+  const videoTrack = stream.getVideoTracks()[0];
+
+  if (!videoTrack) {
+    return false;
+  }
+
+  const facingMode = videoTrack.getSettings?.().facingMode;
+  return facingMode !== 'environment';
+}
+
+function createHorizontallyCorrectedRecordingStream(
+  sourceVideo: HTMLVideoElement | null
+): CorrectedRecordingStream | null {
+  if (!sourceVideo) {
+    return null;
+  }
+
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  const captureStream = (
+    canvas as HTMLCanvasElement & { captureStream?: (frameRate?: number) => MediaStream }
+  ).captureStream;
+
+  if (!context || !captureStream) {
+    return null;
+  }
+
+  const width = Math.max(1, sourceVideo.videoWidth || 1280);
+  const height = Math.max(1, sourceVideo.videoHeight || 720);
+  let animationFrameId: number | null = null;
+  let stopped = false;
+
+  canvas.width = width;
+  canvas.height = height;
+
+  const drawFrame = () => {
+    if (stopped) {
+      return;
+    }
+
+    if (sourceVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      context.save();
+      context.translate(width, 0);
+      context.scale(-1, 1);
+      context.drawImage(sourceVideo, 0, 0, width, height);
+      context.restore();
+    }
+
+    animationFrameId = requestAnimationFrame(drawFrame);
+  };
+
+  drawFrame();
+
+  const stream = captureStream.call(canvas, RECORDING_FRAME_RATE);
+
+  return {
+    stream,
+    cleanup: () => {
+      stopped = true;
+
+      if (animationFrameId !== null) {
+        cancelAnimationFrame(animationFrameId);
+      }
+
+      stream.getTracks().forEach((track) => track.stop());
+    },
+  };
 }
 
 function waitForMediaEvent(target: HTMLMediaElement, eventName: string) {
@@ -456,6 +541,7 @@ export default function WebVideoRecorderScreen({
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
   const playbackVideoRef = useRef<HTMLVideoElement | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
+  const correctedRecordingCleanupRef = useRef<(() => void) | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -472,6 +558,13 @@ export default function WebVideoRecorderScreen({
   const [trimEnd, setTrimEnd] = useState(0);
   const [playbackTime, setPlaybackTime] = useState(0);
   const [trimThumbnails, setTrimThumbnails] = useState<TrimThumbnail[]>([]);
+  const [cameraNeedsHorizontalCorrection, setCameraNeedsHorizontalCorrection] = useState(false);
+
+  const previewVideoStyle = useMemo(
+    () => getBrowserVideoStyle(cameraNeedsHorizontalCorrection),
+    [cameraNeedsHorizontalCorrection]
+  );
+  const playbackVideoStyle = useMemo(() => getBrowserVideoStyle(false), []);
 
   const stopElapsedTimer = useCallback(() => {
     if (elapsedTimerRef.current) {
@@ -483,10 +576,16 @@ export default function WebVideoRecorderScreen({
   const stopCameraTracks = useCallback(() => {
     cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
     cameraStreamRef.current = null;
+    setCameraNeedsHorizontalCorrection(false);
 
     if (previewVideoRef.current) {
       previewVideoRef.current.srcObject = null;
     }
+  }, []);
+
+  const cleanupCorrectedRecordingStream = useCallback(() => {
+    correctedRecordingCleanupRef.current?.();
+    correctedRecordingCleanupRef.current = null;
   }, []);
 
   const revokeRecordingUrl = useCallback(() => {
@@ -532,6 +631,7 @@ export default function WebVideoRecorderScreen({
       });
 
       cameraStreamRef.current = stream;
+      setCameraNeedsHorizontalCorrection(shouldCorrectCameraHorizontally(stream));
 
       if (previewVideoRef.current) {
         previewVideoRef.current.srcObject = stream;
@@ -557,9 +657,10 @@ export default function WebVideoRecorderScreen({
       }
 
       stopCameraTracks();
+      cleanupCorrectedRecordingStream();
       revokeRecordingUrl();
     };
-  }, [revokeRecordingUrl, startCamera, stopCameraTracks, stopElapsedTimer]);
+  }, [cleanupCorrectedRecordingStream, revokeRecordingUrl, startCamera, stopCameraTracks, stopElapsedTimer]);
 
   useEffect(() => {
     if (setupResumeKey <= 0 || recordedFile || phase === 'recording' || cameraStreamRef.current) {
@@ -614,7 +715,22 @@ export default function WebVideoRecorderScreen({
     }
 
     try {
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      cleanupCorrectedRecordingStream();
+
+      const correctedRecording = cameraNeedsHorizontalCorrection
+        ? createHorizontallyCorrectedRecordingStream(previewVideoRef.current)
+        : null;
+
+      if (cameraNeedsHorizontalCorrection && !correctedRecording) {
+        setErrorMessage('Unable to correct the camera orientation in this browser.');
+        setPhase('ready');
+        return;
+      }
+
+      correctedRecordingCleanupRef.current = correctedRecording?.cleanup ?? null;
+
+      const recordingStream = correctedRecording?.stream ?? stream;
+      const recorder = new MediaRecorder(recordingStream, mimeType ? { mimeType } : undefined);
       const startedAt = Date.now();
 
       recordingChunksRef.current = [];
@@ -633,12 +749,14 @@ export default function WebVideoRecorderScreen({
         }
       };
       recorder.onerror = () => {
+        cleanupCorrectedRecordingStream();
         stopElapsedTimer();
         setErrorMessage('Recording failed. Try again.');
         setPhase('ready');
       };
       recorder.onstop = () => {
         stopElapsedTimer();
+        cleanupCorrectedRecordingStream();
 
         const recordedMimeType = getBaseMimeType(recorder.mimeType || mimeType || 'video/webm');
         const blob = new Blob(recordingChunksRef.current, { type: recordedMimeType });
@@ -674,10 +792,17 @@ export default function WebVideoRecorderScreen({
         setElapsedMs(Date.now() - startedAt);
       }, 250);
     } catch (error) {
+      cleanupCorrectedRecordingStream();
       setErrorMessage(error instanceof Error ? error.message : 'Unable to start recording.');
       setPhase('ready');
     }
-  }, [revokeRecordingUrl, stopCameraTracks, stopElapsedTimer]);
+  }, [
+    cameraNeedsHorizontalCorrection,
+    cleanupCorrectedRecordingStream,
+    revokeRecordingUrl,
+    stopCameraTracks,
+    stopElapsedTimer,
+  ]);
 
   const recordAgain = () => {
     stopElapsedTimer();
@@ -813,7 +938,7 @@ export default function WebVideoRecorderScreen({
                 onTimeUpdate: (event: React.SyntheticEvent<HTMLVideoElement>) => {
                   setPlaybackTime(event.currentTarget.currentTime);
                 },
-                style: styles.browserVideo,
+                style: playbackVideoStyle,
               })
             ) : null
           ) : (
@@ -822,7 +947,7 @@ export default function WebVideoRecorderScreen({
               autoPlay: true,
               muted: true,
               playsInline: true,
-              style: styles.browserVideo,
+              style: previewVideoStyle,
             })
           )}
 
@@ -975,12 +1100,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#050505',
     overflow: 'hidden',
     position: 'relative',
-  },
-  browserVideo: {
-    width: '100%',
-    height: '100%',
-    objectFit: 'cover',
-    backgroundColor: '#000',
   },
   videoOverlay: {
     ...StyleSheet.absoluteFillObject,
