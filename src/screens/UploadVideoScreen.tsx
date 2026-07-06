@@ -57,7 +57,7 @@ type UploadVideoScreenProps = {
   initialVideoSetup?: VideoSetupSelection | null;
   onBack?: () => void;
   onRecordVideoPress?: () => void;
-  onAnalysisSaved?: () => void;
+  onAnalysisSaved?: (videoId: string) => void | Promise<void>;
 };
 
 function formatFileSize(fileSize?: number | null) {
@@ -106,6 +106,10 @@ function formatPercent(value?: number | null) {
   return `${Math.round(value * 100)}%`;
 }
 
+function getSetupKey(setup?: VideoSetupSelection | null) {
+  return setup ? `${setup.exercise}:${setup.angle}` : null;
+}
+
 export default function UploadVideoScreen({
   sourceMode = 'library',
   initialSelectedVideo = null,
@@ -144,6 +148,7 @@ export default function UploadVideoScreen({
   const activeAnalysisRunRef = useRef<AnalysisRun | null>(null);
   const analysisPollInFlightRef = useRef(false);
   const initializedVideoUriRef = useRef<string | null>(null);
+  const initializedSetupKeyRef = useRef<string | null>(getSetupKey(initialVideoSetup));
 
   const analysisRunIsCurrent = (run: AnalysisRun) => (
     isAnalysisRunCurrent(analysisRunGenerationRef.current, run)
@@ -206,6 +211,13 @@ export default function UploadVideoScreen({
       return;
     }
 
+    const nextInitialSetupKey = getSetupKey(initialVideoSetup);
+    if (initializedSetupKeyRef.current === nextInitialSetupKey) {
+      return;
+    }
+
+    initializedSetupKeyRef.current = nextInitialSetupKey;
+
     const setupChanged =
       videoSetup?.exercise !== initialVideoSetup.exercise ||
       videoSetup?.angle !== initialVideoSetup.angle;
@@ -217,7 +229,7 @@ export default function UploadVideoScreen({
       setRemovePinsDialogVisible(false);
     }
     setSetupModalVisible(false);
-  }, [initialVideoSetup, videoSetup?.angle, videoSetup?.exercise]);
+  }, [initialVideoSetup]);
 
   const handleStartAnalysis = async () => {
     // Upload first, then ask the backend to begin analysis.
@@ -863,6 +875,27 @@ export default function UploadVideoScreen({
     setScreenLayout({ width, height });
   };
 
+  const clearCompletedAnalysisForRecordedReview = () => {
+    const run = activeAnalysisRunRef.current;
+    if (run) {
+      analysisRunGenerationRef.current = cancelAnalysisRun(analysisRunGenerationRef.current, run);
+    } else {
+      analysisRunGenerationRef.current += 1;
+    }
+    activeAnalysisRunRef.current = null;
+    analysisStartInFlightRef.current = false;
+    analysisQueuedForVideoRef.current = null;
+    analysisPollInFlightRef.current = false;
+    setUploading(false);
+    setAnalysisRunning(false);
+    setAnalysisVideoId(null);
+    setAnalysisStatus(null);
+    setAnalysisResult(null);
+    setErrorMessage(null);
+    setQuotaWarningMessage(null);
+    setStatusMessage('Recording saved. You can edit setup or pins, then run analysis again.');
+  };
+
   const handleReviewDiscarded = () => {
     // Clearing the review screen resets the upload flow.
     cancelActiveAnalysis();
@@ -884,13 +917,34 @@ export default function UploadVideoScreen({
     setDisplayedVideoSizeBytes(null);
   };
 
+  const handleAnalysisReviewSaved = async (videoId: string) => {
+    if (sourceMode === 'camera') {
+      await onAnalysisSaved?.(videoId);
+      clearCompletedAnalysisForRecordedReview();
+      return;
+    }
+
+    if (onAnalysisSaved) {
+      await onAnalysisSaved(videoId);
+      return;
+    }
+
+    if (onBack) {
+      onBack();
+      return;
+    }
+
+    handleReviewDiscarded();
+  };
+
   if (analysisResult && selectedVideo) {
     return (
       <AnalysisReviewScreen
         videoUri={selectedVideo.uri}
         result={analysisResult}
         onDiscarded={handleReviewDiscarded}
-        onSaved={onAnalysisSaved ?? onBack ?? handleReviewDiscarded}
+        onSaved={handleAnalysisReviewSaved}
+        saveOnBack={sourceMode === 'camera'}
       />
     );
   }

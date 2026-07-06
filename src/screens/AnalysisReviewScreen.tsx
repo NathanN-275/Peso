@@ -44,8 +44,9 @@ type AnalysisReviewScreenProps = {
   mode?: 'pending' | 'saved';
   onBack?: () => void;
   onDiscarded?: () => void;
-  onSaved?: () => void;
+  onSaved?: (videoId: string) => void | Promise<void>;
   onDeleteSavedVideo?: (videoId: string) => Promise<void>;
+  saveOnBack?: boolean;
 };
 
 type BarbellPathCarrier = VideoAnalysisResult & {
@@ -195,6 +196,7 @@ export default function AnalysisReviewScreen({
   onDiscarded,
   onSaved,
   onDeleteSavedVideo,
+  saveOnBack = false,
 }: AnalysisReviewScreenProps) {
   // This screen plays the analyzed clip and overlays pose feedback.
   const { session } = useAuth();
@@ -434,7 +436,7 @@ export default function AnalysisReviewScreen({
       if (mediaAvailable) {
         player.pause();
       }
-      onSaved?.();
+      await onSaved?.(result.video_id);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to save this video.');
     } finally {
@@ -513,7 +515,12 @@ export default function AnalysisReviewScreen({
 
     // Going back warns if the analyzed clip has not been saved yet.
     if (saved) {
-      onSaved?.();
+      void onSaved?.(result.video_id);
+      return;
+    }
+
+    if (saveOnBack) {
+      void handleSave();
       return;
     }
 

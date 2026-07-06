@@ -411,6 +411,8 @@ function AppContent() {
   const [uploadSourceMode, setUploadSourceMode] = useState<'camera' | 'library'>('library');
   const [recordedUploadVideo, setRecordedUploadVideo] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [recordedUploadSetup, setRecordedUploadSetup] = useState<VideoSetupSelection | null>(null);
+  const [recordedReviewSavedVideoId, setRecordedReviewSavedVideoId] = useState<string | null>(null);
+  const [deletingRecordedReviewVideo, setDeletingRecordedReviewVideo] = useState(false);
   const [pendingRecordingSetup, setPendingRecordingSetup] = useState<VideoSetupSelection | null>(null);
   const [recordingSetupModalVisible, setRecordingSetupModalVisible] = useState(false);
   const [recordingSetupResumeKey, setRecordingSetupResumeKey] = useState(0);
@@ -718,13 +720,47 @@ function AppContent() {
   const handleUploadVideoRoute = () => {
     setRecordedUploadVideo(null);
     setRecordedUploadSetup(null);
+    setRecordedReviewSavedVideoId(null);
     setPendingRecordingSetup(null);
     setUploadSourceMode('library');
     authNavigation.toUploadVideo();
   };
-  const handleUploadBack = () => {
+
+  const discardRecordedReviewVideo = async (videoId: string) => {
+    if (!session?.access_token) {
+      throw new Error('You need to be signed in to delete this recording.');
+    }
+
+    await deleteSavedVideo(videoId, session.access_token);
+    setSavedVideos((currentVideos) => currentVideos.filter((video) => video.id !== videoId));
+    setSavedVideosLoaded(false);
+    setHomeRefreshKey((key) => key + 1);
+  };
+
+  const handleUploadBack = async () => {
+    if (deletingRecordedReviewVideo) {
+      return;
+    }
+
+    if (uploadSourceMode === 'camera' && recordedReviewSavedVideoId) {
+      setDeletingRecordedReviewVideo(true);
+      try {
+        await discardRecordedReviewVideo(recordedReviewSavedVideoId);
+      } catch (error) {
+        Alert.alert(
+          'Unable to delete recording',
+          error instanceof Error ? error.message : 'The saved recording could not be deleted. Try again.'
+        );
+        return;
+      } finally {
+        setDeletingRecordedReviewVideo(false);
+      }
+    }
+
     setRecordedUploadVideo(null);
     setRecordedUploadSetup(null);
+    setRecordedReviewSavedVideoId(null);
+    setPendingRecordingSetup(null);
     authNavigation.toAddVideo();
   };
   const handleSavedVideosLoaded = (videos: SavedVideo[]) => {
@@ -734,9 +770,23 @@ function AppContent() {
   const handleAnalysisSaved = () => {
     setRecordedUploadVideo(null);
     setRecordedUploadSetup(null);
+    setRecordedReviewSavedVideoId(null);
     setSavedVideosLoaded(false);
     setHomeRefreshKey((key) => key + 1);
     authNavigation.toHome();
+  };
+  const handleRecordedAnalysisSaved = (videoId: string) => {
+    const previousSavedVideoId = recordedReviewSavedVideoId;
+
+    setRecordedReviewSavedVideoId(videoId);
+    setSavedVideosLoaded(false);
+    setHomeRefreshKey((key) => key + 1);
+
+    if (previousSavedVideoId && previousSavedVideoId !== videoId && session?.access_token) {
+      deleteSavedVideo(previousSavedVideoId, session.access_token).catch((error) => {
+        console.warn('Unable to discard replaced recorded review video.', error);
+      });
+    }
   };
   const handleOpenSavedLiftFolder = (exerciseType: string) => {
     setSelectedSavedExerciseType(exerciseType);
@@ -1044,7 +1094,7 @@ function AppContent() {
             initialVideoSetup={recordedUploadSetup}
             onBack={handleUploadBack}
             onRecordVideoPress={Platform.OS === 'web' ? handleRecordVideoRoute : undefined}
-            onAnalysisSaved={handleAnalysisSaved}
+            onAnalysisSaved={uploadSourceMode === 'camera' ? handleRecordedAnalysisSaved : handleAnalysisSaved}
           />
         );
       }
