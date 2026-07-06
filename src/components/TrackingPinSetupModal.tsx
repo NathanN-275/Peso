@@ -115,8 +115,9 @@ export default function TrackingPinSetupModal({
     initialSetup?.anchors ?? {}
   );
   const [placementOrder, setPlacementOrder] = useState<TrackingPinName[]>(
-    initialSetup ? [...TRACKING_PIN_NAMES] : []
+    initialSetup ? (Object.keys(initialSetup.anchors) as TrackingPinName[]) : []
   );
+  const [skippedPins, setSkippedPins] = useState<TrackingPinName[]>([]);
   const [draggingPin, setDraggingPin] = useState<TrackingPinName | null>(null);
   const [pinnedFrameTime, setPinnedFrameTime] = useState<number | null>(
     initialSetup ? initialSetup.reference_time_ms / 1000 : null
@@ -156,7 +157,8 @@ export default function TrackingPinSetupModal({
     }
     const referenceTime = (initialSetup?.reference_time_ms ?? 0) / 1000;
     setPins(initialSetup?.anchors ?? {});
-    setPlacementOrder(initialSetup ? [...TRACKING_PIN_NAMES] : []);
+    setPlacementOrder(initialSetup ? (Object.keys(initialSetup.anchors) as TrackingPinName[]) : []);
+    setSkippedPins([]);
     setCurrentTime(referenceTime);
     setPinnedFrameTime(initialSetup ? referenceTime : null);
     setPendingFrameTime(null);
@@ -238,12 +240,16 @@ export default function TrackingPinSetupModal({
     videoLayout,
     { gap: 7 }
   ), [pins, videoLayout, videoRect]);
-  const nextPin = TRACKING_PIN_NAMES.find((name) => !pins[name]) ?? null;
+  const nextPin = TRACKING_PIN_NAMES.find((name) => !pins[name] && !skippedPins.includes(name)) ?? null;
   const pinCount = TRACKING_PIN_NAMES.filter((name) => pins[name]).length;
-  const allPinsPlaced = pinCount === TRACKING_PIN_NAMES.length;
+  const skippedPinCount = skippedPins.length;
+  const actionCount = placementOrder.length;
+  const canSavePins = pinCount > 0;
   const placementInstruction = nextPin === 'barbell'
     ? 'Place the center of the + on the near-side hub where the sleeve meets the plate.'
-    : 'Choose a clear side-view frame, then tap each landmark. Drag any pin to adjust it.';
+    : nextPin
+      ? 'Choose a clear side-view frame, then tap each landmark. Drag any pin to adjust it.'
+      : 'Use the placed pins or reset if you want to add skipped landmarks.';
 
   const pointFromTouch = (x: number, y: number): NormalizedTrackingPoint | null => {
     if (
@@ -299,6 +305,7 @@ export default function TrackingPinSetupModal({
   const clearPins = () => {
     setPins({});
     setPlacementOrder([]);
+    setSkippedPins([]);
     setPinnedFrameTime(null);
   };
 
@@ -363,7 +370,21 @@ export default function TrackingPinSetupModal({
       delete nextPins[latestPin];
       return nextPins;
     });
+    setSkippedPins((current) => current.filter((pin) => pin !== latestPin));
     setPlacementOrder((current) => current.slice(0, -1));
+  };
+
+  const skipCurrentPin = () => {
+    if (!nextPin) {
+      return;
+    }
+
+    setSkippedPins((current) => (
+      current.includes(nextPin) ? current : [...current, nextPin]
+    ));
+    setPlacementOrder((current) => (
+      current.includes(nextPin) ? current : [...current, nextPin]
+    ));
   };
 
   const syncRenderedVideoMetadata = () => {
@@ -388,14 +409,14 @@ export default function TrackingPinSetupModal({
   };
 
   const savePins = () => {
-    if (!allPinsPlaced) {
+    if (!canSavePins) {
       return;
     }
     onSave({
       version: 1,
       reference_time_ms: Math.round(currentTime * 1000),
       barbell_target: 'near_side_collar',
-      anchors: pins as Record<TrackingPinName, NormalizedTrackingPoint>,
+      anchors: pins,
     });
   };
 
@@ -415,12 +436,14 @@ export default function TrackingPinSetupModal({
 
         <View style={styles.instructions}>
           <Text style={styles.instructionTitle}>
-            {nextPin ? `Place: ${PIN_LABELS[nextPin]}` : 'All pins placed'}
+            {nextPin ? `Place: ${PIN_LABELS[nextPin]}` : 'Pins ready'}
           </Text>
           <Text style={styles.instructionText}>
             {placementInstruction}
           </Text>
-          <Text style={styles.progressText}>{pinCount}/5 pins</Text>
+          <Text style={styles.progressText}>
+            {pinCount}/5 pins placed{skippedPinCount > 0 ? `, ${skippedPinCount} skipped` : ''}
+          </Text>
         </View>
 
         <View
@@ -462,6 +485,7 @@ export default function TrackingPinSetupModal({
                   if (pinCount === 0) {
                     setPinnedFrameTime(currentTime);
                   }
+                  setSkippedPins((current) => current.filter((pin) => pin !== selectedPin));
                   setPlacementOrder((current) => (
                     current.includes(selectedPin) ? current : [...current, selectedPin]
                   ));
@@ -525,13 +549,16 @@ export default function TrackingPinSetupModal({
           <Text style={styles.helperText}>
             {pinCount > 0
               ? 'Scrubbing to another frame will clear the placed pins after confirmation.'
-              : 'Scrub to a frame where all landmarks and the collar are visible.'}
+              : 'Scrub to a frame where the landmarks or collar you want to pin are visible.'}
           </Text>
           <View style={styles.actions}>
-            <Pressable onPress={undoLatestPin} disabled={pinCount === 0} style={styles.resetButton}>
-              <Text style={[styles.resetText, pinCount === 0 && styles.disabledText]}>Undo</Text>
+            <Pressable onPress={undoLatestPin} disabled={actionCount === 0} style={styles.resetButton}>
+              <Text style={[styles.resetText, actionCount === 0 && styles.disabledText]}>Undo</Text>
             </Pressable>
-            <Button label="Use These Pins" onPress={savePins} disabled={!allPinsPlaced} style={styles.saveButton} />
+            <Pressable onPress={skipCurrentPin} disabled={!nextPin} style={styles.skipButton}>
+              <Text style={[styles.skipText, !nextPin && styles.disabledText]}>Skip This Pin</Text>
+            </Pressable>
+            <Button label="Use These Pins" onPress={savePins} disabled={!canSavePins} style={styles.saveButton} />
           </View>
         </View>
         <ConfirmationDialog
@@ -636,6 +663,8 @@ const styles = StyleSheet.create({
   actions: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   resetButton: { paddingHorizontal: 10, paddingVertical: 12 },
   resetText: { color: tokens.colors.textPrimary, fontSize: 14, fontWeight: '600' },
+  skipButton: { paddingHorizontal: 8, paddingVertical: 12 },
+  skipText: { color: tokens.colors.textPrimary, fontSize: 14, fontWeight: '600' },
   disabledText: { color: tokens.colors.textMuted },
   saveButton: { flex: 1 },
 });

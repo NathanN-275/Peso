@@ -439,4 +439,8 @@ export type SavedVideo = {
   saved_at: string | null;
   created_at: string;
   analysis: SavedVideoAnalysis | null;
+  export_options?: {
+    pose: boolean;
+    barbell: boolean;
+  } | null;
 };

@@ -56,6 +56,11 @@ class SavedVideoAnalysisResponse(BaseModel):
   rep_data: list[dict]
 
 
+class SavedVideoExportOptionsResponse(BaseModel):
+  pose: bool
+  barbell: bool
+
+
 class SavedVideoResponse(BaseModel):
   id: UUID
   exercise_type: str
@@ -68,6 +73,7 @@ class SavedVideoResponse(BaseModel):
   saved_at: str | None = None
   created_at: str
   analysis: SavedVideoAnalysisResponse | None = None
+  export_options: SavedVideoExportOptionsResponse | None = None
 
 
 class SaveVideoResponse(BaseModel):
@@ -91,6 +97,12 @@ class AnalyzedVideoExportResponse(BaseModel):
   analysis_id: UUID
   storage_path: str
   export_url: str
+  variant: str
+
+
+class AnalyzedVideoExportRequest(BaseModel):
+  pose: bool = True
+  barbell: bool = False
 
 
 class CleanupDetailsResponse(BaseModel):
@@ -212,6 +224,32 @@ def _summary_rep_payload(rep: dict) -> dict:
     "flags": rep.get("flags") or [],
     "timestamps_ms": rep.get("timestamps_ms"),
   }
+
+
+def _analysis_export_options(result_json: dict) -> dict[str, bool]:
+  pose_frames = result_json.get("poseFrames")
+  barbell_path = result_json.get("barbellPath") or {}
+  barbell_points = barbell_path.get("points") if isinstance(barbell_path, dict) else None
+
+  return {
+    "pose": isinstance(pose_frames, list) and len(pose_frames) > 0,
+    "barbell": (
+      isinstance(barbell_path, dict)
+      and barbell_path.get("available") is True
+      and isinstance(barbell_points, list)
+      and len(barbell_points) >= 2
+    ),
+  }
+
+
+def _export_variant(*, pose: bool, barbell: bool) -> str:
+  if pose and barbell:
+    return "pose-barbell"
+  if pose:
+    return "pose"
+  if barbell:
+    return "barbell"
+  return "clean"
 
 
 def _playback_storage_path(video: dict) -> str:
@@ -403,9 +441,11 @@ def list_saved_videos(
     analysis = repository.get_analysis_result(video["id"])
     result_json = annotate_analysis_freshness(analysis["result_json"], analysis) if analysis else {}
     normalized_analysis = None
+    export_options = None
 
     if analysis:
       summary_payload = _summary_analysis_payload(result_json)
+      export_options = _analysis_export_options(result_json)
       normalized_analysis = SavedVideoAnalysisResponse(
         id=analysis["id"],
         model_version=analysis["model_version"],
@@ -430,6 +470,11 @@ def list_saved_videos(
         saved_at=video.get("saved_at"),
         created_at=video["created_at"],
         analysis=normalized_analysis,
+        export_options=(
+          SavedVideoExportOptionsResponse(**export_options)
+          if export_options
+          else None
+        ),
       )
     )
 
@@ -461,6 +506,7 @@ def get_video_playback_url(
 @router.post("/videos/{video_id}/analyzed-export", response_model=AnalyzedVideoExportResponse)
 def export_analyzed_video(
   video_id: UUID,
+  export_request: AnalyzedVideoExportRequest | None = None,
   user_id: str = Depends(get_current_user_id),
 ) -> AnalyzedVideoExportResponse:
   repository = VideoRepository()
@@ -489,7 +535,20 @@ def export_analyzed_video(
     )
 
   analysis_id = str(analysis["id"])
-  export_path = f"{user_id}/exports/{video_id_str}-{analysis_id}-h264-v1.mp4"
+  requested = export_request or AnalyzedVideoExportRequest()
+  variant = _export_variant(pose=requested.pose, barbell=requested.barbell)
+
+  if variant == "clean":
+    playback_path = _playback_storage_path(video)
+    return AnalyzedVideoExportResponse(
+      video_id=video_id,
+      analysis_id=analysis["id"],
+      storage_path=playback_path,
+      export_url=storage.create_signed_url(playback_path),
+      variant=variant,
+    )
+
+  export_path = f"{user_id}/exports/{video_id_str}-{analysis_id}-{variant}-h264-v1.mp4"
 
   if not storage.storage_path_exists(export_path):
     source_file: Path | None = None
@@ -505,6 +564,8 @@ def export_analyzed_video(
         source_path=source_file,
         output_path=output_file,
         result_json=annotate_analysis_freshness(analysis["result_json"], analysis),
+        include_pose=requested.pose,
+        include_barbell=requested.barbell,
       )
       storage.upload_file(export_path, output_file, "video/mp4")
     finally:
@@ -519,6 +580,7 @@ def export_analyzed_video(
     analysis_id=analysis["id"],
     storage_path=export_path,
     export_url=storage.create_signed_url(export_path),
+    variant=variant,
   )
 
 

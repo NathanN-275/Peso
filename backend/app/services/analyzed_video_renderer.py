@@ -27,6 +27,8 @@ YELLOW = (0, 245, 255)
 WHITE = (255, 255, 255)
 ORANGE = (32, 176, 255)
 BLACK = (0, 0, 0)
+GREEN = (52, 235, 64)
+BARBELL_GAP_SECONDS = 0.25
 
 
 def _resolve_ffmpeg_binary() -> str:
@@ -234,11 +236,141 @@ def _draw_pose_overlay(
     _draw_label(cv2, image, SQUAT_LABELS[name], point, label_color)
 
 
+def _barbell_points(result_json: dict[str, Any]) -> list[dict[str, Any]]:
+  payload = result_json.get("barbellPath") or {}
+  if not isinstance(payload, dict) or payload.get("available") is not True:
+    return []
+
+  points = [point for point in payload.get("points") or [] if isinstance(point, dict)]
+  return sorted(points, key=lambda point: float(point.get("time") or 0))
+
+
+def _interpolated_barbell_point(
+  points: list[dict[str, Any]],
+  current_time: float,
+) -> dict[str, Any] | None:
+  if not points:
+    return None
+
+  previous = None
+  for point in points:
+    point_time = float(point.get("time") or 0)
+    if point_time == current_time:
+      return point
+    if point_time > current_time:
+      if previous is None:
+        return point
+
+      previous_time = float(previous.get("time") or 0)
+      span = point_time - previous_time
+      if span <= 0 or span > BARBELL_GAP_SECONDS:
+        return previous
+
+      ratio = (current_time - previous_time) / span
+      return {
+        **point,
+        "time": current_time,
+        "x": float(previous.get("x") or 0) + (float(point.get("x") or 0) - float(previous.get("x") or 0)) * ratio,
+        "y": float(previous.get("y") or 0) + (float(point.get("y") or 0) - float(previous.get("y") or 0)) * ratio,
+        "markerX": float(previous.get("markerX", previous.get("x") or 0))
+        + (float(point.get("markerX", point.get("x") or 0)) - float(previous.get("markerX", previous.get("x") or 0))) * ratio,
+        "markerY": float(previous.get("markerY", previous.get("y") or 0))
+        + (float(point.get("markerY", point.get("y") or 0)) - float(previous.get("markerY", previous.get("y") or 0))) * ratio,
+      }
+    previous = point
+
+  return previous
+
+
+def _barbell_point_is_gap(point: dict[str, Any]) -> bool:
+  return (
+    bool(point.get("coastingFrame"))
+    or bool(point.get("stationaryHardwareRejected"))
+    or bool(point.get("hardwareRejected"))
+    or bool(point.get("gapReason"))
+    or point.get("selectedSource") == "gap"
+  )
+
+
+def _normalized_barbell_point(point: dict[str, Any], width: int, height: int) -> tuple[int, int]:
+  x = int(round(float(point.get("x") or 0) * width))
+  y = int(round(float(point.get("y") or 0) * height))
+  return (max(0, min(x, width - 1)), max(0, min(y, height - 1)))
+
+
+def _normalized_barbell_marker(point: dict[str, Any], width: int, height: int) -> tuple[int, int]:
+  marker_x = point.get("markerX", point.get("x"))
+  marker_y = point.get("markerY", point.get("y"))
+  x = int(round(float(marker_x or 0) * width))
+  y = int(round(float(marker_y or 0) * height))
+  return (max(0, min(x, width - 1)), max(0, min(y, height - 1)))
+
+
+def _draw_barbell_overlay(
+  cv2: Any,
+  image: Any,
+  points: list[dict[str, Any]],
+  current_time: float,
+) -> None:
+  if len(points) < 2:
+    return
+
+  height, width = image.shape[:2]
+  current_point = _interpolated_barbell_point(points, current_time)
+  visible_points = [point for point in points if float(point.get("time") or 0) <= current_time]
+
+  if current_point and (
+    not visible_points
+    or float(visible_points[-1].get("time") or 0) < float(current_point.get("time") or 0)
+  ):
+    visible_points.append(current_point)
+
+  if not visible_points:
+    return
+
+  mapped = [
+    {
+      **point,
+      "point": _normalized_barbell_point(point, width, height),
+    }
+    for point in visible_points
+  ]
+
+  for previous, point in zip(mapped, mapped[1:]):
+    if (
+      float(point.get("time") or 0) - float(previous.get("time") or 0) > BARBELL_GAP_SECONDS
+      or _barbell_point_is_gap(previous)
+      or _barbell_point_is_gap(point)
+    ):
+      continue
+
+    cv2.line(image, previous["point"], point["point"], GREEN, 3, cv2.LINE_AA)
+
+  first = mapped[0]["point"]
+  cv2.circle(image, first, 4, WHITE, -1, cv2.LINE_AA)
+  cv2.circle(image, first, 3, GREEN, -1, cv2.LINE_AA)
+
+  if current_point:
+    marker = _normalized_barbell_marker(current_point, width, height)
+    estimated = (
+      current_point.get("trackingState") in {"automatic", "estimated"}
+      or bool(current_point.get("coastingFrame"))
+      or bool(current_point.get("stationaryHardwareRejected"))
+      or bool(current_point.get("hardwareRejected"))
+    )
+    fill_color = WHITE if estimated else GREEN
+    border_color = ORANGE if estimated else WHITE
+    cv2.circle(image, marker, 8, border_color, -1, cv2.LINE_AA)
+    cv2.circle(image, marker, 5, fill_color, -1, cv2.LINE_AA)
+
+
 def render_analyzed_video(
   *,
   source_path: Path,
   output_path: Path,
   result_json: dict[str, Any],
+  include_pose: bool = True,
+  include_barbell: bool = False,
 ) -> Path:
   import cv2
 
@@ -298,6 +430,7 @@ def render_analyzed_video(
   diagnostics = result_json.get("diagnostics") or {}
   pose_validation = diagnostics.get("pose_validation") or {}
   selected_side = pose_validation.get("selected_side") or diagnostics.get("selected_side")
+  barbell_points = _barbell_points(result_json)
   frame_index = 0
 
   try:
@@ -308,13 +441,17 @@ def render_analyzed_video(
         break
 
       timestamp = frame_index / fps if fps > 0 else 0
-      _draw_pose_overlay(
-        cv2,
-        image,
-        _closest_pose_frame(pose_frames, timestamp),
-        camera_view,
-        selected_side,
-      )
+      if include_pose:
+        _draw_pose_overlay(
+          cv2,
+          image,
+          _closest_pose_frame(pose_frames, timestamp),
+          camera_view,
+          selected_side,
+        )
+
+      if include_barbell:
+        _draw_barbell_overlay(cv2, image, barbell_points, timestamp)
 
       if not ffmpeg_process.stdin:
         raise RuntimeError("FFmpeg input pipe was unavailable for analyzed video export.")

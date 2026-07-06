@@ -24,18 +24,20 @@ const MAX_POSE_BITRATE = 2_500_000;
 const AUDIO_BITRATE_RESERVE = 128_000;
 const PENDING_VIDEO_TTL_MS = 24 * 60 * 60 * 1000;
 const UPLOAD_LIMIT_LABEL = `${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))} MB`;
-const ALLOWED_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.m4v'] as const;
+const ALLOWED_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.m4v', '.webm'] as const;
 const ALLOWED_VIDEO_MIME_TYPES = [
   'video/mp4',
   'video/quicktime',
   'video/x-m4v',
   'video/m4v',
+  'video/webm',
 ] as const;
 
 type UploadVideoForAnalysisArgs = {
   asset: ImagePickerAsset;
   exercise: ExerciseOption;
   angle: CameraAngle;
+  sourceType?: 'camera' | 'camera_roll';
   trackingSetup?: TrackingSetup | null;
   onStatusChange?: (message: string | null) => void;
   onQuotaWarning?: (message: string) => void;
@@ -179,10 +181,12 @@ function hasFileExtension(filename: string) {
 
 function isAllowedVideoMimeType(mimeType?: string | null) {
   // Accept only the video types the backend can process.
+  const normalizedMimeType = mimeType?.split(';')[0]?.trim().toLowerCase();
+
   return Boolean(
-    mimeType &&
+    normalizedMimeType &&
       ALLOWED_VIDEO_MIME_TYPES.includes(
-        mimeType.toLowerCase() as (typeof ALLOWED_VIDEO_MIME_TYPES)[number]
+        normalizedMimeType as (typeof ALLOWED_VIDEO_MIME_TYPES)[number]
       )
   );
 }
@@ -203,12 +207,16 @@ function inferMimeTypeFromFilename(filename: string) {
     return 'video/mp4';
   }
 
+  if (extension === '.webm') {
+    return 'video/webm';
+  }
+
   return null;
 }
 
 function inferExtensionFromMimeType(mimeType: string) {
   // Choose a storage extension that matches the media type.
-  const normalizedMimeType = mimeType.toLowerCase();
+  const normalizedMimeType = mimeType.split(';')[0]?.trim().toLowerCase();
 
   if (normalizedMimeType === 'video/quicktime') {
     return '.mov';
@@ -216,6 +224,10 @@ function inferExtensionFromMimeType(mimeType: string) {
 
   if (normalizedMimeType === 'video/x-m4v' || normalizedMimeType === 'video/m4v') {
     return '.m4v';
+  }
+
+  if (normalizedMimeType === 'video/webm') {
+    return '.webm';
   }
 
   return '.mp4';
@@ -235,15 +247,15 @@ function assertSupportedVideoFile(fileName: string, mimeType?: string | null) {
   const hasExtension = hasFileExtension(fileName);
 
   if (hasExtension && !isAllowedVideoExtension(fileName)) {
-    throw new Error('Unsupported video file type. Choose an MP4, MOV, or M4V video.');
+    throw new Error('Unsupported video file type. Choose an MP4, MOV, M4V, or WebM video.');
   }
 
   if (mimeType && !isAllowedVideoMimeType(mimeType)) {
-    throw new Error('Unsupported video format. Choose an MP4, MOV, or M4V video.');
+    throw new Error('Unsupported video format. Choose an MP4, MOV, M4V, or WebM video.');
   }
 
   if (!hasExtension && !isAllowedVideoMimeType(mimeType)) {
-    throw new Error('Unable to verify the selected video format. Choose an MP4, MOV, or M4V video.');
+    throw new Error('Unable to verify the selected video format. Choose an MP4, MOV, M4V, or WebM video.');
   }
 }
 
@@ -650,6 +662,7 @@ export async function uploadVideoForAnalysis({
   asset,
   exercise,
   angle,
+  sourceType = 'camera_roll',
   trackingSetup,
   onStatusChange,
   onQuotaWarning,
@@ -754,7 +767,7 @@ export async function uploadVideoForAnalysis({
     id: videoId,
     user_id: user.id,
     storage_path: storagePath,
-    source_type: 'camera_roll',
+    source_type: sourceType,
     exercise_type: normalizedExerciseType,
     view_type: normalizedViewType,
     status: 'uploaded',

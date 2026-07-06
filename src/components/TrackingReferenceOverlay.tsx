@@ -70,13 +70,21 @@ export default function TrackingReferenceOverlay({
     return null;
   }
   const rect = calculateVideoRect(containerSize, videoSize, contentFit);
-  const points = TRACKING_PIN_NAMES.map((name) => ({
-    id: name,
-    x: rect.x + (reference.anchors[name].x * rect.width),
-    y: rect.y + (reference.anchors[name].y * rect.height),
-    labelWidth: name === 'barbell' ? 104 : name === 'shoulder' ? 104 : 76,
-    labelHeight: LABEL_HEIGHT,
-  }));
+  const points = TRACKING_PIN_NAMES.flatMap((name) => {
+    const point = reference.anchors[name];
+
+    if (!point) {
+      return [];
+    }
+
+    return [{
+      id: name,
+      x: rect.x + (point.x * rect.width),
+      y: rect.y + (point.y * rect.height),
+      labelWidth: name === 'barbell' ? 104 : name === 'shoulder' ? 104 : 76,
+      labelHeight: LABEL_HEIGHT,
+    }];
+  });
   const labels = layoutTrackingLabels(points, containerSize, { gap: 7 });
 
   return (

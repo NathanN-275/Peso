@@ -26,16 +26,37 @@ export type BackendApiConfig = {
 };
 
 let loggedLanFallbackWarning = false;
+let loggedIosSimulatorTargetWarning = false;
+let loggedIosSimulatorEnvOverrideWarning = false;
 
 function normalizeBackendApiUrl(value?: string | null) {
   return value?.trim().replace(/\/+$/, '') ?? '';
 }
 
+function getExplicitBackendUrlConfig() {
+  const developmentUrl = normalizeBackendApiUrl(process.env.EXPO_PUBLIC_BACKEND_URL);
+
+  if (developmentUrl) {
+    return {
+      url: developmentUrl,
+      envName: 'EXPO_PUBLIC_BACKEND_URL',
+    };
+  }
+
+  const productionUrl = normalizeBackendApiUrl(process.env.EXPO_PUBLIC_PRODUCTION_BACKEND_URL);
+
+  if (productionUrl) {
+    return {
+      url: productionUrl,
+      envName: 'EXPO_PUBLIC_PRODUCTION_BACKEND_URL',
+    };
+  }
+
+  return null;
+}
+
 function getExplicitBackendUrl() {
-  return (
-    normalizeBackendApiUrl(process.env.EXPO_PUBLIC_BACKEND_URL)
-    || normalizeBackendApiUrl(process.env.EXPO_PUBLIC_PRODUCTION_BACKEND_URL)
-  );
+  return getExplicitBackendUrlConfig()?.url ?? '';
 }
 
 function getBackendPort() {
@@ -124,6 +145,10 @@ function resolveExpoGoLanBackendConfig(): BackendApiConfig {
   };
 }
 
+function isIosSimulatorRuntime() {
+  return Platform.OS === 'ios' && Constants.isDevice === false;
+}
+
 function isIosSimulatorTarget(target: BackendTarget) {
   if (Platform.OS !== 'ios') {
     return false;
@@ -137,8 +162,7 @@ function isIosSimulatorTarget(target: BackendTarget) {
     return false;
   }
 
-  const platform = Constants.platform?.ios?.platform?.toLowerCase();
-  return platform === 'i386' || platform === 'x86_64' || platform === 'arm64';
+  return isIosSimulatorRuntime();
 }
 
 function isAndroidEmulatorTarget(target: BackendTarget) {
@@ -173,7 +197,8 @@ function shouldUseLanAutoForLoopback(target: BackendTarget) {
 }
 
 export function resolveBackendApiConfig(): BackendApiConfig {
-  const explicitUrl = getExplicitBackendUrl();
+  const explicitConfig = getExplicitBackendUrlConfig();
+  const explicitUrl = explicitConfig?.url ?? '';
 
   if (!__DEV__) {
     return {
@@ -183,6 +208,13 @@ export function resolveBackendApiConfig(): BackendApiConfig {
   }
 
   const target = getBackendTarget();
+
+  if (__DEV__ && isIosSimulatorRuntime() && target === 'physical-device' && !loggedIosSimulatorTargetWarning) {
+    loggedIosSimulatorTargetWarning = true;
+    console.warn(
+      '[BackendConfig] iOS Simulator is running with EXPO_PUBLIC_BACKEND_TARGET=physical-device. Use ios-simulator for simulator runs.'
+    );
+  }
 
   if (Platform.OS === 'web') {
     if (explicitUrl && isLoopbackBackendUrl(explicitUrl)) {
@@ -195,6 +227,34 @@ export function resolveBackendApiConfig(): BackendApiConfig {
     return {
       url: buildLocalUrl(getWebBackendHost()),
       source: 'web local default',
+    };
+  }
+
+  if (Platform.OS === 'ios' && target === 'ios-simulator') {
+    if (explicitUrl && isLoopbackBackendUrl(explicitUrl)) {
+      return {
+        url: explicitUrl,
+        source: 'env override',
+      };
+    }
+
+    if (explicitConfig?.envName === 'EXPO_PUBLIC_PRODUCTION_BACKEND_URL' && explicitUrl) {
+      return {
+        url: explicitUrl,
+        source: 'env override',
+      };
+    }
+
+    if (__DEV__ && explicitUrl && !loggedIosSimulatorEnvOverrideWarning) {
+      loggedIosSimulatorEnvOverrideWarning = true;
+      console.warn(
+        `[BackendConfig] Ignoring ${explicitConfig?.envName ?? 'backend URL'}=${explicitUrl} for iOS Simulator. Use localhost or EXPO_PUBLIC_PRODUCTION_BACKEND_URL for deliberate remote API testing.`
+      );
+    }
+
+    return {
+      url: buildLocalUrl('localhost'),
+      source: 'ios simulator default',
     };
   }
 

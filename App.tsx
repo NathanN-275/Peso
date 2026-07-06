@@ -1,7 +1,9 @@
 import './global.css';
 
+import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   Linking,
   LogBox,
   Platform,
@@ -21,12 +23,15 @@ import ResetPasswordFormScreen from './src/screens/ChangePasswordScreen';
 import AnalysisReviewScreen from './src/screens/AnalysisReviewScreen';
 import SavedLiftVideosScreen from './src/screens/SavedLiftVideosScreen';
 import UploadVideoScreen from './src/screens/UploadVideoScreen';
+import WebVideoRecorderScreen from './src/screens/WebVideoRecorderScreen';
+import VideoSetupModal from './src/components/VideoSetupModal';
 import WelcomeScreen from './src/screens/WelcomeScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import { supabase } from './lib/supabase';
 import { deleteSavedVideo, fetchAnalysisResult, getVideoPlaybackUrl } from './lib/backendApi';
 import type { SavedVideo } from './lib/backendApi';
+import type { VideoSetupSelection } from './src/constants/videoSetup';
 import type { VideoAnalysisResult } from './src/types/videoAnalysis';
 
 LogBox.ignoreLogs([
@@ -38,6 +43,7 @@ const AUTH_ROUTES = {
   home: 'home',
   addVideo: 'add-video',
   uploadVideo: 'upload-video',
+  webRecordVideo: 'web-record-video',
   savedLiftVideos: 'saved-lift-videos',
   savedVideoReview: 'saved-video-review',
   profile: 'profile',
@@ -83,6 +89,7 @@ const WEB_ROUTE_HASHES: Record<AuthRoute, string> = {
   [AUTH_ROUTES.home]: '#/home',
   [AUTH_ROUTES.addVideo]: '#/add-video',
   [AUTH_ROUTES.uploadVideo]: '#/upload-video',
+  [AUTH_ROUTES.webRecordVideo]: '#/web-record-video',
   [AUTH_ROUTES.savedLiftVideos]: '#/saved-lift-videos',
   [AUTH_ROUTES.savedVideoReview]: '#/saved-video-review',
   [AUTH_ROUTES.profile]: '#/profile',
@@ -124,6 +131,10 @@ function parseWebAuthRoute(hash: string): AuthRoute {
 
   if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.uploadVideo]) {
     return AUTH_ROUTES.uploadVideo;
+  }
+
+  if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.webRecordVideo]) {
+    return AUTH_ROUTES.webRecordVideo;
   }
 
   if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.savedLiftVideos]) {
@@ -397,7 +408,17 @@ function AppContent() {
     return parseWebAuthLink(window.location.search, window.location.hash).errorMessage;
   });
   const [homeRefreshKey, setHomeRefreshKey] = useState(0);
+  const [uploadSourceMode, setUploadSourceMode] = useState<'camera' | 'library'>('library');
+  const [recordedUploadVideo, setRecordedUploadVideo] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [recordedUploadSetup, setRecordedUploadSetup] = useState<VideoSetupSelection | null>(null);
+  const [recordedReviewSavedVideoId, setRecordedReviewSavedVideoId] = useState<string | null>(null);
+  const [deletingRecordedReviewVideo, setDeletingRecordedReviewVideo] = useState(false);
+  const [pendingRecordingSetup, setPendingRecordingSetup] = useState<VideoSetupSelection | null>(null);
+  const [recordingSetupModalVisible, setRecordingSetupModalVisible] = useState(false);
+  const [recordingSetupResumeKey, setRecordingSetupResumeKey] = useState(0);
+  const [recordingLauncherOpen, setRecordingLauncherOpen] = useState(false);
   const [savedVideos, setSavedVideos] = useState<SavedVideo[]>([]);
+  const [savedVideosLoaded, setSavedVideosLoaded] = useState(false);
   const [selectedSavedExerciseType, setSelectedSavedExerciseType] = useState<string | null>(null);
   const [selectedSavedVideo, setSelectedSavedVideo] = useState<SavedVideo | null>(null);
   const [selectedSavedVideoPlaybackUri, setSelectedSavedVideoPlaybackUri] = useState<string | null>(null);
@@ -410,6 +431,15 @@ function AppContent() {
     // Keep the current route in a ref for async deep-link handlers.
     routeRef.current = route;
   }, [route]);
+
+  useEffect(() => {
+    if (session?.access_token) {
+      return;
+    }
+
+    setSavedVideos([]);
+    setSavedVideosLoaded(false);
+  }, [session?.access_token]);
 
   useEffect(() => {
     // Native links are parsed here so recovery sessions can be hydrated early.
@@ -547,9 +577,216 @@ function AppContent() {
     toResetPassword: () => navigateToAuthRoute(AUTH_ROUTES.resetPassword),
     toResetPasswordForm: () => navigateToAuthRoute(AUTH_ROUTES.resetPasswordForm),
   };
+
+  const handleRecordedVideoAsset = (
+    asset?: ImagePicker.ImagePickerAsset | null,
+    setup: VideoSetupSelection | null = pendingRecordingSetup
+  ) => {
+    if (!asset) {
+      return;
+    }
+
+    setRecordedUploadVideo(asset);
+    setRecordedUploadSetup(setup);
+    setUploadSourceMode('camera');
+    authNavigation.toUploadVideo();
+  };
+
+  const launchRecordingCamera = async (setup: VideoSetupSelection | null = pendingRecordingSetup) => {
+    if (recordingLauncherOpen) {
+      return;
+    }
+
+    setRecordingLauncherOpen(true);
+
+    try {
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['videos'],
+        allowsEditing: true,
+        quality: 1,
+        videoMaxDuration: 0,
+        cameraType: ImagePicker.CameraType.back,
+        ...(Platform.OS === 'ios'
+          ? {
+              videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
+              videoQuality: ImagePicker.UIImagePickerControllerQualityType.High,
+            }
+          : {}),
+      });
+
+      if (result.canceled) {
+        return;
+      }
+
+      handleRecordedVideoAsset(result.assets[0], setup);
+    } finally {
+      setRecordingLauncherOpen(false);
+    }
+  };
+
+  const promptForCameraSettings = () => {
+    Alert.alert(
+      'Camera access needed',
+      'Peso needs camera access to record lift videos.',
+      [
+        {
+          text: 'Accept',
+          onPress: () => {
+            void requestCameraPermissionAndRecord(true);
+          },
+        },
+        {
+          text: 'Settings',
+          onPress: () => {
+            void Linking.openSettings();
+          },
+        },
+      ],
+      { cancelable: true }
+    );
+  };
+
+  const handleWebRecordVideoRoute = () => {
+    setRecordedUploadVideo(null);
+    setUploadSourceMode('camera');
+    navigateToAuthRoute(AUTH_ROUTES.webRecordVideo);
+  };
+
+  const requestCameraPermissionAndRecord = async (
+    forcePrompt = false,
+    setup: VideoSetupSelection | null = pendingRecordingSetup
+  ) => {
+    if (Platform.OS === 'web') {
+      handleWebRecordVideoRoute();
+      return;
+    }
+
+    const currentPermission = await ImagePicker.getCameraPermissionsAsync();
+
+    if (currentPermission.granted) {
+      await launchRecordingCamera(setup);
+      return;
+    }
+
+    if (currentPermission.canAskAgain || forcePrompt) {
+      const requestedPermission = await ImagePicker.requestCameraPermissionsAsync();
+
+      if (requestedPermission.granted) {
+        await launchRecordingCamera(setup);
+        return;
+      }
+    }
+
+    promptForCameraSettings();
+  };
+
+  const handleRecordVideoRoute = () => {
+    setRecordedUploadVideo(null);
+    setRecordedUploadSetup(null);
+    setPendingRecordingSetup(null);
+    setRecordingSetupModalVisible(true);
+  };
+
+  const handleRecordingSetupContinue = (selection: VideoSetupSelection) => {
+    setPendingRecordingSetup(selection);
+    setRecordedUploadSetup(selection);
+    setRecordingSetupModalVisible(false);
+
+    if (route === AUTH_ROUTES.webRecordVideo) {
+      setRecordingSetupResumeKey((key) => key + 1);
+      return;
+    }
+
+    if (Platform.OS === 'web') {
+      handleWebRecordVideoRoute();
+      return;
+    }
+
+    void requestCameraPermissionAndRecord(true, selection);
+  };
+
+  const handleRecordingSetupCancel = () => {
+    setRecordingSetupModalVisible(false);
+
+    if (route === AUTH_ROUTES.webRecordVideo) {
+      setRecordingSetupResumeKey((key) => key + 1);
+    }
+  };
+
+  const handleEditRecordingSetup = () => {
+    setRecordingSetupModalVisible(true);
+  };
+
+  const handleUploadVideoRoute = () => {
+    setRecordedUploadVideo(null);
+    setRecordedUploadSetup(null);
+    setRecordedReviewSavedVideoId(null);
+    setPendingRecordingSetup(null);
+    setUploadSourceMode('library');
+    authNavigation.toUploadVideo();
+  };
+
+  const discardRecordedReviewVideo = async (videoId: string) => {
+    if (!session?.access_token) {
+      throw new Error('You need to be signed in to delete this recording.');
+    }
+
+    await deleteSavedVideo(videoId, session.access_token);
+    setSavedVideos((currentVideos) => currentVideos.filter((video) => video.id !== videoId));
+    setSavedVideosLoaded(false);
+    setHomeRefreshKey((key) => key + 1);
+  };
+
+  const handleUploadBack = async () => {
+    if (deletingRecordedReviewVideo) {
+      return;
+    }
+
+    if (uploadSourceMode === 'camera' && recordedReviewSavedVideoId) {
+      setDeletingRecordedReviewVideo(true);
+      try {
+        await discardRecordedReviewVideo(recordedReviewSavedVideoId);
+      } catch (error) {
+        Alert.alert(
+          'Unable to delete recording',
+          error instanceof Error ? error.message : 'The saved recording could not be deleted. Try again.'
+        );
+        return;
+      } finally {
+        setDeletingRecordedReviewVideo(false);
+      }
+    }
+
+    setRecordedUploadVideo(null);
+    setRecordedUploadSetup(null);
+    setRecordedReviewSavedVideoId(null);
+    setPendingRecordingSetup(null);
+    authNavigation.toAddVideo();
+  };
+  const handleSavedVideosLoaded = (videos: SavedVideo[]) => {
+    setSavedVideos(videos);
+    setSavedVideosLoaded(true);
+  };
   const handleAnalysisSaved = () => {
+    setRecordedUploadVideo(null);
+    setRecordedUploadSetup(null);
+    setRecordedReviewSavedVideoId(null);
+    setSavedVideosLoaded(false);
     setHomeRefreshKey((key) => key + 1);
     authNavigation.toHome();
+  };
+  const handleRecordedAnalysisSaved = (videoId: string) => {
+    const previousSavedVideoId = recordedReviewSavedVideoId;
+
+    setRecordedReviewSavedVideoId(videoId);
+    setSavedVideosLoaded(false);
+    setHomeRefreshKey((key) => key + 1);
+
+    if (previousSavedVideoId && previousSavedVideoId !== videoId && session?.access_token) {
+      deleteSavedVideo(previousSavedVideoId, session.access_token).catch((error) => {
+        console.warn('Unable to discard replaced recorded review video.', error);
+      });
+    }
   };
   const handleOpenSavedLiftFolder = (exerciseType: string) => {
     setSelectedSavedExerciseType(exerciseType);
@@ -596,12 +833,12 @@ function AppContent() {
 
     if (deletedIds.size > 0) {
       setSavedVideos((currentVideos) => currentVideos.filter((video) => !deletedIds.has(video.id)));
+      setSavedVideosLoaded(true);
       setSelectedSavedVideo((currentVideo) => currentVideo && deletedIds.has(currentVideo.id) ? null : currentVideo);
       setSelectedSavedVideoPlaybackUri((currentUri) => deletedIds.has(selectedSavedVideo?.id ?? '') ? null : currentUri);
       setSelectedSavedVideoAnalysisResult((currentResult) =>
         deletedIds.has(selectedSavedVideo?.id ?? '') ? null : currentResult
       );
-      setHomeRefreshKey((key) => key + 1);
     }
 
     if (failedIds.size > 0) {
@@ -753,6 +990,7 @@ function AppContent() {
         route !== AUTH_ROUTES.home &&
         route !== AUTH_ROUTES.addVideo &&
         route !== AUTH_ROUTES.uploadVideo &&
+        route !== AUTH_ROUTES.webRecordVideo &&
         route !== AUTH_ROUTES.savedLiftVideos &&
         route !== AUTH_ROUTES.savedVideoReview &&
         route !== AUTH_ROUTES.profile &&
@@ -772,6 +1010,7 @@ function AppContent() {
       route === AUTH_ROUTES.home ||
       route === AUTH_ROUTES.addVideo ||
       route === AUTH_ROUTES.uploadVideo ||
+      route === AUTH_ROUTES.webRecordVideo ||
       route === AUTH_ROUTES.savedLiftVideos ||
       route === AUTH_ROUTES.savedVideoReview ||
       route === AUTH_ROUTES.profile ||
@@ -848,7 +1087,28 @@ function AppContent() {
 
     if (session && user) {
       if (route === AUTH_ROUTES.uploadVideo) {
-        return <UploadVideoScreen onBack={authNavigation.toAddVideo} onAnalysisSaved={handleAnalysisSaved} />;
+        return (
+          <UploadVideoScreen
+            sourceMode={uploadSourceMode}
+            initialSelectedVideo={recordedUploadVideo}
+            initialVideoSetup={recordedUploadSetup}
+            onBack={handleUploadBack}
+            onRecordVideoPress={Platform.OS === 'web' ? handleRecordVideoRoute : undefined}
+            onAnalysisSaved={uploadSourceMode === 'camera' ? handleRecordedAnalysisSaved : handleAnalysisSaved}
+          />
+        );
+      }
+
+      if (route === AUTH_ROUTES.webRecordVideo) {
+        return (
+          <WebVideoRecorderScreen
+            onBack={authNavigation.toAddVideo}
+            setup={pendingRecordingSetup}
+            setupResumeKey={recordingSetupResumeKey}
+            onEditSetup={handleEditRecordingSetup}
+            onUseRecording={(asset) => handleRecordedVideoAsset(asset, pendingRecordingSetup)}
+          />
+        );
       }
 
       if (
@@ -890,7 +1150,8 @@ function AppContent() {
             onHomePress={handleHomeRoute}
             onAddPress={authNavigation.toAddVideo}
             onProfilePress={handleProfileRoute}
-            onUploadVideoPress={authNavigation.toUploadVideo}
+            onRecordVideoPress={handleRecordVideoRoute}
+            onUploadVideoPress={handleUploadVideoRoute}
           />
         );
       }
@@ -901,7 +1162,9 @@ function AppContent() {
             onHomePress={handleHomeRoute}
             onAddPress={authNavigation.toAddVideo}
             onSettingsPress={authNavigation.toSettings}
-            onSavedVideosLoaded={setSavedVideos}
+            cachedSavedVideos={savedVideos}
+            savedVideosLoaded={savedVideosLoaded}
+            onSavedVideosLoaded={handleSavedVideosLoaded}
           />
         );
       }
@@ -926,7 +1189,9 @@ function AppContent() {
           onNavigateToAddVideo={authNavigation.toAddVideo}
           onNavigateToProfile={handleProfileRoute}
           onOpenSavedLiftFolder={handleOpenSavedLiftFolder}
-          onSavedVideosLoaded={setSavedVideos}
+          cachedSavedVideos={savedVideos}
+          savedVideosLoaded={savedVideosLoaded}
+          onSavedVideosLoaded={handleSavedVideosLoaded}
         />
       );
     }
@@ -973,8 +1238,22 @@ function AppContent() {
     );
   })();
 
+  const appContent = (
+    <>
+      {screenContent}
+      {session && user ? (
+        <VideoSetupModal
+          visible={recordingSetupModalVisible}
+          initialSelection={pendingRecordingSetup}
+          onContinue={handleRecordingSetupContinue}
+          onCancel={handleRecordingSetupCancel}
+        />
+      ) : null}
+    </>
+  );
+
   if (Platform.OS !== 'web') {
-    return screenContent;
+    return appContent;
   }
 
   return (
@@ -989,7 +1268,7 @@ function AppContent() {
         }}
       >
         <View style={styles.phoneFrame}>
-          {screenContent}
+          {appContent}
         </View>
       </ScrollView>
     </View>

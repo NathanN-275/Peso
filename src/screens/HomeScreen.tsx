@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
-import { getSavedVideos } from '../../lib/backendApi';
+import { describeBackendRequestFailure, getSavedVideos } from '../../lib/backendApi';
 import type { SavedVideo } from '../../lib/backendApi';
 import BottomNav, { NAV_HEIGHT } from '../components/BottomNav';
 import tokens from '../theme/tokens';
@@ -25,6 +25,8 @@ type HomeScreenProps = {
   onNavigateToAddVideo?: () => void;
   onNavigateToProfile?: () => void;
   onOpenSavedLiftFolder?: (exerciseType: string) => void;
+  cachedSavedVideos?: SavedVideo[];
+  savedVideosLoaded?: boolean;
   onSavedVideosLoaded?: (videos: SavedVideo[]) => void;
 };
 
@@ -112,16 +114,29 @@ export default function HomeScreen({
   onNavigateToAddVideo,
   onNavigateToProfile,
   onOpenSavedLiftFolder,
+  cachedSavedVideos = [],
+  savedVideosLoaded = false,
   onSavedVideosLoaded,
 }: HomeScreenProps) {
   const { session } = useAuth();
-  const [loading, setLoading] = useState(true);
-  const [savedVideos, setSavedVideos] = useState<SavedVideo[]>([]);
+  const [loading, setLoading] = useState(!savedVideosLoaded);
+  const [savedVideos, setSavedVideos] = useState<SavedVideo[]>(cachedSavedVideos);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    if (!savedVideosLoaded) {
+      return;
+    }
+
+    setSavedVideos(cachedSavedVideos);
+    setLoadError(null);
+    setLoading(false);
+  }, [cachedSavedVideos, savedVideosLoaded]);
+
+  useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
 
     const loadSavedVideos = async () => {
       if (!session?.access_token) {
@@ -131,11 +146,17 @@ export default function HomeScreen({
         return;
       }
 
+      if (savedVideosLoaded) {
+        setLoading(false);
+        setLoadError(null);
+        return;
+      }
+
       setLoading(true);
       setLoadError(null);
 
       try {
-        const videos = await getSavedVideos(session.access_token);
+        const videos = await getSavedVideos(session.access_token, controller.signal);
 
         if (cancelled) {
           return;
@@ -157,8 +178,17 @@ export default function HomeScreen({
         setSavedVideos(videos);
         onSavedVideosLoaded?.(videos);
       } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          return;
+        }
+
+        const message = await describeBackendRequestFailure(
+          error,
+          'Unable to load saved videos.'
+        );
+
         if (!cancelled) {
-          setLoadError(error instanceof Error ? error.message : 'Unable to load saved videos.');
+          setLoadError(message);
         }
       } finally {
         if (!cancelled) {
@@ -171,8 +201,9 @@ export default function HomeScreen({
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [session?.access_token, refreshKey, reloadKey]);
+  }, [session?.access_token, refreshKey, reloadKey, savedVideosLoaded]);
 
   const groups = useMemo(() => groupSavedVideos(savedVideos), [savedVideos]);
 
@@ -325,6 +356,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 12,
+    paddingHorizontal: 18,
   },
   stateText: {
     color: tokens.colors.textMuted,
