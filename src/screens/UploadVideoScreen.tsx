@@ -54,6 +54,7 @@ import { createLocalVideoThumbnail, getUriScheme } from '../utils/localVideoThum
 type UploadVideoScreenProps = {
   sourceMode?: 'camera' | 'library';
   initialSelectedVideo?: ImagePicker.ImagePickerAsset | null;
+  initialVideoSetup?: VideoSetupSelection | null;
   onBack?: () => void;
   onRecordVideoPress?: () => void;
   onAnalysisSaved?: () => void;
@@ -108,6 +109,7 @@ function formatPercent(value?: number | null) {
 export default function UploadVideoScreen({
   sourceMode = 'library',
   initialSelectedVideo = null,
+  initialVideoSetup = null,
   onBack,
   onRecordVideoPress,
   onAnalysisSaved,
@@ -118,8 +120,8 @@ export default function UploadVideoScreen({
   const [permissionStatus, setPermissionStatus] = useState<ImagePicker.PermissionStatus | null>(null);
   const [cameraPermissionStatus, setCameraPermissionStatus] = useState<ImagePicker.PermissionStatus | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [setupModalVisible, setSetupModalVisible] = useState(true);
-  const [videoSetup, setVideoSetup] = useState<VideoSetupSelection | null>(null);
+  const [setupModalVisible, setSetupModalVisible] = useState(!initialVideoSetup);
+  const [videoSetup, setVideoSetup] = useState<VideoSetupSelection | null>(initialVideoSetup);
   const [selectedVideo, setSelectedVideo] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [trackingSetup, setTrackingSetup] = useState<TrackingSetup | null>(null);
   const [trackingDetailsExpanded, setTrackingDetailsExpanded] = useState(false);
@@ -196,8 +198,29 @@ export default function UploadVideoScreen({
 
     initializedVideoUriRef.current = initialSelectedVideo.uri;
     handleSelectedVideo(initialSelectedVideo);
-    setSetupModalVisible(true);
-  }, [initialSelectedVideo?.uri]);
+    setSetupModalVisible(!initialVideoSetup);
+  }, [initialSelectedVideo?.uri, initialVideoSetup]);
+
+  useEffect(() => {
+    if (!initialVideoSetup) {
+      return;
+    }
+
+    setVideoSetup((currentSetup) => {
+      const setupChanged =
+        currentSetup?.exercise !== initialVideoSetup.exercise ||
+        currentSetup?.angle !== initialVideoSetup.angle;
+
+      if (setupChanged) {
+        setTrackingSetup(null);
+        setTrackingDetailsExpanded(false);
+        setRemovePinsDialogVisible(false);
+      }
+
+      return initialVideoSetup;
+    });
+    setSetupModalVisible(false);
+  }, [initialVideoSetup]);
 
   const handleStartAnalysis = async () => {
     // Upload first, then ask the backend to begin analysis.

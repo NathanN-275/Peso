@@ -24,12 +24,14 @@ import AnalysisReviewScreen from './src/screens/AnalysisReviewScreen';
 import SavedLiftVideosScreen from './src/screens/SavedLiftVideosScreen';
 import UploadVideoScreen from './src/screens/UploadVideoScreen';
 import WebVideoRecorderScreen from './src/screens/WebVideoRecorderScreen';
+import VideoSetupModal from './src/components/VideoSetupModal';
 import WelcomeScreen from './src/screens/WelcomeScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import { supabase } from './lib/supabase';
 import { deleteSavedVideo, fetchAnalysisResult, getVideoPlaybackUrl } from './lib/backendApi';
 import type { SavedVideo } from './lib/backendApi';
+import type { VideoSetupSelection } from './src/constants/videoSetup';
 import type { VideoAnalysisResult } from './src/types/videoAnalysis';
 
 LogBox.ignoreLogs([
@@ -408,6 +410,10 @@ function AppContent() {
   const [homeRefreshKey, setHomeRefreshKey] = useState(0);
   const [uploadSourceMode, setUploadSourceMode] = useState<'camera' | 'library'>('library');
   const [recordedUploadVideo, setRecordedUploadVideo] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [recordedUploadSetup, setRecordedUploadSetup] = useState<VideoSetupSelection | null>(null);
+  const [pendingRecordingSetup, setPendingRecordingSetup] = useState<VideoSetupSelection | null>(null);
+  const [recordingSetupModalVisible, setRecordingSetupModalVisible] = useState(false);
+  const [recordingSetupResumeKey, setRecordingSetupResumeKey] = useState(0);
   const [recordingLauncherOpen, setRecordingLauncherOpen] = useState(false);
   const [savedVideos, setSavedVideos] = useState<SavedVideo[]>([]);
   const [savedVideosLoaded, setSavedVideosLoaded] = useState(false);
@@ -570,17 +576,21 @@ function AppContent() {
     toResetPasswordForm: () => navigateToAuthRoute(AUTH_ROUTES.resetPasswordForm),
   };
 
-  const handleRecordedVideoAsset = (asset?: ImagePicker.ImagePickerAsset | null) => {
+  const handleRecordedVideoAsset = (
+    asset?: ImagePicker.ImagePickerAsset | null,
+    setup: VideoSetupSelection | null = pendingRecordingSetup
+  ) => {
     if (!asset) {
       return;
     }
 
     setRecordedUploadVideo(asset);
+    setRecordedUploadSetup(setup);
     setUploadSourceMode('camera');
     authNavigation.toUploadVideo();
   };
 
-  const launchRecordingCamera = async () => {
+  const launchRecordingCamera = async (setup: VideoSetupSelection | null = pendingRecordingSetup) => {
     if (recordingLauncherOpen) {
       return;
     }
@@ -606,7 +616,7 @@ function AppContent() {
         return;
       }
 
-      handleRecordedVideoAsset(result.assets[0]);
+      handleRecordedVideoAsset(result.assets[0], setup);
     } finally {
       setRecordingLauncherOpen(false);
     }
@@ -640,7 +650,10 @@ function AppContent() {
     navigateToAuthRoute(AUTH_ROUTES.webRecordVideo);
   };
 
-  const requestCameraPermissionAndRecord = async (forcePrompt = false) => {
+  const requestCameraPermissionAndRecord = async (
+    forcePrompt = false,
+    setup: VideoSetupSelection | null = pendingRecordingSetup
+  ) => {
     if (Platform.OS === 'web') {
       handleWebRecordVideoRoute();
       return;
@@ -649,7 +662,7 @@ function AppContent() {
     const currentPermission = await ImagePicker.getCameraPermissionsAsync();
 
     if (currentPermission.granted) {
-      await launchRecordingCamera();
+      await launchRecordingCamera(setup);
       return;
     }
 
@@ -657,7 +670,7 @@ function AppContent() {
       const requestedPermission = await ImagePicker.requestCameraPermissionsAsync();
 
       if (requestedPermission.granted) {
-        await launchRecordingCamera();
+        await launchRecordingCamera(setup);
         return;
       }
     }
@@ -666,15 +679,52 @@ function AppContent() {
   };
 
   const handleRecordVideoRoute = () => {
-    void requestCameraPermissionAndRecord(true);
+    setRecordedUploadVideo(null);
+    setRecordedUploadSetup(null);
+    setPendingRecordingSetup(null);
+    setRecordingSetupModalVisible(true);
   };
+
+  const handleRecordingSetupContinue = (selection: VideoSetupSelection) => {
+    setPendingRecordingSetup(selection);
+    setRecordedUploadSetup(selection);
+    setRecordingSetupModalVisible(false);
+
+    if (route === AUTH_ROUTES.webRecordVideo) {
+      setRecordingSetupResumeKey((key) => key + 1);
+      return;
+    }
+
+    if (Platform.OS === 'web') {
+      handleWebRecordVideoRoute();
+      return;
+    }
+
+    void requestCameraPermissionAndRecord(true, selection);
+  };
+
+  const handleRecordingSetupCancel = () => {
+    setRecordingSetupModalVisible(false);
+
+    if (route === AUTH_ROUTES.webRecordVideo) {
+      setRecordingSetupResumeKey((key) => key + 1);
+    }
+  };
+
+  const handleEditRecordingSetup = () => {
+    setRecordingSetupModalVisible(true);
+  };
+
   const handleUploadVideoRoute = () => {
     setRecordedUploadVideo(null);
+    setRecordedUploadSetup(null);
+    setPendingRecordingSetup(null);
     setUploadSourceMode('library');
     authNavigation.toUploadVideo();
   };
   const handleUploadBack = () => {
     setRecordedUploadVideo(null);
+    setRecordedUploadSetup(null);
     authNavigation.toAddVideo();
   };
   const handleSavedVideosLoaded = (videos: SavedVideo[]) => {
@@ -683,6 +733,7 @@ function AppContent() {
   };
   const handleAnalysisSaved = () => {
     setRecordedUploadVideo(null);
+    setRecordedUploadSetup(null);
     setSavedVideosLoaded(false);
     setHomeRefreshKey((key) => key + 1);
     authNavigation.toHome();
@@ -990,8 +1041,9 @@ function AppContent() {
           <UploadVideoScreen
             sourceMode={uploadSourceMode}
             initialSelectedVideo={recordedUploadVideo}
+            initialVideoSetup={recordedUploadSetup}
             onBack={handleUploadBack}
-            onRecordVideoPress={Platform.OS === 'web' ? handleWebRecordVideoRoute : undefined}
+            onRecordVideoPress={Platform.OS === 'web' ? handleRecordVideoRoute : undefined}
             onAnalysisSaved={handleAnalysisSaved}
           />
         );
@@ -1001,7 +1053,10 @@ function AppContent() {
         return (
           <WebVideoRecorderScreen
             onBack={authNavigation.toAddVideo}
-            onUseRecording={handleRecordedVideoAsset}
+            setup={pendingRecordingSetup}
+            setupResumeKey={recordingSetupResumeKey}
+            onEditSetup={handleEditRecordingSetup}
+            onUseRecording={(asset) => handleRecordedVideoAsset(asset, pendingRecordingSetup)}
           />
         );
       }
@@ -1133,8 +1188,22 @@ function AppContent() {
     );
   })();
 
+  const appContent = (
+    <>
+      {screenContent}
+      {session && user ? (
+        <VideoSetupModal
+          visible={recordingSetupModalVisible}
+          initialSelection={pendingRecordingSetup}
+          onContinue={handleRecordingSetupContinue}
+          onCancel={handleRecordingSetupCancel}
+        />
+      ) : null}
+    </>
+  );
+
   if (Platform.OS !== 'web') {
-    return screenContent;
+    return appContent;
   }
 
   return (
@@ -1149,7 +1218,7 @@ function AppContent() {
         }}
       >
         <View style={styles.phoneFrame}>
-          {screenContent}
+          {appContent}
         </View>
       </ScrollView>
     </View>
