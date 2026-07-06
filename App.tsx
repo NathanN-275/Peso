@@ -23,6 +23,7 @@ import ResetPasswordFormScreen from './src/screens/ChangePasswordScreen';
 import AnalysisReviewScreen from './src/screens/AnalysisReviewScreen';
 import SavedLiftVideosScreen from './src/screens/SavedLiftVideosScreen';
 import UploadVideoScreen from './src/screens/UploadVideoScreen';
+import WebVideoRecorderScreen from './src/screens/WebVideoRecorderScreen';
 import WelcomeScreen from './src/screens/WelcomeScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
@@ -40,6 +41,7 @@ const AUTH_ROUTES = {
   home: 'home',
   addVideo: 'add-video',
   uploadVideo: 'upload-video',
+  webRecordVideo: 'web-record-video',
   savedLiftVideos: 'saved-lift-videos',
   savedVideoReview: 'saved-video-review',
   profile: 'profile',
@@ -85,6 +87,7 @@ const WEB_ROUTE_HASHES: Record<AuthRoute, string> = {
   [AUTH_ROUTES.home]: '#/home',
   [AUTH_ROUTES.addVideo]: '#/add-video',
   [AUTH_ROUTES.uploadVideo]: '#/upload-video',
+  [AUTH_ROUTES.webRecordVideo]: '#/web-record-video',
   [AUTH_ROUTES.savedLiftVideos]: '#/saved-lift-videos',
   [AUTH_ROUTES.savedVideoReview]: '#/saved-video-review',
   [AUTH_ROUTES.profile]: '#/profile',
@@ -126,6 +129,10 @@ function parseWebAuthRoute(hash: string): AuthRoute {
 
   if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.uploadVideo]) {
     return AUTH_ROUTES.uploadVideo;
+  }
+
+  if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.webRecordVideo]) {
+    return AUTH_ROUTES.webRecordVideo;
   }
 
   if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.savedLiftVideos]) {
@@ -573,30 +580,6 @@ function AppContent() {
     authNavigation.toUploadVideo();
   };
 
-  const launchRecordingWebFallback = async () => {
-    if (recordingLauncherOpen) {
-      return;
-    }
-
-    setRecordingLauncherOpen(true);
-
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['videos'],
-        allowsEditing: false,
-        quality: 1,
-      });
-
-      if (result.canceled) {
-        return;
-      }
-
-      handleRecordedVideoAsset(result.assets[0]);
-    } finally {
-      setRecordingLauncherOpen(false);
-    }
-  };
-
   const launchRecordingCamera = async () => {
     if (recordingLauncherOpen) {
       return;
@@ -651,9 +634,15 @@ function AppContent() {
     );
   };
 
+  const handleWebRecordVideoRoute = () => {
+    setRecordedUploadVideo(null);
+    setUploadSourceMode('camera');
+    navigateToAuthRoute(AUTH_ROUTES.webRecordVideo);
+  };
+
   const requestCameraPermissionAndRecord = async (forcePrompt = false) => {
     if (Platform.OS === 'web') {
-      await launchRecordingWebFallback();
+      handleWebRecordVideoRoute();
       return;
     }
 
@@ -900,6 +889,7 @@ function AppContent() {
         route !== AUTH_ROUTES.home &&
         route !== AUTH_ROUTES.addVideo &&
         route !== AUTH_ROUTES.uploadVideo &&
+        route !== AUTH_ROUTES.webRecordVideo &&
         route !== AUTH_ROUTES.savedLiftVideos &&
         route !== AUTH_ROUTES.savedVideoReview &&
         route !== AUTH_ROUTES.profile &&
@@ -919,6 +909,7 @@ function AppContent() {
       route === AUTH_ROUTES.home ||
       route === AUTH_ROUTES.addVideo ||
       route === AUTH_ROUTES.uploadVideo ||
+      route === AUTH_ROUTES.webRecordVideo ||
       route === AUTH_ROUTES.savedLiftVideos ||
       route === AUTH_ROUTES.savedVideoReview ||
       route === AUTH_ROUTES.profile ||
@@ -1000,7 +991,17 @@ function AppContent() {
             sourceMode={uploadSourceMode}
             initialSelectedVideo={recordedUploadVideo}
             onBack={handleUploadBack}
+            onRecordVideoPress={Platform.OS === 'web' ? handleWebRecordVideoRoute : undefined}
             onAnalysisSaved={handleAnalysisSaved}
+          />
+        );
+      }
+
+      if (route === AUTH_ROUTES.webRecordVideo) {
+        return (
+          <WebVideoRecorderScreen
+            onBack={authNavigation.toAddVideo}
+            onUseRecording={handleRecordedVideoAsset}
           />
         );
       }

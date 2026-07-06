@@ -12,12 +12,13 @@ from .config import get_settings
 from .supabase_client import get_supabase_admin_client
 
 
-ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v"}
+ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm"}
 ALLOWED_VIDEO_MIME_TYPES = {
   "video/mp4",
   "video/quicktime",
   "video/x-m4v",
   "video/m4v",
+  "video/webm",
 }
 DEFAULT_CACHE_CONTROL_SECONDS = "3600"
 IMMUTABLE_CACHE_CONTROL_SECONDS = "31536000"
@@ -102,16 +103,18 @@ class StorageService:
     if extension not in ALLOWED_VIDEO_EXTENSIONS:
       raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Unsupported video file type. Upload an MP4, MOV, or M4V file.",
+        detail="Unsupported video file type. Upload an MP4, MOV, M4V, or WebM file.",
       )
 
     object_info = self.get_object_info(storage_path)
     mime_type = _metadata_value(object_info, "mimetype", "mimeType", "contentType", "content_type")
 
-    if not isinstance(mime_type, str) or mime_type.lower() not in ALLOWED_VIDEO_MIME_TYPES:
+    normalized_mime_type = mime_type.split(";", 1)[0].strip().lower() if isinstance(mime_type, str) else None
+
+    if normalized_mime_type not in ALLOWED_VIDEO_MIME_TYPES:
       raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Unsupported video MIME type. Upload an MP4, MOV, or M4V video.",
+        detail="Unsupported video MIME type. Upload an MP4, MOV, M4V, or WebM video.",
       )
 
     size_bytes = _parse_size_bytes(

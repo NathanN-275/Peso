@@ -55,6 +55,7 @@ type UploadVideoScreenProps = {
   sourceMode?: 'camera' | 'library';
   initialSelectedVideo?: ImagePicker.ImagePickerAsset | null;
   onBack?: () => void;
+  onRecordVideoPress?: () => void;
   onAnalysisSaved?: () => void;
 };
 
@@ -108,6 +109,7 @@ export default function UploadVideoScreen({
   sourceMode = 'library',
   initialSelectedVideo = null,
   onBack,
+  onRecordVideoPress,
   onAnalysisSaved,
 }: UploadVideoScreenProps) {
   // This screen handles selection, upload, queueing, and polling.
@@ -388,7 +390,7 @@ export default function UploadVideoScreen({
 
   const launchCamera = async () => {
     if (isWeb) {
-      await launchPicker();
+      onRecordVideoPress?.();
       return;
     }
 
@@ -516,7 +518,7 @@ export default function UploadVideoScreen({
 
   const requestCameraPermission = async (forcePrompt = false) => {
     if (isWeb) {
-      await launchPicker();
+      onRecordVideoPress?.();
       return;
     }
 
@@ -782,7 +784,7 @@ export default function UploadVideoScreen({
     }
 
     if (isWeb) {
-      void launchPicker();
+      onRecordVideoPress?.();
       return;
     }
 
@@ -799,14 +801,14 @@ export default function UploadVideoScreen({
   const resolvedFileSize = formatFileSize(displayedVideoSizeBytes ?? selectedVideo?.fileSize);
   const inlineMessage = errorMessage ?? statusMessage;
   const isCameraMode = sourceMode === 'camera';
-  const screenTitle = isCameraMode ? (isWeb ? 'Test Recorded Video' : 'Record Video') : 'Upload Video';
+  const screenTitle = isCameraMode ? (isWeb ? 'Review Recording' : 'Record Video') : 'Upload Video';
   const screenCopy = isCameraMode
     ? isWeb
-      ? 'Confirm the exercise and camera angle, then choose a recorded video to test the recording flow.'
+      ? 'Confirm the exercise and camera angle, then start analysis.'
       : 'Confirm the exercise and camera angle, then record and trim your lift.'
     : 'Confirm the exercise and camera angle, then select a video from your camera roll.';
-  const chooseVideoLabel = isCameraMode ? (isWeb ? 'Choose Recorded Video' : 'Record Video') : 'Choose Video';
-  const changeVideoLabel = isCameraMode ? (isWeb ? 'Choose Another Recording' : 'Record Again') : 'Choose Another Video';
+  const chooseVideoLabel = isCameraMode ? 'Record Video' : 'Choose Video';
+  const changeVideoLabel = isCameraMode ? 'Record Again' : 'Choose Another Video';
   const diagnostics = analysisResult?.diagnostics;
   const videoQualityRows = diagnostics
     ? [
