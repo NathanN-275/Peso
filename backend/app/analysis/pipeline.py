@@ -14,8 +14,10 @@ from .barbell_tracker import BarbellTracker
 from .feedback_engine import build_depth_summary_debug, build_feedback
 from .exercises.squat import SquatAnalyzer
 from .manual_tracking import (
+  USER_BODY_ANCHORS,
   barbell_track_priors,
   fuse_manual_body_tracks,
+  fuse_partial_manual_body_tracks,
   track_manual_anchors,
   validate_tracking_setup,
 )
@@ -101,7 +103,12 @@ def _apply_tracking_assistance(
       width=width,
       height=height,
     )
-    fused_frames, fusion = fuse_manual_body_tracks(
+    has_complete_body_chain = all(
+      name in (validated_setup.get("anchors") or {})
+      for name in USER_BODY_ANCHORS
+    )
+    body_fuser = fuse_manual_body_tracks if has_complete_body_chain else fuse_partial_manual_body_tracks
+    fused_frames, fusion = body_fuser(
       estimation.get("frames") or [],
       setup=validated_setup,
       tracking=tracking,
@@ -144,7 +151,11 @@ def _apply_tracking_assistance(
               for name, point in validated_setup["anchors"].items()
               if name != "upper_back"
             },
-            "shoulder": copy.deepcopy(validated_setup["anchors"]["upper_back"]),
+            **(
+              {"shoulder": copy.deepcopy(validated_setup["anchors"]["upper_back"])}
+              if "upper_back" in validated_setup["anchors"]
+              else {}
+            ),
           },
         },
       }

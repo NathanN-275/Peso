@@ -34,14 +34,14 @@ export type TrackingSetup = {
   version: 1;
   reference_time_ms: number;
   barbell_target: 'near_side_collar';
-  anchors: Record<TrackingPinName, NormalizedTrackingPoint>;
+  anchors: Partial<Record<TrackingPinName, NormalizedTrackingPoint>>;
 };
 
 export type TrackingReference = {
   version: 1;
   timeMs: number;
   selectedSide?: 'left' | 'right' | null;
-  anchors: Record<TrackingPinName, NormalizedTrackingPoint>;
+  anchors: Partial<Record<TrackingPinName, NormalizedTrackingPoint>>;
 };
 
 export type TrackingAssistance = {

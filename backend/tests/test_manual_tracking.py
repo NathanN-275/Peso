@@ -91,11 +91,28 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertIsNone(error)
     self.assertEqual(validated["anchors"]["barbell"]["x"], 0.5)
 
-  def test_validate_tracking_setup_rejects_missing_and_misordered_points(self) -> None:
-    missing = tracking_setup()
-    del missing["anchors"]["knee"]
-    self.assertEqual(validate_tracking_setup(missing)[1], "missing_knee_anchor")
+  def test_validate_tracking_setup_accepts_partial_payload(self) -> None:
+    partial = tracking_setup()
+    partial["anchors"] = {
+      "hip": partial["anchors"]["hip"],
+      "barbell": partial["anchors"]["barbell"],
+    }
 
+    validated, error = validate_tracking_setup(partial, duration_ms=1000)
+
+    self.assertIsNone(error)
+    self.assertEqual(set(validated["anchors"]), {"hip", "barbell"})
+
+  def test_validate_tracking_setup_rejects_empty_and_unknown_anchors(self) -> None:
+    empty = tracking_setup()
+    empty["anchors"] = {}
+    self.assertEqual(validate_tracking_setup(empty)[1], "empty_tracking_anchors")
+
+    unknown = tracking_setup()
+    unknown["anchors"]["wrist"] = {"x": 0.4, "y": 0.4}
+    self.assertEqual(validate_tracking_setup(unknown)[1], "unsupported_wrist_anchor")
+
+  def test_validate_tracking_setup_rejects_misordered_points_when_chain_available(self) -> None:
     misordered = tracking_setup()
     misordered["anchors"]["hip"]["y"] = 0.1
     self.assertEqual(validate_tracking_setup(misordered)[1], "invalid_body_anchor_order")
@@ -1040,15 +1057,82 @@ class ManualTrackingTest(unittest.TestCase):
       },
     )
 
+  def test_pipeline_accepts_single_body_pin_without_full_chain(self) -> None:
+    setup = tracking_setup()
+    setup["anchors"] = {"hip": setup["anchors"]["hip"]}
+    estimation = {
+      "duration_ms": 1000,
+      "frames": [pose_frame()],
+      "fps": 10.0,
+      "processed_frame_width": 160,
+      "processed_frame_height": 120,
+    }
+    tracked = {
+      "tracks": {
+        "hip": {1: {**tracking_setup()["anchors"]["hip"], "confidence": 0.9, "tracking_state": "reference"}},
+      },
+      "reference_source_index": 1,
+      "coverage": {"hip": 1.0},
+    }
+
+    with patch("app.analysis.pipeline.track_manual_anchors", return_value=tracked):
+      assisted = _apply_tracking_assistance(
+        file_path="unused.mov",
+        video={"id": "video-1", "tracking_setup": setup},
+        estimation=estimation,
+      )
+
+    self.assertEqual(assisted["tracking_assistance"]["actualMode"], "pin_assisted")
+    self.assertTrue(assisted["tracking_assistance"]["used"])
+    self.assertEqual(assisted["tracking_assistance"]["pinOwnedLandmarkCount"], 1)
+    self.assertTrue(assisted["frames"][0]["landmarks"]["left_hip"]["partial_pin_assisted"])
+    self.assertNotIn("partial_pin_assisted", assisted["frames"][0]["landmarks"]["left_knee"])
+
+  def test_pipeline_accepts_barbell_only_setup_without_body_fusion(self) -> None:
+    setup = tracking_setup()
+    setup["anchors"] = {"barbell": setup["anchors"]["barbell"]}
+    estimation = {
+      "duration_ms": 1000,
+      "frames": [pose_frame()],
+      "fps": 10.0,
+      "processed_frame_width": 160,
+      "processed_frame_height": 120,
+    }
+    tracked = {
+      "tracks": {
+        "barbell": {1: {**tracking_setup()["anchors"]["barbell"], "confidence": 0.9, "tracking_state": "reference"}},
+      },
+      "reference_source_index": 1,
+      "coverage": {"barbell": 1.0},
+    }
+
+    with patch("app.analysis.pipeline.track_manual_anchors", return_value=tracked):
+      assisted = _apply_tracking_assistance(
+        file_path="unused.mov",
+        video={"id": "video-1", "tracking_setup": setup},
+        estimation=estimation,
+      )
+
+    self.assertEqual(assisted["tracking_assistance"]["actualMode"], "automatic_fallback")
+    self.assertFalse(assisted["tracking_assistance"]["used"])
+    self.assertEqual(assisted["manual_tracking"]["tracks"]["barbell"][1]["confidence"], 0.9)
+    self.assertEqual(assisted["tracking_assistance"]["reference"]["anchors"], {"barbell": setup["anchors"]["barbell"]})
+
   def test_pipeline_marks_manual_collar_points_as_pin_assisted(self) -> None:
     tracker = BarbellTracker()
     tracker.manual_seed_count = 3
     tracker.manual_point_count = 3
     tracker.automatic_point_count = 2
-    tracker.track = lambda *args, **kwargs: {
-      "barbellPath": {"available": True, "coverage": 1.0, "points": []},
-      "diagnostics": {"manual_point_count": 3, "automatic_point_count": 2},
-    }
+    barbell_track = {1: {**tracking_setup()["anchors"]["barbell"], "confidence": 0.9}}
+
+    def track_with_manual_prior(*args, **kwargs):
+      self.assertEqual(kwargs["manual_barbell_priors"], barbell_track)
+      return {
+        "barbellPath": {"available": True, "coverage": 1.0, "points": []},
+        "diagnostics": {"manual_point_count": 3, "automatic_point_count": 2},
+      }
+
+    tracker.track = track_with_manual_prior
     result = {
       "reps": [],
       "trackingAssistance": {
@@ -1064,7 +1148,7 @@ class ManualTrackingTest(unittest.TestCase):
         result=result,
         video={"id": "video-1", "exercise_type": "squat", "view_type": "side"},
         file_path="unused.mov",
-        estimation={"frames": [], "frame_step": 1, "manual_tracking": {"tracks": {}}},
+        estimation={"frames": [], "frame_step": 1, "manual_tracking": {"tracks": {"barbell": barbell_track}}},
       )
 
     assistance = result["trackingAssistance"]

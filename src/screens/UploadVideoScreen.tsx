@@ -206,21 +206,18 @@ export default function UploadVideoScreen({
       return;
     }
 
-    setVideoSetup((currentSetup) => {
-      const setupChanged =
-        currentSetup?.exercise !== initialVideoSetup.exercise ||
-        currentSetup?.angle !== initialVideoSetup.angle;
+    const setupChanged =
+      videoSetup?.exercise !== initialVideoSetup.exercise ||
+      videoSetup?.angle !== initialVideoSetup.angle;
 
-      if (setupChanged) {
-        setTrackingSetup(null);
-        setTrackingDetailsExpanded(false);
-        setRemovePinsDialogVisible(false);
-      }
-
-      return initialVideoSetup;
-    });
+    setVideoSetup(initialVideoSetup);
+    if (setupChanged) {
+      setTrackingSetup(null);
+      setTrackingDetailsExpanded(false);
+      setRemovePinsDialogVisible(false);
+    }
     setSetupModalVisible(false);
-  }, [initialVideoSetup]);
+  }, [initialVideoSetup, videoSetup?.angle, videoSetup?.exercise]);
 
   const handleStartAnalysis = async () => {
     // Upload first, then ask the backend to begin analysis.
@@ -1031,7 +1028,7 @@ export default function UploadVideoScreen({
               {trackingDetailsExpanded ? (
                 <View style={styles.trackingDetails}>
                   <Text style={styles.trackingSetupDescription}>
-                    Place five pins on one clear frame to help the pose and barbell trackers stay locked on you.
+                    Place any visible pins on one clear frame to help the pose and barbell trackers stay locked on you.
                   </Text>
                   <Text style={styles.accuracyDisclaimer}>
                     Automatic tracking may be less accurate when joints or the barbell are obscured.
