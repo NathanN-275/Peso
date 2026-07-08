@@ -4,15 +4,18 @@ import { Platform } from 'react-native';
 import type { VideoCompressorType } from 'react-native-compressor';
 import { CameraAngle, ExerciseOption } from '../src/constants/videoSetup';
 import type { TrackingSetup } from '../src/types/trackingSetup';
-import { fetchStorageUsage, fetchVideoCapabilities } from './backendApi';
+import {
+  fetchStorageUsage,
+  fetchVideoCapabilities,
+  markVideoUploadFailed,
+  registerUploadedVideo,
+} from './backendApi';
 import { getFreshBackendAccessToken } from './backendAuth';
 import {
   shouldCheckPinTrackingCapability,
   verifyPinTrackingCapability,
 } from './pinTrackingCapabilityPolicy';
 import { supabase, supabaseConfigError } from './supabase';
-import { getVideoInsertRetryMode, omitLegacyStorageMetadata } from './videoUploadInsertPolicy';
-import { withOptionalTrackingSetup } from './videoUploadPayload';
 
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = resolveFrontendMaxUploadBytes();
@@ -22,7 +25,6 @@ const TARGET_MAX_DIMENSION = 1280;
 const MIN_POSE_BITRATE = 1_800_000;
 const MAX_POSE_BITRATE = 2_500_000;
 const AUDIO_BITRATE_RESERVE = 128_000;
-const PENDING_VIDEO_TTL_MS = 24 * 60 * 60 * 1000;
 const UPLOAD_LIMIT_LABEL = `${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))} MB`;
 const ALLOWED_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.m4v', '.webm'] as const;
 const ALLOWED_VIDEO_MIME_TYPES = [
@@ -589,7 +591,16 @@ export async function cleanupUploadedVideoForAnalysis({
     return;
   }
 
-  let storageRemoved = false;
+  try {
+    const accessToken = await getFreshBackendAccessToken();
+    await markVideoUploadFailed(videoId, accessToken);
+    return;
+  } catch (error) {
+    logVideoUploadWarning('Failed to mark uploaded video as failed through the backend.', {
+      videoId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 
   const {
     data: { user },
@@ -618,43 +629,7 @@ export async function cleanupUploadedVideoForAnalysis({
         storagePath,
         error: formatSupabaseError(removeError),
       });
-    } else {
-      storageRemoved = true;
     }
-  }
-
-  if (storageRemoved) {
-    let deleteQuery = supabase.from('videos').delete().eq('id', videoId);
-
-    if (user?.id) {
-      deleteQuery = deleteQuery.eq('user_id', user.id);
-    }
-
-    const { error: deleteError } = await deleteQuery;
-
-    if (!deleteError) {
-      return;
-    }
-
-    logVideoUploadWarning('Failed to delete uploaded video row during cleanup.', {
-      videoId,
-      error: formatSupabaseError(deleteError),
-    });
-  }
-
-  let updateQuery = supabase.from('videos').update({ status: 'failed' }).eq('id', videoId);
-
-  if (user?.id) {
-    updateQuery = updateQuery.eq('user_id', user.id);
-  }
-
-  const { error: updateError } = await updateQuery;
-
-  if (updateError) {
-    logVideoUploadWarning('Failed to mark uploaded video row as failed during cleanup.', {
-      videoId,
-      error: formatSupabaseError(updateError),
-    });
   }
 }
 
@@ -761,103 +736,41 @@ export async function uploadVideoForAnalysis({
   const videoId = createUuid();
   const normalizedExerciseType = normalizeExerciseType(exercise);
   const normalizedViewType = normalizeViewType(angle);
-  const expiresAt = new Date(Date.now() + PENDING_VIDEO_TTL_MS).toISOString();
 
-  const insertPayload = withOptionalTrackingSetup({
+  const registerPayload = {
     id: videoId,
-    user_id: user.id,
     storage_path: storagePath,
     source_type: sourceType,
     exercise_type: normalizedExerciseType,
     view_type: normalizedViewType,
-    status: 'uploaded',
     duration_ms: durationMs,
-    save_state: 'pending',
-    expires_at: expiresAt,
     original_size_bytes: preparedVideo.originalSizeBytes,
     uploaded_size_bytes: uploadSource.sizeBytes,
     was_compressed: preparedVideo.wasCompressed,
-    storage_state: 'available',
-  }, trackingSetup);
+    ...(trackingSetup ? { tracking_setup: trackingSetup } : {}),
+  };
 
-  const { error: insertError } = await supabase
-    .from('videos')
-    .insert(insertPayload)
-    ;
-
-  if (insertError) {
-    let finalInsertError = insertError;
-    const retryMode = getVideoInsertRetryMode(
-      formatSupabaseError(insertError),
-      Boolean(trackingSetup)
-    );
-
-    if (retryMode === 'retry_without_storage_metadata') {
-      const legacyInsertPayload = omitLegacyStorageMetadata(insertPayload);
-      const { error: legacyInsertError } = await supabase
-        .from('videos')
-        .insert(legacyInsertPayload);
-
-      if (!legacyInsertError) {
-        logVideoUploadWarning('Inserted upload without storage retention metadata. Apply the retention migration.', {
-          videoId,
-          storagePath,
-          migration: 'supabase/migrations/202605270001_storage_retention_metadata.sql',
-        });
-
-        return {
-          videoId,
-          status: 'uploaded',
-          storagePath,
-          originalFileSizeBytes: preparedVideo.originalSizeBytes,
-          uploadedFileSizeBytes: uploadSource.sizeBytes,
-          wasCompressed: preparedVideo.wasCompressed,
-        };
-      }
-      finalInsertError = legacyInsertError;
-
-      if (
-        getVideoInsertRetryMode(formatSupabaseError(legacyInsertError), Boolean(trackingSetup))
-        === 'tracking_unavailable'
-      ) {
-        await supabase.storage.from('videos').remove([storagePath]);
-        throw new Error(
-          'Pin-assisted tracking is unavailable because the tracking database migration has not been applied. Your pins were not submitted.'
-        );
-      }
-    }
-
-    if (retryMode === 'tracking_unavailable') {
-      await supabase.storage.from('videos').remove([storagePath]);
-      throw new Error(
-        'Pin-assisted tracking is unavailable because the tracking database migration has not been applied. Your pins were not submitted.'
-      );
-    }
-
-    console.error('[Supabase] uploadVideoForAnalysis insert failed', {
+  try {
+    const registeredVideo = await registerUploadedVideo(registerPayload, accessToken);
+    return {
+      videoId: registeredVideo.video_id,
+      status: 'uploaded',
+      storagePath: registeredVideo.storage_path,
+      originalFileSizeBytes: preparedVideo.originalSizeBytes,
+      uploadedFileSizeBytes: registeredVideo.uploaded_size_bytes,
+      wasCompressed: preparedVideo.wasCompressed,
+    };
+  } catch (error) {
+    console.error('[VideoUpload] uploadVideoForAnalysis registration failed', {
       authUserId: user.id,
       insertedUserId: user.id,
       videoId,
       storagePath,
       exerciseType: normalizedExerciseType,
       viewType: normalizedViewType,
-      error: {
-        message: finalInsertError.message,
-        code: finalInsertError.code,
-        details: finalInsertError.details,
-        hint: finalInsertError.hint,
-      },
+      error,
     });
     await supabase.storage.from('videos').remove([storagePath]);
-    throw new Error(formatSupabaseError(finalInsertError));
+    throw error;
   }
-
-  return {
-    videoId,
-    status: 'uploaded',
-    storagePath,
-    originalFileSizeBytes: preparedVideo.originalSizeBytes,
-    uploadedFileSizeBytes: uploadSource.sizeBytes,
-    wasCompressed: preparedVideo.wasCompressed,
-  };
 }

@@ -111,6 +111,59 @@ class VideoRepository:
 
     return response.data[0]
 
+  def create_video(self, fields: dict[str, Any]) -> dict[str, Any]:
+    response = self.client.table("videos").insert(fields).execute()
+
+    if not response.data:
+      raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unable to create video.")
+
+    return response.data[0]
+
+  def create_uploaded_video(self, fields: dict[str, Any]) -> dict[str, Any]:
+    try:
+      return self.create_video(fields)
+    except Exception as error:
+      missing_storage_metadata = self._error_mentions_missing_columns(
+        error,
+        {
+          "storage_state",
+          "original_size_bytes",
+          "uploaded_size_bytes",
+          "was_compressed",
+        },
+      )
+
+      if not missing_storage_metadata:
+        raise
+
+      logger.warning("Falling back to upload insert without storage metadata: %s", error)
+      legacy_fields = {
+        key: value
+        for key, value in fields.items()
+        if key not in {"storage_state", "original_size_bytes", "uploaded_size_bytes", "was_compressed"}
+      }
+      return self.create_video(legacy_fields)
+
+  def count_user_in_progress_videos(self, user_id: str) -> int:
+    response = (
+      self.client.table("videos")
+      .select("id", count="exact")
+      .eq("user_id", user_id)
+      .in_("status", ["queued", "processing"])
+      .execute()
+    )
+    return int(response.count or 0)
+
+  def count_recent_user_uploads(self, user_id: str, since_iso: str) -> int:
+    response = (
+      self.client.table("videos")
+      .select("id", count="exact")
+      .eq("user_id", user_id)
+      .gte("created_at", since_iso)
+      .execute()
+    )
+    return int(response.count or 0)
+
   def queue_owned_video_if_status(
     self,
     video_id: str,
@@ -310,6 +363,15 @@ class VideoRepository:
   @staticmethod
   def video_is_saved(video: dict[str, Any]) -> bool:
     return video.get("save_state") == "saved" or video.get("is_saved") is True
+
+  @staticmethod
+  def _error_mentions_missing_columns(error: Exception, columns: set[str]) -> bool:
+    error_message = str(error).lower()
+
+    if not ("does not exist" in error_message or "could not find" in error_message):
+      return False
+
+    return any(column in error_message for column in columns)
 
   @staticmethod
   def _parse_timestamp(value: Any) -> datetime | None:

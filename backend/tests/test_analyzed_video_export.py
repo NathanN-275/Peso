@@ -15,6 +15,7 @@ from app.services.analyzed_video_renderer import _resolve_ffmpeg_binary, render_
 VIDEO_ID = UUID("11111111-1111-1111-1111-111111111111")
 ANALYSIS_ID = UUID("22222222-2222-2222-2222-222222222222")
 USER_ID = "33333333-3333-3333-3333-333333333333"
+OTHER_USER_ID = "44444444-4444-4444-4444-444444444444"
 
 
 class AnalyzedVideoExportRouteTest(unittest.TestCase):
@@ -181,6 +182,43 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
     storage.create_signed_url.assert_called_once_with(expected_path)
     self.assertEqual(response.storage_path, expected_path)
     self.assertEqual(response.variant, "clean")
+
+  def test_export_clean_rejects_cross_user_playback_path(self) -> None:
+    repository = self._repository()
+    repository.require_owned_video.return_value["playback_path"] = f"{OTHER_USER_ID}/playback/{VIDEO_ID}.mp4"
+    storage = MagicMock()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      export_analyzed_video(
+        VIDEO_ID,
+        AnalyzedVideoExportRequest(pose=False, barbell=False),
+        user_id=USER_ID,
+      )
+
+    self.assertEqual(raised.exception.status_code, status.HTTP_403_FORBIDDEN)
+    storage.create_signed_url.assert_not_called()
+
+  def test_export_render_rejects_cross_user_source_path_before_download(self) -> None:
+    repository = self._repository()
+    repository.require_owned_video.return_value["storage_path"] = f"{OTHER_USER_ID}/uploads/{VIDEO_ID}.mp4"
+    storage = MagicMock()
+    storage.storage_path_exists.return_value = False
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.render_analyzed_video") as renderer,
+      self.assertRaises(HTTPException) as raised,
+    ):
+      export_analyzed_video(VIDEO_ID, user_id=USER_ID)
+
+    self.assertEqual(raised.exception.status_code, status.HTTP_403_FORBIDDEN)
+    storage.download_to_tempfile.assert_not_called()
+    renderer.assert_not_called()
 
   def test_export_uses_barbell_variant_cache_path(self) -> None:
     repository = self._repository()

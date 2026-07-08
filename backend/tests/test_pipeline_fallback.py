@@ -129,7 +129,8 @@ class PipelineFallbackTest(unittest.TestCase):
     repository = MagicMock()
     repository.get_video.return_value = {
       "id": "video-1",
-      "storage_path": "videos/video-1.mov",
+      "user_id": "33333333-3333-3333-3333-333333333333",
+      "storage_path": "33333333-3333-3333-3333-333333333333/uploads/video-1.mov",
       "exercise_type": "squat",
       "view_type": "side",
     }

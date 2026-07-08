@@ -35,6 +35,7 @@ from ..services.video_assets import (
   create_video_thumbnail,
 )
 from ..services.video_repository import VideoRepository
+from ..services.video_storage_paths import require_user_storage_path
 
 
 logger = logging.getLogger(__name__)
@@ -749,7 +750,7 @@ def _finalize_storage_assets(
   thumbnail_temp: Path | None = None
   compressed_temp: Path | None = None
   thumbnail_path: str | None = None
-  original_path = str(video["storage_path"])
+  original_path = require_user_storage_path(str(video["storage_path"]), user_id, "storage_path")
 
   try:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_thumbnail:
@@ -1157,7 +1158,11 @@ def analyze_video(video_id: str) -> None:
     repository.update_video(video_id, {"status": "processing"})
     # Download the clip into a temporary file for local processing.
     stage_started = time.perf_counter()
-    source_storage_path = video.get("playback_path") or video["storage_path"]
+    source_storage_path = require_user_storage_path(
+      str(video.get("playback_path") or video["storage_path"]),
+      str(video.get("user_id") or ""),
+      "source_storage_path",
+    )
     temp_file = storage.download_to_tempfile(source_storage_path)
     logger.info(
       "Downloaded video %s from %s in %sms.",

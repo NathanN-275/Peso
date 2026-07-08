@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -7,7 +8,7 @@ from unittest.mock import patch
 from fastapi import HTTPException, status
 
 from app.routes.videos import _authorize_cleanup
-from app.services.config import Settings
+from app.services.config import Settings, get_settings as load_settings
 from app.services.storage_cleanup import StorageCleanupService
 
 
@@ -242,6 +243,32 @@ class StorageCleanupServiceTest(unittest.TestCase):
     self.assertEqual(report.bytes_reclaimable, 200)
     self.assertEqual(storage.deleted_paths, [orphan_path])
 
+  def test_pending_video_cleanup_skips_cross_user_storage_path(self) -> None:
+    video_id = "11111111-1111-1111-1111-111111111111"
+    unsafe_path = f"{OTHER_USER_ID}/{video_id}.mp4"
+    repository = FakeRepository(
+      expired_videos=[
+        video(video_id, storage_path=unsafe_path),
+      ],
+      referenced_videos=[
+        video(video_id, storage_path=unsafe_path),
+        video(
+          "22222222-2222-2222-2222-222222222222",
+          user_id=OTHER_USER_ID,
+          storage_path=unsafe_path,
+        ),
+      ],
+    )
+    storage = FakeStorage([storage_object(unsafe_path, 100, 30)])
+
+    report = StorageCleanupService(repository, storage, settings()).run(now=NOW)
+
+    self.assertEqual(report.deleted_count, 0)
+    self.assertEqual(report.storage_objects, 0)
+    self.assertEqual(repository.deleted_video_ids, [])
+    self.assertEqual(storage.deleted_paths, [])
+    self.assertIn("outside the owning user folder", report.errors[0])
+
   def test_dry_run_reports_reclaimable_storage_without_deleting(self) -> None:
     video_id = "11111111-1111-1111-1111-111111111111"
     source_path = f"{USER_ID}/{video_id}.mp4"
@@ -278,9 +305,62 @@ class CleanupRouteAuthorizationTest(unittest.TestCase):
     with patch("app.routes.videos.get_settings", return_value=settings(backend_env="production")):
       _authorize_cleanup("cleanup-secret")
 
-  def test_cleanup_token_is_not_required_in_development(self) -> None:
+  def test_cleanup_token_is_required_by_default_in_development(self) -> None:
     with patch("app.routes.videos.get_settings", return_value=settings(backend_env="development")):
+      with self.assertRaises(HTTPException) as raised:
+        _authorize_cleanup(None)
+
+    self.assertEqual(raised.exception.status_code, status.HTTP_401_UNAUTHORIZED)
+
+  def test_cleanup_token_can_be_explicitly_disabled_in_development(self) -> None:
+    dev_settings = settings(
+      backend_env="development",
+      allow_unauthenticated_dev_cleanup=True,
+    )
+
+    with patch("app.routes.videos.get_settings", return_value=dev_settings):
       _authorize_cleanup(None)
+
+
+class ConfigSecurityTest(unittest.TestCase):
+  def tearDown(self) -> None:
+    load_settings.cache_clear()
+
+  def test_production_requires_cleanup_token(self) -> None:
+    with patch.dict(
+      os.environ,
+      {
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+        "SUPABASE_JWT_SECRET": "secret",
+        "BACKEND_ENV": "production",
+        "BACKEND_CORS_ORIGINS": "https://app.example.com",
+      },
+      clear=True,
+    ):
+      load_settings.cache_clear()
+      with self.assertRaisesRegex(RuntimeError, "CLEANUP_JOB_TOKEN"):
+        load_settings()
+
+  def test_production_accepts_explicit_non_local_cors_and_cleanup_token(self) -> None:
+    with patch.dict(
+      os.environ,
+      {
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+        "SUPABASE_JWT_SECRET": "secret",
+        "BACKEND_ENV": "production",
+        "CLEANUP_JOB_TOKEN": "cleanup-secret",
+        "BACKEND_CORS_ORIGINS": "https://app.example.com",
+        "BACKEND_CORS_ALLOW_PRIVATE_NETWORK": "false",
+      },
+      clear=True,
+    ):
+      load_settings.cache_clear()
+      loaded = load_settings()
+
+    self.assertEqual(loaded.backend_env, "production")
+    self.assertEqual(loaded.cors_origins, ("https://app.example.com",))
 
 
 if __name__ == "__main__":

@@ -5,6 +5,8 @@ import { supabase, supabaseConfigError } from './supabase';
 
 const PROFILE_AVATAR_BUCKET = 'profile-avatars';
 const AVATAR_SIGNED_URL_EXPIRES_IN_SECONDS = 60 * 60;
+const MAX_AVATAR_UPLOAD_BYTES = 5 * 1024 * 1024;
+const ALLOWED_AVATAR_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 
 type WebImageAsset = ImagePickerAsset & {
   file?: File | null;
@@ -37,6 +39,26 @@ function requireSupabase() {
 function normalizeOptionalText(value?: string | null) {
   const trimmedValue = value?.trim() ?? '';
   return trimmedValue ? trimmedValue : null;
+}
+
+function normalizeMimeType(value?: string | null) {
+  return value?.split(';')[0]?.trim().toLowerCase() ?? '';
+}
+
+function assertSupportedAvatarSource(contentType: string, sizeBytes: number) {
+  const normalizedContentType = normalizeMimeType(contentType);
+
+  if (
+    !ALLOWED_AVATAR_MIME_TYPES.includes(
+      normalizedContentType as (typeof ALLOWED_AVATAR_MIME_TYPES)[number]
+    )
+  ) {
+    throw new Error('Unsupported profile image format. Choose a JPG, PNG, or WebP image.');
+  }
+
+  if (sizeBytes > MAX_AVATAR_UPLOAD_BYTES) {
+    throw new Error('Profile image is too large. Choose an image under 5 MB.');
+  }
 }
 
 function isMissingProfileInfrastructureError(error: unknown) {
@@ -166,16 +188,17 @@ export async function saveOwnProfile(user: User, update: ProfileUpdate): Promise
 function inferImageExtension(asset: ImagePickerAsset, contentType: string) {
   const filename = asset.fileName ?? asset.uri.split('/').pop() ?? '';
   const extension = filename.split(/[?#]/)[0].split('.').pop()?.toLowerCase();
+  const normalizedContentType = normalizeMimeType(contentType);
 
   if (extension && ['jpg', 'jpeg', 'png', 'webp'].includes(extension)) {
     return extension === 'jpeg' ? 'jpg' : extension;
   }
 
-  if (contentType === 'image/png') {
+  if (normalizedContentType === 'image/png') {
     return 'png';
   }
 
-  if (contentType === 'image/webp') {
+  if (normalizedContentType === 'image/webp') {
     return 'webp';
   }
 
@@ -187,10 +210,12 @@ async function resolveAvatarUploadSource(asset: ImagePickerAsset) {
 
   if (Platform.OS === 'web' && webAsset.file) {
     const contentType = webAsset.file.type || asset.mimeType || 'image/jpeg';
+    assertSupportedAvatarSource(contentType, webAsset.file.size);
     return {
       body: webAsset.file,
       contentType,
       extension: inferImageExtension(asset, contentType),
+      sizeBytes: webAsset.file.size,
     };
   }
 
@@ -202,11 +227,13 @@ async function resolveAvatarUploadSource(asset: ImagePickerAsset) {
 
   const blob = await response.blob();
   const contentType = asset.mimeType || blob.type || 'image/jpeg';
+  assertSupportedAvatarSource(contentType, blob.size);
 
   return {
     body: blob,
     contentType,
     extension: inferImageExtension(asset, contentType),
+    sizeBytes: blob.size,
   };
 }
 

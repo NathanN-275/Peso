@@ -142,7 +142,10 @@ Backend variables include:
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_JWT_SECRET=
+CLEANUP_JOB_TOKEN=
 ```
+
+Production backend deployments must also set `BACKEND_ENV=production` and an explicit non-local `BACKEND_CORS_ORIGINS` value.
 
 ### Install frontend dependencies
 

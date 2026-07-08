@@ -9,6 +9,7 @@ from typing import Any
 from .storage_service import IMMUTABLE_CACHE_CONTROL_SECONDS, StorageService
 from .video_assets import THUMBNAIL_VERSION, build_thumbnail_storage_path, create_video_thumbnail
 from .video_repository import VIDEO_BASE_COLUMNS, VIDEO_STORAGE_COLUMNS, VideoRepository
+from .video_storage_paths import require_user_storage_path
 
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ def backfill_saved_video_thumbnails(
     thumbnail_file: Path | None = None
 
     try:
+      storage_path = require_user_storage_path(storage_path, user_id, "storage_path")
       source_file = storage.download_to_tempfile(storage_path)
 
       with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_thumbnail:

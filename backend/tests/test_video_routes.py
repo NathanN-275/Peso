@@ -9,13 +9,16 @@ from fastapi import BackgroundTasks, HTTPException
 
 from app.analysis.versioning import annotate_analysis_freshness, analysis_is_current
 from app.routes.videos import (
+  RegisterVideoRequest,
   delete_account,
   discard_video,
   get_video_capabilities,
   get_storage_usage,
   get_video_playback_url,
   list_saved_videos,
+  mark_upload_failed,
   queue_analysis,
+  register_video,
   save_video,
 )
 from app.services.config import DEFAULT_MODEL_VERSION, get_settings
@@ -23,6 +26,7 @@ from app.services.config import DEFAULT_MODEL_VERSION, get_settings
 
 VIDEO_ID = UUID("11111111-1111-1111-1111-111111111111")
 USER_ID = "33333333-3333-3333-3333-333333333333"
+OTHER_USER_ID = "44444444-4444-4444-4444-444444444444"
 
 
 class VideoRoutesTest(unittest.TestCase):
@@ -74,12 +78,122 @@ class VideoRoutesTest(unittest.TestCase):
       "message": "Storage capacity is available for this upload.",
     }
 
-    with patch("app.routes.videos.StorageQuotaService", return_value=quota_service):
+    settings = MagicMock(expose_storage_quota_details=False)
+
+    with (
+      patch("app.routes.videos.StorageQuotaService", return_value=quota_service),
+      patch("app.routes.videos.get_settings", return_value=settings),
+    ):
       response = get_storage_usage(50, USER_ID)
 
     quota_service.get_usage.assert_called_once_with(50)
-    self.assertEqual(response.projected_peak_bytes, 201)
+    self.assertEqual(response.projected_peak_bytes, 0)
+    self.assertEqual(response.current_storage_bytes, 0)
+    self.assertEqual(response.storage_limit_bytes, 0)
+    self.assertEqual(response.upload_size_bytes, 50)
     self.assertFalse(response.blocked)
+
+  def test_register_video_creates_server_owned_uploaded_row(self) -> None:
+    repository = MagicMock()
+    repository.count_user_in_progress_videos.return_value = 0
+    repository.count_recent_user_uploads.return_value = 0
+    repository.create_uploaded_video.return_value = {
+      "id": str(VIDEO_ID),
+      "status": "uploaded",
+      "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mp4",
+    }
+    storage = MagicMock()
+    storage.validate_video_object.return_value = {"metadata": {"size": "2048", "mimetype": "video/mp4"}}
+    storage.storage_object_size_bytes.return_value = 2048
+    settings = MagicMock(
+      saved_video_storage_ttl_hours=24,
+      max_user_in_progress_videos=3,
+      max_user_uploads_per_hour=20,
+    )
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.get_settings", return_value=settings),
+    ):
+      response = register_video(
+        RegisterVideoRequest(
+          id=VIDEO_ID,
+          storage_path=f"{USER_ID}/uploads/{VIDEO_ID}.mp4",
+          source_type="camera_roll",
+          exercise_type="Bench Press",
+          view_type="Front",
+          duration_ms=1200,
+          original_size_bytes=1024,
+          uploaded_size_bytes=999,
+          was_compressed=False,
+        ),
+        USER_ID,
+      )
+
+    storage.validate_video_object.assert_called_once_with(f"{USER_ID}/uploads/{VIDEO_ID}.mp4")
+    fields = repository.create_uploaded_video.call_args.args[0]
+    self.assertEqual(fields["user_id"], USER_ID)
+    self.assertEqual(fields["status"], "uploaded")
+    self.assertEqual(fields["save_state"], "pending")
+    self.assertEqual(fields["uploaded_size_bytes"], 2048)
+    self.assertEqual(fields["original_size_bytes"], 2048)
+    self.assertEqual(response.video_id, VIDEO_ID)
+    self.assertEqual(response.uploaded_size_bytes, 2048)
+
+  def test_register_video_rejects_cross_user_storage_path(self) -> None:
+    repository = MagicMock()
+    storage = MagicMock()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      register_video(
+        RegisterVideoRequest(
+          id=VIDEO_ID,
+          storage_path=f"{OTHER_USER_ID}/uploads/{VIDEO_ID}.mp4",
+          source_type="camera_roll",
+          exercise_type="squat",
+          view_type="side",
+        ),
+        USER_ID,
+      )
+
+    self.assertEqual(raised.exception.status_code, 403)
+    storage.validate_video_object.assert_not_called()
+    repository.create_uploaded_video.assert_not_called()
+
+  def test_register_video_rate_limits_active_user_work(self) -> None:
+    repository = MagicMock()
+    repository.count_user_in_progress_videos.return_value = 3
+    storage = MagicMock()
+    settings = MagicMock(
+      saved_video_storage_ttl_hours=24,
+      max_user_in_progress_videos=3,
+      max_user_uploads_per_hour=20,
+    )
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.get_settings", return_value=settings),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      register_video(
+        RegisterVideoRequest(
+          id=VIDEO_ID,
+          storage_path=f"{USER_ID}/uploads/{VIDEO_ID}.mp4",
+          source_type="camera_roll",
+          exercise_type="squat",
+          view_type="side",
+        ),
+        USER_ID,
+      )
+
+    self.assertEqual(raised.exception.status_code, 429)
+    storage.validate_video_object.assert_not_called()
 
   def test_video_capabilities_reports_pin_tracking_support(self) -> None:
     repository = MagicMock()
@@ -158,6 +272,27 @@ class VideoRoutesTest(unittest.TestCase):
     storage.validate_video_object.assert_not_called()
     repository.queue_owned_video_if_status.assert_not_called()
     self.assertEqual(raised.exception.status_code, 409)
+
+  def test_queue_analysis_rejects_cross_user_storage_path_before_validation(self) -> None:
+    repository = MagicMock()
+    repository.require_owned_video.return_value = {
+      "id": str(VIDEO_ID),
+      "user_id": USER_ID,
+      "status": "uploaded",
+      "storage_path": f"{OTHER_USER_ID}/uploads/{VIDEO_ID}.mov",
+    }
+    storage = MagicMock()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      queue_analysis(VIDEO_ID, BackgroundTasks(), USER_ID)
+
+    self.assertEqual(raised.exception.status_code, 403)
+    storage.validate_video_object.assert_not_called()
+    repository.queue_owned_video_if_status.assert_not_called()
 
   def test_queue_analysis_propagates_ownership_errors(self) -> None:
     repository = MagicMock()
@@ -329,6 +464,27 @@ class VideoRoutesTest(unittest.TestCase):
     )
     self.assertEqual(response.video_url, "https://example.test/signed-original")
 
+  def test_playback_url_rejects_cross_user_playback_path(self) -> None:
+    repository = MagicMock()
+    repository.require_owned_video.return_value = {
+      "id": str(VIDEO_ID),
+      "user_id": USER_ID,
+      "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+      "playback_path": f"{OTHER_USER_ID}/playback/{VIDEO_ID}.mp4",
+      "discarded_at": None,
+    }
+    storage = MagicMock()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      get_video_playback_url(VIDEO_ID, USER_ID)
+
+    self.assertEqual(raised.exception.status_code, 403)
+    storage.create_signed_url.assert_not_called()
+
   def test_save_video_only_updates_metadata(self) -> None:
     repository = MagicMock()
     repository.require_owned_video.return_value = {
@@ -392,6 +548,30 @@ class VideoRoutesTest(unittest.TestCase):
     storage.delete_storage_path.assert_called_once_with(f"{USER_ID}/uploads/{VIDEO_ID}.mov")
     repository.mark_discarded.assert_called_once_with(str(VIDEO_ID))
     self.assertTrue(response.discarded)
+
+  def test_mark_upload_failed_deletes_owned_storage_and_marks_failed(self) -> None:
+    repository = MagicMock()
+    repository.require_owned_video.return_value = {
+      "id": str(VIDEO_ID),
+      "user_id": USER_ID,
+      "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+      "playback_path": f"{OTHER_USER_ID}/playback/{VIDEO_ID}.mp4",
+      "thumbnail_path": None,
+    }
+    repository.update_video.return_value = {"status": "failed"}
+    storage = MagicMock()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+    ):
+      response = mark_upload_failed(VIDEO_ID, USER_ID)
+
+    storage.delete_storage_path.assert_called_once_with(f"{USER_ID}/uploads/{VIDEO_ID}.mov")
+    update_fields = repository.update_video.call_args.args[1]
+    self.assertEqual(update_fields["status"], "failed")
+    self.assertEqual(update_fields["is_saved"], False)
+    self.assertEqual(response.status, "failed")
 
   def test_old_model_result_is_marked_stale(self) -> None:
     with patch.dict(

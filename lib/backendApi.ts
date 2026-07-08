@@ -312,6 +312,19 @@ export type AnalyzedVideoExportOptions = {
   barbell: boolean;
 };
 
+export type RegisterUploadedVideoRequest = {
+  id: string;
+  storage_path: string;
+  source_type: 'camera' | 'camera_roll';
+  exercise_type: string;
+  view_type: string;
+  duration_ms: number | null;
+  original_size_bytes: number;
+  uploaded_size_bytes: number;
+  was_compressed: boolean;
+  tracking_setup?: unknown;
+};
+
 export async function testBackendConnection(signal?: AbortSignal, timeoutMs = HEALTH_CHECK_TIMEOUT_MS) {
   // Health checks confirm the backend is reachable before upload starts.
   return requestJson<{ status: string }>('/health', undefined, { signal, timeoutMs });
@@ -350,6 +363,28 @@ export async function fetchStorageUsage(uploadSizeBytes: number, accessToken: st
 
 export async function fetchVideoCapabilities(accessToken: string) {
   return requestJson<VideoCapabilitiesResponse>('/videos/capabilities', accessToken);
+}
+
+export async function registerUploadedVideo(payload: RegisterUploadedVideoRequest, accessToken: string) {
+  return requestJson<{
+    video_id: string;
+    status: 'uploaded';
+    storage_path: string;
+    uploaded_size_bytes: number;
+  }>('/videos', accessToken, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function markVideoUploadFailed(videoId: string, accessToken: string) {
+  return requestJson<{ video_id: string; status: 'failed' }>(
+    `/videos/${videoId}/upload-failed`,
+    accessToken,
+    {
+      method: 'POST',
+    }
+  );
 }
 
 export async function triggerVideoAnalysis(videoId: string, accessToken: string, signal?: AbortSignal) {

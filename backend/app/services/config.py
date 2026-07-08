@@ -35,6 +35,8 @@ DEFAULT_STORAGE_WARNING_RATIO = 0.80
 DEFAULT_STORAGE_BLOCK_RATIO = 0.95
 DEFAULT_PLAYBACK_STORAGE_ESTIMATE_RATIO = 1.0
 DEFAULT_THUMBNAIL_STORAGE_ALLOWANCE_BYTES = 1024 * 1024
+DEFAULT_MAX_USER_IN_PROGRESS_VIDEOS = 3
+DEFAULT_MAX_USER_UPLOADS_PER_HOUR = 20
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,10 @@ class Settings:
   storage_block_ratio: float = DEFAULT_STORAGE_BLOCK_RATIO
   playback_storage_estimate_ratio: float = DEFAULT_PLAYBACK_STORAGE_ESTIMATE_RATIO
   thumbnail_storage_allowance_bytes: int = DEFAULT_THUMBNAIL_STORAGE_ALLOWANCE_BYTES
+  allow_unauthenticated_dev_cleanup: bool = False
+  expose_storage_quota_details: bool = False
+  max_user_in_progress_videos: int = DEFAULT_MAX_USER_IN_PROGRESS_VIDEOS
+  max_user_uploads_per_hour: int = DEFAULT_MAX_USER_UPLOADS_PER_HOUR
 
 
 def _parse_positive_int_env(name: str, default: int, *aliases: str) -> int:
@@ -100,6 +106,26 @@ def _parse_positive_float_env(name: str, default: float) -> float:
     raise RuntimeError(f"{name} must be a positive number.")
 
   return parsed_value
+
+
+def _parse_bool_env(name: str, default: bool = False) -> bool:
+  raw_value = os.getenv(name, "").strip().lower()
+
+  if not raw_value:
+    return default
+
+  return raw_value in {"1", "true", "yes", "on"}
+
+
+def _origin_is_local(origin: str) -> bool:
+  return (
+    origin.startswith("http://localhost")
+    or origin.startswith("https://localhost")
+    or origin.startswith("http://127.0.0.1")
+    or origin.startswith("https://127.0.0.1")
+    or origin.startswith("http://0.0.0.0")
+    or origin.startswith("https://0.0.0.0")
+  )
 
 
 @lru_cache(maxsize=1)
@@ -163,6 +189,14 @@ def get_settings() -> Settings:
     "THUMBNAIL_STORAGE_ALLOWANCE_BYTES",
     DEFAULT_THUMBNAIL_STORAGE_ALLOWANCE_BYTES,
   )
+  max_user_in_progress_videos = _parse_positive_int_env(
+    "MAX_USER_IN_PROGRESS_VIDEOS",
+    DEFAULT_MAX_USER_IN_PROGRESS_VIDEOS,
+  )
+  max_user_uploads_per_hour = _parse_positive_int_env(
+    "MAX_USER_UPLOADS_PER_HOUR",
+    DEFAULT_MAX_USER_UPLOADS_PER_HOUR,
+  )
 
   if storage_warning_ratio >= storage_block_ratio or storage_block_ratio > 1:
     raise RuntimeError(
@@ -179,6 +213,11 @@ def get_settings() -> Settings:
     ",".join(DEFAULT_CORS_ORIGINS),
   )
   cors_origins = tuple(origin.strip() for origin in cors_origins_raw.split(",") if origin.strip())
+  allow_unauthenticated_dev_cleanup = _parse_bool_env(
+    "BACKEND_ALLOW_UNAUTHENTICATED_DEV_CLEANUP",
+    False,
+  )
+  expose_storage_quota_details = _parse_bool_env("BACKEND_EXPOSE_STORAGE_QUOTA_DETAILS", False)
   cors_origin_regex = (
     None
     if backend_env in {"production", "prod"}
@@ -189,6 +228,19 @@ def get_settings() -> Settings:
     and os.getenv("BACKEND_CORS_ALLOW_PRIVATE_NETWORK", "true").strip().lower()
     in {"1", "true", "yes", "on"}
   )
+
+  if backend_env in {"production", "prod"}:
+    if not cleanup_job_token:
+      raise RuntimeError("CLEANUP_JOB_TOKEN must be configured in production.")
+
+    if not os.getenv("BACKEND_CORS_ORIGINS", "").strip():
+      raise RuntimeError("BACKEND_CORS_ORIGINS must be explicitly configured in production.")
+
+    if any(_origin_is_local(origin) for origin in cors_origins):
+      raise RuntimeError("BACKEND_CORS_ORIGINS must not include local origins in production.")
+
+    if _parse_bool_env("BACKEND_CORS_ALLOW_PRIVATE_NETWORK", False):
+      raise RuntimeError("BACKEND_CORS_ALLOW_PRIVATE_NETWORK must not be enabled in production.")
 
   missing = [
     name
@@ -228,4 +280,8 @@ def get_settings() -> Settings:
     storage_block_ratio=storage_block_ratio,
     playback_storage_estimate_ratio=playback_storage_estimate_ratio,
     thumbnail_storage_allowance_bytes=thumbnail_storage_allowance_bytes,
+    allow_unauthenticated_dev_cleanup=allow_unauthenticated_dev_cleanup,
+    expose_storage_quota_details=expose_storage_quota_details,
+    max_user_in_progress_videos=max_user_in_progress_videos,
+    max_user_uploads_per_hour=max_user_uploads_per_hour,
   )

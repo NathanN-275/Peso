@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import logging
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel
 
 from ..analysis.pipeline import analyze_video
+from ..analysis.manual_tracking import validate_tracking_setup
 from ..analysis.versioning import annotate_analysis_freshness, analysis_is_current
 from ..services.analyzed_video_renderer import render_analyzed_video
 from ..services.auth import get_current_user_id
@@ -19,12 +21,31 @@ from ..services.storage_cleanup import StorageCleanupService, cleanup_requires_t
 from ..services.storage_quota import StorageQuotaService
 from ..services.storage_service import StorageService
 from ..services.video_repository import VideoRepository
+from ..services.video_storage_paths import (
+  require_user_storage_path,
+  storage_path_belongs_to_user,
+)
 
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 QUEUEABLE_ANALYSIS_STATUSES = ("uploaded", "failed")
 IDEMPOTENT_ANALYSIS_STATUSES = {"queued", "processing", "completed"}
+ALLOWED_EXERCISE_TYPES = {
+  "squat",
+  "front squat",
+  "zercher squat",
+  "box squat",
+  "goblet squat",
+  "bench press",
+  "incline bench press",
+  "deadlift",
+  "romanian deadlift",
+  "overhead press",
+  "barbell row",
+}
+ALLOWED_VIEW_TYPES = {"side", "front"}
+ALLOWED_SOURCE_TYPES = {"camera", "camera_roll"}
 
 
 class AnalyzeResponse(BaseModel):
@@ -38,6 +59,26 @@ class VideoStatusResponse(BaseModel):
   exercise_type: str
   view_type: str
   updated_at: str
+
+
+class RegisterVideoRequest(BaseModel):
+  id: UUID | None = None
+  storage_path: str
+  source_type: str = "camera_roll"
+  exercise_type: str
+  view_type: str
+  duration_ms: int | None = None
+  original_size_bytes: int | None = None
+  uploaded_size_bytes: int | None = None
+  was_compressed: bool = False
+  tracking_setup: dict | None = None
+
+
+class RegisterVideoResponse(BaseModel):
+  video_id: UUID
+  status: str
+  storage_path: str
+  uploaded_size_bytes: int
 
 
 class AnalysisResponse(BaseModel):
@@ -84,6 +125,11 @@ class SaveVideoResponse(BaseModel):
 class DiscardVideoResponse(BaseModel):
   video_id: UUID
   discarded: bool
+
+
+class UploadFailedResponse(BaseModel):
+  video_id: UUID
+  status: str
 
 
 class VideoPlaybackUrlResponse(BaseModel):
@@ -169,6 +215,47 @@ def _authorize_cleanup(cleanup_token: str | None) -> None:
 
 def _video_is_saved(video: dict) -> bool:
   return video.get("save_state") == "saved" or video.get("is_saved") is True
+
+
+def _normalize_label(value: str) -> str:
+  return " ".join(value.strip().lower().replace("_", " ").split())
+
+
+def _public_storage_usage_payload(report) -> dict:
+  payload = report.to_dict()
+
+  if get_settings().expose_storage_quota_details:
+    return payload
+
+  for key in (
+    "storage_limit_bytes",
+    "database_limit_bytes",
+    "monthly_egress_limit_bytes",
+    "current_storage_bytes",
+    "projected_peak_bytes",
+    "warning_threshold_bytes",
+    "block_threshold_bytes",
+  ):
+    payload[key] = 0
+
+  return payload
+
+
+def _enforce_video_registration_limits(repository: VideoRepository, user_id: str) -> None:
+  settings = get_settings()
+
+  if repository.count_user_in_progress_videos(user_id) >= settings.max_user_in_progress_videos:
+    raise HTTPException(
+      status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+      detail="Too many videos are already queued or processing. Wait for one to finish before uploading another.",
+    )
+
+  recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+  if repository.count_recent_user_uploads(user_id, recent_cutoff.isoformat()) >= settings.max_user_uploads_per_hour:
+    raise HTTPException(
+      status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+      detail="Too many uploads were started recently. Try again later.",
+    )
 
 
 def _summary_analysis_payload(result_json: dict) -> dict:
@@ -257,7 +344,7 @@ def _playback_storage_path(video: dict) -> str:
 
 
 def _path_belongs_to_user(path: str, user_id: str) -> bool:
-  return bool(path) and path.startswith(f"{user_id}/")
+  return storage_path_belongs_to_user(path, user_id)
 
 
 def _delete_owned_storage_path(storage: StorageService, path: str, user_id: str, label: str) -> bool:
@@ -308,6 +395,86 @@ def _delete_account_storage(user_id: str, repository: VideoRepository) -> None:
   StorageService(bucket="profile-avatars").delete_storage_prefix(f"{user_id}/")
 
 
+@router.post("/videos", response_model=RegisterVideoResponse, status_code=status.HTTP_201_CREATED)
+def register_video(
+  request: RegisterVideoRequest,
+  user_id: str = Depends(get_current_user_id),
+) -> RegisterVideoResponse:
+  storage_path = require_user_storage_path(request.storage_path, user_id, "storage_path")
+  exercise_type = _normalize_label(request.exercise_type)
+  view_type = _normalize_label(request.view_type)
+  source_type = request.source_type.strip().lower()
+
+  if exercise_type not in ALLOWED_EXERCISE_TYPES:
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported exercise type.")
+
+  if view_type not in ALLOWED_VIEW_TYPES:
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported camera view.")
+
+  if source_type not in ALLOWED_SOURCE_TYPES:
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported video source type.")
+
+  if request.duration_ms is not None and request.duration_ms < 0:
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Video duration must be non-negative.")
+
+  repository = VideoRepository()
+  storage = StorageService()
+  _enforce_video_registration_limits(repository, user_id)
+
+  object_info = storage.validate_video_object(storage_path)
+  actual_uploaded_size = storage.storage_object_size_bytes(object_info)
+  if actual_uploaded_size <= 0:
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unable to verify uploaded video size.")
+
+  normalized_tracking_setup = None
+  if request.tracking_setup is not None:
+    normalized_tracking_setup, tracking_error = validate_tracking_setup(
+      request.tracking_setup,
+      duration_ms=request.duration_ms,
+    )
+
+    if tracking_error:
+      raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid tracking setup: {tracking_error}.")
+
+  video_id = str(request.id or uuid4())
+  original_size = request.original_size_bytes if request.original_size_bytes is not None else actual_uploaded_size
+
+  if original_size < actual_uploaded_size:
+    original_size = actual_uploaded_size
+
+  settings = get_settings()
+  expires_at = (
+    datetime.now(timezone.utc) + timedelta(hours=settings.saved_video_storage_ttl_hours)
+  ).isoformat()
+  fields = {
+    "id": video_id,
+    "user_id": user_id,
+    "storage_path": storage_path,
+    "source_type": source_type,
+    "exercise_type": exercise_type,
+    "view_type": view_type,
+    "status": "uploaded",
+    "duration_ms": request.duration_ms,
+    "save_state": "pending",
+    "expires_at": expires_at,
+    "original_size_bytes": original_size,
+    "uploaded_size_bytes": actual_uploaded_size,
+    "was_compressed": bool(request.was_compressed),
+    "storage_state": "available",
+  }
+
+  if normalized_tracking_setup is not None:
+    fields["tracking_setup"] = normalized_tracking_setup
+
+  video = repository.create_uploaded_video(fields)
+  return RegisterVideoResponse(
+    video_id=video["id"],
+    status=video["status"],
+    storage_path=video["storage_path"],
+    uploaded_size_bytes=actual_uploaded_size,
+  )
+
+
 @router.delete("/account", response_model=AccountDeleteResponse)
 def delete_account(
   user_id: str = Depends(get_current_user_id),
@@ -335,7 +502,7 @@ def get_storage_usage(
   _user_id: str = Depends(get_current_user_id),
 ) -> StorageUsageResponse:
   report = StorageQuotaService().get_usage(upload_size_bytes)
-  return StorageUsageResponse(**report.to_dict())
+  return StorageUsageResponse(**_public_storage_usage_payload(report))
 
 
 @router.get("/videos/capabilities", response_model=VideoCapabilitiesResponse)
@@ -374,7 +541,8 @@ def queue_analysis(
     analysis = repository.get_analysis_result(video_id_str)
 
     if not analysis_is_current(analysis):
-      StorageService().validate_video_object(_playback_storage_path(video))
+      playback_path = require_user_storage_path(_playback_storage_path(video), user_id, "playback_path")
+      StorageService().validate_video_object(playback_path)
       repository.update_video(video_id_str, {"status": "queued"})
       background_tasks.add_task(_run_analysis_job, video_id_str)
       return AnalyzeResponse(video_id=video_id, status="queued")
@@ -388,7 +556,8 @@ def queue_analysis(
       detail=f"Video cannot be queued for analysis from status '{current_status}'.",
     )
 
-  StorageService().validate_video_object(_playback_storage_path(video))
+  playback_path = require_user_storage_path(_playback_storage_path(video), user_id, "playback_path")
+  StorageService().validate_video_object(playback_path)
   queued_video = repository.queue_owned_video_if_status(
     video_id_str,
     user_id,
@@ -457,6 +626,11 @@ def list_saved_videos(
       )
 
     thumbnail_path = video.get("thumbnail_path")
+    thumbnail_url = (
+      storage.create_signed_url(require_user_storage_path(thumbnail_path, user_id, "thumbnail_path"))
+      if thumbnail_path
+      else None
+    )
     saved_videos.append(
       SavedVideoResponse(
         id=video["id"],
@@ -465,7 +639,7 @@ def list_saved_videos(
         storage_path=None,
         thumbnail_path=thumbnail_path,
         video_url=None,
-        thumbnail_url=storage.create_signed_url(thumbnail_path) if thumbnail_path else None,
+        thumbnail_url=thumbnail_url,
         save_state=video.get("save_state") or ("saved" if video.get("is_saved") else "pending"),
         saved_at=video.get("saved_at"),
         created_at=video["created_at"],
@@ -494,7 +668,7 @@ def get_video_playback_url(
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found.")
 
   expires_in = 300
-  playback_path = _playback_storage_path(video)
+  playback_path = require_user_storage_path(_playback_storage_path(video), user_id, "playback_path")
   logger.info("Signing playback URL for video_id=%s path=%s expires_in=%s", video_id, playback_path, expires_in)
   return VideoPlaybackUrlResponse(
     video_id=video_id,
@@ -539,7 +713,7 @@ def export_analyzed_video(
   variant = _export_variant(pose=requested.pose, barbell=requested.barbell)
 
   if variant == "clean":
-    playback_path = _playback_storage_path(video)
+    playback_path = require_user_storage_path(_playback_storage_path(video), user_id, "playback_path")
     return AnalyzedVideoExportResponse(
       video_id=video_id,
       analysis_id=analysis["id"],
@@ -555,7 +729,8 @@ def export_analyzed_video(
     output_file: Path | None = None
 
     try:
-      source_file = storage.download_to_tempfile(_playback_storage_path(video))
+      source_path = require_user_storage_path(_playback_storage_path(video), user_id, "playback_path")
+      source_file = storage.download_to_tempfile(source_path)
 
       with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_output:
         output_file = Path(temp_output.name)
@@ -609,6 +784,31 @@ def discard_video(
 
   repository.mark_discarded(str(video_id))
   return DiscardVideoResponse(video_id=video_id, discarded=True)
+
+
+@router.post("/videos/{video_id}/upload-failed", response_model=UploadFailedResponse)
+def mark_upload_failed(
+  video_id: UUID,
+  user_id: str = Depends(get_current_user_id),
+) -> UploadFailedResponse:
+  repository = VideoRepository()
+  storage = StorageService()
+  video = repository.require_owned_video(str(video_id), user_id)
+
+  for path in [path for path in dict.fromkeys(_video_storage_paths(video)) if path]:
+    _delete_owned_storage_path(storage, path, user_id, "failed upload")
+
+  failed_video = repository.update_video(
+    str(video_id),
+    {
+      "status": "failed",
+      "save_state": "pending",
+      "is_saved": False,
+      "discarded_at": datetime.now(timezone.utc).isoformat(),
+      "expires_at": None,
+    },
+  )
+  return UploadFailedResponse(video_id=video_id, status=failed_video["status"])
 
 
 @router.post("/videos/cleanup-expired", response_model=CleanupExpiredVideosResponse)
