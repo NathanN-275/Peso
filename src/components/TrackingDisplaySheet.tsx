@@ -36,6 +36,8 @@ const TRACKING_LABELS: Record<string, string> = {
   hip: 'Hip',
   knee: 'Knee',
   ankle: 'Ankle',
+  elbow: 'Elbow',
+  wrist: 'Wrist',
   barbell: 'Barbell',
 };
 
@@ -59,6 +61,7 @@ const BARBELL_SOURCE_LABELS: Record<string, string> = {
   kinematic_coast: 'coasting',
   detector_tracklet: 'detector tracklet',
   detector_pin_prior: 'detector + pin',
+  pose_wrist_proxy: 'wrist proxy',
   pending_lock: 'pending lock',
   coast: 'coasting',
   gap: 'gap',

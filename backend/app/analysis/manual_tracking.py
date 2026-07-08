@@ -16,7 +16,9 @@ BODY_ANCHORS = (LEGACY_UPPER_BACK_ANCHOR, "hip", "knee", "ankle")
 FUSED_BODY_ANCHORS = ("hip", "knee", "ankle")
 DISPLAY_BODY_ANCHORS = ("upper_back", *FUSED_BODY_ANCHORS)
 ALL_ANCHORS = (*USER_BODY_ANCHORS, "barbell")
-KNOWN_INPUT_ANCHORS = (*ALL_ANCHORS, LEGACY_UPPER_BACK_ANCHOR)
+PRESSING_ANCHORS = ("elbow", "wrist")
+TRACKABLE_ANCHORS = (*ALL_ANCHORS, *PRESSING_ANCHORS)
+KNOWN_INPUT_ANCHORS = (*TRACKABLE_ANCHORS, LEGACY_UPPER_BACK_ANCHOR)
 MIN_TRACK_CONFIDENCE = 0.42
 MIN_MODEL_VISIBILITY = 0.15
 PIN_PERSISTENCE_CONFIDENCE = 0.24
@@ -107,7 +109,7 @@ def validate_tracking_setup(value: Any, *, duration_ms: int | None = None) -> tu
     return None, "tracking_setup_not_object"
   if value.get("version") != TRACKING_SETUP_VERSION:
     return None, "unsupported_tracking_setup_version"
-  if value.get("barbell_target") != "near_side_collar":
+  if value.get("barbell_target") not in {"near_side_collar", "bar_center"}:
     return None, "unsupported_barbell_target"
 
   reference_time_ms = value.get("reference_time_ms")
@@ -126,7 +128,7 @@ def validate_tracking_setup(value: Any, *, duration_ms: int | None = None) -> tu
 
   anchors = _normalize_anchor_map(anchors)
   normalized_anchors: dict[str, dict[str, float]] = {}
-  for name in ALL_ANCHORS:
+  for name in TRACKABLE_ANCHORS:
     point = anchors.get(name)
     if not isinstance(point, dict):
       continue
@@ -158,7 +160,7 @@ def validate_tracking_setup(value: Any, *, duration_ms: int | None = None) -> tu
   return {
     "version": TRACKING_SETUP_VERSION,
     "reference_time_ms": int(round(reference_time_ms)),
-    "barbell_target": "near_side_collar",
+    "barbell_target": value.get("barbell_target"),
     "anchors": normalized_anchors,
   }, None
 
@@ -1128,14 +1130,14 @@ def track_manual_anchors(
   import cv2
 
   setup = _normalized_tracking_setup(setup)
-  anchor_names = tuple(name for name in ALL_ANCHORS if name in (setup.get("anchors") or {}))
+  anchor_names = tuple(name for name in TRACKABLE_ANCHORS if name in (setup.get("anchors") or {}))
 
   source_indices = sorted({int(frame["source_frame_index"]) for frame in pose_frames})
   if not source_indices or width <= 0 or height <= 0:
     return {
       "tracks": {},
       "reference_source_index": None,
-      "coverage": {name: 0.0 for name in ALL_ANCHORS},
+      "coverage": {name: 0.0 for name in TRACKABLE_ANCHORS},
       "velocity_cap_count": 0,
       "velocity_cap_counts": {name: 0 for name in USER_BODY_ANCHORS},
     }
@@ -1149,7 +1151,7 @@ def track_manual_anchors(
     return {
       "tracks": {},
       "reference_source_index": None,
-      "coverage": {name: 0.0 for name in ALL_ANCHORS},
+      "coverage": {name: 0.0 for name in TRACKABLE_ANCHORS},
       "velocity_cap_count": 0,
       "velocity_cap_counts": {name: 0 for name in USER_BODY_ANCHORS},
     }
@@ -1164,7 +1166,7 @@ def track_manual_anchors(
     return {
       "tracks": {},
       "reference_source_index": reference_index,
-      "coverage": {name: 0.0 for name in ALL_ANCHORS},
+      "coverage": {name: 0.0 for name in TRACKABLE_ANCHORS},
       "velocity_cap_count": 0,
       "velocity_cap_counts": {name: 0 for name in USER_BODY_ANCHORS},
     }
@@ -1223,7 +1225,7 @@ def track_manual_anchors(
     velocity_cap_counts[LEGACY_UPPER_BACK_ANCHOR] = velocity_cap_counts.get(UPPER_BACK_ANCHOR, 0)
     stale_track_counts[LEGACY_UPPER_BACK_ANCHOR] = stale_track_counts.get(UPPER_BACK_ANCHOR, 0)
 
-  coverage = {name: 0.0 for name in ALL_ANCHORS}
+  coverage = {name: 0.0 for name in TRACKABLE_ANCHORS}
   coverage.update({
     name: round(
       sum(1 for point in anchor_tracks.values() if _manual_track_is_usable(point)) / max(len(available_indices), 1),

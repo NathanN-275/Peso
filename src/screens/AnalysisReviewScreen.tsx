@@ -585,6 +585,7 @@ export default function AnalysisReviewScreen({
                     containerSize={videoLayout}
                     videoSize={videoSize}
                     contentFit="cover"
+                    exercise={result.exercise}
                     cameraView={cameraView}
                     selectedSide={selectedPoseSide}
                     preferUpperBackKeypoint={trackingAssistance?.actualMode === 'pin_assisted'}

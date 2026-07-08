@@ -35,6 +35,7 @@ type TrackingPinSetupModalProps = {
   videoSize: { width: number; height: number };
   videoDurationMs?: number | null;
   initialSetup?: TrackingSetup | null;
+  barbellTarget?: TrackingSetup['barbell_target'];
   onSave: (setup: TrackingSetup) => void;
   onCancel: () => void;
 };
@@ -44,6 +45,8 @@ const PIN_LABELS: Record<TrackingPinName, string> = {
   hip: 'Hip',
   knee: 'Knee',
   ankle: 'Ankle',
+  elbow: 'Elbow',
+  wrist: 'Wrist',
   barbell: 'Barbell collar',
 };
 
@@ -52,6 +55,8 @@ const PIN_COLORS: Record<TrackingPinName, string> = {
   hip: '#A77BFF',
   knee: '#FFB454',
   ankle: '#5DDBA6',
+  elbow: '#F973B7',
+  wrist: '#2DD4BF',
   barbell: '#FF6577',
 };
 
@@ -100,6 +105,7 @@ export default function TrackingPinSetupModal({
   videoSize,
   videoDurationMs,
   initialSetup,
+  barbellTarget = 'near_side_collar',
   onSave,
   onCancel,
 }: TrackingPinSetupModalProps) {
@@ -415,7 +421,7 @@ export default function TrackingPinSetupModal({
     onSave({
       version: 1,
       reference_time_ms: Math.round(currentTime * 1000),
-      barbell_target: 'near_side_collar',
+      barbell_target: barbellTarget,
       anchors: pins,
     });
   };

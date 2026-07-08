@@ -12,6 +12,7 @@ from typing import Any
 
 from .barbell_tracker import BarbellTracker
 from .feedback_engine import build_depth_summary_debug, build_feedback
+from .exercises.pressing import PressingAnalyzer, is_pressing_exercise
 from .exercises.squat import SquatAnalyzer
 from .manual_tracking import (
   USER_BODY_ANCHORS,
@@ -41,6 +42,10 @@ logger = logging.getLogger(__name__)
 
 def _is_squat_variation(exercise_type: str) -> bool:
   return exercise_type.strip().lower().endswith("squat")
+
+
+def _is_supported_pressing_view(video: dict[str, Any]) -> bool:
+  return is_pressing_exercise(video.get("exercise_type", "")) and video.get("view_type") in {"side", "front"}
 
 
 def _apply_tracking_assistance(
@@ -426,7 +431,7 @@ def build_limited_result(
     "reps": [],
     "summary_flags": [reason],
     "coach_feedback": [
-      "Detailed v1 analysis is currently available only for squat videos from the side view."
+      "Detailed analysis is currently available for side-view squats and side/front bench or overhead press videos."
     ],
     "videoId": video_id,
     "cameraView": view_type,
@@ -441,7 +446,7 @@ def build_limited_result(
       "squatMotionSignal": 0,
     },
     "coachingFeedback": [
-      "Detailed v1 analysis is currently available only for squat videos from the side view."
+      "Detailed analysis is currently available for side-view squats and side/front bench or overhead press videos."
     ],
   }
 
@@ -671,12 +676,29 @@ def _analyze_squat_result(
   video: dict[str, Any],
   estimation: dict[str, Any],
 ) -> dict[str, Any]:
+  if _is_supported_pressing_view(video):
+    if not estimation["frames"]:
+      return build_limited_result(
+        video_id=video_id,
+        exercise_type=video["exercise_type"],
+        view_type=video["view_type"],
+        reason="No pose detected. Make sure your upper body and bar path are visible.",
+        error_code="no_pose_detected",
+      )
+    return PressingAnalyzer().analyze(
+      video_id=video_id,
+      exercise_type=video["exercise_type"],
+      view_type=video["view_type"],
+      frames=estimation["frames"],
+      sampled_frame_count=estimation.get("sampled_frame_count"),
+    )
+
   if not _is_squat_variation(video["exercise_type"]) or video["view_type"] != "side":
     return build_limited_result(
       video_id=video_id,
       exercise_type=video["exercise_type"],
       view_type=video["view_type"],
-      reason="Limited analysis: full support is available only for squat side view in v1.",
+      reason="Limited analysis: full support is available only for side-view squats and side/front bench or overhead press videos.",
     )
 
   if not estimation["frames"]:
@@ -822,6 +844,25 @@ def _attach_barbell_tracking(
   file_path: str,
   estimation: dict[str, Any],
 ) -> None:
+  if _is_supported_pressing_view(video):
+    path, tracking_diagnostics = _pressing_barbell_path_from_pose(
+      estimation=estimation,
+      video=video,
+    )
+    result["barbellPath"] = path
+    diagnostics = result.setdefault("diagnostics", {})
+    diagnostics["barbell_tracking"] = tracking_diagnostics
+    assistance = result.get("trackingAssistance") or {}
+    assistance["manualBarbellPointCount"] = int(tracking_diagnostics.get("manual_point_count") or 0)
+    assistance["automaticBarbellPointCount"] = int(tracking_diagnostics.get("pose_proxy_point_count") or 0)
+    if path.get("available") and assistance["manualBarbellPointCount"] > 0:
+      assistance["used"] = True
+      assistance["actualMode"] = "pin_assisted"
+      assistance["fallbackReason"] = None
+    result["trackingAssistance"] = assistance
+    diagnostics["tracking_assistance"] = assistance
+    return
+
   if not _is_squat_variation(video["exercise_type"]) or video["view_type"] != "side":
     return
 
@@ -985,6 +1026,118 @@ def _attach_barbell_tracking(
       "failure_reason": "tracker_error",
       "error": str(error),
     }
+
+
+def _pressing_barbell_path_from_pose(
+  *,
+  estimation: dict[str, Any],
+  video: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+  frames = estimation.get("frames") or []
+  manual_barbell = barbell_track_priors(estimation.get("manual_tracking") or {})
+  manual_by_index = {
+    int(index): point
+    for index, point in manual_barbell.items()
+    if isinstance(point, dict) and float(point.get("confidence") or 0.0) >= 0.24
+  }
+  points: list[dict[str, Any]] = []
+  manual_count = 0
+  pose_count = 0
+
+  for frame in frames:
+    source_index = int(frame.get("source_frame_index", -1))
+    time_seconds = float(frame.get("timestamp_ms", 0.0) or 0.0) / 1000.0
+    manual_point = manual_by_index.get(source_index)
+    if manual_point is not None:
+      points.append({
+        "time": round(time_seconds, 4),
+        "x": float(manual_point["x"]),
+        "y": float(manual_point["y"]),
+        "confidence": min(float(manual_point.get("confidence") or 0.0), 0.95),
+        "trackingState": manual_point.get("tracking_state") or "guided",
+        "selectedSource": "manual_pin_lane",
+      })
+      manual_count += 1
+      continue
+
+    landmarks = frame.get("landmarks") or {}
+    wrists = [
+      landmarks.get("left_wrist"),
+      landmarks.get("right_wrist"),
+    ]
+    usable_wrists = [
+      wrist for wrist in wrists
+      if isinstance(wrist, dict)
+      and isinstance(wrist.get("x"), (int, float))
+      and isinstance(wrist.get("y"), (int, float))
+      and float(wrist.get("visibility") or 0.0) >= 0.20
+    ]
+    if not usable_wrists:
+      continue
+    total_visibility = sum(max(float(wrist.get("visibility") or 0.0), 0.01) for wrist in usable_wrists)
+    x = sum(float(wrist["x"]) * max(float(wrist.get("visibility") or 0.0), 0.01) for wrist in usable_wrists) / total_visibility
+    y = sum(float(wrist["y"]) * max(float(wrist.get("visibility") or 0.0), 0.01) for wrist in usable_wrists) / total_visibility
+    confidence = min(float(wrist.get("visibility") or 0.0) for wrist in usable_wrists)
+    points.append({
+      "time": round(time_seconds, 4),
+      "x": x,
+      "y": y,
+      "confidence": min(confidence, 0.72),
+      "trackingState": "estimated",
+      "selectedSource": "pose_wrist_proxy",
+    })
+    pose_count += 1
+
+  coverage = len(points) / max(len(frames), 1)
+  target = "bar_center" if video.get("view_type") == "front" else "press_bar_center"
+  path = {
+    "available": bool(points),
+    "target": target,
+    "source": "manual_pin_lane" if manual_count and manual_count >= pose_count else "pose_wrist_proxy",
+    "coverage": round(coverage, 3),
+    "points": points,
+  }
+  diagnostics = {
+    "available": bool(points),
+    "target": target,
+    "source": path["source"],
+    "coverage": round(coverage, 3),
+    "manual_point_count": manual_count,
+    "pose_proxy_point_count": pose_count,
+    "front_bar_target": "bar_center" if video.get("view_type") == "front" else None,
+  }
+  return path, diagnostics
+
+
+def _refresh_pressing_result_from_barbell(
+  *,
+  result: dict[str, Any],
+  video: dict[str, Any],
+  estimation: dict[str, Any],
+) -> dict[str, Any]:
+  if not _is_supported_pressing_view(video):
+    return result
+  refreshed = PressingAnalyzer().analyze(
+    video_id=str(video["id"]),
+    exercise_type=video["exercise_type"],
+    view_type=video["view_type"],
+    frames=estimation.get("frames") or [],
+    sampled_frame_count=estimation.get("sampled_frame_count"),
+    barbell_path=result.get("barbellPath"),
+  )
+  for key in (
+    "rep_count",
+    "reps",
+    "summary_flags",
+    "summaryFlags",
+    "coach_feedback",
+    "coachingFeedback",
+    "videoQuality",
+  ):
+    result[key] = refreshed[key]
+  diagnostics = result.setdefault("diagnostics", {})
+  diagnostics.update(refreshed.get("diagnostics") or {})
+  return result
 
 
 def analyze_video(video_id: str) -> None:
@@ -1171,6 +1324,11 @@ def analyze_video(video_id: str) -> None:
       result=result,
       video=video,
       file_path=str(temp_file),
+      estimation=estimation,
+    )
+    result = _refresh_pressing_result_from_barbell(
+      result=result,
+      video=video,
       estimation=estimation,
     )
     logger.info(

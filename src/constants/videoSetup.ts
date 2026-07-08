@@ -24,5 +24,15 @@ export type VideoSetupSelection = {
 };
 
 export function supportsPinAssistedTracking(selection: VideoSetupSelection | null) {
-  return Boolean(selection?.angle === 'Side' && selection.exercise.endsWith('Squat'));
+  return Boolean(
+    (selection?.angle === 'Side' && selection.exercise.endsWith('Squat'))
+    || (
+      selection?.angle
+      && ['Bench Press', 'Incline Bench Press', 'Overhead Press'].includes(selection.exercise)
+    )
+  );
+}
+
+export function trackingBarbellTarget(selection: VideoSetupSelection | null) {
+  return selection?.angle === 'Front' ? ('bar_center' as const) : ('near_side_collar' as const);
 }

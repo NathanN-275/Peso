@@ -109,8 +109,26 @@ class ManualTrackingTest(unittest.TestCase):
     self.assertEqual(validate_tracking_setup(empty)[1], "empty_tracking_anchors")
 
     unknown = tracking_setup()
-    unknown["anchors"]["wrist"] = {"x": 0.4, "y": 0.4}
-    self.assertEqual(validate_tracking_setup(unknown)[1], "unsupported_wrist_anchor")
+    unknown["anchors"]["neck"] = {"x": 0.4, "y": 0.4}
+    self.assertEqual(validate_tracking_setup(unknown)[1], "unsupported_neck_anchor")
+
+  def test_validate_tracking_setup_accepts_pressing_pins_and_bar_center(self) -> None:
+    setup = {
+      "version": 1,
+      "reference_time_ms": 100,
+      "barbell_target": "bar_center",
+      "anchors": {
+        "elbow": {"x": 0.42, "y": 0.45},
+        "wrist": {"x": 0.45, "y": 0.35},
+        "barbell": {"x": 0.50, "y": 0.34},
+      },
+    }
+
+    validated, error = validate_tracking_setup(setup, duration_ms=1000)
+
+    self.assertIsNone(error)
+    self.assertEqual(validated["barbell_target"], "bar_center")
+    self.assertEqual(set(validated["anchors"]), {"elbow", "wrist", "barbell"})
 
   def test_validate_tracking_setup_rejects_misordered_points_when_chain_available(self) -> None:
     misordered = tracking_setup()
