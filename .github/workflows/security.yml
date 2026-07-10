@@ -1,0 +1,77 @@
+name: Security Checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  backend-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pip-audit
+
+      - name: Run backend tests
+        working-directory: backend
+        env:
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: test-service-role
+          SUPABASE_JWT_SECRET: test-jwt-secret
+          CLEANUP_JOB_TOKEN: test-cleanup-token
+          BACKEND_ALLOW_UNAUTHENTICATED_DEV_CLEANUP: "false"
+        run: python -m unittest discover -s tests
+
+      - name: Audit Python dependencies
+        run: pip-audit -r backend/requirements.txt --ignore-vuln PYSEC-2026-1805
+
+      - name: Audit Supabase migrations and RLS
+        run: python scripts/supabase_security_audit.py
+
+  frontend-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Typecheck frontend
+        run: npm run typecheck
+
+      - name: Run frontend policy tests
+        run: npm run test:policy
+
+      - name: Audit Node dependencies
+        run: npm audit --audit-level=high
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

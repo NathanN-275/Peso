@@ -4,6 +4,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import MagicMock, patch
 
+from fastapi import HTTPException
+
 from app.services.storage_service import StorageService
 
 
@@ -14,6 +16,7 @@ class StorageServiceTest(unittest.TestCase):
     service.create_signed_url = MagicMock(return_value="https://storage.example.test/signed")
     service.remove_tempfile = StorageService.remove_tempfile.__get__(service, StorageService)
     service.max_video_upload_bytes = 50 * 1024 * 1024
+    service.download_signed_url_ttl_seconds = 120
     return service
 
   def test_validate_video_object_accepts_browser_recorded_webm_with_codec_mime(self) -> None:
@@ -28,6 +31,22 @@ class StorageServiceTest(unittest.TestCase):
     result = service.validate_video_object("user/uploads/recording.webm")
 
     self.assertEqual(result, object_info)
+
+  def test_validate_video_object_rejects_invalid_mime_type(self) -> None:
+    service = self._service({"metadata": {"mimetype": "text/plain", "size": "1024"}})
+
+    with self.assertRaises(HTTPException) as raised:
+      service.validate_video_object("user/uploads/not-video.mp4")
+
+    self.assertEqual(raised.exception.status_code, 400)
+
+  def test_validate_video_object_rejects_oversized_video(self) -> None:
+    service = self._service({"metadata": {"mimetype": "video/mp4", "size": str(51 * 1024 * 1024)}})
+
+    with self.assertRaises(HTTPException) as raised:
+      service.validate_video_object("user/uploads/large.mp4")
+
+    self.assertEqual(raised.exception.status_code, 413)
 
   def test_download_to_tempfile_streams_signed_url(self) -> None:
     object_info = {

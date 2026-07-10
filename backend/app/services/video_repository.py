@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from .supabase_client import get_supabase_admin_client
+from .video_storage_paths import VIDEO_STORAGE_PATH_FIELDS, require_user_storage_path
 
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ class VideoRepository:
 
   def update_video(self, video_id: str, fields: dict[str, Any]) -> dict[str, Any]:
     # Update any video metadata in place.
+    self._validate_storage_path_update(video_id, fields)
     response = (
       self.client.table("videos")
       .update(fields)
@@ -363,6 +365,21 @@ class VideoRepository:
   @staticmethod
   def video_is_saved(video: dict[str, Any]) -> bool:
     return video.get("save_state") == "saved" or video.get("is_saved") is True
+
+  def _validate_storage_path_update(self, video_id: str, fields: dict[str, Any]) -> None:
+    if not any(field in fields and fields[field] is not None for field in VIDEO_STORAGE_PATH_FIELDS):
+      return
+
+    video = self.get_video(video_id)
+    if not video:
+      raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found.")
+
+    user_id = str(video.get("user_id") or "")
+    for field in VIDEO_STORAGE_PATH_FIELDS:
+      path = fields.get(field)
+
+      if path is not None:
+        require_user_storage_path(str(path), user_id, field)
 
   @staticmethod
   def _error_mentions_missing_columns(error: Exception, columns: set[str]) -> bool:

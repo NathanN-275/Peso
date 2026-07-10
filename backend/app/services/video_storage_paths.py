@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import HTTPException, status
 
+
+logger = logging.getLogger(__name__)
 
 VIDEO_STORAGE_PATH_FIELDS = (
   "storage_path",
@@ -14,21 +17,51 @@ VIDEO_STORAGE_PATH_FIELDS = (
 
 
 def _path_parts(path: str) -> list[str]:
-  return [part for part in path.strip("/").split("/") if part]
+  return path.split("/")
+
+
+def storage_path_validation_error(path: str | None, user_id: str | None) -> str | None:
+  if not path:
+    return "missing_path"
+
+  if not user_id:
+    return "missing_user_id"
+
+  if path != path.strip() or path.startswith("/") or path.endswith("/"):
+    return "invalid_path_boundary"
+
+  if "\\" in path or "://" in path or any(ord(char) < 32 for char in path):
+    return "invalid_path_characters"
+
+  parts = _path_parts(path)
+  if len(parts) < 2 or any(not part for part in parts):
+    return "invalid_path_shape"
+
+  if any(part in {".", ".."} for part in parts):
+    return "path_traversal"
+
+  if parts[0] != user_id:
+    return "wrong_owner"
+
+  return None
 
 
 def storage_path_belongs_to_user(path: str | None, user_id: str | None) -> bool:
-  if not path or not user_id:
-    return False
-
-  parts = _path_parts(path)
-  return len(parts) >= 2 and parts[0] == user_id and ".." not in parts
+  return storage_path_validation_error(path, user_id) is None
 
 
 def require_user_storage_path(path: str | None, user_id: str, label: str = "storage path") -> str:
-  if storage_path_belongs_to_user(path, user_id):
+  reason = storage_path_validation_error(path, user_id)
+  if reason is None:
     return str(path)
 
+  logger.warning(
+    "Rejected storage path user_id=%s label=%s reason=%s path=%s",
+    user_id,
+    label,
+    reason,
+    path,
+  )
   raise HTTPException(
     status_code=status.HTTP_403_FORBIDDEN,
     detail=f"{label} is outside the current user folder.",

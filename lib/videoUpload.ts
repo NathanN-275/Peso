@@ -509,19 +509,6 @@ async function prepareVideoForUpload(
   };
 }
 
-function createUuid() {
-  // UUID generation falls back to a local shim when needed.
-  if (typeof globalThis.crypto?.randomUUID === 'function') {
-    return globalThis.crypto.randomUUID();
-  }
-
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => {
-    const randomNibble = Math.floor(Math.random() * 16);
-    const value = character === 'x' ? randomNibble : (randomNibble & 0x3) | 0x8;
-    return value.toString(16);
-  });
-}
-
 function formatSupabaseError(error: unknown) {
   // Reduce Supabase responses to a single readable message.
   const typedError = (error ?? {}) as SupabaseLikeError;
@@ -733,20 +720,15 @@ export async function uploadVideoForAnalysis({
     typeof asset.duration === 'number' && !Number.isNaN(asset.duration)
       ? Math.round(asset.duration)
       : null;
-  const videoId = createUuid();
   const normalizedExerciseType = normalizeExerciseType(exercise);
   const normalizedViewType = normalizeViewType(angle);
 
   const registerPayload = {
-    id: videoId,
     storage_path: storagePath,
     source_type: sourceType,
     exercise_type: normalizedExerciseType,
     view_type: normalizedViewType,
     duration_ms: durationMs,
-    original_size_bytes: preparedVideo.originalSizeBytes,
-    uploaded_size_bytes: uploadSource.sizeBytes,
-    was_compressed: preparedVideo.wasCompressed,
     ...(trackingSetup ? { tracking_setup: trackingSetup } : {}),
   };
 
@@ -764,7 +746,6 @@ export async function uploadVideoForAnalysis({
     console.error('[VideoUpload] uploadVideoForAnalysis registration failed', {
       authUserId: user.id,
       insertedUserId: user.id,
-      videoId,
       storagePath,
       exerciseType: normalizedExerciseType,
       viewType: normalizedViewType,

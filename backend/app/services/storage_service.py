@@ -71,6 +71,7 @@ class StorageService:
     settings = get_settings()
     self.bucket = bucket or settings.video_bucket
     self.max_video_upload_bytes = settings.max_video_upload_bytes
+    self.download_signed_url_ttl_seconds = settings.storage_download_signed_url_ttl_seconds
     self.client = get_supabase_admin_client()
 
   def get_object_info(self, storage_path: str) -> dict[str, Any]:
@@ -130,7 +131,7 @@ class StorageService:
 
     if size_bytes > self.max_video_upload_bytes:
       raise HTTPException(
-        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
         detail="Uploaded video exceeds the configured analysis limit.",
       )
 
@@ -139,7 +140,7 @@ class StorageService:
   def download_to_tempfile(self, storage_path: str) -> Path:
     self.validate_video_object(storage_path)
     suffix = Path(storage_path).suffix or ".mp4"
-    signed_url = self.create_signed_url(storage_path, expires_in=120)
+    signed_url = self.create_signed_url(storage_path, expires_in=self.download_signed_url_ttl_seconds)
     temp_path: Path | None = None
     downloaded_bytes = 0
 
@@ -158,7 +159,7 @@ class StorageService:
 
             if downloaded_bytes > self.max_video_upload_bytes:
               raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                 detail="Downloaded video exceeds the configured analysis limit.",
               )
 

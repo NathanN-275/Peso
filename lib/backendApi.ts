@@ -313,15 +313,11 @@ export type AnalyzedVideoExportOptions = {
 };
 
 export type RegisterUploadedVideoRequest = {
-  id: string;
   storage_path: string;
   source_type: 'camera' | 'camera_roll';
   exercise_type: string;
   view_type: string;
   duration_ms: number | null;
-  original_size_bytes: number;
-  uploaded_size_bytes: number;
-  was_compressed: boolean;
   tracking_setup?: unknown;
 };
 

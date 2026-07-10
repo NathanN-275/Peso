@@ -41,7 +41,13 @@ The main analysis pipeline is focused on:
 ```bash
 BACKEND_ENV=development
 VIDEO_BUCKET=videos
-CLEANUP_JOB_TOKEN=
+CLEANUP_JOB_TOKEN=replace-with-random-cleanup-secret
+MAX_VIDEO_DURATION_MS=300000
+SIGNED_URL_TTL_SECONDS=300
+STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS=120
+FFMPEG_TIMEOUT_SECONDS=120
+MAX_GLOBAL_VIDEO_WORKERS=2
+EXPORT_COOLDOWN_SECONDS=30
 EXPORT_CACHE_TTL_HOURS=24
 ORPHAN_STORAGE_MIN_AGE_HOURS=24
 STALE_PROCESSING_HOURS=6
@@ -142,10 +148,10 @@ Backend variables include:
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_JWT_SECRET=
-CLEANUP_JOB_TOKEN=
+CLEANUP_JOB_TOKEN=replace-with-random-cleanup-secret
 ```
 
-Production backend deployments must also set `BACKEND_ENV=production` and an explicit non-local `BACKEND_CORS_ORIGINS` value.
+Production backend deployments must also set `BACKEND_ENV=production`, `CLEANUP_JOB_TOKEN`, and an explicit non-local `BACKEND_CORS_ORIGINS` value.
 
 ### Install frontend dependencies
 

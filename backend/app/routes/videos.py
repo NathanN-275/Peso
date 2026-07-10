@@ -8,7 +8,7 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from ..analysis.pipeline import analyze_video
 from ..analysis.manual_tracking import validate_tracking_setup
@@ -21,9 +21,17 @@ from ..services.storage_cleanup import StorageCleanupService, cleanup_requires_t
 from ..services.storage_quota import StorageQuotaService
 from ..services.storage_service import StorageService
 from ..services.video_repository import VideoRepository
+from ..services.config import DEFAULT_MAX_VIDEO_DURATION_MS
 from ..services.video_storage_paths import (
   require_user_storage_path,
   storage_path_belongs_to_user,
+)
+from ..services.video_work_limits import (
+  VideoWorkSlot,
+  acquire_video_work_slot_or_429,
+  enforce_export_cooldown,
+  record_export_attempt,
+  release_video_work_slot,
 )
 
 
@@ -48,6 +56,10 @@ ALLOWED_VIEW_TYPES = {"side", "front"}
 ALLOWED_SOURCE_TYPES = {"camera", "camera_roll"}
 
 
+class StrictRequestModel(BaseModel):
+  model_config = ConfigDict(extra="forbid")
+
+
 class AnalyzeResponse(BaseModel):
   video_id: UUID
   status: str
@@ -61,16 +73,12 @@ class VideoStatusResponse(BaseModel):
   updated_at: str
 
 
-class RegisterVideoRequest(BaseModel):
-  id: UUID | None = None
+class RegisterVideoRequest(StrictRequestModel):
   storage_path: str
   source_type: str = "camera_roll"
   exercise_type: str
   view_type: str
   duration_ms: int | None = None
-  original_size_bytes: int | None = None
-  uploaded_size_bytes: int | None = None
-  was_compressed: bool = False
   tracking_setup: dict | None = None
 
 
@@ -146,7 +154,7 @@ class AnalyzedVideoExportResponse(BaseModel):
   variant: str
 
 
-class AnalyzedVideoExportRequest(BaseModel):
+class AnalyzedVideoExportRequest(StrictRequestModel):
   pose: bool = True
   barbell: bool = False
 
@@ -201,12 +209,14 @@ def _authorize_cleanup(cleanup_token: str | None) -> None:
     return
 
   if not settings.cleanup_job_token:
+    logger.error("Rejected cleanup request because cleanup token is not configured.")
     raise HTTPException(
       status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail="CLEANUP_JOB_TOKEN must be configured before running cleanup outside development.",
     )
 
   if cleanup_token != settings.cleanup_job_token:
+    logger.warning("Rejected cleanup request with invalid cleanup token.")
     raise HTTPException(
       status_code=status.HTTP_401_UNAUTHORIZED,
       detail="Invalid cleanup token.",
@@ -243,19 +253,100 @@ def _public_storage_usage_payload(report) -> dict:
 
 def _enforce_video_registration_limits(repository: VideoRepository, user_id: str) -> None:
   settings = get_settings()
+  in_progress_count = repository.count_user_in_progress_videos(user_id)
+  recent_upload_count = repository.count_recent_user_uploads(
+    user_id,
+    (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+  )
 
-  if repository.count_user_in_progress_videos(user_id) >= settings.max_user_in_progress_videos:
+  if not isinstance(in_progress_count, int):
+    in_progress_count = 0
+
+  if not isinstance(recent_upload_count, int):
+    recent_upload_count = 0
+
+  if in_progress_count >= settings.max_user_in_progress_videos:
+    logger.warning(
+      "Rejected video registration because per-user in-progress limit is saturated user_id=%s limit=%s",
+      user_id,
+      settings.max_user_in_progress_videos,
+    )
     raise HTTPException(
       status_code=status.HTTP_429_TOO_MANY_REQUESTS,
       detail="Too many videos are already queued or processing. Wait for one to finish before uploading another.",
     )
 
-  recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
-  if repository.count_recent_user_uploads(user_id, recent_cutoff.isoformat()) >= settings.max_user_uploads_per_hour:
+  if recent_upload_count >= settings.max_user_uploads_per_hour:
+    logger.warning(
+      "Rejected video registration because per-user upload frequency is saturated user_id=%s limit=%s",
+      user_id,
+      settings.max_user_uploads_per_hour,
+    )
     raise HTTPException(
       status_code=status.HTTP_429_TOO_MANY_REQUESTS,
       detail="Too many uploads were started recently. Try again later.",
     )
+
+
+def _enforce_analysis_queue_limit(repository: VideoRepository, user_id: str) -> None:
+  settings = get_settings()
+  in_progress_count = repository.count_user_in_progress_videos(user_id)
+
+  if not isinstance(in_progress_count, int):
+    in_progress_count = 0
+
+  if in_progress_count >= settings.max_user_in_progress_videos:
+    logger.warning(
+      "Rejected analysis queue because per-user in-progress limit is saturated user_id=%s limit=%s",
+      user_id,
+      settings.max_user_in_progress_videos,
+    )
+    raise HTTPException(
+      status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+      detail="Too many videos are already queued or processing. Wait for one to finish before starting another.",
+    )
+
+
+def _setting_int(settings, name: str, default: int) -> int:
+  value = getattr(settings, name, default)
+  return value if isinstance(value, int) else default
+
+
+def _validate_video_duration(duration_ms: int | None, settings) -> None:
+  if duration_ms is None:
+    return
+
+  if duration_ms < 0:
+    logger.warning("Rejected video registration with negative duration duration_ms=%s", duration_ms)
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Video duration must be non-negative.")
+
+  max_duration_ms = _setting_int(settings, "max_video_duration_ms", DEFAULT_MAX_VIDEO_DURATION_MS)
+  if duration_ms > max_duration_ms:
+    logger.warning(
+      "Rejected video registration because duration exceeds limit duration_ms=%s max_duration_ms=%s",
+      duration_ms,
+      max_duration_ms,
+    )
+    raise HTTPException(
+      status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+      detail="Uploaded video exceeds the configured duration limit.",
+    )
+
+
+def _signed_url_ttl_seconds() -> int:
+  settings = get_settings()
+  return _setting_int(settings, "signed_url_ttl_seconds", 300)
+
+
+def _create_owned_signed_url(
+  storage: StorageService,
+  path: str | None,
+  user_id: str,
+  label: str,
+) -> tuple[str, str, int]:
+  owned_path = require_user_storage_path(path, user_id, label)
+  expires_in = _signed_url_ttl_seconds()
+  return owned_path, storage.create_signed_url(owned_path, expires_in=expires_in), expires_in
 
 
 def _summary_analysis_payload(result_json: dict) -> dict:
@@ -364,12 +455,14 @@ def _delete_owned_storage_path(storage: StorageService, path: str, user_id: str,
     return False
 
 
-def _run_analysis_job(video_id: str) -> None:
+def _run_analysis_job(video_id: str, video_work_slot: VideoWorkSlot | None = None) -> None:
   # Background tasks run analysis outside the request lifecycle.
   try:
     analyze_video(video_id)
   except Exception:
     logger.exception("Background analysis failed for video %s", video_id)
+  finally:
+    release_video_work_slot(video_work_slot)
 
 
 def _video_storage_paths(video: dict) -> list[str]:
@@ -414,8 +507,8 @@ def register_video(
   if source_type not in ALLOWED_SOURCE_TYPES:
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported video source type.")
 
-  if request.duration_ms is not None and request.duration_ms < 0:
-    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Video duration must be non-negative.")
+  settings = get_settings()
+  _validate_video_duration(request.duration_ms, settings)
 
   repository = VideoRepository()
   storage = StorageService()
@@ -436,13 +529,8 @@ def register_video(
     if tracking_error:
       raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid tracking setup: {tracking_error}.")
 
-  video_id = str(request.id or uuid4())
-  original_size = request.original_size_bytes if request.original_size_bytes is not None else actual_uploaded_size
-
-  if original_size < actual_uploaded_size:
-    original_size = actual_uploaded_size
-
-  settings = get_settings()
+  video_id = str(uuid4())
+  original_size = actual_uploaded_size
   expires_at = (
     datetime.now(timezone.utc) + timedelta(hours=settings.saved_video_storage_ttl_hours)
   ).isoformat()
@@ -459,7 +547,7 @@ def register_video(
     "expires_at": expires_at,
     "original_size_bytes": original_size,
     "uploaded_size_bytes": actual_uploaded_size,
-    "was_compressed": bool(request.was_compressed),
+    "was_compressed": False,
     "storage_state": "available",
   }
 
@@ -543,8 +631,14 @@ def queue_analysis(
     if not analysis_is_current(analysis):
       playback_path = require_user_storage_path(_playback_storage_path(video), user_id, "playback_path")
       StorageService().validate_video_object(playback_path)
-      repository.update_video(video_id_str, {"status": "queued"})
-      background_tasks.add_task(_run_analysis_job, video_id_str)
+      _enforce_analysis_queue_limit(repository, user_id)
+      video_work_slot = acquire_video_work_slot_or_429("analysis", user_id=user_id, video_id=video_id_str)
+      try:
+        repository.update_video(video_id_str, {"status": "queued"})
+      except Exception:
+        release_video_work_slot(video_work_slot)
+        raise
+      background_tasks.add_task(_run_analysis_job, video_id_str, video_work_slot)
       return AnalyzeResponse(video_id=video_id, status="queued")
 
   if current_status in IDEMPOTENT_ANALYSIS_STATUSES:
@@ -558,16 +652,23 @@ def queue_analysis(
 
   playback_path = require_user_storage_path(_playback_storage_path(video), user_id, "playback_path")
   StorageService().validate_video_object(playback_path)
-  queued_video = repository.queue_owned_video_if_status(
-    video_id_str,
-    user_id,
-    QUEUEABLE_ANALYSIS_STATUSES,
-  )
+  _enforce_analysis_queue_limit(repository, user_id)
+  video_work_slot = acquire_video_work_slot_or_429("analysis", user_id=user_id, video_id=video_id_str)
+  try:
+    queued_video = repository.queue_owned_video_if_status(
+      video_id_str,
+      user_id,
+      QUEUEABLE_ANALYSIS_STATUSES,
+    )
+  except Exception:
+    release_video_work_slot(video_work_slot)
+    raise
 
   if queued_video:
-    background_tasks.add_task(_run_analysis_job, video_id_str)
+    background_tasks.add_task(_run_analysis_job, video_id_str, video_work_slot)
     return AnalyzeResponse(video_id=video_id, status=queued_video["status"])
 
+  release_video_work_slot(video_work_slot)
   latest_video = repository.require_owned_video(video_id_str, user_id)
   latest_status = latest_video["status"]
 
@@ -626,11 +727,9 @@ def list_saved_videos(
       )
 
     thumbnail_path = video.get("thumbnail_path")
-    thumbnail_url = (
-      storage.create_signed_url(require_user_storage_path(thumbnail_path, user_id, "thumbnail_path"))
-      if thumbnail_path
-      else None
-    )
+    thumbnail_url = None
+    if thumbnail_path:
+      _, thumbnail_url, _ = _create_owned_signed_url(storage, thumbnail_path, user_id, "thumbnail_path")
     saved_videos.append(
       SavedVideoResponse(
         id=video["id"],
@@ -668,11 +767,16 @@ def get_video_playback_url(
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found.")
 
   expires_in = 300
-  playback_path = require_user_storage_path(_playback_storage_path(video), user_id, "playback_path")
+  playback_path, playback_url, expires_in = _create_owned_signed_url(
+    storage,
+    _playback_storage_path(video),
+    user_id,
+    "playback_path",
+  )
   logger.info("Signing playback URL for video_id=%s path=%s expires_in=%s", video_id, playback_path, expires_in)
   return VideoPlaybackUrlResponse(
     video_id=video_id,
-    video_url=storage.create_signed_url(playback_path, expires_in=expires_in),
+    video_url=playback_url,
     expires_in=expires_in,
   )
 
@@ -713,18 +817,21 @@ def export_analyzed_video(
   variant = _export_variant(pose=requested.pose, barbell=requested.barbell)
 
   if variant == "clean":
-    playback_path = require_user_storage_path(_playback_storage_path(video), user_id, "playback_path")
+    playback_path, export_url, _ = _create_owned_signed_url(storage, _playback_storage_path(video), user_id, "playback_path")
     return AnalyzedVideoExportResponse(
       video_id=video_id,
       analysis_id=analysis["id"],
       storage_path=playback_path,
-      export_url=storage.create_signed_url(playback_path),
+      export_url=export_url,
       variant=variant,
     )
 
   export_path = f"{user_id}/exports/{video_id_str}-{analysis_id}-{variant}-h264-v1.mp4"
 
   if not storage.storage_path_exists(export_path):
+    enforce_export_cooldown(user_id, video_id_str, variant)
+    record_export_attempt(user_id, video_id_str, variant)
+    video_work_slot = acquire_video_work_slot_or_429("export", user_id=user_id, video_id=video_id_str)
     source_file: Path | None = None
     output_file: Path | None = None
 
@@ -744,17 +851,19 @@ def export_analyzed_video(
       )
       storage.upload_file(export_path, output_file, "video/mp4")
     finally:
+      release_video_work_slot(video_work_slot)
       if source_file:
         storage.remove_tempfile(source_file)
 
       if output_file:
         storage.remove_tempfile(output_file)
 
+  export_path, export_url, _ = _create_owned_signed_url(storage, export_path, user_id, "export_path")
   return AnalyzedVideoExportResponse(
     video_id=video_id,
     analysis_id=analysis["id"],
     storage_path=export_path,
-    export_url=storage.create_signed_url(export_path),
+    export_url=export_url,
     variant=variant,
   )
 

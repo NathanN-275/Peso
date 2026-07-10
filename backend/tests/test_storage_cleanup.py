@@ -305,6 +305,19 @@ class CleanupRouteAuthorizationTest(unittest.TestCase):
     with patch("app.routes.videos.get_settings", return_value=settings(backend_env="production")):
       _authorize_cleanup("cleanup-secret")
 
+  def test_invalid_cleanup_token_is_logged_without_token_value(self) -> None:
+    with (
+      patch("app.routes.videos.get_settings", return_value=settings(backend_env="production")),
+      self.assertLogs("app.routes.videos", level="WARNING") as logs,
+      self.assertRaises(HTTPException) as raised,
+    ):
+      _authorize_cleanup("wrong-secret")
+
+    self.assertEqual(raised.exception.status_code, status.HTTP_401_UNAUTHORIZED)
+    joined_logs = "\n".join(logs.output)
+    self.assertIn("invalid cleanup token", joined_logs)
+    self.assertNotIn("wrong-secret", joined_logs)
+
   def test_cleanup_token_is_required_by_default_in_development(self) -> None:
     with patch("app.routes.videos.get_settings", return_value=settings(backend_env="development")):
       with self.assertRaises(HTTPException) as raised:
@@ -361,6 +374,124 @@ class ConfigSecurityTest(unittest.TestCase):
 
     self.assertEqual(loaded.backend_env, "production")
     self.assertEqual(loaded.cors_origins, ("https://app.example.com",))
+
+  def test_development_requires_cleanup_token_without_explicit_allow_flag(self) -> None:
+    with patch.dict(
+      os.environ,
+      {
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+        "SUPABASE_JWT_SECRET": "secret",
+        "BACKEND_ENV": "development",
+      },
+      clear=True,
+    ):
+      load_settings.cache_clear()
+      with self.assertRaisesRegex(RuntimeError, "CLEANUP_JOB_TOKEN"):
+        load_settings()
+
+  def test_development_can_explicitly_allow_unauthenticated_cleanup_without_token(self) -> None:
+    with patch.dict(
+      os.environ,
+      {
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+        "SUPABASE_JWT_SECRET": "secret",
+        "BACKEND_ENV": "development",
+        "BACKEND_ALLOW_UNAUTHENTICATED_DEV_CLEANUP": "true",
+      },
+      clear=True,
+    ):
+      load_settings.cache_clear()
+      loaded = load_settings()
+
+    self.assertTrue(loaded.allow_unauthenticated_dev_cleanup)
+
+  def test_deployed_environment_requires_explicit_backend_env(self) -> None:
+    with patch.dict(
+      os.environ,
+      {
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+        "SUPABASE_JWT_SECRET": "secret",
+        "CLEANUP_JOB_TOKEN": "cleanup-secret",
+        "RENDER": "true",
+      },
+      clear=True,
+    ):
+      load_settings.cache_clear()
+      with self.assertRaisesRegex(RuntimeError, "BACKEND_ENV"):
+        load_settings()
+
+  def test_production_rejects_wildcard_cors_origin(self) -> None:
+    with patch.dict(
+      os.environ,
+      {
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+        "SUPABASE_JWT_SECRET": "secret",
+        "BACKEND_ENV": "production",
+        "CLEANUP_JOB_TOKEN": "cleanup-secret",
+        "BACKEND_CORS_ORIGINS": "*",
+      },
+      clear=True,
+    ):
+      load_settings.cache_clear()
+      with self.assertRaisesRegex(RuntimeError, "wildcard"):
+        load_settings()
+
+  def test_production_rejects_local_cors_origin(self) -> None:
+    with patch.dict(
+      os.environ,
+      {
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+        "SUPABASE_JWT_SECRET": "secret",
+        "BACKEND_ENV": "production",
+        "CLEANUP_JOB_TOKEN": "cleanup-secret",
+        "BACKEND_CORS_ORIGINS": "http://localhost:3000",
+      },
+      clear=True,
+    ):
+      load_settings.cache_clear()
+      with self.assertRaisesRegex(RuntimeError, "local origins"):
+        load_settings()
+
+  def test_production_rejects_private_network_cors_regex(self) -> None:
+    with patch.dict(
+      os.environ,
+      {
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+        "SUPABASE_JWT_SECRET": "secret",
+        "BACKEND_ENV": "production",
+        "CLEANUP_JOB_TOKEN": "cleanup-secret",
+        "BACKEND_CORS_ORIGINS": "https://app.example.com",
+        "BACKEND_CORS_ORIGIN_REGEX": r"^https?://192\\.168\\.1\\.10:8000$",
+      },
+      clear=True,
+    ):
+      load_settings.cache_clear()
+      with self.assertRaisesRegex(RuntimeError, "private-network"):
+        load_settings()
+
+  def test_production_rejects_debug_landmark_export_dir(self) -> None:
+    with patch.dict(
+      os.environ,
+      {
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+        "SUPABASE_JWT_SECRET": "secret",
+        "BACKEND_ENV": "production",
+        "CLEANUP_JOB_TOKEN": "cleanup-secret",
+        "BACKEND_CORS_ORIGINS": "https://app.example.com",
+        "POSE_DEBUG_LANDMARK_EXPORT_DIR": "/tmp/peso-landmarks",
+      },
+      clear=True,
+    ):
+      load_settings.cache_clear()
+      with self.assertRaisesRegex(RuntimeError, "POSE_DEBUG_LANDMARK_EXPORT_DIR"):
+        load_settings()
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from uuid import UUID
 
 from fastapi import BackgroundTasks, HTTPException
+from pydantic import ValidationError
 
 from app.analysis.versioning import annotate_analysis_freshness, analysis_is_current
 from app.routes.videos import (
@@ -22,6 +23,7 @@ from app.routes.videos import (
   save_video,
 )
 from app.services.config import DEFAULT_MODEL_VERSION, get_settings
+from app.services.video_work_limits import reset_video_work_limits_for_tests
 
 
 VIDEO_ID = UUID("11111111-1111-1111-1111-111111111111")
@@ -30,8 +32,25 @@ OTHER_USER_ID = "44444444-4444-4444-4444-444444444444"
 
 
 class VideoRoutesTest(unittest.TestCase):
-  def tearDown(self) -> None:
+  def setUp(self) -> None:
+    self.env_patcher = patch.dict(
+      os.environ,
+      {
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+        "SUPABASE_JWT_SECRET": "secret",
+        "CLEANUP_JOB_TOKEN": "cleanup-secret",
+      },
+      clear=False,
+    )
+    self.env_patcher.start()
     get_settings.cache_clear()
+    reset_video_work_limits_for_tests()
+
+  def tearDown(self) -> None:
+    self.env_patcher.stop()
+    get_settings.cache_clear()
+    reset_video_work_limits_for_tests()
 
   def test_queue_analysis_queues_uploaded_owned_video(self) -> None:
     repository = MagicMock()
@@ -109,24 +128,22 @@ class VideoRoutesTest(unittest.TestCase):
       saved_video_storage_ttl_hours=24,
       max_user_in_progress_videos=3,
       max_user_uploads_per_hour=20,
+      max_video_duration_ms=300000,
     )
 
     with (
       patch("app.routes.videos.VideoRepository", return_value=repository),
       patch("app.routes.videos.StorageService", return_value=storage),
       patch("app.routes.videos.get_settings", return_value=settings),
+      patch("app.routes.videos.uuid4", return_value=VIDEO_ID),
     ):
       response = register_video(
         RegisterVideoRequest(
-          id=VIDEO_ID,
           storage_path=f"{USER_ID}/uploads/{VIDEO_ID}.mp4",
           source_type="camera_roll",
           exercise_type="Bench Press",
           view_type="Front",
           duration_ms=1200,
-          original_size_bytes=1024,
-          uploaded_size_bytes=999,
-          was_compressed=False,
         ),
         USER_ID,
       )
@@ -141,6 +158,28 @@ class VideoRoutesTest(unittest.TestCase):
     self.assertEqual(response.video_id, VIDEO_ID)
     self.assertEqual(response.uploaded_size_bytes, 2048)
 
+  def test_register_video_rejects_server_owned_client_fields(self) -> None:
+    for field, value in {
+      "id": str(VIDEO_ID),
+      "status": "completed",
+      "save_state": "saved",
+      "expires_at": "2099-01-01T00:00:00+00:00",
+      "original_size_bytes": 1024,
+      "uploaded_size_bytes": 1024,
+      "was_compressed": True,
+      "playback_path": f"{USER_ID}/playback/{VIDEO_ID}.mp4",
+      "thumbnail_path": f"{USER_ID}/thumbnails/{VIDEO_ID}.jpg",
+    }.items():
+      with self.subTest(field=field):
+        with self.assertRaises(ValidationError):
+          RegisterVideoRequest(
+            storage_path=f"{USER_ID}/uploads/{VIDEO_ID}.mp4",
+            source_type="camera_roll",
+            exercise_type="squat",
+            view_type="side",
+            **{field: value},
+          )
+
   def test_register_video_rejects_cross_user_storage_path(self) -> None:
     repository = MagicMock()
     storage = MagicMock()
@@ -152,7 +191,6 @@ class VideoRoutesTest(unittest.TestCase):
     ):
       register_video(
         RegisterVideoRequest(
-          id=VIDEO_ID,
           storage_path=f"{OTHER_USER_ID}/uploads/{VIDEO_ID}.mp4",
           source_type="camera_roll",
           exercise_type="squat",
@@ -165,14 +203,37 @@ class VideoRoutesTest(unittest.TestCase):
     storage.validate_video_object.assert_not_called()
     repository.create_uploaded_video.assert_not_called()
 
-  def test_register_video_rate_limits_active_user_work(self) -> None:
+  def test_register_video_rejects_malformed_storage_path_before_storage_lookup(self) -> None:
     repository = MagicMock()
-    repository.count_user_in_progress_videos.return_value = 3
+    storage = MagicMock()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      register_video(
+        RegisterVideoRequest(
+          storage_path=f"{USER_ID}/../{VIDEO_ID}.mp4",
+          source_type="camera_roll",
+          exercise_type="squat",
+          view_type="side",
+        ),
+        USER_ID,
+      )
+
+    self.assertEqual(raised.exception.status_code, 403)
+    storage.validate_video_object.assert_not_called()
+    repository.create_uploaded_video.assert_not_called()
+
+  def test_register_video_rejects_oversized_duration_before_storage_lookup(self) -> None:
+    repository = MagicMock()
     storage = MagicMock()
     settings = MagicMock(
       saved_video_storage_ttl_hours=24,
       max_user_in_progress_videos=3,
       max_user_uploads_per_hour=20,
+      max_video_duration_ms=1000,
     )
 
     with (
@@ -183,7 +244,73 @@ class VideoRoutesTest(unittest.TestCase):
     ):
       register_video(
         RegisterVideoRequest(
-          id=VIDEO_ID,
+          storage_path=f"{USER_ID}/uploads/{VIDEO_ID}.mp4",
+          source_type="camera_roll",
+          exercise_type="squat",
+          view_type="side",
+          duration_ms=1001,
+        ),
+        USER_ID,
+      )
+
+    self.assertEqual(raised.exception.status_code, 413)
+    storage.validate_video_object.assert_not_called()
+    repository.create_uploaded_video.assert_not_called()
+
+  def test_register_video_rejects_malformed_tracking_setup(self) -> None:
+    repository = MagicMock()
+    repository.count_user_in_progress_videos.return_value = 0
+    repository.count_recent_user_uploads.return_value = 0
+    storage = MagicMock()
+    storage.validate_video_object.return_value = {"metadata": {"size": "2048", "mimetype": "video/mp4"}}
+    storage.storage_object_size_bytes.return_value = 2048
+    settings = MagicMock(
+      saved_video_storage_ttl_hours=24,
+      max_user_in_progress_videos=3,
+      max_user_uploads_per_hour=20,
+      max_video_duration_ms=300000,
+    )
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.get_settings", return_value=settings),
+      patch("app.routes.videos.validate_tracking_setup", return_value=(None, "invalid anchors")),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      register_video(
+        RegisterVideoRequest(
+          storage_path=f"{USER_ID}/uploads/{VIDEO_ID}.mp4",
+          source_type="camera_roll",
+          exercise_type="squat",
+          view_type="side",
+          tracking_setup={"version": 1, "anchors": {"barbell": {"x": 2, "y": -1}}},
+        ),
+        USER_ID,
+      )
+
+    self.assertEqual(raised.exception.status_code, 400)
+    repository.create_uploaded_video.assert_not_called()
+
+  def test_register_video_rate_limits_active_user_work(self) -> None:
+    repository = MagicMock()
+    repository.count_user_in_progress_videos.return_value = 3
+    storage = MagicMock()
+    settings = MagicMock(
+      saved_video_storage_ttl_hours=24,
+      max_user_in_progress_videos=3,
+      max_user_uploads_per_hour=20,
+      max_video_duration_ms=300000,
+    )
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.get_settings", return_value=settings),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      register_video(
+        RegisterVideoRequest(
           storage_path=f"{USER_ID}/uploads/{VIDEO_ID}.mp4",
           source_type="camera_roll",
           exercise_type="squat",
@@ -273,6 +400,70 @@ class VideoRoutesTest(unittest.TestCase):
     repository.queue_owned_video_if_status.assert_not_called()
     self.assertEqual(raised.exception.status_code, 409)
 
+  def test_queue_analysis_rejects_when_user_analysis_limit_is_saturated(self) -> None:
+    repository = MagicMock()
+    repository.require_owned_video.return_value = {
+      "id": str(VIDEO_ID),
+      "user_id": USER_ID,
+      "status": "uploaded",
+      "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+    }
+    repository.count_user_in_progress_videos.return_value = 3
+    storage = MagicMock()
+    background_tasks = BackgroundTasks()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      queue_analysis(VIDEO_ID, background_tasks, USER_ID)
+
+    self.assertEqual(raised.exception.status_code, 429)
+    storage.validate_video_object.assert_called_once_with(f"{USER_ID}/uploads/{VIDEO_ID}.mov")
+    repository.queue_owned_video_if_status.assert_not_called()
+    self.assertEqual(len(background_tasks.tasks), 0)
+
+  def test_queue_analysis_rejects_when_global_video_work_is_saturated(self) -> None:
+    second_video_id = UUID("22222222-2222-2222-2222-222222222222")
+    first_repository = MagicMock()
+    first_repository.require_owned_video.return_value = {
+      "id": str(VIDEO_ID),
+      "user_id": USER_ID,
+      "status": "uploaded",
+      "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+    }
+    first_repository.count_user_in_progress_videos.return_value = 0
+    first_repository.queue_owned_video_if_status.return_value = {"status": "queued"}
+    second_repository = MagicMock()
+    second_repository.require_owned_video.return_value = {
+      "id": str(second_video_id),
+      "user_id": USER_ID,
+      "status": "uploaded",
+      "storage_path": f"{USER_ID}/uploads/{second_video_id}.mov",
+    }
+    second_repository.count_user_in_progress_videos.return_value = 0
+    storage = MagicMock()
+
+    with (
+      patch.dict(os.environ, {"MAX_GLOBAL_VIDEO_WORKERS": "1"}, clear=False),
+      patch("app.routes.videos.VideoRepository", side_effect=[first_repository, second_repository]),
+      patch("app.routes.videos.StorageService", return_value=storage),
+    ):
+      get_settings.cache_clear()
+      first_tasks = BackgroundTasks()
+      second_tasks = BackgroundTasks()
+      first_response = queue_analysis(VIDEO_ID, first_tasks, USER_ID)
+
+      with self.assertRaises(HTTPException) as raised:
+        queue_analysis(second_video_id, second_tasks, USER_ID)
+
+    self.assertEqual(first_response.status, "queued")
+    self.assertEqual(raised.exception.status_code, 429)
+    second_repository.queue_owned_video_if_status.assert_not_called()
+    self.assertEqual(len(first_tasks.tasks), 1)
+    self.assertEqual(len(second_tasks.tasks), 0)
+
   def test_queue_analysis_rejects_cross_user_storage_path_before_validation(self) -> None:
     repository = MagicMock()
     repository.require_owned_video.return_value = {
@@ -333,7 +524,10 @@ class VideoRoutesTest(unittest.TestCase):
     ):
       response = list_saved_videos(USER_ID)
 
-    storage.create_signed_url.assert_called_once_with(f"{USER_ID}/thumbnails/{VIDEO_ID}-thumb-v3.jpg")
+    storage.create_signed_url.assert_called_once_with(
+      f"{USER_ID}/thumbnails/{VIDEO_ID}-thumb-v3.jpg",
+      expires_in=300,
+    )
     self.assertIsNone(response[0].video_url)
     self.assertEqual(response[0].thumbnail_url, "https://example.test/signed-thumbnail")
     self.assertIsNone(response[0].storage_path)
@@ -380,6 +574,33 @@ class VideoRoutesTest(unittest.TestCase):
     self.assertNotIn("poseFrames", response[0].analysis.result_json)
     self.assertEqual(response[0].analysis.rep_data[0]["rep_index"], 1)
     self.assertEqual(response[0].analysis.result_json["rep_count"], 1)
+
+  def test_list_saved_videos_rejects_cross_user_thumbnail_before_signing(self) -> None:
+    repository = MagicMock()
+    repository.list_saved_videos.return_value = [
+      {
+        "id": str(VIDEO_ID),
+        "exercise_type": "back_squat",
+        "view_type": "side",
+        "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+        "thumbnail_path": f"{OTHER_USER_ID}/thumbnails/{VIDEO_ID}.jpg",
+        "save_state": "saved",
+        "saved_at": "2026-05-24T12:00:00+00:00",
+        "created_at": "2026-05-24T12:00:00+00:00",
+      }
+    ]
+    repository.get_analysis_result.return_value = None
+    storage = MagicMock()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      list_saved_videos(USER_ID)
+
+    self.assertEqual(raised.exception.status_code, 403)
+    storage.create_signed_url.assert_not_called()
 
   def test_delete_account_removes_storage_profile_and_auth_user(self) -> None:
     repository = MagicMock()
@@ -471,6 +692,27 @@ class VideoRoutesTest(unittest.TestCase):
       "user_id": USER_ID,
       "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
       "playback_path": f"{OTHER_USER_ID}/playback/{VIDEO_ID}.mp4",
+      "discarded_at": None,
+    }
+    storage = MagicMock()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      get_video_playback_url(VIDEO_ID, USER_ID)
+
+    self.assertEqual(raised.exception.status_code, 403)
+    storage.create_signed_url.assert_not_called()
+
+  def test_playback_url_rejects_cross_user_storage_path_fallback(self) -> None:
+    repository = MagicMock()
+    repository.require_owned_video.return_value = {
+      "id": str(VIDEO_ID),
+      "user_id": USER_ID,
+      "storage_path": f"{OTHER_USER_ID}/uploads/{VIDEO_ID}.mov",
+      "playback_path": None,
       "discarded_at": None,
     }
     storage = MagicMock()
@@ -580,6 +822,7 @@ class VideoRoutesTest(unittest.TestCase):
         "SUPABASE_URL": "https://example.supabase.co",
         "SUPABASE_SERVICE_ROLE_KEY": "service-role",
         "SUPABASE_JWT_SECRET": "secret",
+        "CLEANUP_JOB_TOKEN": "cleanup-secret",
       },
       clear=True,
     ):
@@ -606,6 +849,7 @@ class VideoRoutesTest(unittest.TestCase):
         "SUPABASE_URL": "https://example.supabase.co",
         "SUPABASE_SERVICE_ROLE_KEY": "service-role",
         "SUPABASE_JWT_SECRET": "secret",
+        "CLEANUP_JOB_TOKEN": "cleanup-secret",
       },
       clear=True,
     ):
@@ -639,6 +883,7 @@ class VideoRoutesTest(unittest.TestCase):
         "SUPABASE_URL": "https://example.supabase.co",
         "SUPABASE_SERVICE_ROLE_KEY": "service-role",
         "SUPABASE_JWT_SECRET": "secret",
+        "CLEANUP_JOB_TOKEN": "cleanup-secret",
       },
       clear=True,
     ):
@@ -686,6 +931,7 @@ class VideoRoutesTest(unittest.TestCase):
         "SUPABASE_URL": "https://example.supabase.co",
         "SUPABASE_SERVICE_ROLE_KEY": "service-role",
         "SUPABASE_JWT_SECRET": "secret",
+        "CLEANUP_JOB_TOKEN": "cleanup-secret",
       },
       clear=True,
     ):

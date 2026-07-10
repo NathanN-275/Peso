@@ -7,9 +7,16 @@ from uuid import UUID
 from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException, status
+from pydantic import ValidationError
 
 from app.routes.videos import AnalyzedVideoExportRequest, export_analyzed_video
+from app.services.config import get_settings
 from app.services.analyzed_video_renderer import _resolve_ffmpeg_binary, render_analyzed_video
+from app.services.video_work_limits import (
+  acquire_video_work_slot_or_429,
+  release_video_work_slot,
+  reset_video_work_limits_for_tests,
+)
 
 
 VIDEO_ID = UUID("11111111-1111-1111-1111-111111111111")
@@ -19,6 +26,26 @@ OTHER_USER_ID = "44444444-4444-4444-4444-444444444444"
 
 
 class AnalyzedVideoExportRouteTest(unittest.TestCase):
+  def setUp(self) -> None:
+    self.env_patcher = patch.dict(
+      "os.environ",
+      {
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+        "SUPABASE_JWT_SECRET": "secret",
+        "CLEANUP_JOB_TOKEN": "cleanup-secret",
+      },
+      clear=False,
+    )
+    self.env_patcher.start()
+    get_settings.cache_clear()
+    reset_video_work_limits_for_tests()
+
+  def tearDown(self) -> None:
+    self.env_patcher.stop()
+    get_settings.cache_clear()
+    reset_video_work_limits_for_tests()
+
   def _repository(self) -> MagicMock:
     repository = MagicMock()
     repository.require_owned_video.return_value = {
@@ -82,6 +109,10 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
     self.assertEqual(raised.exception.status_code, status.HTTP_404_NOT_FOUND)
     self.assertEqual(raised.exception.detail, "Analysis result not available for export.")
 
+  def test_export_request_rejects_unknown_fields(self) -> None:
+    with self.assertRaises(ValidationError):
+      AnalyzedVideoExportRequest(pose=True, barbell=False, storage_path=f"{OTHER_USER_ID}/video.mp4")
+
   def test_export_rejects_unsaved_video(self) -> None:
     repository = self._repository()
     repository.require_owned_video.return_value["save_state"] = "pending"
@@ -131,7 +162,7 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
     renderer.assert_not_called()
     storage.download_to_tempfile.assert_not_called()
     storage.upload_file.assert_not_called()
-    storage.create_signed_url.assert_called_once_with(expected_path)
+    storage.create_signed_url.assert_called_once_with(expected_path, expires_in=300)
     self.assertEqual(response.storage_path, expected_path)
     self.assertEqual(response.export_url, "https://example.test/signed-export")
 
@@ -153,9 +184,54 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
     expected_path = f"{USER_ID}/exports/{VIDEO_ID}-{ANALYSIS_ID}-pose-h264-v1.mp4"
     renderer.assert_called_once()
     storage.upload_file.assert_called_once()
-    storage.create_signed_url.assert_called_once_with(expected_path)
+    storage.create_signed_url.assert_called_once_with(expected_path, expires_in=300)
     self.assertEqual(response.storage_path, expected_path)
     self.assertEqual(response.variant, "pose")
+
+  def test_export_rejects_repeated_uncached_render_during_cooldown(self) -> None:
+    repository = self._repository()
+    storage = MagicMock()
+    storage.storage_path_exists.return_value = False
+    storage.download_to_tempfile.return_value = Path("/tmp/source.mp4")
+    storage.create_signed_url.return_value = "https://example.test/signed-export"
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.annotate_analysis_freshness", side_effect=lambda result, analysis: result),
+      patch("app.routes.videos.render_analyzed_video") as renderer,
+    ):
+      export_analyzed_video(VIDEO_ID, user_id=USER_ID)
+
+      with self.assertRaises(HTTPException) as raised:
+        export_analyzed_video(VIDEO_ID, user_id=USER_ID)
+
+    self.assertEqual(raised.exception.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+    self.assertEqual(renderer.call_count, 1)
+
+  def test_export_rejects_when_global_video_work_is_saturated(self) -> None:
+    repository = self._repository()
+    storage = MagicMock()
+    storage.storage_path_exists.return_value = False
+    held_slot = None
+
+    with (
+      patch.dict("os.environ", {"MAX_GLOBAL_VIDEO_WORKERS": "1"}, clear=False),
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.render_analyzed_video") as renderer,
+    ):
+      get_settings.cache_clear()
+      held_slot = acquire_video_work_slot_or_429("test", user_id=USER_ID, video_id=str(VIDEO_ID))
+      try:
+        with self.assertRaises(HTTPException) as raised:
+          export_analyzed_video(VIDEO_ID, user_id=USER_ID)
+      finally:
+        release_video_work_slot(held_slot)
+
+    self.assertEqual(raised.exception.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+    storage.download_to_tempfile.assert_not_called()
+    renderer.assert_not_called()
 
   def test_export_clean_returns_playback_url_without_rendering(self) -> None:
     repository = self._repository()
@@ -179,7 +255,7 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
     storage.storage_path_exists.assert_not_called()
     storage.download_to_tempfile.assert_not_called()
     storage.upload_file.assert_not_called()
-    storage.create_signed_url.assert_called_once_with(expected_path)
+    storage.create_signed_url.assert_called_once_with(expected_path, expires_in=300)
     self.assertEqual(response.storage_path, expected_path)
     self.assertEqual(response.variant, "clean")
 
@@ -239,7 +315,7 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
 
     expected_path = f"{USER_ID}/exports/{VIDEO_ID}-{ANALYSIS_ID}-barbell-h264-v1.mp4"
     renderer.assert_not_called()
-    storage.create_signed_url.assert_called_once_with(expected_path)
+    storage.create_signed_url.assert_called_once_with(expected_path, expires_in=300)
     self.assertEqual(response.storage_path, expected_path)
     self.assertEqual(response.variant, "barbell")
 
@@ -262,12 +338,30 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
 
     expected_path = f"{USER_ID}/exports/{VIDEO_ID}-{ANALYSIS_ID}-pose-barbell-h264-v1.mp4"
     renderer.assert_not_called()
-    storage.create_signed_url.assert_called_once_with(expected_path)
+    storage.create_signed_url.assert_called_once_with(expected_path, expires_in=300)
     self.assertEqual(response.storage_path, expected_path)
     self.assertEqual(response.variant, "pose-barbell")
 
 
 class AnalyzedVideoRendererTest(unittest.TestCase):
+  def setUp(self) -> None:
+    self.env_patcher = patch.dict(
+      "os.environ",
+      {
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+        "SUPABASE_JWT_SECRET": "secret",
+        "CLEANUP_JOB_TOKEN": "cleanup-secret",
+      },
+      clear=False,
+    )
+    self.env_patcher.start()
+    get_settings.cache_clear()
+
+  def tearDown(self) -> None:
+    self.env_patcher.stop()
+    get_settings.cache_clear()
+
   def test_renderer_reports_missing_ffmpeg_binary(self) -> None:
     with (
       patch.dict("os.environ", {"FFMPEG_BINARY": "/definitely/missing/ffmpeg"}),
