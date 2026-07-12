@@ -1,4 +1,6 @@
-import { StyleSheet, Text, TextInput, TextInputProps, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useState } from 'react';
+import { Pressable, StyleSheet, Text, TextInput, TextInputProps, View } from 'react-native';
 import tokens from '../theme/tokens';
 
 type InputProps = {
@@ -17,6 +19,7 @@ type InputProps = {
   autoFocus?: boolean;
   returnKeyType?: TextInputProps['returnKeyType'];
   onSubmitEditing?: TextInputProps['onSubmitEditing'];
+  showPasswordToggle?: boolean;
 };
 
 export default function Input({
@@ -35,7 +38,11 @@ export default function Input({
   autoFocus = false,
   returnKeyType,
   onSubmitEditing,
+  showPasswordToggle = false,
 }: InputProps) {
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const hasPasswordToggle = secureTextEntry === true && showPasswordToggle;
+
   return (
     <View>
       {label ? (
@@ -47,25 +54,43 @@ export default function Input({
           {label}
         </Text>
       ) : null}
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor={tokens.colors.textMuted}
-        secureTextEntry={secureTextEntry}
-        keyboardType={keyboardType}
-        autoCapitalize={autoCapitalize}
-        autoCorrect={autoCorrect}
-        textContentType={textContentType}
-        editable={editable}
-        onFocus={onFocus}
-        onBlur={onBlur}
-        autoFocus={autoFocus}
-        returnKeyType={returnKeyType}
-        onSubmitEditing={onSubmitEditing}
-        className="rounded-input border border-input-border bg-input-bg px-4 text-text-primary"
-        style={styles.textInput}
-      />
+      <View style={styles.inputWrap}>
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor={tokens.colors.textMuted}
+          secureTextEntry={secureTextEntry && !passwordVisible}
+          keyboardType={keyboardType}
+          autoCapitalize={autoCapitalize}
+          autoCorrect={autoCorrect}
+          textContentType={textContentType}
+          editable={editable}
+          onFocus={onFocus}
+          onBlur={onBlur}
+          autoFocus={autoFocus}
+          returnKeyType={returnKeyType}
+          onSubmitEditing={onSubmitEditing}
+          className="rounded-input border border-input-border bg-input-bg px-4 text-text-primary"
+          style={[styles.textInput, hasPasswordToggle && styles.textInputWithIcon]}
+        />
+        {hasPasswordToggle ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={passwordVisible ? 'Hide password' : 'Show password'}
+            onPress={() => setPasswordVisible((visible) => !visible)}
+            disabled={!editable}
+            hitSlop={8}
+            style={styles.passwordToggle}
+          >
+            <Ionicons
+              name={passwordVisible ? 'eye-off-outline' : 'eye-outline'}
+              size={22}
+              color={editable ? tokens.colors.textMuted : '#667085'}
+            />
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -76,8 +101,23 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: 10,
   },
+  inputWrap: {
+    position: 'relative',
+  },
   textInput: {
     height: tokens.sizes.inputHeight - 4,
     marginTop: 0,
+  },
+  textInputWithIcon: {
+    paddingRight: 52,
+  },
+  passwordToggle: {
+    position: 'absolute',
+    top: 0,
+    right: 8,
+    bottom: 0,
+    width: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

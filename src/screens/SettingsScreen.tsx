@@ -512,6 +512,7 @@ export default function SettingsScreen({
           value={password}
           onChangeText={setPassword}
           secureTextEntry
+          showPasswordToggle
           textContentType="newPassword"
         />
         <Input
@@ -520,6 +521,7 @@ export default function SettingsScreen({
           value={confirmPassword}
           onChangeText={setConfirmPassword}
           secureTextEntry
+          showPasswordToggle
           textContentType="newPassword"
         />
         <Button
