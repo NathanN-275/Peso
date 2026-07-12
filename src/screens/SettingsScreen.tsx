@@ -275,7 +275,7 @@ export default function SettingsScreen({
         mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.85,
+        quality: 0.72,
       });
 
       if (result.canceled || !result.assets[0]) {

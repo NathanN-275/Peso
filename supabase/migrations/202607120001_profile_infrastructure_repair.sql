@@ -70,7 +70,7 @@ values (
   'profile-avatars',
   'profile-avatars',
   false,
-  5242880,
+  524288,
   array['image/jpeg', 'image/png', 'image/webp']
 )
 on conflict (id) do update set
