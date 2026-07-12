@@ -515,13 +515,16 @@ class PoseEstimator:
 
     try:
       while capture.isOpened():
+        if frame_index % frame_step != 0:
+          success = capture.grab()
+          if not success:
+            break
+          frame_index += 1
+          continue
+
         success, frame = capture.read()
         if not success:
           break
-
-        if frame_index % frame_step != 0:
-          frame_index += 1
-          continue
 
         sampled_frame_count += 1
         inference_frame = self._prepare_inference_frame(

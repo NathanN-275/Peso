@@ -75,6 +75,11 @@ MAX_USER_UPLOADS_PER_HOUR=20
 MAX_VIDEO_DURATION_MS=300000
 SIGNED_URL_TTL_SECONDS=300
 STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS=120
+SUPABASE_HTTP_MAX_CONNECTIONS=20
+SUPABASE_HTTP_MAX_KEEPALIVE_CONNECTIONS=10
+SUPABASE_HTTP_KEEPALIVE_EXPIRY_SECONDS=30
+SUPABASE_POSTGREST_TIMEOUT_SECONDS=30
+SUPABASE_STORAGE_TIMEOUT_SECONDS=60
 FFMPEG_TIMEOUT_SECONDS=120
 MAX_GLOBAL_VIDEO_WORKERS=2
 EXPORT_COOLDOWN_SECONDS=30
@@ -97,6 +102,8 @@ FFMPEG_BINARY=
 BACKEND_CORS_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhost:8082,http://127.0.0.1:8082,http://localhost:19006,http://127.0.0.1:19006,http://localhost:3000,http://127.0.0.1:3000
 BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true
 ```
+
+The backend reuses a singleton Supabase admin client and a bounded pooled HTTP client for signed storage downloads. Supabase SQL poolers, such as Supavisor or PgBouncer, apply when the backend is changed to use a direct Postgres connection string through a Postgres driver or ORM.
 
 ## Pose analysis settings
 

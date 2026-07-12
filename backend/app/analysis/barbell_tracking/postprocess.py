@@ -9,6 +9,18 @@ MAX_SMOOTHING_TIME_GAP_SECONDS = 0.5
 MAX_SMOOTHING_DISPLACEMENT = 0.015
 MAX_MANUAL_SMOOTHING_DISPLACEMENT = 0.006
 HIGH_CONFIDENCE_AUTOMATIC = 0.65
+OUTLIER_BRIDGE_MIN_CONFIDENCE = 0.45
+
+
+def _point_can_be_motion_bridged(point: dict[str, Any]) -> bool:
+  if point.get("manual_assisted"):
+    return False
+
+  tracking_state = str(point.get("trackingState") or "automatic")
+  if tracking_state in {"reference", "guided", "estimated"}:
+    return False
+
+  return True
 
 
 def _interpolate_missing(
@@ -116,6 +128,86 @@ def _remove_motion_outliers(points: list[dict[str, Any]]) -> tuple[list[dict[str
     filtered.append(point)
 
   return filtered, removed_count
+
+
+def _bridge_isolated_motion_outliers(
+  points: list[dict[str, Any]],
+  *,
+  width: float,
+  height: float,
+) -> tuple[list[dict[str, Any]], int]:
+  if len(points) < 3:
+    return points, 0
+
+  width = max(float(width), 1.0)
+  height = max(float(height), 1.0)
+  bridged_points: list[dict[str, Any]] = [points[0]]
+  bridged_count = 0
+
+  for index in range(1, len(points) - 1):
+    previous = points[index - 1]
+    point = points[index]
+    following = points[index + 1]
+    previous_gap = float(point["time"]) - float(previous["time"])
+    following_gap = float(following["time"]) - float(point["time"])
+    if (
+      not _point_can_be_motion_bridged(point)
+      or previous_gap <= 0
+      or following_gap <= 0
+      or previous_gap > MAX_SMOOTHING_TIME_GAP_SECONDS
+      or following_gap > MAX_SMOOTHING_TIME_GAP_SECONDS
+      or float(previous.get("confidence") or 0.0) < OUTLIER_BRIDGE_MIN_CONFIDENCE
+      or float(following.get("confidence") or 0.0) < OUTLIER_BRIDGE_MIN_CONFIDENCE
+    ):
+      bridged_points.append(point)
+      continue
+
+    span = previous_gap + following_gap
+    progress = previous_gap / span
+    expected_x = float(previous["x"]) + ((float(following["x"]) - float(previous["x"])) * progress)
+    expected_y = float(previous["y"]) + ((float(following["y"]) - float(previous["y"])) * progress)
+    residual_px = math.hypot(
+      (float(point["x"]) - expected_x) * width,
+      (float(point["y"]) - expected_y) * height,
+    )
+    neighbor_motion_px = math.hypot(
+      (float(following["x"]) - float(previous["x"])) * width,
+      (float(following["y"]) - float(previous["y"])) * height,
+    )
+    bridge_limit_px = max(16.0, neighbor_motion_px * 1.75, max(width, height) * 0.025)
+
+    if residual_px <= bridge_limit_px:
+      bridged_points.append(point)
+      continue
+
+    bridged_points.append({
+      **point,
+      "x": expected_x,
+      "y": expected_y,
+      "confidence": round(
+        min(
+          float(previous.get("confidence") or 0.0),
+          float(following.get("confidence") or 0.0),
+          float(point.get("confidence") or 1.0),
+          0.42,
+        ),
+        3,
+      ),
+      "trackingState": "estimated",
+      "selectedSource": "motion_outlier_bridge",
+      "outlierBridged": True,
+      "rawAutomaticPoint": {
+        "x": point.get("x"),
+        "y": point.get("y"),
+        "confidence": point.get("confidence"),
+        "trackingState": point.get("trackingState"),
+        "selectedSource": point.get("selectedSource"),
+      },
+    })
+    bridged_count += 1
+
+  bridged_points.append(points[-1])
+  return bridged_points, bridged_count
 
 
 def _motion_tangent_px(
