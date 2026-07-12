@@ -16,7 +16,9 @@ from app.routes.videos import (
   get_video_capabilities,
   get_storage_usage,
   get_video_playback_url,
+  get_saved_video_overview,
   list_saved_videos,
+  list_saved_videos_page,
   mark_upload_failed,
   queue_analysis,
   register_video,
@@ -574,6 +576,171 @@ class VideoRoutesTest(unittest.TestCase):
     self.assertNotIn("poseFrames", response[0].analysis.result_json)
     self.assertEqual(response[0].analysis.rep_data[0]["rep_index"], 1)
     self.assertEqual(response[0].analysis.result_json["rep_count"], 1)
+
+  def test_list_saved_videos_batch_loads_analysis_results(self) -> None:
+    repository = MagicMock()
+    repository.list_saved_videos.return_value = [
+      {
+        "id": str(VIDEO_ID),
+        "exercise_type": "back_squat",
+        "view_type": "side",
+        "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+        "thumbnail_path": None,
+        "save_state": "saved",
+        "saved_at": "2026-05-24T12:00:00+00:00",
+        "created_at": "2026-05-24T12:00:00+00:00",
+      }
+    ]
+    repository.get_latest_analysis_results.return_value = {
+      str(VIDEO_ID): {
+        "id": str(VIDEO_ID),
+        "video_id": str(VIDEO_ID),
+        "model_version": "test-model",
+        "created_at": "2026-05-24T12:00:00+00:00",
+        "result_json": {
+          "summary_flags": [],
+          "coach_feedback": [],
+          "reps": [{"rep_index": 1}],
+          "rep_count": 1,
+        },
+      }
+    }
+    storage = MagicMock()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.annotate_analysis_freshness", side_effect=lambda result, analysis: result),
+    ):
+      response = list_saved_videos(USER_ID)
+
+    repository.get_latest_analysis_results.assert_called_once_with([str(VIDEO_ID)])
+    repository.get_analysis_result.assert_not_called()
+    self.assertEqual(response[0].analysis.result_json["rep_count"], 1)
+
+  def test_list_saved_videos_page_returns_opaque_next_cursor(self) -> None:
+    second_video_id = "22222222-2222-2222-2222-222222222222"
+    repository = MagicMock()
+    repository.list_saved_videos_page.return_value = [
+      {
+        "id": str(VIDEO_ID),
+        "exercise_type": "back_squat",
+        "view_type": "side",
+        "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+        "thumbnail_path": None,
+        "save_state": "saved",
+        "saved_at": "2026-05-24T12:00:00+00:00",
+        "created_at": "2026-05-24T12:00:00+00:00",
+      },
+      {
+        "id": second_video_id,
+        "exercise_type": "back_squat",
+        "view_type": "side",
+        "storage_path": f"{USER_ID}/uploads/{second_video_id}.mov",
+        "thumbnail_path": None,
+        "save_state": "saved",
+        "saved_at": "2026-05-23T12:00:00+00:00",
+        "created_at": "2026-05-23T12:00:00+00:00",
+      },
+    ]
+    repository.get_latest_analysis_results.return_value = {}
+    storage = MagicMock()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+    ):
+      first_page = list_saved_videos_page("back_squat", 1, None, USER_ID)
+      next_cursor = first_page.next_cursor
+      self.assertIsNotNone(next_cursor)
+
+      repository.list_saved_videos_page.return_value = []
+      second_page = list_saved_videos_page("back_squat", 1, next_cursor, USER_ID)
+
+    self.assertEqual(len(first_page.items), 1)
+    self.assertIsNone(second_page.next_cursor)
+    self.assertEqual(
+      repository.list_saved_videos_page.call_args_list[0].kwargs,
+      {"exercise_type": "back_squat", "offset": 0, "limit": 2},
+    )
+    self.assertEqual(
+      repository.list_saved_videos_page.call_args_list[1].kwargs,
+      {"exercise_type": "back_squat", "offset": 1, "limit": 2},
+    )
+
+  def test_list_saved_videos_page_rejects_malformed_cursor(self) -> None:
+    repository = MagicMock()
+    storage = MagicMock()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      list_saved_videos_page(None, 20, "not-a-valid-cursor", USER_ID)
+
+    self.assertEqual(raised.exception.status_code, 400)
+    repository.list_saved_videos_page.assert_not_called()
+
+  def test_saved_overview_uses_batched_analysis_and_preview_signing_only(self) -> None:
+    second_video_id = "22222222-2222-2222-2222-222222222222"
+    repository = MagicMock()
+    repository.list_saved_videos.return_value = [
+      {
+        "id": str(VIDEO_ID),
+        "exercise_type": "back_squat",
+        "view_type": "side",
+        "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+        "thumbnail_path": f"{USER_ID}/thumbnails/{VIDEO_ID}.jpg",
+        "save_state": "saved",
+        "saved_at": "2026-05-24T12:00:00+00:00",
+        "created_at": "2026-05-24T12:00:00+00:00",
+      },
+      {
+        "id": second_video_id,
+        "exercise_type": "bench press",
+        "view_type": "front",
+        "storage_path": f"{USER_ID}/uploads/{second_video_id}.mov",
+        "thumbnail_path": None,
+        "save_state": "saved",
+        "saved_at": "2026-05-23T12:00:00+00:00",
+        "created_at": "2026-05-23T12:00:00+00:00",
+      },
+    ]
+    repository.get_latest_analysis_results.return_value = {
+      str(VIDEO_ID): {
+        "id": str(VIDEO_ID),
+        "video_id": str(VIDEO_ID),
+        "model_version": "test-model",
+        "created_at": "2026-05-24T12:00:00+00:00",
+        "result_json": {"rep_count": 3, "reps": []},
+      },
+      second_video_id: {
+        "id": second_video_id,
+        "video_id": second_video_id,
+        "model_version": "test-model",
+        "created_at": "2026-05-23T12:00:00+00:00",
+        "result_json": {"reps": [{"rep_index": 1}, {"rep_index": 2}]},
+      },
+    }
+    storage = MagicMock()
+    storage.create_signed_url.return_value = "https://example.test/thumb"
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.annotate_analysis_freshness", side_effect=lambda result, analysis: result),
+    ):
+      response = get_saved_video_overview(USER_ID)
+
+    repository.get_latest_analysis_results.assert_called_once_with([str(VIDEO_ID), second_video_id])
+    repository.get_analysis_result.assert_not_called()
+    storage.create_signed_url.assert_called_once_with(f"{USER_ID}/thumbnails/{VIDEO_ID}.jpg", expires_in=300)
+    self.assertEqual(response.stats.total_saved, 2)
+    self.assertEqual(response.stats.exercise_count, 2)
+    self.assertEqual(response.stats.total_reps, 5)
+    self.assertEqual(response.groups[0].exercise_type, "back_squat")
+    self.assertEqual(response.groups[0].count, 1)
 
   def test_list_saved_videos_rejects_cross_user_thumbnail_before_signing(self) -> None:
     repository = MagicMock()

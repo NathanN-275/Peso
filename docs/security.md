@@ -28,3 +28,22 @@ Run Python dependency auditing when `pip-audit` is available. The protobuf advis
 ```sh
 pip-audit -r backend/requirements.txt --ignore-vuln PYSEC-2026-1805
 ```
+
+## Dependency Review Checklist
+
+Use this checklist for every Python or Node package update:
+
+- Audit result: run `npm audit --audit-level=high` for Node and `pip-audit -r backend/requirements.txt --ignore-vuln PYSEC-2026-1805` for Python when `pip-audit` is available.
+- Lockfile diff: review new packages, removed packages, install scripts, native modules, and transitive dependency changes.
+- Runtime risk: identify whether the dependency runs in the Expo client, FastAPI backend request path, build tooling, CI only, or local development only.
+- Production exposure: note whether the package handles auth, storage paths, media files, request parsing, subprocess execution, or network calls.
+- Advisory handling: document any ignored advisory with the package constraint, affected runtime, exploitability in this app, and revisit trigger.
+
+Current tracked advisory exceptions:
+
+- Python: `PYSEC-2026-1805` for protobuf remains ignored only because `mediapipe==0.10.21` requires `protobuf<5` while the available fix starts at `5.29.6`.
+- Node: Expo transitive moderate advisories are not ignored in CI because CI fails only on high severity and above. Revisit them on each Expo SDK update and document any advisory that becomes high severity or ships in production runtime code.
+
+## Request Provenance
+
+See [request-inventory.md](/Users/nathan/Downloads/peso-app/docs/request-inventory.md) for the current frontend-to-backend and frontend-to-Supabase request inventory, HTTP policy, and client/server field boundary.

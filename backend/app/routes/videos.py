@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import logging
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -54,6 +57,9 @@ ALLOWED_EXERCISE_TYPES = {
 }
 ALLOWED_VIEW_TYPES = {"side", "front"}
 ALLOWED_SOURCE_TYPES = {"camera", "camera_roll"}
+DEFAULT_SAVED_PAGE_LIMIT = 20
+MAX_SAVED_PAGE_LIMIT = 50
+SAVED_OVERVIEW_PREVIEW_LIMIT = 4
 
 
 class StrictRequestModel(BaseModel):
@@ -123,6 +129,32 @@ class SavedVideoResponse(BaseModel):
   created_at: str
   analysis: SavedVideoAnalysisResponse | None = None
   export_options: SavedVideoExportOptionsResponse | None = None
+
+
+class SavedVideosPageResponse(BaseModel):
+  items: list[SavedVideoResponse]
+  next_cursor: str | None = None
+
+
+class SavedVideoOverviewGroupResponse(BaseModel):
+  exercise_type: str
+  count: int
+  preview_items: list[SavedVideoResponse]
+
+
+class SavedVideoOverviewStatsResponse(BaseModel):
+  total_saved: int
+  exercise_count: int
+  total_reps: int
+  latest_exercise_type: str | None = None
+  latest_saved_at: str | None = None
+  most_trained_exercise_type: str | None = None
+  most_trained_count: int = 0
+
+
+class SavedVideoOverviewResponse(BaseModel):
+  stats: SavedVideoOverviewStatsResponse
+  groups: list[SavedVideoOverviewGroupResponse]
 
 
 class SaveVideoResponse(BaseModel):
@@ -420,6 +452,130 @@ def _analysis_export_options(result_json: dict) -> dict[str, bool]:
   }
 
 
+def _analysis_rep_count(analysis: dict | None) -> int:
+  result_json = analysis.get("result_json") if analysis else None
+  if not isinstance(result_json, dict):
+    return 0
+
+  rep_count = result_json.get("rep_count") or result_json.get("repCount")
+  if isinstance(rep_count, int):
+    return max(0, rep_count)
+
+  reps = result_json.get("reps")
+  return len(reps) if isinstance(reps, list) else 0
+
+
+def _load_latest_analyses(
+  repository: VideoRepository,
+  videos: list[dict],
+) -> dict[str, dict]:
+  video_ids = [str(video["id"]) for video in videos]
+
+  if not video_ids:
+    return {}
+
+  analyses = repository.get_latest_analysis_results(video_ids)
+
+  if isinstance(analyses, dict):
+    return analyses
+
+  return {
+    video_id: analysis
+    for video_id in video_ids
+    if (analysis := repository.get_analysis_result(video_id))
+  }
+
+
+def _saved_video_response(
+  *,
+  video: dict,
+  analysis: dict | None,
+  storage: StorageService,
+  user_id: str,
+) -> SavedVideoResponse:
+  result_json = annotate_analysis_freshness(analysis["result_json"], analysis) if analysis else {}
+  normalized_analysis = None
+  export_options = None
+
+  if analysis:
+    summary_payload = _summary_analysis_payload(result_json)
+    export_options = _analysis_export_options(result_json)
+    normalized_analysis = SavedVideoAnalysisResponse(
+      id=analysis["id"],
+      model_version=analysis["model_version"],
+      created_at=analysis["created_at"],
+      result_json=summary_payload,
+      summary=summary_payload["summary_flags"],
+      coaching_feedback=summary_payload["coach_feedback"],
+      rep_data=summary_payload["reps"],
+    )
+
+  thumbnail_path = video.get("thumbnail_path")
+  thumbnail_url = None
+  if thumbnail_path:
+    _, thumbnail_url, _ = _create_owned_signed_url(storage, thumbnail_path, user_id, "thumbnail_path")
+
+  return SavedVideoResponse(
+    id=video["id"],
+    exercise_type=video["exercise_type"],
+    view_type=video["view_type"],
+    storage_path=None,
+    thumbnail_path=thumbnail_path,
+    video_url=None,
+    thumbnail_url=thumbnail_url,
+    save_state=video.get("save_state") or ("saved" if video.get("is_saved") else "pending"),
+    saved_at=video.get("saved_at"),
+    created_at=video["created_at"],
+    analysis=normalized_analysis,
+    export_options=(
+      SavedVideoExportOptionsResponse(**export_options)
+      if export_options
+      else None
+    ),
+  )
+
+
+def _saved_video_responses(
+  *,
+  videos: list[dict],
+  analyses_by_video_id: dict[str, dict],
+  storage: StorageService,
+  user_id: str,
+) -> list[SavedVideoResponse]:
+  return [
+    _saved_video_response(
+      video=video,
+      analysis=analyses_by_video_id.get(str(video["id"])),
+      storage=storage,
+      user_id=user_id,
+    )
+    for video in videos
+  ]
+
+
+def _encode_saved_page_cursor(offset: int) -> str:
+  payload = json.dumps({"offset": max(0, offset)}, separators=(",", ":")).encode("utf-8")
+  return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_saved_page_cursor(cursor: str | None) -> int:
+  if not cursor:
+    return 0
+
+  try:
+    padding = "=" * (-len(cursor) % 4)
+    decoded = base64.urlsafe_b64decode(f"{cursor}{padding}".encode("ascii"))
+    payload = json.loads(decoded.decode("utf-8"))
+    offset = payload.get("offset")
+  except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as error:
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid saved-video cursor.") from error
+
+  if not isinstance(offset, int) or offset < 0:
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid saved-video cursor.")
+
+  return offset
+
+
 def _export_variant(*, pose: bool, barbell: bool) -> str:
   if pose and barbell:
     return "pose-barbell"
@@ -705,53 +861,120 @@ def list_saved_videos(
   repository = VideoRepository()
   storage = StorageService()
   videos = repository.list_saved_videos(user_id)
-  saved_videos: list[SavedVideoResponse] = []
+  analyses_by_video_id = _load_latest_analyses(repository, videos)
+
+  return _saved_video_responses(
+    videos=videos,
+    analyses_by_video_id=analyses_by_video_id,
+    storage=storage,
+    user_id=user_id,
+  )
+
+
+@router.get("/videos/saved-page", response_model=SavedVideosPageResponse)
+def list_saved_videos_page(
+  exercise_type: str | None = Query(default=None),
+  limit: int = Query(default=DEFAULT_SAVED_PAGE_LIMIT, ge=1, le=MAX_SAVED_PAGE_LIMIT),
+  cursor: str | None = Query(default=None),
+  user_id: str = Depends(get_current_user_id),
+) -> SavedVideosPageResponse:
+  repository = VideoRepository()
+  storage = StorageService()
+  offset = _decode_saved_page_cursor(cursor)
+  normalized_exercise_type = exercise_type.strip() if exercise_type else None
+  videos = repository.list_saved_videos_page(
+    user_id,
+    exercise_type=normalized_exercise_type,
+    offset=offset,
+    limit=limit + 1,
+  )
+  page_videos = videos[:limit]
+  analyses_by_video_id = _load_latest_analyses(repository, page_videos)
+  next_cursor = (
+    _encode_saved_page_cursor(offset + limit)
+    if len(videos) > limit
+    else None
+  )
+
+  return SavedVideosPageResponse(
+    items=_saved_video_responses(
+      videos=page_videos,
+      analyses_by_video_id=analyses_by_video_id,
+      storage=storage,
+      user_id=user_id,
+    ),
+    next_cursor=next_cursor,
+  )
+
+
+@router.get("/videos/saved-overview", response_model=SavedVideoOverviewResponse)
+def get_saved_video_overview(
+  user_id: str = Depends(get_current_user_id),
+) -> SavedVideoOverviewResponse:
+  repository = VideoRepository()
+  storage = StorageService()
+  videos = repository.list_saved_videos(user_id)
+  analyses_by_video_id = _load_latest_analyses(repository, videos)
+  groups_by_exercise: dict[str, dict] = {}
 
   for video in videos:
-    analysis = repository.get_analysis_result(video["id"])
-    result_json = annotate_analysis_freshness(analysis["result_json"], analysis) if analysis else {}
-    normalized_analysis = None
-    export_options = None
+    exercise_type = str(video["exercise_type"])
+    group = groups_by_exercise.setdefault(
+      exercise_type,
+      {
+        "exercise_type": exercise_type,
+        "count": 0,
+        "preview_videos": [],
+      },
+    )
+    group["count"] += 1
 
-    if analysis:
-      summary_payload = _summary_analysis_payload(result_json)
-      export_options = _analysis_export_options(result_json)
-      normalized_analysis = SavedVideoAnalysisResponse(
-        id=analysis["id"],
-        model_version=analysis["model_version"],
-        created_at=analysis["created_at"],
-        result_json=summary_payload,
-        summary=summary_payload["summary_flags"],
-        coaching_feedback=summary_payload["coach_feedback"],
-        rep_data=summary_payload["reps"],
-      )
+    if len(group["preview_videos"]) < SAVED_OVERVIEW_PREVIEW_LIMIT:
+      group["preview_videos"].append(video)
 
-    thumbnail_path = video.get("thumbnail_path")
-    thumbnail_url = None
-    if thumbnail_path:
-      _, thumbnail_url, _ = _create_owned_signed_url(storage, thumbnail_path, user_id, "thumbnail_path")
-    saved_videos.append(
-      SavedVideoResponse(
-        id=video["id"],
-        exercise_type=video["exercise_type"],
-        view_type=video["view_type"],
-        storage_path=None,
-        thumbnail_path=thumbnail_path,
-        video_url=None,
-        thumbnail_url=thumbnail_url,
-        save_state=video.get("save_state") or ("saved" if video.get("is_saved") else "pending"),
-        saved_at=video.get("saved_at"),
-        created_at=video["created_at"],
-        analysis=normalized_analysis,
-        export_options=(
-          SavedVideoExportOptionsResponse(**export_options)
-          if export_options
-          else None
+  latest_video = videos[0] if videos else None
+  most_trained = sorted(
+    groups_by_exercise.values(),
+    key=lambda group: group["count"],
+    reverse=True,
+  )[0] if groups_by_exercise else None
+  total_reps = sum(
+    _analysis_rep_count(analyses_by_video_id.get(str(video["id"])))
+    for video in videos
+  )
+  response_groups: list[SavedVideoOverviewGroupResponse] = []
+
+  for group in groups_by_exercise.values():
+    preview_videos = group["preview_videos"]
+    response_groups.append(
+      SavedVideoOverviewGroupResponse(
+        exercise_type=group["exercise_type"],
+        count=group["count"],
+        preview_items=_saved_video_responses(
+          videos=preview_videos,
+          analyses_by_video_id=analyses_by_video_id,
+          storage=storage,
+          user_id=user_id,
         ),
       )
     )
 
-  return saved_videos
+  return SavedVideoOverviewResponse(
+    stats=SavedVideoOverviewStatsResponse(
+      total_saved=len(videos),
+      exercise_count=len(groups_by_exercise),
+      total_reps=total_reps,
+      latest_exercise_type=latest_video.get("exercise_type") if latest_video else None,
+      latest_saved_at=(
+        latest_video.get("saved_at") or latest_video.get("created_at")
+        if latest_video
+        else None
+      ),
+      most_trained_exercise_type=most_trained.get("exercise_type") if most_trained else None,
+      most_trained_count=most_trained.get("count") if most_trained else 0,
+    ),
+    groups=response_groups,
+  )
 
 
 @router.get("/videos/{video_id}/playback-url", response_model=VideoPlaybackUrlResponse)

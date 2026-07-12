@@ -1,5 +1,6 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
+import { getProductionBackendUrlError } from './backendUrlPolicy';
 
 export type BackendTarget =
   | 'auto'
@@ -18,11 +19,13 @@ export type BackendUrlSource =
   | 'ios simulator default'
   | 'android emulator default'
   | 'native default localhost'
-  | 'missing production env';
+  | 'missing production env'
+  | 'unsafe production env';
 
 export type BackendApiConfig = {
   url: string;
   source: BackendUrlSource;
+  error?: string | null;
 };
 
 let loggedLanFallbackWarning = false;
@@ -201,9 +204,16 @@ export function resolveBackendApiConfig(): BackendApiConfig {
   const explicitUrl = explicitConfig?.url ?? '';
 
   if (!__DEV__) {
+    const productionUrlError = explicitUrl ? getProductionBackendUrlError(explicitUrl) : null;
+
     return {
-      url: explicitUrl,
-      source: explicitUrl ? 'env override' : 'missing production env',
+      url: productionUrlError ? '' : explicitUrl,
+      source: productionUrlError
+        ? 'unsafe production env'
+        : explicitUrl
+          ? 'env override'
+          : 'missing production env',
+      error: productionUrlError,
     };
   }
 
@@ -333,5 +343,6 @@ export function getBackendConnectionDiagnostics() {
     explicitUrl: explicitUrl || null,
     explicitUrlIsLoopback: explicitUrl ? isLoopbackBackendUrl(explicitUrl) : false,
     expoDevServerLanHost: getExpoDevServerLanHostname(),
+    error: resolved.error ?? null,
   };
 }

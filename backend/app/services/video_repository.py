@@ -343,6 +343,59 @@ class VideoRepository:
 
     return response.data or []
 
+  def list_saved_videos_page(
+    self,
+    user_id: str,
+    *,
+    exercise_type: str | None = None,
+    offset: int = 0,
+    limit: int = 20,
+  ) -> list[dict[str, Any]]:
+    offset = max(0, offset)
+    limit = max(1, limit)
+    range_end = offset + limit - 1
+
+    try:
+      query = (
+        self.client.table("videos")
+        .select(VIDEO_STORAGE_COLUMNS)
+        .eq("user_id", user_id)
+        .or_("save_state.eq.saved,is_saved.eq.true")
+        .filter("discarded_at", "is", "null")
+      )
+
+      if exercise_type:
+        query = query.eq("exercise_type", exercise_type)
+
+      response = (
+        query
+        .order("saved_at", desc=True, nullsfirst=False)
+        .order("created_at", desc=True)
+        .range(offset, range_end)
+        .execute()
+      )
+    except Exception as error:
+      logger.warning("Falling back to legacy saved-video page query for user %s: %s", user_id, error)
+      query = (
+        self.client.table("videos")
+        .select(VIDEO_BASE_COLUMNS)
+        .eq("user_id", user_id)
+        .eq("save_state", "saved")
+      )
+
+      if exercise_type:
+        query = query.eq("exercise_type", exercise_type)
+
+      response = (
+        query
+        .order("saved_at", desc=True, nullsfirst=False)
+        .order("created_at", desc=True)
+        .range(offset, range_end)
+        .execute()
+      )
+
+    return response.data or []
+
   def list_user_videos(self, user_id: str) -> list[dict[str, Any]]:
     try:
       response = (
@@ -434,3 +487,23 @@ class VideoRepository:
       .execute()
     )
     return response.data[0] if response.data else None
+
+  def get_latest_analysis_results(self, video_ids: list[str]) -> dict[str, dict[str, Any]]:
+    if not video_ids:
+      return {}
+
+    response = (
+      self.client.table("analysis_results")
+      .select(ANALYSIS_RESULT_COLUMNS)
+      .in_("video_id", video_ids)
+      .order("created_at", desc=True)
+      .execute()
+    )
+    latest_by_video_id: dict[str, dict[str, Any]] = {}
+
+    for row in response.data or []:
+      video_id = str(row.get("video_id") or "")
+      if video_id and video_id not in latest_by_video_id:
+        latest_by_video_id[video_id] = row
+
+    return latest_by_video_id
