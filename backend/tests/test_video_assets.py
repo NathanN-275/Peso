@@ -3,11 +3,13 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+import subprocess
 from unittest.mock import patch
 
 import cv2
 
 from app.services.config import get_settings
+from app.services.analyzed_video_renderer import _resolve_ffmpeg_binary
 from app.services.video_assets import (
   THUMBNAIL_VERSION,
   build_thumbnail_storage_path,
@@ -41,13 +43,49 @@ class VideoAssetsTest(unittest.TestCase):
     )
 
   def test_thumbnail_generation_respects_mobile_rotation_metadata(self) -> None:
-    source_path = Path(__file__).resolve().parents[1] / "test_videos" / "IMG_0013.MOV"
-    self.assertTrue(source_path.exists())
-
     with tempfile.TemporaryDirectory() as temp_dir:
+      ffmpeg_binary = _resolve_ffmpeg_binary()
+      landscape_path = Path(temp_dir) / "landscape.mp4"
+      source_path = Path(temp_dir) / "rotated-mobile.mov"
       output_path = Path(temp_dir) / "thumbnail.jpg"
+      subprocess.run(
+        [
+          ffmpeg_binary,
+          "-y",
+          "-f",
+          "lavfi",
+          "-i",
+          "color=c=blue:s=160x90:r=1",
+          "-t",
+          "2",
+          "-c:v",
+          "mpeg4",
+          "-pix_fmt",
+          "yuv420p",
+          str(landscape_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+      )
+      subprocess.run(
+        [
+          ffmpeg_binary,
+          "-y",
+          "-display_rotation",
+          "90",
+          "-i",
+          str(landscape_path),
+          "-c",
+          "copy",
+          str(source_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+      )
 
-      create_video_thumbnail(source_path, output_path, at_seconds=1.0)
+      create_video_thumbnail(source_path, output_path, at_seconds=0.5)
 
       image = cv2.imread(str(output_path))
       self.assertIsNotNone(image)

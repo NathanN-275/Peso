@@ -1040,6 +1040,8 @@ class ManualTrackingTest(unittest.TestCase):
     fixture_path = Path(__file__).resolve().parent / "fixtures" / "manual_tracking_img0012_reference.json"
     fixture = json.loads(fixture_path.read_text())
     video_path = Path(__file__).resolve().parent.parent / "test_videos" / fixture["video"]
+    if not video_path.exists():
+      self.skipTest(f"local regression video is unavailable: {video_path}")
     width = fixture["coordinate_space"]["width"]
     height = fixture["coordinate_space"]["height"]
     fps = fixture["fps"]
