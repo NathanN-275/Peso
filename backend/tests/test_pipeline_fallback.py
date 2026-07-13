@@ -517,6 +517,7 @@ class PipelineFallbackTest(unittest.TestCase):
     timings = saved_result["analysis_stage_timings_ms"]
     self.assertIn("download_source", timings)
     self.assertIn("pose_estimation", timings)
+    self.assertIn("pin_assistance", timings)
     self.assertIn("exercise_metrics", timings)
     self.assertIn("barbell_tracking", timings)
     self.assertIn("analysis_payload_ready", timings)

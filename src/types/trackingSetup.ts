@@ -16,6 +16,7 @@ export type TrackingBodySourceName = 'upper_back' | 'hip' | 'knee' | 'ankle';
 export type TrackingDiagnosticPinName = TrackingPinName | 'upper_back';
 export type TrackingBarbellSource =
   | 'manual_pin_lane'
+  | 'manual_wrist_lane'
   | 'manual_pin_blend'
   | 'automatic_lane'
   | 'kinematic_coast'
@@ -63,7 +64,12 @@ export type TrackingAssistance = {
   coverage?: Partial<Record<TrackingDiagnosticPinName, number>>;
   barbellSeedUsed?: boolean;
   manualBarbellPointCount?: number;
+  manualWristPointCount?: number;
   automaticBarbellPointCount?: number;
+  pressingSelectedSide?: 'left' | 'right' | null;
+  pressingPinCoverage?: Partial<Record<'elbow' | 'wrist', number>>;
+  pressingFallbackCount?: number;
+  pressingWristSignalUsed?: boolean;
   barbellCoastingPointCount?: number;
   barbellGapPointCount?: number;
   barbellSourceCounts?: Partial<Record<TrackingBarbellSource, number>>;

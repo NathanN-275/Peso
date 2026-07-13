@@ -16,9 +16,11 @@ from .feedback_engine import build_depth_summary_debug, build_feedback
 from .exercises.pressing import PressingAnalyzer, is_pressing_exercise
 from .exercises.squat import SquatAnalyzer
 from .manual_tracking import (
+  PRESSING_ANCHORS,
   USER_BODY_ANCHORS,
   barbell_track_priors,
   fuse_manual_body_tracks,
+  fuse_manual_pressing_tracks,
   fuse_partial_manual_body_tracks,
   track_manual_anchors,
   validate_tracking_setup,
@@ -78,7 +80,12 @@ def _apply_tracking_assistance(
     "velocityCapCounts": {},
     "barbellSeedUsed": False,
     "manualBarbellPointCount": 0,
+    "manualWristPointCount": 0,
     "automaticBarbellPointCount": 0,
+    "pressingSelectedSide": None,
+    "pressingPinCoverage": {},
+    "pressingFallbackCount": 0,
+    "pressingWristSignalUsed": False,
     "upperBackAnchorKey": "upper_back",
     "upperBackAnchorSemantics": "upper_back_anchor",
     "upperBackAnchorUsedCount": 0,
@@ -110,12 +117,20 @@ def _apply_tracking_assistance(
       width=width,
       height=height,
     )
+    anchors = validated_setup.get("anchors") or {}
+    has_pressing_pins = _is_supported_pressing_view(video) and any(
+      name in anchors for name in PRESSING_ANCHORS
+    )
     has_complete_body_chain = all(
-      name in (validated_setup.get("anchors") or {})
+      name in anchors
       for name in USER_BODY_ANCHORS
     )
-    body_fuser = fuse_manual_body_tracks if has_complete_body_chain else fuse_partial_manual_body_tracks
-    fused_frames, fusion = body_fuser(
+    fuser = (
+      fuse_manual_pressing_tracks
+      if has_pressing_pins
+      else fuse_manual_body_tracks if has_complete_body_chain else fuse_partial_manual_body_tracks
+    )
+    fused_frames, fusion = fuser(
       estimation.get("frames") or [],
       setup=validated_setup,
       tracking=tracking,
@@ -137,6 +152,13 @@ def _apply_tracking_assistance(
         "rejectedTrackCount": int(fusion.get("rejected_track_count") or 0),
         "rejectionReasons": fusion.get("rejection_reasons") or {},
         "coverage": fusion.get("coverage") or {},
+        "pressingSelectedSide": fusion.get("selected_side") if has_pressing_pins else None,
+        "pressingPinCoverage": {
+          name: float((fusion.get("coverage") or {}).get(name) or 0.0)
+          for name in PRESSING_ANCHORS
+          if name in anchors
+        },
+        "pressingFallbackCount": int(fusion.get("pressing_fallback_count") or 0),
         "velocityCapCount": int(tracking.get("velocity_cap_count") or 0),
         "velocityCapCounts": tracking.get("velocity_cap_counts") or {},
         "upperBackAnchorKey": fusion.get("upper_back_anchor_key") or "upper_back",
@@ -701,6 +723,7 @@ def _analyze_squat_result(
       view_type=video["view_type"],
       frames=estimation["frames"],
       sampled_frame_count=estimation.get("sampled_frame_count"),
+      selected_side=(estimation.get("tracking_assistance") or {}).get("pressingSelectedSide"),
     )
 
   if not _is_squat_variation(video["exercise_type"]) or video["view_type"] != "side":
@@ -864,8 +887,12 @@ def _attach_barbell_tracking(
     diagnostics["barbell_tracking"] = tracking_diagnostics
     assistance = result.get("trackingAssistance") or {}
     assistance["manualBarbellPointCount"] = int(tracking_diagnostics.get("manual_point_count") or 0)
+    assistance["manualWristPointCount"] = int(tracking_diagnostics.get("manual_wrist_point_count") or 0)
     assistance["automaticBarbellPointCount"] = int(tracking_diagnostics.get("pose_proxy_point_count") or 0)
-    if path.get("available") and assistance["manualBarbellPointCount"] > 0:
+    assistance["pressingWristSignalUsed"] = assistance["manualWristPointCount"] > 0
+    if path.get("available") and (
+      assistance["manualBarbellPointCount"] > 0 or assistance["manualWristPointCount"] > 0
+    ):
       assistance["used"] = True
       assistance["actualMode"] = "pin_assisted"
       assistance["fallbackReason"] = None
@@ -1045,13 +1072,21 @@ def _pressing_barbell_path_from_pose(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
   frames = estimation.get("frames") or []
   manual_barbell = barbell_track_priors(estimation.get("manual_tracking") or {})
+  manual_tracks = (estimation.get("manual_tracking") or {}).get("tracks") or {}
+  manual_wrist = manual_tracks.get("wrist") or {}
   manual_by_index = {
     int(index): point
     for index, point in manual_barbell.items()
     if isinstance(point, dict) and float(point.get("confidence") or 0.0) >= 0.24
   }
+  manual_wrist_by_index = {
+    int(index): point
+    for index, point in manual_wrist.items()
+    if isinstance(point, dict) and float(point.get("confidence") or 0.0) >= 0.42
+  }
   points: list[dict[str, Any]] = []
-  manual_count = 0
+  manual_barbell_count = 0
+  manual_wrist_count = 0
   pose_count = 0
 
   for frame in frames:
@@ -1067,7 +1102,20 @@ def _pressing_barbell_path_from_pose(
         "trackingState": manual_point.get("tracking_state") or "guided",
         "selectedSource": "manual_pin_lane",
       })
-      manual_count += 1
+      manual_barbell_count += 1
+      continue
+
+    manual_wrist_point = manual_wrist_by_index.get(source_index)
+    if manual_wrist_point is not None:
+      points.append({
+        "time": round(time_seconds, 4),
+        "x": float(manual_wrist_point["x"]),
+        "y": float(manual_wrist_point["y"]),
+        "confidence": min(float(manual_wrist_point.get("confidence") or 0.0), 0.95),
+        "trackingState": manual_wrist_point.get("tracking_state") or "guided",
+        "selectedSource": "manual_wrist_lane",
+      })
+      manual_wrist_count += 1
       continue
 
     landmarks = frame.get("landmarks") or {}
@@ -1100,10 +1148,17 @@ def _pressing_barbell_path_from_pose(
 
   coverage = len(points) / max(len(frames), 1)
   target = "bar_center" if video.get("view_type") == "front" else "press_bar_center"
+  source = (
+    "manual_barbell_lane"
+    if manual_barbell_count >= max(manual_wrist_count, pose_count)
+    else "manual_wrist_lane"
+    if manual_wrist_count >= pose_count
+    else "pose_wrist_proxy"
+  )
   path = {
     "available": bool(points),
     "target": target,
-    "source": "manual_pin_lane" if manual_count and manual_count >= pose_count else "pose_wrist_proxy",
+    "source": source,
     "coverage": round(coverage, 3),
     "points": points,
   }
@@ -1112,7 +1167,8 @@ def _pressing_barbell_path_from_pose(
     "target": target,
     "source": path["source"],
     "coverage": round(coverage, 3),
-    "manual_point_count": manual_count,
+    "manual_point_count": manual_barbell_count,
+    "manual_wrist_point_count": manual_wrist_count,
     "pose_proxy_point_count": pose_count,
     "front_bar_target": "bar_center" if video.get("view_type") == "front" else None,
   }
@@ -1134,6 +1190,7 @@ def _refresh_pressing_result_from_barbell(
     frames=estimation.get("frames") or [],
     sampled_frame_count=estimation.get("sampled_frame_count"),
     barbell_path=result.get("barbellPath"),
+    selected_side=(estimation.get("tracking_assistance") or {}).get("pressingSelectedSide"),
   )
   for key in (
     "rep_count",
@@ -1189,15 +1246,22 @@ def analyze_video(video_id: str) -> None:
     # Pose estimation is the first stage of the backend analysis flow.
     estimator = PoseEstimator()
     stage_started = time.perf_counter()
-    estimation = _apply_tracking_assistance(
-      file_path=str(temp_file),
-      video=video,
-      estimation=estimator.run(str(temp_file)),
-    )
+    estimation = estimator.run(str(temp_file))
     logger.info(
       "Estimated pose for video %s in %sms.",
       video_id,
       record_stage_timing("pose_estimation", stage_started),
+    )
+    stage_started = time.perf_counter()
+    estimation = _apply_tracking_assistance(
+      file_path=str(temp_file),
+      video=video,
+      estimation=estimation,
+    )
+    logger.info(
+      "Applied tracking assistance for video %s in %sms.",
+      video_id,
+      record_stage_timing("pin_assistance", stage_started),
     )
     repository.update_video(
       video_id,
@@ -1247,11 +1311,15 @@ def analyze_video(video_id: str) -> None:
       fallback_config = replace(estimator.config, pose_backend="rtmpose")
       fallback_attempted = True
       try:
+        fallback_estimation = PoseEstimator(config=fallback_config).run(str(temp_file))
+        record_stage_timing("pose_fallback", stage_started)
+        stage_started = time.perf_counter()
         fallback_estimation = _apply_tracking_assistance(
           file_path=str(temp_file),
           video=video,
-          estimation=PoseEstimator(config=fallback_config).run(str(temp_file)),
+          estimation=fallback_estimation,
         )
+        record_stage_timing("pin_assistance_fallback", stage_started)
         if fallback_estimation["frames"]:
           fallback_result = _analyze_squat_result(
             video_id=video_id,
@@ -1333,7 +1401,7 @@ def analyze_video(video_id: str) -> None:
       logger.info(
         "Handled RTMPose fallback for video %s in %sms.",
         video_id,
-        record_stage_timing("pose_fallback", stage_started),
+        stage_timings_ms.get("pose_fallback", 0) + stage_timings_ms.get("pin_assistance_fallback", 0),
       )
 
     result["duration"] = (estimation["duration_ms"] or 0) / 1000

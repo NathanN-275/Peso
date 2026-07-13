@@ -14,6 +14,7 @@ from app.analysis.manual_tracking import (
   BODY_ANCHORS,
   _track_direction,
   fuse_manual_body_tracks,
+  fuse_manual_pressing_tracks,
   select_reference_source_index,
   select_manual_tracking_side,
   track_manual_anchors,
@@ -24,6 +25,7 @@ from app.analysis.pipeline import (
   _apply_tracking_assistance,
   _attach_barbell_tracking,
   _barbell_pose_frames_with_upper_back_context,
+  _pressing_barbell_path_from_pose,
 )
 from app.analysis.barbell_tracking.tracker import BarbellTracker
 from app.services.video_repository import VIDEO_STORAGE_COLUMNS
@@ -140,6 +142,69 @@ class ManualTrackingTest(unittest.TestCase):
       select_manual_tracking_side(pose_frame(), tracking_setup()["anchors"]),
       "left",
     )
+
+  def test_pressing_pins_select_visible_arm_and_fuse_only_that_arm(self) -> None:
+    frame = pose_frame()
+    frame["landmarks"]["left_elbow"] = {"x": 0.22, "y": 0.46, "z": 0.0, "visibility": 0.8}
+    frame["landmarks"]["left_wrist"] = {"x": 0.24, "y": 0.36, "z": 0.0, "visibility": 0.8}
+    frame["landmarks"]["right_elbow"] = {"x": 0.72, "y": 0.46, "z": 0.0, "visibility": 0.8}
+    frame["landmarks"]["right_wrist"] = {"x": 0.74, "y": 0.36, "z": 0.0, "visibility": 0.8}
+    setup = {
+      "version": 1,
+      "reference_time_ms": 100,
+      "barbell_target": "bar_center",
+      "anchors": {
+        "elbow": {"x": 0.70, "y": 0.45},
+        "wrist": {"x": 0.76, "y": 0.34},
+      },
+    }
+    tracking = {
+      "reference_source_index": 1,
+      "coverage": {"elbow": 1.0, "wrist": 1.0},
+      "tracks": {
+        "elbow": {1: {"x": 0.70, "y": 0.45, "confidence": 0.9, "tracking_state": "reference"}},
+        "wrist": {1: {"x": 0.76, "y": 0.34, "confidence": 0.9, "tracking_state": "reference"}},
+      },
+    }
+
+    fused, diagnostics = fuse_manual_pressing_tracks([frame], setup=setup, tracking=tracking)
+
+    self.assertEqual(diagnostics["selected_side"], "right")
+    self.assertTrue(diagnostics["used"])
+    self.assertEqual(diagnostics["fused_landmark_count"], 2)
+    self.assertEqual(fused[0]["landmarks"]["right_wrist"]["x"], 0.76)
+    self.assertTrue(fused[0]["landmarks"]["right_wrist"]["pressing_pin_assisted"])
+    self.assertEqual(fused[0]["landmarks"]["left_wrist"]["x"], 0.24)
+
+  def test_pressing_bar_path_prefers_a_usable_manual_wrist_track(self) -> None:
+    estimation = {
+      "frames": [
+        {
+          "source_frame_index": 1,
+          "timestamp_ms": 100,
+          "landmarks": {
+            "left_wrist": {"x": 0.25, "y": 0.35, "visibility": 0.9},
+            "right_wrist": {"x": 0.75, "y": 0.35, "visibility": 0.9},
+          },
+        }
+      ],
+      "manual_tracking": {
+        "tracks": {
+          "wrist": {
+            1: {"x": 0.76, "y": 0.31, "confidence": 0.9, "tracking_state": "reference"},
+          }
+        }
+      },
+    }
+
+    path, diagnostics = _pressing_barbell_path_from_pose(
+      estimation=estimation,
+      video={"view_type": "front"},
+    )
+
+    self.assertEqual(path["source"], "manual_wrist_lane")
+    self.assertEqual(path["points"][0]["x"], 0.76)
+    self.assertEqual(diagnostics["manual_wrist_point_count"], 1)
 
   def test_reference_frame_uses_decoded_timestamps_before_nominal_fps(self) -> None:
     frames = [

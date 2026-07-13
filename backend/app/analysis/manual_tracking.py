@@ -221,13 +221,18 @@ def _upper_back_proxy(
 def select_manual_tracking_side(reference_frame: dict[str, Any], anchors: dict[str, dict[str, float]]) -> str:
   anchors = _normalize_anchor_map(anchors)
   available_body_anchors = [joint for joint in USER_BODY_ANCHORS if joint in anchors]
-  if not available_body_anchors:
+  available_anchors = (
+    available_body_anchors
+    if available_body_anchors
+    else [joint for joint in PRESSING_ANCHORS if joint in anchors]
+  )
+  if not available_anchors:
     return "left"
   landmarks = reference_frame.get("landmarks") or {}
   scores: dict[str, float] = {}
   for side in ("left", "right"):
     score = 0.0
-    for joint in available_body_anchors:
+    for joint in available_anchors:
       model_point = (
         _upper_back_proxy(landmarks, side)
         if joint == UPPER_BACK_ANCHOR
@@ -1115,6 +1120,101 @@ def fuse_partial_manual_body_tracks(
     "pin_owned_landmark_count": fused_count,
     "body_pin_frames": frame_diagnostics,
     "source_counts": source_counts,
+  }
+
+
+def fuse_manual_pressing_tracks(
+  pose_frames: list[dict[str, Any]],
+  *,
+  setup: dict[str, Any],
+  tracking: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+  """Fuse user-pinned elbow/wrist tracks into the closest visible arm."""
+  setup = _normalized_tracking_setup(setup)
+  anchor_names = [name for name in PRESSING_ANCHORS if name in (setup.get("anchors") or {})]
+  base_result: dict[str, Any] = {
+    "used": False,
+    "selected_side": None,
+    "fused_landmark_count": 0,
+    "directly_anchored_landmark_count": 0,
+    "blended_landmark_count": 0,
+    "fallback_landmark_count": 0,
+    "rejected_track_count": 0,
+    "rejection_reasons": {},
+    "coverage": tracking.get("coverage") or {},
+    "pin_owned_landmark_count": 0,
+    "pressing_anchor_names": anchor_names,
+    "pressing_fallback_count": 0,
+  }
+  if not pose_frames or not anchor_names or not tracking.get("tracks"):
+    return pose_frames, base_result
+
+  reference_source_index = tracking.get("reference_source_index")
+  reference_frame = min(
+    pose_frames,
+    key=lambda frame: abs(int(frame.get("source_frame_index", 0)) - int(reference_source_index or 0)),
+  )
+  selected_side = select_manual_tracking_side(reference_frame, setup["anchors"])
+  fused_frames = copy.deepcopy(pose_frames)
+  fused_count = 0
+  reference_count = 0
+  guided_count = 0
+  fallback_count = 0
+
+  for frame in fused_frames:
+    source_index = int(frame.get("source_frame_index", -1))
+    landmarks = frame.setdefault("landmarks", {})
+    for joint in anchor_names:
+      track = _anchor_track(tracking, joint).get(source_index)
+      if not _manual_track_is_usable(track):
+        fallback_count += 1
+        continue
+
+      landmark_name = f"{selected_side}_{joint}"
+      landmark = landmarks.get(landmark_name)
+      if not isinstance(landmark, dict):
+        landmark = {
+          "x": float(track["x"]),
+          "y": float(track["y"]),
+          "z": 0.0,
+          "visibility": 0.0,
+        }
+        landmarks[landmark_name] = landmark
+
+      tracking_state = "reference" if track.get("tracking_state") == "reference" else "guided"
+      manual_source = "reference_pin" if tracking_state == "reference" else "pin_guided"
+      confidence = max(
+        float(landmark.get("visibility") or 0.0),
+        min(float(track.get("confidence") or 0.0), 0.92),
+      )
+      landmark.update({
+        "x": float(track["x"]),
+        "y": float(track["y"]),
+        "visibility": confidence,
+        "manual_assisted": True,
+        "manual_source": manual_source,
+        "manual_weight": 1.0,
+        "user_pinned": True,
+        "accepted_source": manual_source,
+        "tracking_state": tracking_state,
+        "pressing_pin_assisted": True,
+      })
+      fused_count += 1
+      if tracking_state == "reference":
+        reference_count += 1
+      else:
+        guided_count += 1
+
+  return fused_frames, {
+    **base_result,
+    "used": fused_count > 0,
+    "selected_side": selected_side,
+    "fused_landmark_count": fused_count,
+    "directly_anchored_landmark_count": reference_count,
+    "blended_landmark_count": guided_count,
+    "fallback_landmark_count": fallback_count,
+    "pin_owned_landmark_count": fused_count,
+    "pressing_fallback_count": fallback_count,
   }
 
 

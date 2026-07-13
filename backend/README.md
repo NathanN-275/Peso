@@ -127,6 +127,18 @@ balanced
 
 The original and processed video dimensions are preserved in saved analysis metadata.
 
+## Analysis performance benchmark
+
+`tests/fixtures/analysis_benchmark/pressing_manifest.json` defines the required 15-second press cases for side and front bench press, incline bench press, and overhead press. Save one completed analysis result per case as `<case-id>.json`, then summarize latency and enforce the 30-second payload-ready target with:
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/summarize_analysis_benchmark.py \
+  --results-dir /path/to/analysis-results
+```
+
+The manifest deliberately does not ship synthetic lift clips or expected rep counts. Populate it with reviewed, representative recordings before using it as a release gate.
+Run the same corpus for the manifest's `current`, `balanced_15fps_640px`, and `fast_12fps_640px` profiles by setting `POSE_TARGET_FPS` and `POSE_MAX_FRAME_DIMENSION`; promote only a profile that passes every case and whose payload-ready p95 is within the target.
+
 ## CORS behavior
 
 `BACKEND_CORS_ORIGINS` supports common Expo web, simulator, and local browser ports used by the mobile client.
