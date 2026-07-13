@@ -2251,6 +2251,9 @@ class BarbellTracker:
           if collar_rejection_reason:
             hub_rejected_count += 1
             final_bar_reason_counts[collar_rejection_reason] = final_bar_reason_counts.get(collar_rejection_reason, 0) + 1
+            rejection_reason_counts[collar_rejection_reason] = (
+              rejection_reason_counts.get(collar_rejection_reason, 0) + 1
+            )
           if collar_rejection_reason == "stationary_hardware_like":
             stationary_hardware_rejection_count += 1
           if consecutive_local_failures <= MAX_LOCAL_TRACKING_FAILURES:
