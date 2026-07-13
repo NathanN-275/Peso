@@ -424,6 +424,12 @@ def _template_settings(
       "search_radius_ratio": 0.062,
       "min_score": 0.50,
     }
+  if joint_name == "hip":
+    return {
+      "patch_radius_ratio": 0.018,
+      "search_radius_ratio": 0.062,
+      "min_score": 0.50,
+    }
   return None
 
 

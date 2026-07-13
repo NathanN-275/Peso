@@ -26,6 +26,7 @@ def create_video_thumbnail(source_path: Path, output_path: Path, at_seconds: flo
   command = [
     ffmpeg_binary,
     "-y",
+    "-autorotate",
     "-i",
     str(source_path),
     "-ss",
