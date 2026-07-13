@@ -4,6 +4,8 @@ import type {
   SavedVideo,
   VideoAnalysisStatus,
   VideoStatusResponse,
+  SavedVideoOverview,
+  SavedVideosPage,
 } from '../src/types/videoAnalysis';
 import { Platform } from 'react-native';
 import {
@@ -11,6 +13,10 @@ import {
   getBackendConnectionDiagnostics,
   resolveBackendApiConfig,
 } from './backendConfig';
+import {
+  buildAnalyzedVideoExportPayload,
+  buildRegisterUploadedVideoPayload,
+} from './videoRequestPayloadPolicy';
 
 let loggedBackendConfig = false;
 const PLAYBACK_URL_CACHE_TTL_MS = 2 * 60 * 1000;
@@ -35,9 +41,9 @@ function ensureBackendApiUrl() {
   const backend = resolveBackendApiConfig();
 
   if (!backend.url) {
-    throw new Error(
+    throw new Error(backend.error ?? (
       'Missing video analysis backend URL. Set EXPO_PUBLIC_BACKEND_URL before building or running the production app.'
-    );
+    ));
   }
 
   return backend;
@@ -312,6 +318,15 @@ export type AnalyzedVideoExportOptions = {
   barbell: boolean;
 };
 
+export type RegisterUploadedVideoRequest = {
+  storage_path: string;
+  source_type: 'camera' | 'camera_roll';
+  exercise_type: string;
+  view_type: string;
+  duration_ms: number | null;
+  tracking_setup?: unknown;
+};
+
 export async function testBackendConnection(signal?: AbortSignal, timeoutMs = HEALTH_CHECK_TIMEOUT_MS) {
   // Health checks confirm the backend is reachable before upload starts.
   return requestJson<{ status: string }>('/health', undefined, { signal, timeoutMs });
@@ -352,6 +367,30 @@ export async function fetchVideoCapabilities(accessToken: string) {
   return requestJson<VideoCapabilitiesResponse>('/videos/capabilities', accessToken);
 }
 
+export async function registerUploadedVideo(payload: RegisterUploadedVideoRequest, accessToken: string) {
+  const requestPayload = buildRegisterUploadedVideoPayload(payload);
+
+  return requestJson<{
+    video_id: string;
+    status: 'uploaded';
+    storage_path: string;
+    uploaded_size_bytes: number;
+  }>('/videos', accessToken, {
+    method: 'POST',
+    body: JSON.stringify(requestPayload),
+  });
+}
+
+export async function markVideoUploadFailed(videoId: string, accessToken: string) {
+  return requestJson<{ video_id: string; status: 'failed' }>(
+    `/videos/${videoId}/upload-failed`,
+    accessToken,
+    {
+      method: 'POST',
+    }
+  );
+}
+
 export async function triggerVideoAnalysis(videoId: string, accessToken: string, signal?: AbortSignal) {
   // Queue analysis for an uploaded video.
   const analyzePath = `/analyze/${videoId}`;
@@ -379,6 +418,35 @@ export async function fetchAnalysisResult(videoId: string, accessToken: string, 
 export async function getSavedVideos(accessToken: string, signal?: AbortSignal) {
   // Saved video lists include thumbnail URLs only; playback URLs are fetched on demand.
   return requestJson<SavedVideo[]>('/videos/saved', accessToken, { signal });
+}
+
+export async function getSavedVideosPage(
+  accessToken: string,
+  options: {
+    exerciseType?: string | null;
+    limit?: number;
+    cursor?: string | null;
+  } = {},
+  signal?: AbortSignal
+) {
+  const params = new URLSearchParams();
+  const normalizedLimit = Math.max(1, Math.min(50, Math.floor(options.limit ?? 20)));
+
+  params.set('limit', `${normalizedLimit}`);
+
+  if (options.exerciseType) {
+    params.set('exercise_type', options.exerciseType);
+  }
+
+  if (options.cursor) {
+    params.set('cursor', options.cursor);
+  }
+
+  return requestJson<SavedVideosPage>(`/videos/saved-page?${params.toString()}`, accessToken, { signal });
+}
+
+export async function getSavedVideoOverview(accessToken: string, signal?: AbortSignal) {
+  return requestJson<SavedVideoOverview>('/videos/saved-overview', accessToken, { signal });
 }
 
 export async function getVideoPlaybackUrl(videoId: string, accessToken: string) {
@@ -423,6 +491,8 @@ export async function exportAnalyzedVideo(
   accessToken: string,
   options: AnalyzedVideoExportOptions = { pose: true, barbell: false }
 ) {
+  const requestPayload = buildAnalyzedVideoExportPayload(options);
+
   // Render and sign an analyzed copy with the requested overlays burned in.
   return requestJson<{
     video_id: string;
@@ -435,7 +505,7 @@ export async function exportAnalyzedVideo(
     accessToken,
     {
       method: 'POST',
-      body: JSON.stringify(options),
+      body: JSON.stringify(requestPayload),
       timeoutMs: EXPORT_REQUEST_TIMEOUT_MS,
     }
   );

@@ -275,7 +275,7 @@ export default function SettingsScreen({
         mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.85,
+        quality: 0.72,
       });
 
       if (result.canceled || !result.assets[0]) {
@@ -512,6 +512,7 @@ export default function SettingsScreen({
           value={password}
           onChangeText={setPassword}
           secureTextEntry
+          showPasswordToggle
           textContentType="newPassword"
         />
         <Input
@@ -520,6 +521,7 @@ export default function SettingsScreen({
           value={confirmPassword}
           onChangeText={setConfirmPassword}
           secureTextEntry
+          showPasswordToggle
           textContentType="newPassword"
         />
         <Button

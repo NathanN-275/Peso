@@ -44,7 +44,12 @@ import ConfirmationDialog from '../components/ConfirmationDialog';
 import SelectedVideoPreview from '../components/SelectedVideoPreview';
 import TrackingPinSetupModal from '../components/TrackingPinSetupModal';
 import VideoSetupModal from '../components/VideoSetupModal';
-import { supportsPinAssistedTracking, VideoSetupSelection } from '../constants/videoSetup';
+import {
+  supportsPinAssistedTracking,
+  trackingBarbellTarget,
+  trackingPinNames,
+  VideoSetupSelection,
+} from '../constants/videoSetup';
 import AnalysisReviewScreen from './AnalysisReviewScreen';
 import { VideoAnalysisResult, VideoAnalysisStatus } from '../types/videoAnalysis';
 import tokens from '../theme/tokens';
@@ -985,6 +990,9 @@ export default function UploadVideoScreen({
           }}
           videoDurationMs={selectedVideo.duration ?? undefined}
           initialSetup={trackingSetup}
+          barbellTarget={trackingBarbellTarget(videoSetup)}
+          pinNames={trackingPinNames(videoSetup)}
+          cameraView={videoSetup?.angle === 'Front' ? 'front' : 'side'}
           onSave={(setup) => {
             setTrackingSetup(setup);
             setTrackingPinModalVisible(false);

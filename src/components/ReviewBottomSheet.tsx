@@ -49,7 +49,7 @@ export default function ReviewBottomSheet({
           <ScrollView
             style={styles.scroll}
             contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator
+            showsVerticalScrollIndicator={false}
           >
             {children}
           </ScrollView>

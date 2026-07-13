@@ -4,11 +4,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from fastapi import HTTPException
+
 from app.analysis.pipeline import _finalize_storage_assets
 
 
 VIDEO_ID = "11111111-1111-1111-1111-111111111111"
 USER_ID = "33333333-3333-3333-3333-333333333333"
+OTHER_USER_ID = "44444444-4444-4444-4444-444444444444"
 ORIGINAL_PATH = f"{USER_ID}/uploads/{VIDEO_ID}.mov"
 THUMBNAIL_PATH = f"{USER_ID}/thumbnails/{VIDEO_ID}-thumb-v3.jpg"
 PLAYBACK_PATH = f"{USER_ID}/playback/{VIDEO_ID}-h264-720p-v1.mp4"
@@ -108,6 +111,30 @@ class VideoAssetFinalizationTest(unittest.TestCase):
       )
 
     storage.delete_storage_path.assert_called_once_with(PLAYBACK_PATH)
+
+  def test_rejects_original_path_outside_owner_folder_before_asset_work(self) -> None:
+    repository = MagicMock()
+    storage = MagicMock()
+    video = self._video()
+    video["storage_path"] = f"{OTHER_USER_ID}/uploads/{VIDEO_ID}.mov"
+
+    with (
+      patch("app.analysis.pipeline.create_video_thumbnail") as thumbnail,
+      patch("app.analysis.pipeline.compress_video_for_playback") as compress_video,
+      self.assertRaises(HTTPException) as raised,
+    ):
+      _finalize_storage_assets(
+        video=video,
+        video_id=VIDEO_ID,
+        source_path=Path("/tmp/source.mov"),
+        repository=repository,
+        storage=storage,
+      )
+
+    self.assertEqual(raised.exception.status_code, 403)
+    thumbnail.assert_not_called()
+    compress_video.assert_not_called()
+    storage.delete_storage_path.assert_not_called()
 
 
 if __name__ == "__main__":

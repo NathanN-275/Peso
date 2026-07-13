@@ -585,6 +585,7 @@ export default function AnalysisReviewScreen({
                     containerSize={videoLayout}
                     videoSize={videoSize}
                     contentFit="cover"
+                    exercise={result.exercise}
                     cameraView={cameraView}
                     selectedSide={selectedPoseSide}
                     preferUpperBackKeypoint={trackingAssistance?.actualMode === 'pin_assisted'}
@@ -707,7 +708,11 @@ export default function AnalysisReviewScreen({
           title="Summary"
           onClose={() => setActiveSheet(null)}
         >
-          <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent}>
+          <ScrollView
+            style={styles.sheetScroll}
+            contentContainerStyle={styles.sheetContent}
+            showsVerticalScrollIndicator={false}
+          >
             <SheetSection title="Summary flags">
               <Text style={styles.sheetText}>{depthHitLabel}</Text>
               {analysisStale ? (
@@ -844,7 +849,11 @@ export default function AnalysisReviewScreen({
           title="Coaching"
           onClose={() => setActiveSheet(null)}
         >
-          <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent}>
+          <ScrollView
+            style={styles.sheetScroll}
+            contentContainerStyle={styles.sheetContent}
+            showsVerticalScrollIndicator={false}
+          >
             {coachingFeedback.length ? coachingFeedback.map((feedback) => (
               <Text key={feedback} style={styles.sheetText}>{feedback}</Text>
             )) : <Text style={styles.sheetMutedText}>No coaching feedback available.</Text>}

@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Image,
   Pressable,
   ScrollView,
@@ -11,21 +10,22 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
-import { describeBackendRequestFailure, getSavedVideos } from '../../lib/backendApi';
+import { describeBackendRequestFailure, getSavedVideoOverview } from '../../lib/backendApi';
 import { deriveUsernameFromUser, getProfileDisplayName, loadOwnProfile } from '../../lib/profile';
 import BottomNav, { NAV_HEIGHT } from '../components/BottomNav';
+import { SkeletonBlock } from '../components/Skeleton';
 import tokens from '../theme/tokens';
 import type { UserProfile } from '../../lib/profile';
-import type { SavedVideo, VideoAnalysisRep } from '../types/videoAnalysis';
+import type { SavedVideoOverview } from '../types/videoAnalysis';
 import { formatExerciseLabel, formatSavedDate } from '../utils/savedVideos';
 
 type ProfileScreenProps = {
   onHomePress?: () => void;
   onAddPress?: () => void;
   onSettingsPress?: () => void;
-  cachedSavedVideos?: SavedVideo[];
-  savedVideosLoaded?: boolean;
-  onSavedVideosLoaded?: (videos: SavedVideo[]) => void;
+  cachedSavedOverview?: SavedVideoOverview | null;
+  savedOverviewLoaded?: boolean;
+  onSavedOverviewLoaded?: (overview: SavedVideoOverview) => void;
 };
 
 type DashboardMetric = {
@@ -45,38 +45,24 @@ const ACHIEVEMENT_MILESTONES = {
   reps: 25,
   liftTypes: 3,
 };
+const EMPTY_SAVED_OVERVIEW: SavedVideoOverview = {
+  stats: {
+    total_saved: 0,
+    exercise_count: 0,
+    total_reps: 0,
+    latest_exercise_type: null,
+    latest_saved_at: null,
+    most_trained_exercise_type: null,
+    most_trained_count: 0,
+  },
+  groups: [],
+};
 
-function getVideoTimestamp(video: SavedVideo) {
-  const timestamp = Date.parse(video.saved_at ?? video.created_at);
-  return Number.isFinite(timestamp) ? timestamp : 0;
-}
-
-function getVideoReps(video: SavedVideo): VideoAnalysisRep[] {
-  return video.analysis?.rep_data ?? video.analysis?.result_json?.reps ?? [];
-}
-
-function getVideoRepCount(video: SavedVideo) {
-  const resultRepCount = video.analysis?.result_json?.rep_count;
-
-  if (typeof resultRepCount === 'number') {
-    return resultRepCount;
-  }
-
-  return getVideoReps(video).length;
-}
-
-function buildProfileStats(videos: SavedVideo[]) {
-  const workouts = videos.length;
-  const totalReps = videos.reduce((total, video) => total + getVideoRepCount(video), 0);
-  const exerciseCounts = new Map<string, number>();
-
-  for (const video of videos) {
-    exerciseCounts.set(video.exercise_type, (exerciseCounts.get(video.exercise_type) ?? 0) + 1);
-  }
-
-  const latestVideo = [...videos].sort((left, right) => getVideoTimestamp(right) - getVideoTimestamp(left))[0];
-  const mostTrainedLift = [...exerciseCounts.entries()].sort((left, right) => right[1] - left[1])[0];
-  const liftTypeCount = exerciseCounts.size;
+function buildProfileStats(overview: SavedVideoOverview | null) {
+  const overviewStats = overview?.stats ?? EMPTY_SAVED_OVERVIEW.stats;
+  const workouts = overviewStats.total_saved;
+  const totalReps = overviewStats.total_reps;
+  const liftTypeCount = overviewStats.exercise_count;
   const metrics: DashboardMetric[] = [
     {
       label: 'Recorded Workouts',
@@ -90,13 +76,13 @@ function buildProfileStats(videos: SavedVideo[]) {
     },
     {
       label: 'Latest Workout',
-      value: latestVideo ? formatExerciseLabel(latestVideo.exercise_type) : 'N/A',
-      detail: latestVideo ? formatSavedDate(latestVideo.saved_at ?? latestVideo.created_at) : 'save a lift',
+      value: overviewStats.latest_exercise_type ? formatExerciseLabel(overviewStats.latest_exercise_type) : 'N/A',
+      detail: overviewStats.latest_saved_at ? formatSavedDate(overviewStats.latest_saved_at) : 'save a lift',
     },
     {
       label: 'Most Trained Lift',
-      value: mostTrainedLift ? formatExerciseLabel(mostTrainedLift[0]) : 'N/A',
-      detail: mostTrainedLift ? `${mostTrainedLift[1]} recorded` : 'no workouts yet',
+      value: overviewStats.most_trained_exercise_type ? formatExerciseLabel(overviewStats.most_trained_exercise_type) : 'N/A',
+      detail: overviewStats.most_trained_count > 0 ? `${overviewStats.most_trained_count} recorded` : 'no workouts yet',
     },
   ];
   const achievements: Achievement[] = [
@@ -128,6 +114,28 @@ function buildProfileStats(videos: SavedVideo[]) {
     metrics,
     achievements,
   };
+}
+
+function ProfileLoadingSkeleton() {
+  return (
+    <View style={styles.profileSkeleton}>
+      <SkeletonBlock width={96} height={96} radius={48} />
+      <View style={styles.profileSkeletonCopy}>
+        <SkeletonBlock width="68%" height={28} radius={6} />
+        <SkeletonBlock width="42%" height={18} radius={6} />
+      </View>
+    </View>
+  );
+}
+
+function StatsLoadingSkeleton() {
+  return (
+    <View style={styles.metricsGrid}>
+      {[0, 1, 2, 3].map((index) => (
+        <SkeletonBlock key={index} width="48.5%" height={96} radius={8} />
+      ))}
+    </View>
+  );
 }
 
 function DashboardCard({ metric }: { metric: DashboardMetric }) {
@@ -162,15 +170,15 @@ export default function ProfileScreen({
   onHomePress,
   onAddPress,
   onSettingsPress,
-  cachedSavedVideos = [],
-  savedVideosLoaded = false,
-  onSavedVideosLoaded,
+  cachedSavedOverview = null,
+  savedOverviewLoaded = false,
+  onSavedOverviewLoaded,
 }: ProfileScreenProps) {
   const { session, user } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [videos, setVideos] = useState<SavedVideo[]>(cachedSavedVideos);
+  const [savedOverview, setSavedOverview] = useState<SavedVideoOverview | null>(cachedSavedOverview);
   const [profileLoading, setProfileLoading] = useState(true);
-  const [videosLoading, setVideosLoading] = useState(!savedVideosLoaded);
+  const [videosLoading, setVideosLoading] = useState(!savedOverviewLoaded);
   const [profileErrorMessage, setProfileErrorMessage] = useState<string | null>(null);
   const [videosErrorMessage, setVideosErrorMessage] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -214,14 +222,14 @@ export default function ProfileScreen({
   }, [session?.access_token, user, reloadKey]);
 
   useEffect(() => {
-    if (!savedVideosLoaded) {
+    if (!savedOverviewLoaded) {
       return;
     }
 
-    setVideos(cachedSavedVideos);
+    setSavedOverview(cachedSavedOverview);
     setVideosErrorMessage(null);
     setVideosLoading(false);
-  }, [cachedSavedVideos, savedVideosLoaded]);
+  }, [cachedSavedOverview, savedOverviewLoaded]);
 
   useEffect(() => {
     let cancelled = false;
@@ -229,13 +237,13 @@ export default function ProfileScreen({
 
     const loadSavedVideoStats = async () => {
       if (!session?.access_token) {
-        setVideos([]);
+        setSavedOverview(EMPTY_SAVED_OVERVIEW);
         setVideosLoading(false);
-        onSavedVideosLoaded?.([]);
+        onSavedOverviewLoaded?.(EMPTY_SAVED_OVERVIEW);
         return;
       }
 
-      if (savedVideosLoaded && reloadKey === 0) {
+      if (savedOverviewLoaded && reloadKey === 0) {
         setVideosLoading(false);
         setVideosErrorMessage(null);
         return;
@@ -245,14 +253,14 @@ export default function ProfileScreen({
       setVideosErrorMessage(null);
 
       try {
-        const savedVideos = await getSavedVideos(session.access_token, controller.signal);
+        const overview = await getSavedVideoOverview(session.access_token, controller.signal);
 
         if (cancelled) {
           return;
         }
 
-        setVideos(savedVideos);
-        onSavedVideosLoaded?.(savedVideos);
+        setSavedOverview(overview);
+        onSavedOverviewLoaded?.(overview);
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') {
           return;
@@ -279,9 +287,9 @@ export default function ProfileScreen({
       cancelled = true;
       controller.abort();
     };
-  }, [session?.access_token, reloadKey, savedVideosLoaded]);
+  }, [session?.access_token, reloadKey, savedOverviewLoaded]);
 
-  const stats = useMemo(() => buildProfileStats(videos), [videos]);
+  const stats = useMemo(() => buildProfileStats(savedOverview), [savedOverview]);
   const displayName = getProfileDisplayName(profile, user);
   const username = profile?.username || deriveUsernameFromUser(user) || 'username';
   const shouldAppendUsername = Boolean(
@@ -290,8 +298,8 @@ export default function ProfileScreen({
       displayName.toLowerCase() !== username.toLowerCase(),
   );
   const profileName = shouldAppendUsername ? `${displayName} ${username}` : displayName;
-  const showInitialStatsLoading = videosLoading && videos.length === 0;
-  const showStats = !showInitialStatsLoading && (!videosErrorMessage || videos.length > 0);
+  const showInitialStatsLoading = videosLoading && stats.workouts === 0;
+  const showStats = !showInitialStatsLoading && (!videosErrorMessage || stats.workouts > 0);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -326,10 +334,7 @@ export default function ProfileScreen({
           </View>
 
           {profileLoading ? (
-            <View style={styles.stateBlock}>
-              <ActivityIndicator color={tokens.colors.brand} />
-              <Text style={styles.stateText}>Loading profile...</Text>
-            </View>
+            <ProfileLoadingSkeleton />
           ) : null}
 
           {!profileLoading && profileErrorMessage ? (
@@ -345,10 +350,7 @@ export default function ProfileScreen({
             <Text style={styles.sectionTitle}>Training Dashboard</Text>
 
             {showInitialStatsLoading ? (
-              <View style={styles.inlineStateBlock}>
-                <ActivityIndicator color={tokens.colors.brand} />
-                <Text style={styles.stateText}>Loading saved video stats...</Text>
-              </View>
+              <StatsLoadingSkeleton />
             ) : null}
 
             {videosErrorMessage ? (
@@ -413,6 +415,16 @@ const styles = StyleSheet.create({
   },
   profileTop: {
     gap: 18,
+  },
+  profileSkeleton: {
+    minHeight: 118,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  profileSkeletonCopy: {
+    flex: 1,
+    gap: 10,
   },
   iconButton: {
     width: 38,
@@ -545,10 +557,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 10,
     paddingVertical: 10,
-  },
-  stateText: {
-    color: tokens.colors.textMuted,
-    fontSize: 14,
   },
   errorText: {
     color: '#FF8A8A',

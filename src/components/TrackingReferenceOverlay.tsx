@@ -15,6 +15,8 @@ const PIN_LABELS: Record<TrackingPinName, string> = {
   hip: 'Hip',
   knee: 'Knee',
   ankle: 'Ankle',
+  elbow: 'Elbow',
+  wrist: 'Wrist',
   barbell: 'Barbell collar',
 };
 
@@ -23,6 +25,8 @@ const PIN_COLORS: Record<TrackingPinName, string> = {
   hip: '#A77BFF',
   knee: '#FFB454',
   ankle: '#5DDBA6',
+  elbow: '#F973B7',
+  wrist: '#2DD4BF',
   barbell: '#FF6577',
 };
 

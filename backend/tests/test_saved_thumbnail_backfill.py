@@ -13,6 +13,7 @@ from app.services.saved_thumbnail_backfill import (
 
 VIDEO_ID = "11111111-1111-1111-1111-111111111111"
 USER_ID = "33333333-3333-3333-3333-333333333333"
+OTHER_USER_ID = "44444444-4444-4444-4444-444444444444"
 SOURCE_PATH = f"{USER_ID}/uploads/{VIDEO_ID}.mov"
 THUMBNAIL_PATH = f"{USER_ID}/thumbnails/{VIDEO_ID}-thumb-v3.jpg"
 
@@ -161,6 +162,26 @@ class SavedThumbnailBackfillTest(unittest.TestCase):
     storage.upload_file.assert_called_once()
     repository.update_video.assert_called_once_with(VIDEO_ID, {"thumbnail_path": THUMBNAIL_PATH})
     storage.delete_storage_path.assert_called_once_with(THUMBNAIL_PATH)
+
+  def test_confirm_rejects_saved_video_source_outside_owner_folder(self) -> None:
+    repository = MagicMock()
+    repository.client.table.return_value.select.return_value.execute.return_value = SimpleNamespace(
+      data=[self._video(storage_path=f"{OTHER_USER_ID}/uploads/{VIDEO_ID}.mov")]
+    )
+    storage = MagicMock()
+
+    with patch("app.services.saved_thumbnail_backfill.create_video_thumbnail") as create_thumbnail:
+      result = backfill_saved_video_thumbnails(
+        repository=repository,
+        storage=storage,
+        confirm=True,
+      )
+
+    self.assertEqual(result.failed_count, 1)
+    storage.download_to_tempfile.assert_not_called()
+    create_thumbnail.assert_not_called()
+    storage.upload_file.assert_not_called()
+    repository.update_video.assert_not_called()
 
 
 if __name__ == "__main__":

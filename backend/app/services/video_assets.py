@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 from .analyzed_video_renderer import _resolve_ffmpeg_binary
+from .config import get_settings
 
 
 PLAYBACK_VERSION = "h264-720p-v1"
@@ -20,6 +21,7 @@ def build_thumbnail_storage_path(user_id: str, video_id: str) -> str:
 
 def create_video_thumbnail(source_path: Path, output_path: Path, at_seconds: float = 1.0) -> Path:
   ffmpeg_binary = _resolve_ffmpeg_binary()
+  timeout_seconds = get_settings().ffmpeg_timeout_seconds
   output_path.parent.mkdir(parents=True, exist_ok=True)
   command = [
     ffmpeg_binary,
@@ -39,7 +41,16 @@ def create_video_thumbnail(source_path: Path, output_path: Path, at_seconds: flo
     "3",
     str(output_path),
   ]
-  completed = subprocess.run(command, capture_output=True, text=True, check=False)
+  try:
+    completed = subprocess.run(
+      command,
+      capture_output=True,
+      text=True,
+      check=False,
+      timeout=timeout_seconds,
+    )
+  except subprocess.TimeoutExpired as error:
+    raise RuntimeError("FFmpeg thumbnail generation timed out.") from error
 
   if completed.returncode != 0:
     raise RuntimeError(completed.stderr.strip() or "FFmpeg thumbnail generation failed.")
@@ -52,6 +63,7 @@ def create_video_thumbnail(source_path: Path, output_path: Path, at_seconds: flo
 
 def compress_video_for_playback(source_path: Path, output_path: Path) -> Path:
   ffmpeg_binary = _resolve_ffmpeg_binary()
+  timeout_seconds = get_settings().ffmpeg_timeout_seconds
   output_path.parent.mkdir(parents=True, exist_ok=True)
   command = [
     ffmpeg_binary,
@@ -77,7 +89,16 @@ def compress_video_for_playback(source_path: Path, output_path: Path) -> Path:
     "+faststart",
     str(output_path),
   ]
-  completed = subprocess.run(command, capture_output=True, text=True, check=False)
+  try:
+    completed = subprocess.run(
+      command,
+      capture_output=True,
+      text=True,
+      check=False,
+      timeout=timeout_seconds,
+    )
+  except subprocess.TimeoutExpired as error:
+    raise RuntimeError("FFmpeg playback compression timed out.") from error
 
   if completed.returncode != 0:
     raise RuntimeError(completed.stderr.strip() or "FFmpeg playback compression failed.")

@@ -32,7 +32,7 @@ import { supabase } from './lib/supabase';
 import { deleteSavedVideo, fetchAnalysisResult, getVideoPlaybackUrl } from './lib/backendApi';
 import type { SavedVideo } from './lib/backendApi';
 import type { VideoSetupSelection } from './src/constants/videoSetup';
-import type { VideoAnalysisResult } from './src/types/videoAnalysis';
+import type { SavedVideoOverview, VideoAnalysisResult } from './src/types/videoAnalysis';
 
 LogBox.ignoreLogs([
   "SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead.",
@@ -417,8 +417,8 @@ function AppContent() {
   const [recordingSetupModalVisible, setRecordingSetupModalVisible] = useState(false);
   const [recordingSetupResumeKey, setRecordingSetupResumeKey] = useState(0);
   const [recordingLauncherOpen, setRecordingLauncherOpen] = useState(false);
-  const [savedVideos, setSavedVideos] = useState<SavedVideo[]>([]);
-  const [savedVideosLoaded, setSavedVideosLoaded] = useState(false);
+  const [savedOverview, setSavedOverview] = useState<SavedVideoOverview | null>(null);
+  const [savedOverviewLoaded, setSavedOverviewLoaded] = useState(false);
   const [selectedSavedExerciseType, setSelectedSavedExerciseType] = useState<string | null>(null);
   const [selectedSavedVideo, setSelectedSavedVideo] = useState<SavedVideo | null>(null);
   const [selectedSavedVideoPlaybackUri, setSelectedSavedVideoPlaybackUri] = useState<string | null>(null);
@@ -437,8 +437,8 @@ function AppContent() {
       return;
     }
 
-    setSavedVideos([]);
-    setSavedVideosLoaded(false);
+    setSavedOverview(null);
+    setSavedOverviewLoaded(false);
   }, [session?.access_token]);
 
   useEffect(() => {
@@ -732,8 +732,11 @@ function AppContent() {
     }
 
     await deleteSavedVideo(videoId, session.access_token);
-    setSavedVideos((currentVideos) => currentVideos.filter((video) => video.id !== videoId));
-    setSavedVideosLoaded(false);
+    invalidateSavedVideoCaches();
+  };
+
+  const invalidateSavedVideoCaches = () => {
+    setSavedOverviewLoaded(false);
     setHomeRefreshKey((key) => key + 1);
   };
 
@@ -763,24 +766,22 @@ function AppContent() {
     setPendingRecordingSetup(null);
     authNavigation.toAddVideo();
   };
-  const handleSavedVideosLoaded = (videos: SavedVideo[]) => {
-    setSavedVideos(videos);
-    setSavedVideosLoaded(true);
+  const handleSavedOverviewLoaded = (overview: SavedVideoOverview) => {
+    setSavedOverview(overview);
+    setSavedOverviewLoaded(true);
   };
   const handleAnalysisSaved = () => {
     setRecordedUploadVideo(null);
     setRecordedUploadSetup(null);
     setRecordedReviewSavedVideoId(null);
-    setSavedVideosLoaded(false);
-    setHomeRefreshKey((key) => key + 1);
+    invalidateSavedVideoCaches();
     authNavigation.toHome();
   };
   const handleRecordedAnalysisSaved = (videoId: string) => {
     const previousSavedVideoId = recordedReviewSavedVideoId;
 
     setRecordedReviewSavedVideoId(videoId);
-    setSavedVideosLoaded(false);
-    setHomeRefreshKey((key) => key + 1);
+    invalidateSavedVideoCaches();
 
     if (previousSavedVideoId && previousSavedVideoId !== videoId && session?.access_token) {
       deleteSavedVideo(previousSavedVideoId, session.access_token).catch((error) => {
@@ -832,8 +833,7 @@ function AppContent() {
     }
 
     if (deletedIds.size > 0) {
-      setSavedVideos((currentVideos) => currentVideos.filter((video) => !deletedIds.has(video.id)));
-      setSavedVideosLoaded(true);
+      invalidateSavedVideoCaches();
       setSelectedSavedVideo((currentVideo) => currentVideo && deletedIds.has(currentVideo.id) ? null : currentVideo);
       setSelectedSavedVideoPlaybackUri((currentUri) => deletedIds.has(selectedSavedVideo?.id ?? '') ? null : currentUri);
       setSelectedSavedVideoAnalysisResult((currentResult) =>
@@ -1129,14 +1129,9 @@ function AppContent() {
       }
 
       if (route === AUTH_ROUTES.savedLiftVideos && selectedSavedExerciseType) {
-        const selectedVideos = savedVideos.filter(
-          (video) => video.exercise_type === selectedSavedExerciseType
-        );
-
         return (
           <SavedLiftVideosScreen
             exerciseType={selectedSavedExerciseType}
-            videos={selectedVideos}
             onBack={handleHomeRoute}
             onOpenSavedVideo={handleOpenSavedVideo}
             onDeleteSavedVideos={handleDeleteSavedVideos}
@@ -1162,9 +1157,9 @@ function AppContent() {
             onHomePress={handleHomeRoute}
             onAddPress={authNavigation.toAddVideo}
             onSettingsPress={authNavigation.toSettings}
-            cachedSavedVideos={savedVideos}
-            savedVideosLoaded={savedVideosLoaded}
-            onSavedVideosLoaded={handleSavedVideosLoaded}
+            cachedSavedOverview={savedOverview}
+            savedOverviewLoaded={savedOverviewLoaded}
+            onSavedOverviewLoaded={handleSavedOverviewLoaded}
           />
         );
       }
@@ -1189,9 +1184,9 @@ function AppContent() {
           onNavigateToAddVideo={authNavigation.toAddVideo}
           onNavigateToProfile={handleProfileRoute}
           onOpenSavedLiftFolder={handleOpenSavedLiftFolder}
-          cachedSavedVideos={savedVideos}
-          savedVideosLoaded={savedVideosLoaded}
-          onSavedVideosLoaded={handleSavedVideosLoaded}
+          cachedSavedOverview={savedOverview}
+          savedOverviewLoaded={savedOverviewLoaded}
+          onSavedOverviewLoaded={handleSavedOverviewLoaded}
         />
       );
     }

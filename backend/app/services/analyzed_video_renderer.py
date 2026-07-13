@@ -6,6 +6,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .config import get_settings
+
 
 SQUAT_LABELS = {
   "left_upper_back": "Upper Back",
@@ -392,6 +394,7 @@ def render_analyzed_video(
 
   output_path.parent.mkdir(parents=True, exist_ok=True)
   ffmpeg_binary = _resolve_ffmpeg_binary()
+  ffmpeg_timeout_seconds = get_settings().ffmpeg_timeout_seconds
   ffmpeg_process = subprocess.Popen(
     [
       ffmpeg_binary,
@@ -468,7 +471,13 @@ def render_analyzed_video(
       ffmpeg_process.stdin.close()
       ffmpeg_process.stdin = None
 
-  _, stderr = ffmpeg_process.communicate()
+  try:
+    _, stderr = ffmpeg_process.communicate(timeout=ffmpeg_timeout_seconds)
+  except subprocess.TimeoutExpired as error:
+    ffmpeg_process.kill()
+    _, stderr = ffmpeg_process.communicate()
+    message = stderr.decode("utf-8", errors="replace").strip()
+    raise RuntimeError(f"FFmpeg analyzed video export timed out: {message}") from error
 
   if frame_index == 0:
     raise RuntimeError("Unable to read frames from source video for export.")

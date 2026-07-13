@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from .supabase_client import get_supabase_admin_client
+from .video_storage_paths import VIDEO_STORAGE_PATH_FIELDS, require_user_storage_path
 
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ class VideoRepository:
 
   def update_video(self, video_id: str, fields: dict[str, Any]) -> dict[str, Any]:
     # Update any video metadata in place.
+    self._validate_storage_path_update(video_id, fields)
     response = (
       self.client.table("videos")
       .update(fields)
@@ -110,6 +112,59 @@ class VideoRepository:
       raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found.")
 
     return response.data[0]
+
+  def create_video(self, fields: dict[str, Any]) -> dict[str, Any]:
+    response = self.client.table("videos").insert(fields).execute()
+
+    if not response.data:
+      raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unable to create video.")
+
+    return response.data[0]
+
+  def create_uploaded_video(self, fields: dict[str, Any]) -> dict[str, Any]:
+    try:
+      return self.create_video(fields)
+    except Exception as error:
+      missing_storage_metadata = self._error_mentions_missing_columns(
+        error,
+        {
+          "storage_state",
+          "original_size_bytes",
+          "uploaded_size_bytes",
+          "was_compressed",
+        },
+      )
+
+      if not missing_storage_metadata:
+        raise
+
+      logger.warning("Falling back to upload insert without storage metadata: %s", error)
+      legacy_fields = {
+        key: value
+        for key, value in fields.items()
+        if key not in {"storage_state", "original_size_bytes", "uploaded_size_bytes", "was_compressed"}
+      }
+      return self.create_video(legacy_fields)
+
+  def count_user_in_progress_videos(self, user_id: str) -> int:
+    response = (
+      self.client.table("videos")
+      .select("id", count="exact")
+      .eq("user_id", user_id)
+      .in_("status", ["queued", "processing"])
+      .execute()
+    )
+    return int(response.count or 0)
+
+  def count_recent_user_uploads(self, user_id: str, since_iso: str) -> int:
+    response = (
+      self.client.table("videos")
+      .select("id", count="exact")
+      .eq("user_id", user_id)
+      .gte("created_at", since_iso)
+      .execute()
+    )
+    return int(response.count or 0)
 
   def queue_owned_video_if_status(
     self,
@@ -288,6 +343,59 @@ class VideoRepository:
 
     return response.data or []
 
+  def list_saved_videos_page(
+    self,
+    user_id: str,
+    *,
+    exercise_type: str | None = None,
+    offset: int = 0,
+    limit: int = 20,
+  ) -> list[dict[str, Any]]:
+    offset = max(0, offset)
+    limit = max(1, limit)
+    range_end = offset + limit - 1
+
+    try:
+      query = (
+        self.client.table("videos")
+        .select(VIDEO_STORAGE_COLUMNS)
+        .eq("user_id", user_id)
+        .or_("save_state.eq.saved,is_saved.eq.true")
+        .filter("discarded_at", "is", "null")
+      )
+
+      if exercise_type:
+        query = query.eq("exercise_type", exercise_type)
+
+      response = (
+        query
+        .order("saved_at", desc=True, nullsfirst=False)
+        .order("created_at", desc=True)
+        .range(offset, range_end)
+        .execute()
+      )
+    except Exception as error:
+      logger.warning("Falling back to legacy saved-video page query for user %s: %s", user_id, error)
+      query = (
+        self.client.table("videos")
+        .select(VIDEO_BASE_COLUMNS)
+        .eq("user_id", user_id)
+        .eq("save_state", "saved")
+      )
+
+      if exercise_type:
+        query = query.eq("exercise_type", exercise_type)
+
+      response = (
+        query
+        .order("saved_at", desc=True, nullsfirst=False)
+        .order("created_at", desc=True)
+        .range(offset, range_end)
+        .execute()
+      )
+
+    return response.data or []
+
   def list_user_videos(self, user_id: str) -> list[dict[str, Any]]:
     try:
       response = (
@@ -310,6 +418,30 @@ class VideoRepository:
   @staticmethod
   def video_is_saved(video: dict[str, Any]) -> bool:
     return video.get("save_state") == "saved" or video.get("is_saved") is True
+
+  def _validate_storage_path_update(self, video_id: str, fields: dict[str, Any]) -> None:
+    if not any(field in fields and fields[field] is not None for field in VIDEO_STORAGE_PATH_FIELDS):
+      return
+
+    video = self.get_video(video_id)
+    if not video:
+      raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found.")
+
+    user_id = str(video.get("user_id") or "")
+    for field in VIDEO_STORAGE_PATH_FIELDS:
+      path = fields.get(field)
+
+      if path is not None:
+        require_user_storage_path(str(path), user_id, field)
+
+  @staticmethod
+  def _error_mentions_missing_columns(error: Exception, columns: set[str]) -> bool:
+    error_message = str(error).lower()
+
+    if not ("does not exist" in error_message or "could not find" in error_message):
+      return False
+
+    return any(column in error_message for column in columns)
 
   @staticmethod
   def _parse_timestamp(value: Any) -> datetime | None:
@@ -355,3 +487,23 @@ class VideoRepository:
       .execute()
     )
     return response.data[0] if response.data else None
+
+  def get_latest_analysis_results(self, video_ids: list[str]) -> dict[str, dict[str, Any]]:
+    if not video_ids:
+      return {}
+
+    response = (
+      self.client.table("analysis_results")
+      .select(ANALYSIS_RESULT_COLUMNS)
+      .in_("video_id", video_ids)
+      .order("created_at", desc=True)
+      .execute()
+    )
+    latest_by_video_id: dict[str, dict[str, Any]] = {}
+
+    for row in response.data or []:
+      video_id = str(row.get("video_id") or "")
+      if video_id and video_id not in latest_by_video_id:
+        latest_by_video_id[video_id] = row
+
+    return latest_by_video_id

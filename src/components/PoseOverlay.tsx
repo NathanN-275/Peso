@@ -4,8 +4,8 @@ import { VideoPoseFrame } from '../types/videoAnalysis';
 import {
   ContentFit,
   Size,
-  getSquatOverlayKeypoints,
-  getSquatPoseConnections,
+  getLiftOverlayKeypoints,
+  getLiftPoseConnections,
   mapNormalizedKeypoint,
 } from '../utils/videoReview';
 
@@ -18,6 +18,7 @@ type PoseOverlayProps = {
   containerSize: Size;
   videoSize: Size;
   contentFit?: ContentFit;
+  exercise?: string | null;
   cameraView?: string;
   selectedSide?: string | null;
   confidenceThreshold?: number;
@@ -60,6 +61,7 @@ export default function PoseOverlay({
   containerSize,
   videoSize,
   contentFit = 'cover',
+  exercise,
   cameraView,
   selectedSide,
   confidenceThreshold = 0.35,
@@ -70,22 +72,24 @@ export default function PoseOverlay({
     return null;
   }
 
-  const squatKeypoints = getSquatOverlayKeypoints(
+  const overlayKeypoints = getLiftOverlayKeypoints(
     frame,
+    exercise,
     cameraView,
     confidenceThreshold,
     selectedSide,
     preferUpperBackKeypoint
   );
   // Map the normalized pose points into the rendered video rectangle.
-  const connections = getSquatPoseConnections(
-    squatKeypoints,
+  const connections = getLiftPoseConnections(
+    overlayKeypoints,
+    exercise,
     cameraView,
     selectedSide,
     preferUpperBackKeypoint
   );
   const mappedKeypoints = new Map(
-    squatKeypoints.map((keypoint) => {
+    overlayKeypoints.map((keypoint) => {
       const mapped = mapNormalizedKeypoint(keypoint, containerSize, videoSize, contentFit);
       return [
         mapped.name,

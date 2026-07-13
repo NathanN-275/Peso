@@ -51,9 +51,23 @@ export const SQUAT_BODY_CONNECTIONS = [
   ['left_shoulder', 'right_shoulder'],
 ] as const;
 
+export const PRESSING_LANDMARK_NAMES = [
+  'left_shoulder',
+  'right_shoulder',
+  'left_elbow',
+  'right_elbow',
+  'left_wrist',
+  'right_wrist',
+  'left_hip',
+  'right_hip',
+] as const;
+
+export type PressingLandmarkName = (typeof PRESSING_LANDMARK_NAMES)[number];
+
 export type SquatLandmarkName = (typeof SQUAT_LANDMARK_NAMES)[number];
 
 const SQUAT_LANDMARK_SET = new Set<string>(SQUAT_LANDMARK_NAMES);
+const PRESSING_LANDMARK_SET = new Set<string>(PRESSING_LANDMARK_NAMES);
 const CONFIDENCE_THRESHOLD = 0.35;
 const ESTIMATED_CONFIDENCE_THRESHOLD = 0.15;
 const MAX_BARBELL_POINT_GAP_SECONDS = 0.5;
@@ -68,6 +82,17 @@ const SQUAT_LABELS: Record<SquatLandmarkName, string> = {
   right_knee: 'Knee',
   left_ankle: 'Ankle',
   right_ankle: 'Ankle',
+};
+
+const PRESSING_LABELS: Record<PressingLandmarkName, string> = {
+  left_shoulder: 'Shoulder',
+  right_shoulder: 'Shoulder',
+  left_elbow: 'Elbow',
+  right_elbow: 'Elbow',
+  left_wrist: 'Wrist',
+  right_wrist: 'Wrist',
+  left_hip: 'Hip',
+  right_hip: 'Hip',
 };
 
 function mergeChainValid(
@@ -580,6 +605,110 @@ export function getSquatOverlayKeypoints(
       ...keypoint,
       label: SQUAT_LABELS[keypoint.name as SquatLandmarkName],
     }));
+}
+
+function isPressingLandmarkName(name: string): name is PressingLandmarkName {
+  return PRESSING_LANDMARK_SET.has(name);
+}
+
+function isPressingExercise(exercise?: string | null) {
+  const normalized = exercise?.trim().toLowerCase();
+  return normalized === 'bench press'
+    || normalized === 'incline bench press'
+    || normalized === 'overhead press';
+}
+
+export function getPressingOverlayKeypoints(
+  frame: VideoPoseFrame | null,
+  cameraView?: string,
+  confidenceThreshold = CONFIDENCE_THRESHOLD
+): SquatOverlayPoint[] {
+  if (!frame) {
+    return [];
+  }
+
+  const threshold = Math.min(confidenceThreshold, ESTIMATED_CONFIDENCE_THRESHOLD);
+  const keypoints = frame.keypoints.filter((keypoint) => (
+    isPressingLandmarkName(keypoint.name)
+    && (
+      keypoint.confidence >= threshold
+      || keypoint.userPinned === true
+      || keypoint.manualSource === 'pin_estimated'
+    )
+  ));
+  const selectedSide = cameraView?.toLowerCase() === 'side'
+    ? (getAverageConfidence(keypoints, 'left') >= getAverageConfidence(keypoints, 'right') ? 'left' : 'right')
+    : null;
+
+  return keypoints
+    .filter((keypoint) => !selectedSide || keypoint.name.startsWith(`${selectedSide}_`))
+    .map((keypoint) => ({
+      ...keypoint,
+      label: PRESSING_LABELS[keypoint.name as PressingLandmarkName],
+    }));
+}
+
+export function getPressingPoseConnections(
+  keypoints: VideoPoseKeypoint[],
+  cameraView?: string
+) {
+  if (cameraView?.toLowerCase() === 'side') {
+    const side = getAverageConfidence(keypoints, 'left') >= getAverageConfidence(keypoints, 'right') ? 'left' : 'right';
+    return [
+      [`${side}_shoulder`, `${side}_elbow`],
+      [`${side}_elbow`, `${side}_wrist`],
+      [`${side}_shoulder`, `${side}_hip`],
+    ] as Array<[string, string]>;
+  }
+
+  return [
+    ['left_wrist', 'left_elbow'],
+    ['left_elbow', 'left_shoulder'],
+    ['right_wrist', 'right_elbow'],
+    ['right_elbow', 'right_shoulder'],
+    ['left_shoulder', 'right_shoulder'],
+    ['left_shoulder', 'left_hip'],
+    ['right_shoulder', 'right_hip'],
+    ['left_hip', 'right_hip'],
+  ] as Array<[string, string]>;
+}
+
+export function getLiftOverlayKeypoints(
+  frame: VideoPoseFrame | null,
+  exercise?: string | null,
+  cameraView?: string,
+  confidenceThreshold = CONFIDENCE_THRESHOLD,
+  lockedSide?: string | null,
+  preferUpperBackKeypoint = false
+) {
+  if (isPressingExercise(exercise)) {
+    return getPressingOverlayKeypoints(frame, cameraView, confidenceThreshold);
+  }
+  return getSquatOverlayKeypoints(
+    frame,
+    cameraView,
+    confidenceThreshold,
+    lockedSide,
+    preferUpperBackKeypoint
+  );
+}
+
+export function getLiftPoseConnections(
+  keypoints: VideoPoseKeypoint[],
+  exercise?: string | null,
+  cameraView?: string,
+  lockedSide?: string | null,
+  preferUpperBackKeypoint = false
+) {
+  if (isPressingExercise(exercise)) {
+    return getPressingPoseConnections(keypoints, cameraView);
+  }
+  return getSquatPoseConnections(
+    keypoints,
+    cameraView,
+    lockedSide,
+    preferUpperBackKeypoint
+  );
 }
 
 export function calculateVideoRect(container: Size, source: Size, contentFit: ContentFit = 'contain') {

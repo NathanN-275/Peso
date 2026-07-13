@@ -1,3 +1,5 @@
+import { TRACKING_PIN_NAMES, type TrackingPinName } from '../types/trackingSetup';
+
 export const EXERCISE_OPTIONS = [
   'Squat',
   'Front Squat',
@@ -23,6 +25,33 @@ export type VideoSetupSelection = {
   angle: CameraAngle;
 };
 
+const PRESSING_EXERCISES: ReadonlySet<ExerciseOption> = new Set([
+  'Bench Press',
+  'Incline Bench Press',
+  'Overhead Press',
+]);
+const SQUAT_PIN_NAMES: readonly TrackingPinName[] = ['shoulder', 'hip', 'knee', 'ankle', 'barbell'];
+const PRESSING_PIN_NAMES: readonly TrackingPinName[] = ['wrist', 'elbow', 'shoulder', 'barbell'];
+
 export function supportsPinAssistedTracking(selection: VideoSetupSelection | null) {
-  return Boolean(selection?.angle === 'Side' && selection.exercise.endsWith('Squat'));
+  return Boolean(
+    (selection?.angle === 'Side' && selection.exercise.endsWith('Squat'))
+    || (selection && PRESSING_EXERCISES.has(selection.exercise))
+  );
+}
+
+export function trackingPinNames(selection: VideoSetupSelection | null): readonly TrackingPinName[] {
+  if (selection && PRESSING_EXERCISES.has(selection.exercise)) {
+    return PRESSING_PIN_NAMES;
+  }
+
+  if (selection?.angle === 'Side' && selection.exercise.endsWith('Squat')) {
+    return SQUAT_PIN_NAMES;
+  }
+
+  return TRACKING_PIN_NAMES;
+}
+
+export function trackingBarbellTarget(selection: VideoSetupSelection | null) {
+  return selection?.angle === 'Front' ? ('bar_center' as const) : ('near_side_collar' as const);
 }
