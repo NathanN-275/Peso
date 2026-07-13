@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "target_payload_ready_ms": 60000,
+  "pose_profiles": [
+    {"id": "current", "target_fps": 18, "max_frame_dimension": 720},
+    {"id": "balanced_15fps_640px", "target_fps": 15, "max_frame_dimension": 640},
+    {"id": "fast_12fps_640px", "target_fps": 12, "max_frame_dimension": 640}
+  ],
+  "cases": [
+    {
+      "id": "slow_recording",
+      "exercise": "REPLACE_WITH_EXERCISE",
+      "view": "REPLACE_WITH_VIEW",
+      "duration_seconds": 120,
+      "expected_rep_count": null
+    }
+  ]
+}

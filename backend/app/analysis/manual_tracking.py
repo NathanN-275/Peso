@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import logging
 import math
+import time
 from itertools import product
 from statistics import median
 from typing import Any
@@ -17,6 +18,7 @@ FUSED_BODY_ANCHORS = ("hip", "knee", "ankle")
 DISPLAY_BODY_ANCHORS = ("upper_back", *FUSED_BODY_ANCHORS)
 ALL_ANCHORS = (*USER_BODY_ANCHORS, "barbell")
 PRESSING_ANCHORS = ("elbow", "wrist")
+PRESSING_FUSION_ANCHORS = (UPPER_BACK_ANCHOR, *PRESSING_ANCHORS)
 TRACKABLE_ANCHORS = (*ALL_ANCHORS, *PRESSING_ANCHORS)
 KNOWN_INPUT_ANCHORS = (*TRACKABLE_ANCHORS, LEGACY_UPPER_BACK_ANCHOR)
 MIN_TRACK_CONFIDENCE = 0.42
@@ -218,11 +220,18 @@ def _upper_back_proxy(
   return shoulder
 
 
-def select_manual_tracking_side(reference_frame: dict[str, Any], anchors: dict[str, dict[str, float]]) -> str:
+def select_manual_tracking_side(
+  reference_frame: dict[str, Any],
+  anchors: dict[str, dict[str, float]],
+  *,
+  upper_back_is_shoulder: bool = False,
+) -> str:
   anchors = _normalize_anchor_map(anchors)
   available_body_anchors = [joint for joint in USER_BODY_ANCHORS if joint in anchors]
   available_anchors = (
-    available_body_anchors
+    [joint for joint in PRESSING_FUSION_ANCHORS if joint in anchors]
+    if upper_back_is_shoulder
+    else available_body_anchors
     if available_body_anchors
     else [joint for joint in PRESSING_ANCHORS if joint in anchors]
   )
@@ -234,7 +243,9 @@ def select_manual_tracking_side(reference_frame: dict[str, Any], anchors: dict[s
     score = 0.0
     for joint in available_anchors:
       model_point = (
-        _upper_back_proxy(landmarks, side)
+        _landmark_point(landmarks, side, "shoulder")
+        if joint == UPPER_BACK_ANCHOR and upper_back_is_shoulder
+        else _upper_back_proxy(landmarks, side)
         if joint == UPPER_BACK_ANCHOR
         else _landmark_point(landmarks, side, joint)
       )
@@ -1129,9 +1140,13 @@ def fuse_manual_pressing_tracks(
   setup: dict[str, Any],
   tracking: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-  """Fuse user-pinned elbow/wrist tracks into the closest visible arm."""
+  """Fuse user-pinned shoulder, elbow, and wrist tracks into the closest visible arm."""
   setup = _normalized_tracking_setup(setup)
-  anchor_names = [name for name in PRESSING_ANCHORS if name in (setup.get("anchors") or {})]
+  anchor_pairs = [
+    (name, "shoulder" if name == UPPER_BACK_ANCHOR else name)
+    for name in PRESSING_FUSION_ANCHORS
+    if name in (setup.get("anchors") or {})
+  ]
   base_result: dict[str, Any] = {
     "used": False,
     "selected_side": None,
@@ -1143,10 +1158,10 @@ def fuse_manual_pressing_tracks(
     "rejection_reasons": {},
     "coverage": tracking.get("coverage") or {},
     "pin_owned_landmark_count": 0,
-    "pressing_anchor_names": anchor_names,
+    "pressing_anchor_names": [landmark_name for _track_name, landmark_name in anchor_pairs],
     "pressing_fallback_count": 0,
   }
-  if not pose_frames or not anchor_names or not tracking.get("tracks"):
+  if not pose_frames or not anchor_pairs or not tracking.get("tracks"):
     return pose_frames, base_result
 
   reference_source_index = tracking.get("reference_source_index")
@@ -1154,7 +1169,11 @@ def fuse_manual_pressing_tracks(
     pose_frames,
     key=lambda frame: abs(int(frame.get("source_frame_index", 0)) - int(reference_source_index or 0)),
   )
-  selected_side = select_manual_tracking_side(reference_frame, setup["anchors"])
+  selected_side = select_manual_tracking_side(
+    reference_frame,
+    setup["anchors"],
+    upper_back_is_shoulder=True,
+  )
   fused_frames = copy.deepcopy(pose_frames)
   fused_count = 0
   reference_count = 0
@@ -1164,13 +1183,13 @@ def fuse_manual_pressing_tracks(
   for frame in fused_frames:
     source_index = int(frame.get("source_frame_index", -1))
     landmarks = frame.setdefault("landmarks", {})
-    for joint in anchor_names:
-      track = _anchor_track(tracking, joint).get(source_index)
+    for track_name, landmark_joint in anchor_pairs:
+      track = _anchor_track(tracking, track_name).get(source_index)
       if not _manual_track_is_usable(track):
         fallback_count += 1
         continue
 
-      landmark_name = f"{selected_side}_{joint}"
+      landmark_name = f"{selected_side}_{landmark_joint}"
       landmark = landmarks.get(landmark_name)
       if not isinstance(landmark, dict):
         landmark = {
@@ -1229,6 +1248,7 @@ def track_manual_anchors(
 ) -> dict[str, Any]:
   import cv2
 
+  tracking_started = time.perf_counter()
   setup = _normalized_tracking_setup(setup)
   anchor_names = tuple(name for name in TRACKABLE_ANCHORS if name in (setup.get("anchors") or {}))
 
@@ -1255,12 +1275,14 @@ def track_manual_anchors(
       "velocity_cap_count": 0,
       "velocity_cap_counts": {name: 0 for name in USER_BODY_ANCHORS},
     }
+  frame_decode_started = time.perf_counter()
   gray_frames = _read_sampled_gray_frames(
     file_path,
     source_indices=source_indices,
     width=width,
     height=height,
   )
+  sampled_frame_decode_duration_ms = int((time.perf_counter() - frame_decode_started) * 1000)
   available_indices = [index for index in source_indices if index in gray_frames]
   if reference_index not in gray_frames or not available_indices:
     return {
@@ -1341,6 +1363,8 @@ def track_manual_anchors(
     "velocity_cap_counts": velocity_cap_counts,
     "stale_track_count": sum(stale_track_counts.values()),
     "stale_track_counts": stale_track_counts,
+    "sampled_frame_decode_duration_ms": sampled_frame_decode_duration_ms,
+    "tracking_duration_ms": int((time.perf_counter() - tracking_started) * 1000),
   }
 
 

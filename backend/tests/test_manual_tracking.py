@@ -145,6 +145,8 @@ class ManualTrackingTest(unittest.TestCase):
 
   def test_pressing_pins_select_visible_arm_and_fuse_only_that_arm(self) -> None:
     frame = pose_frame()
+    frame["landmarks"]["left_shoulder"] = {"x": 0.22, "y": 0.32, "z": 0.0, "visibility": 0.8}
+    frame["landmarks"]["right_shoulder"] = {"x": 0.72, "y": 0.32, "z": 0.0, "visibility": 0.8}
     frame["landmarks"]["left_elbow"] = {"x": 0.22, "y": 0.46, "z": 0.0, "visibility": 0.8}
     frame["landmarks"]["left_wrist"] = {"x": 0.24, "y": 0.36, "z": 0.0, "visibility": 0.8}
     frame["landmarks"]["right_elbow"] = {"x": 0.72, "y": 0.46, "z": 0.0, "visibility": 0.8}
@@ -154,14 +156,16 @@ class ManualTrackingTest(unittest.TestCase):
       "reference_time_ms": 100,
       "barbell_target": "bar_center",
       "anchors": {
+        "shoulder": {"x": 0.70, "y": 0.31},
         "elbow": {"x": 0.70, "y": 0.45},
         "wrist": {"x": 0.76, "y": 0.34},
       },
     }
     tracking = {
       "reference_source_index": 1,
-      "coverage": {"elbow": 1.0, "wrist": 1.0},
+      "coverage": {"upper_back": 1.0, "elbow": 1.0, "wrist": 1.0},
       "tracks": {
+        "upper_back": {1: {"x": 0.70, "y": 0.31, "confidence": 0.9, "tracking_state": "reference"}},
         "elbow": {1: {"x": 0.70, "y": 0.45, "confidence": 0.9, "tracking_state": "reference"}},
         "wrist": {1: {"x": 0.76, "y": 0.34, "confidence": 0.9, "tracking_state": "reference"}},
       },
@@ -171,7 +175,9 @@ class ManualTrackingTest(unittest.TestCase):
 
     self.assertEqual(diagnostics["selected_side"], "right")
     self.assertTrue(diagnostics["used"])
-    self.assertEqual(diagnostics["fused_landmark_count"], 2)
+    self.assertEqual(diagnostics["fused_landmark_count"], 3)
+    self.assertEqual(fused[0]["landmarks"]["right_shoulder"]["x"], 0.70)
+    self.assertTrue(fused[0]["landmarks"]["right_shoulder"]["pressing_pin_assisted"])
     self.assertEqual(fused[0]["landmarks"]["right_wrist"]["x"], 0.76)
     self.assertTrue(fused[0]["landmarks"]["right_wrist"]["pressing_pin_assisted"])
     self.assertEqual(fused[0]["landmarks"]["left_wrist"]["x"], 0.24)

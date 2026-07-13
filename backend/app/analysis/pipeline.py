@@ -16,7 +16,7 @@ from .feedback_engine import build_depth_summary_debug, build_feedback
 from .exercises.pressing import PressingAnalyzer, is_pressing_exercise
 from .exercises.squat import SquatAnalyzer
 from .manual_tracking import (
-  PRESSING_ANCHORS,
+  PRESSING_FUSION_ANCHORS,
   USER_BODY_ANCHORS,
   barbell_track_priors,
   fuse_manual_body_tracks,
@@ -86,6 +86,8 @@ def _apply_tracking_assistance(
     "pressingPinCoverage": {},
     "pressingFallbackCount": 0,
     "pressingWristSignalUsed": False,
+    "pinFrameDecodeDurationMs": 0,
+    "pinTrackingDurationMs": 0,
     "upperBackAnchorKey": "upper_back",
     "upperBackAnchorSemantics": "upper_back_anchor",
     "upperBackAnchorUsedCount": 0,
@@ -119,7 +121,7 @@ def _apply_tracking_assistance(
     )
     anchors = validated_setup.get("anchors") or {}
     has_pressing_pins = _is_supported_pressing_view(video) and any(
-      name in anchors for name in PRESSING_ANCHORS
+      name in anchors for name in PRESSING_FUSION_ANCHORS
     )
     has_complete_body_chain = all(
       name in anchors
@@ -154,11 +156,15 @@ def _apply_tracking_assistance(
         "coverage": fusion.get("coverage") or {},
         "pressingSelectedSide": fusion.get("selected_side") if has_pressing_pins else None,
         "pressingPinCoverage": {
-          name: float((fusion.get("coverage") or {}).get(name) or 0.0)
-          for name in PRESSING_ANCHORS
+          "shoulder" if name == "upper_back" else name: float(
+            (fusion.get("coverage") or {}).get(name) or 0.0
+          )
+          for name in PRESSING_FUSION_ANCHORS
           if name in anchors
         },
         "pressingFallbackCount": int(fusion.get("pressing_fallback_count") or 0),
+        "pinFrameDecodeDurationMs": int(tracking.get("sampled_frame_decode_duration_ms") or 0),
+        "pinTrackingDurationMs": int(tracking.get("tracking_duration_ms") or 0),
         "velocityCapCount": int(tracking.get("velocity_cap_count") or 0),
         "velocityCapCounts": tracking.get("velocity_cap_counts") or {},
         "upperBackAnchorKey": fusion.get("upper_back_anchor_key") or "upper_back",

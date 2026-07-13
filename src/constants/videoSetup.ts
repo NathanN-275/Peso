@@ -30,7 +30,8 @@ const PRESSING_EXERCISES: ReadonlySet<ExerciseOption> = new Set([
   'Incline Bench Press',
   'Overhead Press',
 ]);
-const PRESSING_PIN_NAMES: readonly TrackingPinName[] = ['wrist', 'elbow'];
+const SQUAT_PIN_NAMES: readonly TrackingPinName[] = ['shoulder', 'hip', 'knee', 'ankle', 'barbell'];
+const PRESSING_PIN_NAMES: readonly TrackingPinName[] = ['wrist', 'elbow', 'shoulder', 'barbell'];
 
 export function supportsPinAssistedTracking(selection: VideoSetupSelection | null) {
   return Boolean(
@@ -42,6 +43,10 @@ export function supportsPinAssistedTracking(selection: VideoSetupSelection | nul
 export function trackingPinNames(selection: VideoSetupSelection | null): readonly TrackingPinName[] {
   if (selection && PRESSING_EXERCISES.has(selection.exercise)) {
     return PRESSING_PIN_NAMES;
+  }
+
+  if (selection?.angle === 'Side' && selection.exercise.endsWith('Squat')) {
+    return SQUAT_PIN_NAMES;
   }
 
   return TRACKING_PIN_NAMES;

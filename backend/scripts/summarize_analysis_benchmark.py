@@ -19,26 +19,14 @@ def _load_json(path: Path) -> dict[str, Any]:
   return json.loads(path.read_text(encoding="utf-8"))
 
 
-def main() -> int:
-  parser = argparse.ArgumentParser(
-    description="Summarize saved Peso analysis results against the pressing benchmark manifest."
-  )
-  parser.add_argument(
-    "--manifest",
-    type=Path,
-    default=Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "analysis_benchmark" / "pressing_manifest.json",
-  )
-  parser.add_argument("--results-dir", type=Path, required=True)
-  args = parser.parse_args()
-
-  manifest = _load_json(args.manifest)
+def _summarize_results(manifest: dict[str, Any], results_dir: Path) -> dict[str, Any]:
   missing: list[str] = []
   failures: list[str] = []
   payload_ready_ms: list[int] = []
   stage_timings: dict[str, list[int]] = {}
 
   for case in manifest["cases"]:
-    result_path = args.results_dir / f"{case['id']}.json"
+    result_path = results_dir / f"{case['id']}.json"
     if not result_path.exists():
       missing.append(case["id"])
       continue
@@ -55,7 +43,7 @@ def main() -> int:
       if isinstance(duration, int):
         stage_timings.setdefault(stage, []).append(duration)
 
-  summary = {
+  summary: dict[str, Any] = {
     "missing_cases": missing,
     "failures": failures,
     "target_payload_ready_ms": manifest["target_payload_ready_ms"],
@@ -64,10 +52,66 @@ def main() -> int:
     "stage_p50_ms": {stage: _percentile(values, 50) for stage, values in stage_timings.items()},
     "stage_p95_ms": {stage: _percentile(values, 95) for stage, values in stage_timings.items()},
   }
-  print(json.dumps(summary, indent=2, sort_keys=True))
-  if missing or failures or (summary["payload_ready_p95_ms"] or 0) > manifest["target_payload_ready_ms"]:
-    return 1
-  return 0
+  summary["passed"] = (
+    not missing
+    and not failures
+    and summary["payload_ready_p95_ms"] is not None
+    and summary["payload_ready_p95_ms"] <= manifest["target_payload_ready_ms"]
+  )
+  return summary
+
+
+def _parse_profile_spec(value: str) -> tuple[str, Path]:
+  profile_id, separator, directory = value.partition("=")
+  if not separator or not profile_id or not directory:
+    raise argparse.ArgumentTypeError("Profile results must use PROFILE_ID=RESULTS_DIR.")
+  return profile_id, Path(directory)
+
+
+def main() -> int:
+  parser = argparse.ArgumentParser(
+    description="Summarize saved Peso analysis results against an analysis benchmark manifest."
+  )
+  parser.add_argument(
+    "--manifest",
+    type=Path,
+    default=Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "analysis_benchmark" / "pressing_manifest.json",
+  )
+  parser.add_argument("--results-dir", type=Path)
+  parser.add_argument("--profile-results", type=_parse_profile_spec, action="append")
+  args = parser.parse_args()
+  if bool(args.results_dir) == bool(args.profile_results):
+    parser.error("Pass exactly one of --results-dir or --profile-results.")
+
+  manifest = _load_json(args.manifest)
+  if args.results_dir:
+    summary = _summarize_results(manifest, args.results_dir)
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0 if summary["passed"] else 1
+
+  summaries = {
+    profile_id: _summarize_results(manifest, results_dir)
+    for profile_id, results_dir in args.profile_results
+  }
+  expected_profile_ids = [profile["id"] for profile in manifest.get("pose_profiles") or []]
+  missing_profiles = [profile_id for profile_id in expected_profile_ids if profile_id not in summaries]
+  eligible = [
+    (profile_id, summary)
+    for profile_id, summary in summaries.items()
+    if summary["passed"]
+  ]
+  recommended_profile = (
+    min(eligible, key=lambda item: item[1]["payload_ready_p95_ms"])[0]
+    if eligible and not missing_profiles
+    else None
+  )
+  output = {
+    "missing_profiles": missing_profiles,
+    "recommended_profile": recommended_profile,
+    "profiles": summaries,
+  }
+  print(json.dumps(output, indent=2, sort_keys=True))
+  return 0 if recommended_profile else 1
 
 
 if __name__ == "__main__":

@@ -139,6 +139,16 @@ PYTHONPATH=. .venv/bin/python scripts/summarize_analysis_benchmark.py \
 The manifest deliberately does not ship synthetic lift clips or expected rep counts. Populate it with reviewed, representative recordings before using it as a release gate.
 Run the same corpus for the manifest's `current`, `balanced_15fps_640px`, and `fast_12fps_640px` profiles by setting `POSE_TARGET_FPS` and `POSE_MAX_FRAME_DIMENSION`; promote only a profile that passes every case and whose payload-ready p95 is within the target.
 
+For a private two-minute recording, copy `tests/fixtures/analysis_benchmark/slow_recording.template.json` outside the repository, replace its exercise, view, and expected rep count, then compare all profiles without committing the source video or its results:
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/summarize_analysis_benchmark.py \
+  --manifest /private/slow-recording.json \
+  --profile-results current=/private/peso-results/current \
+  --profile-results balanced_15fps_640px=/private/peso-results/15fps \
+  --profile-results fast_12fps_640px=/private/peso-results/12fps
+```
+
 ## CORS behavior
 
 `BACKEND_CORS_ORIGINS` supports common Expo web, simulator, and local browser ports used by the mobile client.

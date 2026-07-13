@@ -67,9 +67,11 @@ export type TrackingAssistance = {
   manualWristPointCount?: number;
   automaticBarbellPointCount?: number;
   pressingSelectedSide?: 'left' | 'right' | null;
-  pressingPinCoverage?: Partial<Record<'elbow' | 'wrist', number>>;
+  pressingPinCoverage?: Partial<Record<'shoulder' | 'elbow' | 'wrist', number>>;
   pressingFallbackCount?: number;
   pressingWristSignalUsed?: boolean;
+  pinFrameDecodeDurationMs?: number;
+  pinTrackingDurationMs?: number;
   barbellCoastingPointCount?: number;
   barbellGapPointCount?: number;
   barbellSourceCounts?: Partial<Record<TrackingBarbellSource, number>>;
