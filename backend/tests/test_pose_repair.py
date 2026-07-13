@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from app.analysis.pose_repair import PoseRepairConfig, repair_selected_side_pose
+from app.analysis.tracking_core import Detection, DetectionFrame, NormalizedPoint
 
 
 def landmark(x: float, y: float, visibility: float = 0.95) -> dict[str, float]:
@@ -139,6 +140,67 @@ class PoseRepairTest(unittest.TestCase):
 
     self.assertAlmostEqual(repaired[1]["landmarks"]["left_knee"]["x"], 0.80)
     self.assertFalse(diagnostics["enabled"])
+
+  def test_hardware_box_marks_stuck_knee_for_temporal_repair(self) -> None:
+    frames = [frame(0), frame(50), frame(100)]
+    detector_frames = [
+      DetectionFrame(
+        source_frame_index=1,
+        time=0.05,
+        detections=(Detection.from_pixel_box(
+          kind="rack_upright",
+          confidence=0.94,
+          bbox=(98, 138, 110, 150),
+          width=200,
+          height=200,
+        ),),
+      ),
+    ]
+
+    repaired, diagnostics = repair_selected_side_pose(
+      frames,
+      selected_side_override="left",
+      config=self.config,
+      detector_frames=detector_frames,
+    )
+
+    knee = repaired[1]["landmarks"]["left_knee"]
+    self.assertEqual(knee["accepted_source"], "pose_repair_interpolated")
+    self.assertEqual(diagnostics["detector_occlusion_count"], 1)
+    self.assertEqual(diagnostics["detector_occlusions"][0]["joint"], "knee")
+
+  def test_unsafe_pin_inside_hardware_is_rejected_not_treated_as_observed(self) -> None:
+    frames = [frame(0), frame(50), frame(100)]
+    frames[1]["landmarks"]["left_knee"].update({
+      "manual_assisted": True,
+      "user_pinned": True,
+      "tracking_state": "guided",
+      "manual_source": "pin_guided",
+    })
+    detector_frames = [
+      DetectionFrame(
+        source_frame_index=1,
+        time=0.05,
+        detections=(Detection(
+          kind="safety_arm",
+          confidence=0.96,
+          center=NormalizedPoint(0.52, 0.72),
+          bbox=(0.50, 0.70, 0.54, 0.74),
+        ),),
+      ),
+    ]
+
+    repaired, diagnostics = repair_selected_side_pose(
+      frames,
+      selected_side_override="left",
+      config=self.config,
+      detector_frames=detector_frames,
+    )
+
+    knee = repaired[1]["landmarks"]["left_knee"]
+    self.assertEqual(knee["accepted_source"], "pose_repair_interpolated")
+    self.assertGreaterEqual(diagnostics["pin_safety_rejection_count"], 1)
+    self.assertIn("detector_safety_arm_occlusion", diagnostics["pin_safety_rejections"][0]["reasons"])
 
 
 if __name__ == "__main__":

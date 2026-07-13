@@ -17,6 +17,7 @@ type ReviewBottomSheetProps = {
   showCloseButton?: boolean;
   sheetStyle?: StyleProp<ViewStyle>;
   scrollable?: boolean;
+  scrollContentStyle?: StyleProp<ViewStyle>;
 };
 
 export default function ReviewBottomSheet({
@@ -27,6 +28,7 @@ export default function ReviewBottomSheet({
   showCloseButton = true,
   sheetStyle,
   scrollable = false,
+  scrollContentStyle,
 }: ReviewBottomSheetProps) {
   if (!visible) {
     return null;
@@ -47,9 +49,10 @@ export default function ReviewBottomSheet({
         </View>
         {scrollable ? (
           <ScrollView
+            className="review-sheet-scroll"
             style={styles.scroll}
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator
+            contentContainerStyle={[styles.scrollContent, scrollContentStyle]}
+            showsVerticalScrollIndicator={false}
           >
             {children}
           </ScrollView>

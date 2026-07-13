@@ -10,6 +10,7 @@ from typing import Any
 
 from .metrics_calculator import clamp, select_tracking_side_for_clip
 from .pose_validator import validate_squat_pose_frames
+from .tracking_core.models import Detection, DetectionFrame, HARDWARE_KINDS
 
 
 REPAIR_JOINTS = ("shoulder", "hip", "knee", "ankle")
@@ -92,6 +93,8 @@ def _is_pin_owned(point: dict[str, Any] | None) -> bool:
 def _is_reliable(point: dict[str, Any] | None, config: PoseRepairConfig) -> bool:
   if not point:
     return False
+  if point.get("detector_occlusion_candidate") or point.get("pin_safety_rejected"):
+    return False
   if _is_pin_owned(point):
     return True
   return (
@@ -99,6 +102,120 @@ def _is_reliable(point: dict[str, Any] | None, config: PoseRepairConfig) -> bool
     and point.get("accepted_source") != "gap"
     and point.get("chain_valid") is not False
   )
+
+
+def _point_in_detection(point: dict[str, Any], detection: Detection, *, margin: float = 0.012) -> bool:
+  if detection.bbox is None:
+    return False
+  x0, y0, x1, y1 = detection.bbox
+  return (
+    min(x0, x1) - margin <= float(point.get("x") or 0.0) <= max(x0, x1) + margin
+    and min(y0, y1) - margin <= float(point.get("y") or 0.0) <= max(y0, y1) + margin
+  )
+
+
+def _detector_occlusion_reason(joint: str, detections: tuple[Detection, ...]) -> str | None:
+  for detection in detections:
+    if detection.kind in HARDWARE_KINDS:
+      return f"detector_{detection.kind}_occlusion"
+    if detection.kind == "barbell_collar" and joint in {"shoulder", "hip", "knee"}:
+      return "detector_barbell_collar_occlusion"
+  return None
+
+
+def _mark_detector_occlusions(
+  frames: list[dict[str, Any]],
+  *,
+  side: str,
+  detector_frames: list[DetectionFrame] | None,
+) -> list[dict[str, Any]]:
+  if not detector_frames:
+    return []
+  by_source_index = {frame.source_frame_index: frame.detections for frame in detector_frames}
+  entries: list[dict[str, Any]] = []
+  for frame_index, frame in enumerate(frames):
+    source_index = frame.get("source_frame_index")
+    if not isinstance(source_index, int):
+      continue
+    detections = by_source_index.get(source_index) or ()
+    for joint in REPAIR_JOINTS:
+      point = _landmark(frame, side, joint)
+      if not point:
+        continue
+      for detection in detections:
+        reason = _detector_occlusion_reason(joint, (detection,))
+        if reason and _point_in_detection(point, detection):
+          point["detector_occlusion_candidate"] = reason
+          entries.append({
+            "frame_index": frame_index,
+            "source_frame_index": source_index,
+            "joint": joint,
+            "reason": reason,
+            "detection_kind": detection.kind,
+          })
+          break
+  return entries
+
+
+def _segment_inconsistency_reasons(
+  frame: dict[str, Any],
+  *,
+  side: str,
+  joint: str,
+  segment_lengths: dict[str, float],
+) -> list[str]:
+  reasons: list[str] = []
+  for first_name, second_name, segment_name in SEGMENTS:
+    if joint not in {first_name, second_name}:
+      continue
+    reference = segment_lengths.get(segment_name) or 0.0
+    first = _landmark(frame, side, first_name)
+    second = _landmark(frame, side, second_name)
+    if reference <= 1e-6 or not first or not second:
+      continue
+    ratio = _distance(first, second) / reference
+    if ratio < 0.62 or ratio > 1.48:
+      reasons.append(f"{segment_name}_length_inconsistent")
+  return reasons
+
+
+def _mark_unsafe_pin_points(
+  frames: list[dict[str, Any]],
+  *,
+  side: str,
+  config: PoseRepairConfig,
+  segment_lengths: dict[str, float],
+) -> list[dict[str, Any]]:
+  subject_scale = sum(segment_lengths.get(name, 0.0) for name in ("torso", "thigh", "shin")) or 0.45
+  entries: list[dict[str, Any]] = []
+  for frame_index, frame in enumerate(frames):
+    for joint in REPAIR_JOINTS:
+      point = _landmark(frame, side, joint)
+      if not _is_pin_owned(point):
+        continue
+      reasons: list[str] = []
+      if point.get("detector_occlusion_candidate"):
+        reasons.append(str(point["detector_occlusion_candidate"]))
+      _, jump_reason = _joint_jump_penalty(frames, frame_index, side, joint, subject_scale)
+      if jump_reason:
+        reasons.append(jump_reason)
+      reasons.extend(_segment_inconsistency_reasons(
+        frame,
+        side=side,
+        joint=joint,
+        segment_lengths=segment_lengths,
+      ))
+      if not reasons:
+        continue
+      point["pin_safety_rejected"] = True
+      point["pin_safety_reasons"] = sorted(set(reasons))
+      entries.append({
+        "frame_index": frame_index,
+        "source_frame_index": frame.get("source_frame_index"),
+        "joint": joint,
+        "reasons": point["pin_safety_reasons"],
+      })
+  return entries
 
 
 def _available_quality_joints(frames: list[dict[str, Any]], side: str) -> tuple[str, ...]:
@@ -181,6 +298,12 @@ def score_selected_side_pose(
       if visibility < config.min_visibility:
         frame_reasons.add(f"{joint}_low_visibility")
         score *= 0.35
+      if point and point.get("detector_occlusion_candidate"):
+        frame_reasons.add(str(point["detector_occlusion_candidate"]))
+        score *= 0.25
+      if point and point.get("pin_safety_rejected"):
+        frame_reasons.add(f"{joint}_pin_safety_rejected")
+        score *= 0.2
       jump_penalty, jump_reason = _joint_jump_penalty(
         frames,
         frame_index,
@@ -256,8 +379,6 @@ def _unreliable_runs(
   for index, raw_frame in enumerate(raw_frames):
     raw_point = _landmark(raw_frame, side, joint)
     repaired_point = _landmark(repaired_frames[index], side, joint)
-    if _is_pin_owned(raw_point):
-      continue
     if not _is_reliable(raw_point, config) or (repaired_point or {}).get("accepted_source") == "gap":
       invalid_indices.append(index)
   if not invalid_indices:
@@ -538,6 +659,7 @@ def repair_selected_side_pose(
   *,
   selected_side_override: str | None = None,
   config: PoseRepairConfig | None = None,
+  detector_frames: list[DetectionFrame] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
   config = config or pose_repair_config_from_env()
   if not frames:
@@ -555,7 +677,20 @@ def repair_selected_side_pose(
 
   automatic_side, side_confidence = select_tracking_side_for_clip(frames)
   selected_side = selected_side_override if selected_side_override in {"left", "right"} else automatic_side
-  quality = score_selected_side_pose(frames, selected_side=selected_side, config=config)
+  working_frames = copy.deepcopy(frames)
+  detector_occlusions = _mark_detector_occlusions(
+    working_frames,
+    side=selected_side,
+    detector_frames=detector_frames,
+  )
+  initial_segment_lengths = _median_segment_lengths(working_frames, selected_side, config)
+  pin_safety_rejections = _mark_unsafe_pin_points(
+    working_frames,
+    side=selected_side,
+    config=config,
+    segment_lengths=initial_segment_lengths,
+  )
+  quality = score_selected_side_pose(working_frames, selected_side=selected_side, config=config)
   if not config.enabled:
     return copy.deepcopy(frames), {
       "enabled": False,
@@ -566,6 +701,10 @@ def repair_selected_side_pose(
       "repaired_frame_count": 0,
       "estimated_landmark_count": 0,
       "gap_count": 0,
+      "detector_occlusion_count": len(detector_occlusions),
+      "pin_safety_rejection_count": len(pin_safety_rejections),
+      "detector_occlusions": detector_occlusions[:160],
+      "pin_safety_rejections": pin_safety_rejections[:160],
       **quality,
       "pose_validation": {
         "selected_side": selected_side,
@@ -579,12 +718,12 @@ def repair_selected_side_pose(
     }
 
   validated_frames, validation = validate_squat_pose_frames(
-    frames,
+    working_frames,
     selected_side_override=selected_side,
   )
-  segment_lengths = _median_segment_lengths(frames, selected_side, config)
+  segment_lengths = _median_segment_lengths(working_frames, selected_side, config)
   temporal_counts = _repair_short_gaps(
-    frames,
+    working_frames,
     validated_frames,
     side=selected_side,
     config=config,
@@ -630,6 +769,12 @@ def repair_selected_side_pose(
     "velocity_estimated_landmark_count": temporal_counts["velocity_estimated"],
     "segment_constrained_landmark_count": temporal_counts["segment_constrained"],
     "hysteresis_hold_landmark_count": temporal_counts["hysteresis_hold"],
+    "detector_occlusion_count": len(detector_occlusions),
+    "pin_safety_rejection_count": len(pin_safety_rejections),
+    "detector_occlusions": detector_occlusions[:160],
+    "detector_occlusions_truncated": len(detector_occlusions) > 160,
+    "pin_safety_rejections": pin_safety_rejections[:160],
+    "pin_safety_rejections_truncated": len(pin_safety_rejections) > 160,
     "raw_repair_debug": raw_repair_debug,
     "raw_repair_debug_truncated": raw_repair_debug_truncated,
     **quality,

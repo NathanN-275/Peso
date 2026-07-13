@@ -2,6 +2,7 @@
   "version": 1,
   "tracking_core": "apache_v1",
   "label_schema": "label_schema.json",
+  "local_regression_manifest_template": "source_video_regression_manifest.example.json",
   "thresholds": {
     "pin_assisted_collar_p95_px": 10,
     "pin_assisted_collar_max_px": 18,
@@ -17,5 +18,10 @@
     "last_rep_occlusion",
     "fast_ascent_descent"
   ],
+  "promotion_requirements": {
+    "minimum_independent_source_videos": 10,
+    "source_video_split_only": true,
+    "shadow_mode_required_before_candidate": true
+  },
   "clips": []
 }

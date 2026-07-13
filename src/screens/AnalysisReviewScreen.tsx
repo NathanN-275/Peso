@@ -6,7 +6,6 @@ import {
   ActivityIndicator,
   LayoutChangeEvent,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -699,9 +698,10 @@ export default function AnalysisReviewScreen({
           visible={activeSheet === 'summary'}
           title="Summary"
           onClose={() => setActiveSheet(null)}
+          scrollable
+          scrollContentStyle={styles.sheetContent}
         >
-          <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent}>
-            <SheetSection title="Summary flags">
+          <SheetSection title="Summary flags">
               <Text style={styles.sheetText}>{depthHitLabel}</Text>
               {analysisStale ? (
                 <Text style={styles.staleText}>
@@ -828,20 +828,19 @@ export default function AnalysisReviewScreen({
                   </View>
                 );
               }) : <Text style={styles.sheetMutedText}>No reps detected.</Text>}
-            </SheetSection>
-          </ScrollView>
+          </SheetSection>
         </ReviewBottomSheet>
 
         <ReviewBottomSheet
           visible={activeSheet === 'coaching'}
           title="Coaching"
           onClose={() => setActiveSheet(null)}
+          scrollable
+          scrollContentStyle={styles.sheetContent}
         >
-          <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent}>
-            {coachingFeedback.length ? coachingFeedback.map((feedback) => (
-              <Text key={feedback} style={styles.sheetText}>{feedback}</Text>
-            )) : <Text style={styles.sheetMutedText}>No coaching feedback available.</Text>}
-          </ScrollView>
+          {coachingFeedback.length ? coachingFeedback.map((feedback) => (
+            <Text key={feedback} style={styles.sheetText}>{feedback}</Text>
+          )) : <Text style={styles.sheetMutedText}>No coaching feedback available.</Text>}
         </ReviewBottomSheet>
 
         <ReviewBottomSheet
@@ -1088,9 +1087,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     textAlign: 'center',
-  },
-  sheetScroll: {
-    flexGrow: 0,
   },
   sheetContent: {
     gap: 18,

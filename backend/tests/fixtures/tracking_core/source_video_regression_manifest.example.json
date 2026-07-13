@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "notes": [
+    "Keep source videos and CVAT exports outside Git.",
+    "Record the exact pin setup used for each pinned clip.",
+    "Use these clips for manual candidate-mode review before promotion."
+  ],
+  "clips": [
+    {
+      "id": "direct_side_pinned",
+      "source_video": "/absolute/path/direct-side-pinned.mov",
+      "tracking_setup": "/absolute/path/direct-side-pinned-tracking-setup.json",
+      "annotations": "/absolute/path/direct-side-pinned-cvat.zip",
+      "expected": ["pin_does_not_bind_joint_to_hardware", "collar_does_not_stick_to_rack"]
+    },
+    {
+      "id": "direct_side_automatic",
+      "source_video": "/absolute/path/direct-side-automatic.mov",
+      "tracking_setup": null,
+      "annotations": "/absolute/path/direct-side-automatic-cvat.zip",
+      "expected": ["automatic_joint_stream_stays_continuous", "collar_reacquires_after_short_loss"]
+    },
+    {
+      "id": "angled_pinned",
+      "source_video": "/absolute/path/angled-pinned.mov",
+      "tracking_setup": "/absolute/path/angled-pinned-tracking-setup.json",
+      "annotations": "/absolute/path/angled-pinned-cvat.zip",
+      "expected": ["knee_pin_is_rejected_when_hardware_bound", "angle_diagnostics_persist"]
+    },
+    {
+      "id": "angled_automatic",
+      "source_video": "/absolute/path/angled-automatic.mov",
+      "tracking_setup": null,
+      "annotations": "/absolute/path/angled-automatic-cvat.zip",
+      "expected": ["upper_back_short_loss_is_repaired", "long_pose_gaps_remain_explicit"]
+    }
+  ]
+}

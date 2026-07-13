@@ -62,6 +62,7 @@ class BarbellIdentityTracker:
     self._pending_lock_streak = 0
     self._reacquire_streak = 0
     self._miss_count = 0
+    self._coast_started_at: float | None = None
     self._last_point: TrackPoint | None = None
     self._previous_point: TrackPoint | None = None
 
@@ -83,7 +84,9 @@ class BarbellIdentityTracker:
     candidate = self._select_collar(frame.detections)
     hardware = self._select_hardware(frame.detections)
     reason: str | None = None
-    if hardware is not None and (candidate is None or hardware.confidence >= candidate.confidence):
+    if hardware is not None and (
+      candidate is None or self._hardware_conflicts_with_candidate(hardware, candidate)
+    ):
       self.diagnostics.hardware_rejection_count += 1
       reason = f"hardware_{hardware.kind}_rejected"
       candidate = None
@@ -125,6 +128,7 @@ class BarbellIdentityTracker:
         return None
       self._locked = True
       self._miss_count = 0
+      self._coast_started_at = None
       self._reacquire_streak += 1
       self.diagnostics.initial_lock_count += 1 if self._last_point is None else 0
       self.diagnostics.reacquire_count += 1 if self._last_point is not None else 0
@@ -142,6 +146,7 @@ class BarbellIdentityTracker:
     self._advance(point)
     self._pending_lock_streak = 0
     self._miss_count = 0
+    self._coast_started_at = None
     self.diagnostics.note_source(source)
     self._record_frame(frame, source=source, emitted=point)
     return point
@@ -155,7 +160,10 @@ class BarbellIdentityTracker:
       return None
 
     self._miss_count += 1
-    if self._miss_count <= self.config.max_coast_frames:
+    if self._coast_started_at is None:
+      self._coast_started_at = frame.time
+    elapsed = max(0.0, frame.time - self._coast_started_at)
+    if elapsed <= self.config.max_coast_seconds:
       predicted = self._predict(frame.time)
       point = TrackPoint(
         time=frame.time,
@@ -175,6 +183,7 @@ class BarbellIdentityTracker:
 
     self._locked = False
     self._reacquire_streak = 0
+    self._coast_started_at = None
     self.diagnostics.identity_gap_count += 1
     self.diagnostics.note_source("gap")
     self._record_frame(frame, source="gap", reason=reason)
@@ -187,6 +196,18 @@ class BarbellIdentityTracker:
   def _select_hardware(self, detections: tuple[Detection, ...]) -> Detection | None:
     candidates = [detection for detection in detections if detection.kind in HARDWARE_KINDS]
     return max(candidates, key=lambda item: item.confidence, default=None)
+
+  def _hardware_conflicts_with_candidate(self, hardware: Detection, candidate: Detection) -> bool:
+    """Reject only collar candidates that overlap the detected hardware.
+
+    A rack upright can be confidently visible for an entire clip. It is a negative
+    class, not a reason to reject a collar on the opposite side of the frame.
+    """
+    if hardware.bbox and candidate.bbox:
+      hx0, hy0, hx1, hy1 = hardware.bbox
+      cx0, cy0, cx1, cy1 = candidate.bbox
+      return max(hx0, cx0) <= min(hx1, cx1) and max(hy0, cy0) <= min(hy1, cy1)
+    return hardware.center.distance_to(candidate.center) <= self.config.max_lane_distance
 
   def _candidate_near_expected(
     self,

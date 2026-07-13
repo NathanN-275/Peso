@@ -23,7 +23,7 @@ from .pose_fallback import analysis_needs_pose_fallback
 from .pose_estimator import PoseEstimator
 from .pose_repair import repair_selected_side_pose
 from .pose_validator import is_body_point_occluded_by_plate, validate_squat_pose_frames
-from .tracking_core import run_apache_v1_tracking, tracking_core_config_from_env
+from .tracking_core import detect_tracking_objects, run_apache_v1_tracking, tracking_core_config_from_env
 from ..services.config import get_settings
 from ..services.storage_service import IMMUTABLE_CACHE_CONTROL_SECONDS, StorageService
 from ..services.video_assets import (
@@ -164,6 +164,45 @@ def _attach_tracking_assistance(result: dict[str, Any], estimation: dict[str, An
   result.setdefault("diagnostics", {})["tracking_assistance"] = assistance
 
 
+def _run_yolo_tracking_prepass(
+  *,
+  file_path: str,
+  video: dict[str, Any],
+  estimation: dict[str, Any],
+) -> dict[str, Any]:
+  """Run optional YOLO once per sampled pose frame before repair/analysis.
+
+  Shadow detections are diagnostic-only. Candidate detections are retained only
+  in the in-process estimation object so pose repair and the temporal tracker
+  can share them without changing persisted raw-pose contracts.
+  """
+  config = tracking_core_config_from_env()
+  prepared = dict(estimation)
+  diagnostics: dict[str, Any] = {
+    "mode": config.yolo_mode,
+    "enabled": config.yolo_enabled,
+    "authoritative": config.yolo_mode == "candidate",
+  }
+  prepared["yolo_tracking"] = diagnostics
+  prepared["yolo_detection_frames"] = []
+  if not config.yolo_enabled:
+    return prepared
+  if not _is_squat_variation(video.get("exercise_type") or "") or video.get("view_type") != "side":
+    diagnostics["failure_reason"] = "unsupported_analysis_context"
+    return prepared
+
+  frames, detector_diagnostics = detect_tracking_objects(
+    video_path=file_path,
+    pose_frames=estimation.get("frames") or [],
+    processed_width=estimation.get("processed_frame_width") or estimation.get("frame_width"),
+    processed_height=estimation.get("processed_frame_height") or estimation.get("frame_height"),
+    config=config,
+  )
+  diagnostics.update(detector_diagnostics)
+  prepared["yolo_detection_frames"] = frames
+  return prepared
+
+
 def _apply_pose_repair(estimation: dict[str, Any]) -> dict[str, Any]:
   raw_frames = estimation.get("frames") or []
   assistance = estimation.get("tracking_assistance") or {}
@@ -174,10 +213,17 @@ def _apply_pose_repair(estimation: dict[str, Any]) -> dict[str, Any]:
   )
   repaired_estimation = dict(estimation)
   repaired_estimation["raw_pose_frames"] = raw_frames
+  tracking_config = tracking_core_config_from_env()
+  detector_frames = (
+    estimation.get("yolo_detection_frames")
+    if tracking_config.yolo_mode == "candidate"
+    else None
+  )
   try:
     repaired_frames, diagnostics = repair_selected_side_pose(
       raw_frames,
       selected_side_override=selected_side_override,
+      detector_frames=detector_frames,
     )
     repaired_estimation["frames"] = repaired_frames
     repaired_estimation["pose_repair"] = diagnostics
@@ -191,6 +237,14 @@ def _apply_pose_repair(estimation: dict[str, Any]) -> dict[str, Any]:
       "repaired_frame_count": 0,
     }
   return repaired_estimation
+
+
+def _attach_yolo_tracking_diagnostics(result: dict[str, Any], estimation: dict[str, Any]) -> None:
+  diagnostics = dict(estimation.get("yolo_tracking") or {})
+  if not diagnostics:
+    return
+  # DetectionFrame instances are intentionally not serialized into the result.
+  result.setdefault("diagnostics", {})["yolo_tracking"] = diagnostics
 
 
 def _barbell_pose_frames_with_upper_back_context(
@@ -888,7 +942,8 @@ def _attach_barbell_tracking(
       manual_tracking=estimation.get("manual_tracking") or {},
       selected_side=selected_side,
     )
-    if tracking_core_config.enabled:
+    detector_candidate_requested = tracking_core_config.yolo_mode == "candidate"
+    if tracking_core_config.enabled or detector_candidate_requested:
       apache_tracking = run_apache_v1_tracking(
         video_path=file_path,
         pose_frames=barbell_pose_frames,
@@ -896,6 +951,11 @@ def _attach_barbell_tracking(
         processed_height=estimation.get("processed_frame_height") or estimation.get("frame_height"),
         manual_barbell_priors=barbell_track_priors(estimation.get("manual_tracking") or {}),
         config=tracking_core_config,
+        detection_frames=(
+          estimation.get("yolo_detection_frames")
+          if detector_candidate_requested
+          else None
+        ),
       )
       apache_diagnostics = apache_tracking.get("diagnostics") or {}
       diagnostics["apache_tracking_core"] = apache_diagnostics
@@ -1042,6 +1102,11 @@ def analyze_video(video_id: str) -> None:
       video=video,
       estimation=estimator.run(str(temp_file)),
     )
+    estimation = _run_yolo_tracking_prepass(
+      file_path=str(temp_file),
+      video=video,
+      estimation=estimation,
+    )
     estimation = _apply_pose_repair(estimation)
     logger.info(
       "Estimated pose for video %s in %sms.",
@@ -1059,6 +1124,7 @@ def analyze_video(video_id: str) -> None:
     stage_started = time.perf_counter()
     result = _analyze_squat_result(video_id=video_id, video=video, estimation=estimation)
     _attach_tracking_assistance(result, estimation)
+    _attach_yolo_tracking_diagnostics(result, estimation)
     _annotate_pose_backend(
       result,
       estimation,
@@ -1101,6 +1167,11 @@ def analyze_video(video_id: str) -> None:
           video=video,
           estimation=PoseEstimator(config=fallback_config).run(str(temp_file)),
         )
+        fallback_estimation = _run_yolo_tracking_prepass(
+          file_path=str(temp_file),
+          video=video,
+          estimation=fallback_estimation,
+        )
         fallback_estimation = _apply_pose_repair(fallback_estimation)
         if fallback_estimation["frames"]:
           fallback_result = _analyze_squat_result(
@@ -1109,6 +1180,7 @@ def analyze_video(video_id: str) -> None:
             estimation=fallback_estimation,
           )
           _attach_tracking_assistance(fallback_result, fallback_estimation)
+          _attach_yolo_tracking_diagnostics(fallback_result, fallback_estimation)
           fallback_selected = _should_select_fallback_result(
             primary_result=result,
             fallback_result=fallback_result,

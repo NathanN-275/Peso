@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import unittest
 import sys
+import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from app.analysis.pose_fallback import analysis_needs_pose_fallback
 from app.analysis.pose_estimator import PoseEstimatorConfig
+from app.analysis.tracking_core import Detection, DetectionFrame, NormalizedPoint
 
 
 class PipelineFallbackTest(unittest.TestCase):
@@ -250,6 +252,97 @@ class PipelineFallbackTest(unittest.TestCase):
     self.assertEqual(repaired_knee["accepted_source"], "pose_repair_interpolated")
     self.assertIsNotNone(analyzer.analyze.call_args.kwargs["pose_validation_override"])
     self.assertTrue(analyzer.analyze.call_args.kwargs["pose_repair_diagnostics"]["enabled"])
+
+  def test_candidate_yolo_detections_reach_pose_repair_before_analysis(self) -> None:
+    pipeline = self._import_pipeline()
+
+    def point(x: float, y: float, visibility: float = 0.95) -> dict:
+      return {"x": x, "y": y, "z": 0.0, "visibility": visibility}
+
+    def pose_frame(timestamp_ms: int) -> dict:
+      return {
+        "timestamp_ms": timestamp_ms,
+        "source_frame_index": timestamp_ms // 50,
+        "landmarks": {
+          "left_shoulder": point(0.40, 0.25),
+          "left_hip": point(0.45, 0.55),
+          "left_knee": point(0.52, 0.72),
+          "left_ankle": point(0.50, 0.92),
+          "right_shoulder": point(0.45, 0.25, 0.35),
+          "right_hip": point(0.50, 0.55, 0.35),
+          "right_knee": point(0.57, 0.72, 0.35),
+          "right_ankle": point(0.55, 0.92, 0.35),
+        },
+      }
+
+    estimation = self._estimation()
+    estimation["frames"] = [pose_frame(0), pose_frame(50), pose_frame(100)]
+    yolo_detections = [DetectionFrame(
+      source_frame_index=1,
+      time=0.05,
+      detections=(Detection(
+        kind="rack_upright",
+        confidence=0.95,
+        center=NormalizedPoint(0.52, 0.72),
+        bbox=(0.50, 0.70, 0.54, 0.74),
+      ),),
+    )]
+    with patch.dict(os.environ, {"YOLO_TRACKING_MODE": "candidate"}, clear=True), patch(
+      "app.analysis.pipeline.detect_tracking_objects",
+      return_value=(yolo_detections, {"available": True, "detection_frame_count": 1}),
+    ):
+      prepared = pipeline._run_yolo_tracking_prepass(
+        file_path="/tmp/source.mov",
+        video={"exercise_type": "squat", "view_type": "side"},
+        estimation=estimation,
+      )
+      repaired = pipeline._apply_pose_repair(prepared)
+
+    knee = repaired["frames"][1]["landmarks"]["left_knee"]
+    self.assertEqual(knee["accepted_source"], "pose_repair_interpolated")
+    self.assertEqual(repaired["pose_repair"]["detector_occlusion_count"], 1)
+
+  def test_shadow_yolo_diagnostics_do_not_change_pose_repair_input(self) -> None:
+    pipeline = self._import_pipeline()
+    estimation = self._estimation()
+    point = lambda x, y, visibility=0.95: {"x": x, "y": y, "z": 0.0, "visibility": visibility}
+    estimation["frames"] = [{
+      "timestamp_ms": 0,
+      "source_frame_index": 0,
+      "landmarks": {
+        "left_shoulder": point(0.40, 0.25),
+        "left_hip": point(0.45, 0.55),
+        "left_knee": point(0.52, 0.72),
+        "left_ankle": point(0.50, 0.92),
+        "right_shoulder": point(0.45, 0.25, 0.35),
+        "right_hip": point(0.50, 0.55, 0.35),
+        "right_knee": point(0.57, 0.72, 0.35),
+        "right_ankle": point(0.55, 0.92, 0.35),
+      },
+    }]
+    yolo_detections = [DetectionFrame(
+      source_frame_index=0,
+      time=0.0,
+      detections=(Detection(
+        kind="rack_upright",
+        confidence=0.95,
+        center=NormalizedPoint(0.5, 0.5),
+        bbox=(0.0, 0.0, 1.0, 1.0),
+      ),),
+    )]
+    with patch.dict(os.environ, {"YOLO_TRACKING_MODE": "shadow"}, clear=True), patch(
+      "app.analysis.pipeline.detect_tracking_objects",
+      return_value=(yolo_detections, {"available": True, "detection_frame_count": 1}),
+    ):
+      prepared = pipeline._run_yolo_tracking_prepass(
+        file_path="/tmp/source.mov",
+        video={"exercise_type": "squat", "view_type": "side"},
+        estimation=estimation,
+      )
+      repaired = pipeline._apply_pose_repair(prepared)
+
+    self.assertEqual(repaired["yolo_tracking"]["mode"], "shadow")
+    self.assertEqual(repaired["pose_repair"]["detector_occlusion_count"], 0)
 
   def test_non_squat_variation_remains_limited(self) -> None:
     pipeline = self._import_pipeline()
