@@ -206,6 +206,51 @@ class PipelineFallbackTest(unittest.TestCase):
       "right",
     )
 
+  def test_pipeline_passes_repaired_pose_stream_to_squat_analyzer(self) -> None:
+    pipeline = self._import_pipeline()
+
+    def point(x: float, y: float, visibility: float = 0.95) -> dict:
+      return {"x": x, "y": y, "z": 0.0, "visibility": visibility}
+
+    def pose_frame(timestamp_ms: int, knee: dict | None = None) -> dict:
+      return {
+        "timestamp_ms": timestamp_ms,
+        "source_frame_index": timestamp_ms // 50,
+        "landmarks": {
+          "left_shoulder": point(0.40, 0.25),
+          "left_hip": point(0.45, 0.55),
+          "left_knee": knee or point(0.52, 0.72),
+          "left_ankle": point(0.50, 0.92),
+          "right_shoulder": point(0.45, 0.25, 0.35),
+          "right_hip": point(0.50, 0.55, 0.35),
+          "right_knee": point(0.57, 0.72, 0.35),
+          "right_ankle": point(0.55, 0.92, 0.35),
+        },
+      }
+
+    estimation = self._estimation()
+    estimation["frames"] = [
+      pose_frame(0),
+      pose_frame(50, point(0.84, 0.18, 0.05)),
+      pose_frame(100),
+    ]
+    repaired_estimation = pipeline._apply_pose_repair(estimation)
+    analyzer = MagicMock()
+    analyzer.analyze.return_value = {"reps": [], "diagnostics": {}}
+
+    with patch("app.analysis.pipeline.SquatAnalyzer", return_value=analyzer):
+      pipeline._analyze_squat_result(
+        video_id="video-1",
+        video={"id": "video-1", "exercise_type": "squat", "view_type": "side"},
+        estimation=repaired_estimation,
+      )
+
+    analyzed_frames = analyzer.analyze.call_args.kwargs["frames"]
+    repaired_knee = analyzed_frames[1]["landmarks"]["left_knee"]
+    self.assertEqual(repaired_knee["accepted_source"], "pose_repair_interpolated")
+    self.assertIsNotNone(analyzer.analyze.call_args.kwargs["pose_validation_override"])
+    self.assertTrue(analyzer.analyze.call_args.kwargs["pose_repair_diagnostics"]["enabled"])
+
   def test_non_squat_variation_remains_limited(self) -> None:
     pipeline = self._import_pipeline()
 

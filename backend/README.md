@@ -83,6 +83,10 @@ POSE_FALLBACK_DEVICE=auto
 POSE_FALLBACK_DET_FREQUENCY=3
 POSE_FALLBACK_MODE=balanced
 POSE_DEBUG_LANDMARK_EXPORT_DIR=
+POSE_REPAIR_ENABLED=true
+POSE_REPAIR_MAX_GAP_FRAMES=3
+POSE_REPAIR_VELOCITY_GAP_FRAMES=2
+POSE_REPAIR_RECOVERY_HYSTERESIS_FRAMES=2
 FFMPEG_BINARY=
 BACKEND_CORS_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhost:8082,http://127.0.0.1:8082,http://localhost:19006,http://127.0.0.1:19006,http://localhost:3000,http://127.0.0.1:3000
 BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true
@@ -99,6 +103,14 @@ POSE_FALLBACK_ENABLED=true
 ```
 
 and the required `rtmlib` / `onnxruntime` dependencies are installed.
+
+`POSE_REPAIR_ENABLED=true` runs a backend-only selected-side pose repair pass after
+manual pin assistance and before squat analysis. It scores visibility, temporal
+jumps, segment consistency, and side consistency; short unreliable runs are
+interpolated or velocity-estimated with segment constraints, while longer runs
+remain explicit low-confidence gaps. The analysis diagnostics expose `pose_repair`
+with quality, repair counts, gap counts, the worst frame segments, and a capped
+`raw_repair_debug` list for changed selected-side landmarks.
 
 `POSE_FALLBACK_MODE` accepts:
 

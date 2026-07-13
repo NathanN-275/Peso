@@ -77,6 +77,11 @@ def _build_pose_frames(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if isinstance(point.get("accepted_source"), str)
         else {}
       ),
+      **(
+        {"poseRepairReasons": point["pose_repair_reasons"]}
+        if isinstance(point.get("pose_repair_reasons"), list)
+        else {}
+      ),
       **({"userPinned": True} if user_pinned else {}),
       **({"preferVisualFallback": True} if point.get("prefer_visual_fallback") else {}),
       **({"chainValid": bool(point["chain_valid"])} if "chain_valid" in point else {}),
@@ -539,18 +544,25 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
     frames: list[dict[str, Any]],
     sampled_frame_count: int | None = None,
     selected_side_override: str | None = None,
+    pose_validation_override: dict[str, Any] | None = None,
+    pose_repair_diagnostics: dict[str, Any] | None = None,
   ) -> dict[str, Any]:
     # Squat analysis combines quality checks, rep detection, and feedback.
-    frames, pose_validation = validate_squat_pose_frames(
-      frames,
-      selected_side_override=selected_side_override,
-    )
+    if pose_validation_override is None:
+      frames, pose_validation = validate_squat_pose_frames(
+        frames,
+        selected_side_override=selected_side_override,
+      )
+    else:
+      pose_validation = dict(pose_validation_override)
     diagnostics = self._build_quality_report(
       frames=frames,
       sampled_frame_count=sampled_frame_count,
       selected_side_override=pose_validation.get("selected_side"),
     )
     diagnostics["pose_validation"] = pose_validation
+    if pose_repair_diagnostics is not None:
+      diagnostics["pose_repair"] = pose_repair_diagnostics
     selected_side = diagnostics["selected_side"] or "left"
     validation_penalty = pose_validation.get("quality_score_penalty", 0.0)
 

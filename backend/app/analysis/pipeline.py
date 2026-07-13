@@ -21,6 +21,7 @@ from .manual_tracking import (
 )
 from .pose_fallback import analysis_needs_pose_fallback
 from .pose_estimator import PoseEstimator
+from .pose_repair import repair_selected_side_pose
 from .pose_validator import is_body_point_occluded_by_plate, validate_squat_pose_frames
 from .tracking_core import run_apache_v1_tracking, tracking_core_config_from_env
 from ..services.config import get_settings
@@ -161,6 +162,35 @@ def _attach_tracking_assistance(result: dict[str, Any], estimation: dict[str, An
   assistance = dict(estimation.get("tracking_assistance") or {})
   result["trackingAssistance"] = assistance
   result.setdefault("diagnostics", {})["tracking_assistance"] = assistance
+
+
+def _apply_pose_repair(estimation: dict[str, Any]) -> dict[str, Any]:
+  raw_frames = estimation.get("frames") or []
+  assistance = estimation.get("tracking_assistance") or {}
+  selected_side_override = (
+    assistance.get("selectedSide")
+    if assistance.get("actualMode") == "pin_assisted"
+    else None
+  )
+  repaired_estimation = dict(estimation)
+  repaired_estimation["raw_pose_frames"] = raw_frames
+  try:
+    repaired_frames, diagnostics = repair_selected_side_pose(
+      raw_frames,
+      selected_side_override=selected_side_override,
+    )
+    repaired_estimation["frames"] = repaired_frames
+    repaired_estimation["pose_repair"] = diagnostics
+  except (KeyError, TypeError, ValueError) as error:
+    logger.warning("Pose repair failed open because pose frames were incomplete: %s", error)
+    repaired_estimation["pose_repair"] = {
+      "enabled": True,
+      "failed_open": True,
+      "error": str(error),
+      "raw_frame_count": len(raw_frames),
+      "repaired_frame_count": 0,
+    }
+  return repaired_estimation
 
 
 def _barbell_pose_frames_with_upper_back_context(
@@ -698,6 +728,8 @@ def _analyze_squat_result(
     frames=estimation["frames"],
     sampled_frame_count=estimation.get("sampled_frame_count"),
     selected_side_override=selected_side_override,
+    pose_validation_override=(estimation.get("pose_repair") or {}).get("pose_validation"),
+    pose_repair_diagnostics=estimation.get("pose_repair"),
   )
 
 def _finalize_storage_assets(
@@ -1010,6 +1042,7 @@ def analyze_video(video_id: str) -> None:
       video=video,
       estimation=estimator.run(str(temp_file)),
     )
+    estimation = _apply_pose_repair(estimation)
     logger.info(
       "Estimated pose for video %s in %sms.",
       video_id,
@@ -1068,6 +1101,7 @@ def analyze_video(video_id: str) -> None:
           video=video,
           estimation=PoseEstimator(config=fallback_config).run(str(temp_file)),
         )
+        fallback_estimation = _apply_pose_repair(fallback_estimation)
         if fallback_estimation["frames"]:
           fallback_result = _analyze_squat_result(
             video_id=video_id,
