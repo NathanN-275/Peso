@@ -27,6 +27,7 @@ const expoBinary = path.join(
 const children = new Set();
 let shuttingDown = false;
 const backendStartupTimeoutMs = Number(devEnvironment.env.BACKEND_STARTUP_TIMEOUT_MS || 30000);
+const startAnalysisWorker = devEnvironment.env.START_ANALYSIS_WORKER !== 'false';
 
 function log(scope, message) {
   process.stdout.write(`[${scope}] ${message}\n`);
@@ -148,6 +149,18 @@ async function main() {
     );
     await waitForBackendHealth();
     log('backend', `healthy at ${backendHealthUrl}`);
+  }
+
+  if (startAnalysisWorker) {
+    log('worker', 'starting durable video-analysis worker');
+    spawnProcess(
+      'worker',
+      pythonCommand,
+      ['-m', 'app.jobs.worker', '--env-file', '.env'],
+      {
+        cwd: backendDir,
+      }
+    );
   }
 
   log('expo', `starting Expo ${startWeb ? 'web' : 'native'} with backend ${expoEnv.EXPO_PUBLIC_BACKEND_URL}`);

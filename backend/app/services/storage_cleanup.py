@@ -244,6 +244,9 @@ class StorageCleanupService:
         candidates[video_id] = (video, "stale")
 
     for video_id, (video, reason) in candidates.items():
+      if self._has_active_analysis_job(video_id, report):
+        continue
+
       source_path = video.get("storage_path")
 
       if not isinstance(source_path, str) or not is_app_storage_path(source_path):
@@ -280,6 +283,16 @@ class StorageCleanupService:
         message = f"Unable to mark video {video_id} as discarded: {error}"
         logger.warning(message)
         report.errors.append(message)
+
+  def _has_active_analysis_job(self, video_id: str, report: StorageCleanupReport) -> bool:
+    try:
+      return self.repository.has_active_analysis_job(video_id)
+    except Exception as error:
+      # Fail closed: a cleanup task must not destroy media while job state is unknown.
+      message = f"Skipped video {video_id} because active analysis job state could not be verified: {error}"
+      logger.warning(message)
+      report.errors.append(message)
+      return True
 
   def _video_can_be_deleted(self, video: dict[str, Any], *, stale_cutoff: datetime) -> bool:
     if video.get("save_state") == "saved":

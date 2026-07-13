@@ -6,11 +6,11 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel
 
-from ..analysis.pipeline import analyze_video
 from ..analysis.versioning import annotate_analysis_freshness, analysis_is_current
+from ..jobs.analysis_queue import AnalysisJobQueue
 from ..services.analyzed_video_renderer import render_analyzed_video
 from ..services.auth import get_current_user_id
 from ..services.config import get_settings
@@ -207,14 +207,6 @@ def _delete_owned_storage_path(storage: StorageService, path: str, user_id: str,
     return False
 
 
-def _run_analysis_job(video_id: str) -> None:
-  # Background tasks run analysis outside the request lifecycle.
-  try:
-    analyze_video(video_id)
-  except Exception:
-    logger.exception("Background analysis failed for video %s", video_id)
-
-
 @router.get("/videos/storage-usage", response_model=StorageUsageResponse)
 def get_storage_usage(
   upload_size_bytes: int = Query(default=0, ge=0),
@@ -247,7 +239,6 @@ def get_video_capabilities(
 @router.post("/analyze/{video_id}", response_model=AnalyzeResponse)
 def queue_analysis(
   video_id: UUID,
-  background_tasks: BackgroundTasks,
   user_id: str = Depends(get_current_user_id),
 ) -> AnalyzeResponse:
   # Queue analysis only when the video belongs to the current user.
@@ -261,8 +252,7 @@ def queue_analysis(
 
     if not analysis_is_current(analysis):
       StorageService().validate_video_object(_playback_storage_path(video))
-      repository.update_video(video_id_str, {"status": "queued"})
-      background_tasks.add_task(_run_analysis_job, video_id_str)
+      AnalysisJobQueue().enqueue(video_id_str, reanalyze=True)
       return AnalyzeResponse(video_id=video_id, status="queued")
 
   if current_status in IDEMPOTENT_ANALYSIS_STATUSES:
@@ -275,26 +265,8 @@ def queue_analysis(
     )
 
   StorageService().validate_video_object(_playback_storage_path(video))
-  queued_video = repository.queue_owned_video_if_status(
-    video_id_str,
-    user_id,
-    QUEUEABLE_ANALYSIS_STATUSES,
-  )
-
-  if queued_video:
-    background_tasks.add_task(_run_analysis_job, video_id_str)
-    return AnalyzeResponse(video_id=video_id, status=queued_video["status"])
-
-  latest_video = repository.require_owned_video(video_id_str, user_id)
-  latest_status = latest_video["status"]
-
-  if latest_status in IDEMPOTENT_ANALYSIS_STATUSES:
-    return AnalyzeResponse(video_id=video_id, status=latest_status)
-
-  raise HTTPException(
-    status_code=status.HTTP_409_CONFLICT,
-    detail=f"Video could not be queued because its status is now '{latest_status}'.",
-  )
+  AnalysisJobQueue().enqueue(video_id_str)
+  return AnalyzeResponse(video_id=video_id, status="queued")
 
 
 @router.post("/videos/{video_id}/save", response_model=SaveVideoResponse)
@@ -455,6 +427,7 @@ def discard_video(
   repository = VideoRepository()
   storage = StorageService()
   video = repository.require_owned_video(str(video_id), user_id)
+  AnalysisJobQueue().cancel_for_video(str(video_id))
 
   paths = [
     str(video.get("storage_path") or ""),

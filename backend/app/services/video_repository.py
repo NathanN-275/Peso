@@ -226,6 +226,18 @@ class VideoRepository:
       )
     return response.data or []
 
+  def has_active_analysis_job(self, video_id: str) -> bool:
+    # Retention cleanup must not delete work that a durable worker can still claim.
+    response = (
+      self.client.table("analysis_jobs")
+      .select("id")
+      .eq("video_id", video_id)
+      .in_("status", ["queued", "processing", "retry_wait"])
+      .limit(1)
+      .execute()
+    )
+    return bool(response.data)
+
   def list_storage_referenced_videos(self) -> list[dict[str, Any]]:
     try:
       response = self.client.table("videos").select(VIDEO_STORAGE_COLUMNS).execute()

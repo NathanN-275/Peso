@@ -35,6 +35,8 @@ DEFAULT_STORAGE_WARNING_RATIO = 0.80
 DEFAULT_STORAGE_BLOCK_RATIO = 0.95
 DEFAULT_PLAYBACK_STORAGE_ESTIMATE_RATIO = 1.0
 DEFAULT_THUMBNAIL_STORAGE_ALLOWANCE_BYTES = 1024 * 1024
+DEFAULT_ANALYSIS_JOB_LEASE_SECONDS = 60 * 60
+DEFAULT_ANALYSIS_WORKER_POLL_SECONDS = 5
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,8 @@ class Settings:
   storage_block_ratio: float = DEFAULT_STORAGE_BLOCK_RATIO
   playback_storage_estimate_ratio: float = DEFAULT_PLAYBACK_STORAGE_ESTIMATE_RATIO
   thumbnail_storage_allowance_bytes: int = DEFAULT_THUMBNAIL_STORAGE_ALLOWANCE_BYTES
+  analysis_job_lease_seconds: int = DEFAULT_ANALYSIS_JOB_LEASE_SECONDS
+  analysis_worker_poll_seconds: int = DEFAULT_ANALYSIS_WORKER_POLL_SECONDS
 
 
 def _parse_positive_int_env(name: str, default: int, *aliases: str) -> int:
@@ -163,6 +167,14 @@ def get_settings() -> Settings:
     "THUMBNAIL_STORAGE_ALLOWANCE_BYTES",
     DEFAULT_THUMBNAIL_STORAGE_ALLOWANCE_BYTES,
   )
+  analysis_job_lease_seconds = _parse_positive_int_env(
+    "ANALYSIS_JOB_LEASE_SECONDS",
+    DEFAULT_ANALYSIS_JOB_LEASE_SECONDS,
+  )
+  analysis_worker_poll_seconds = _parse_positive_int_env(
+    "ANALYSIS_WORKER_POLL_SECONDS",
+    DEFAULT_ANALYSIS_WORKER_POLL_SECONDS,
+  )
 
   if storage_warning_ratio >= storage_block_ratio or storage_block_ratio > 1:
     raise RuntimeError(
@@ -228,4 +240,6 @@ def get_settings() -> Settings:
     storage_block_ratio=storage_block_ratio,
     playback_storage_estimate_ratio=playback_storage_estimate_ratio,
     thumbnail_storage_allowance_bytes=thumbnail_storage_allowance_bytes,
+    analysis_job_lease_seconds=analysis_job_lease_seconds,
+    analysis_worker_poll_seconds=analysis_worker_poll_seconds,
   )

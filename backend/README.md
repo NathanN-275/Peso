@@ -71,6 +71,8 @@ CLEANUP_JOB_TOKEN=
 EXPORT_CACHE_TTL_HOURS=24
 ORPHAN_STORAGE_MIN_AGE_HOURS=24
 STALE_PROCESSING_HOURS=6
+ANALYSIS_JOB_LEASE_SECONDS=3600
+ANALYSIS_WORKER_POLL_SECONDS=5
 MODEL_VERSION=mediapipe-rtmpose-v2-hip-crease-depth
 POSE_TARGET_FPS=18
 POSE_MAX_FRAME_DIMENSION=720
@@ -216,6 +218,32 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 Use `--host 0.0.0.0` for Expo Go on a physical phone. Binding FastAPI to `localhost` only makes it unreachable from another device on the same network.
 
+## Running the analysis worker
+
+The API only persists analysis requests. Run the CPU-heavy analysis worker as a
+separate process using the same backend environment:
+
+```bash
+cd backend
+python -m app.jobs.worker
+```
+
+For one claimed job, useful in deployment checks:
+
+```bash
+python -m app.jobs.worker --once
+```
+
+The worker claims jobs from Postgres with a lease, renews the lease while
+processing, retries transient failures up to three total attempts, and recovers
+expired leases after a worker crash. Start at least one worker anywhere the API
+is deployed. Scale API and workers independently; do not run analysis inside
+FastAPI `BackgroundTasks`.
+
+Apply `supabase/migrations/20260713233319_durable_analysis_jobs.sql` before
+deploying the worker. During the rollout, drain old API processes before starting
+the new worker so an old in-process task cannot analyze the same clip in parallel.
+
 If environment variables are stored in a file, you can also run:
 
 ```bash
@@ -253,6 +281,7 @@ To run the two processes separately:
 
 ```bash
 npm run start:backend
+npm run start:backend-worker
 npm run start:frontend
 ```
 

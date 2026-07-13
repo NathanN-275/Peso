@@ -1068,7 +1068,7 @@ def _attach_barbell_tracking(
     }
 
 
-def analyze_video(video_id: str) -> None:
+def analyze_video(video_id: str, *, manage_status: bool = True) -> None:
   # The pipeline loads the video, estimates pose, then stores results.
   analysis_started = time.perf_counter()
   repository = VideoRepository()
@@ -1082,7 +1082,8 @@ def analyze_video(video_id: str) -> None:
   temp_file = None
 
   try:
-    repository.update_video(video_id, {"status": "processing"})
+    if manage_status:
+      repository.update_video(video_id, {"status": "processing"})
     # Download the clip into a temporary file for local processing.
     stage_started = time.perf_counter()
     source_storage_path = video.get("playback_path") or video["storage_path"]
@@ -1327,14 +1328,16 @@ def analyze_video(video_id: str) -> None:
       video_id,
       int((time.perf_counter() - stage_started) * 1000),
     )
-    repository.update_video(video_id, {"status": "completed"})
+    if manage_status:
+      repository.update_video(video_id, {"status": "completed"})
     logger.info(
       "Completed analysis for video %s in %sms.",
       video_id,
       int((time.perf_counter() - analysis_started) * 1000),
     )
   except Exception as error:
-    repository.update_video(video_id, {"status": "failed"})
+    if manage_status:
+      repository.update_video(video_id, {"status": "failed"})
     raise RuntimeError(
       f"Video analysis failed for {video_id}: {error}\n{traceback.format_exc()}"
     ) from error

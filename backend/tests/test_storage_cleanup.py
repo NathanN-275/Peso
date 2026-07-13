@@ -78,10 +78,12 @@ class FakeRepository:
     expired_videos: list[dict] | None = None,
     stale_videos: list[dict] | None = None,
     referenced_videos: list[dict] | None = None,
+    active_job_video_ids: set[str] | None = None,
   ) -> None:
     self.expired_videos = expired_videos or []
     self.stale_videos = stale_videos or []
     self.referenced_videos = referenced_videos or []
+    self.active_job_video_ids = active_job_video_ids or set()
     self.deleted_video_ids: list[str] = []
 
   def list_expired_pending_videos(self) -> list[dict]:
@@ -93,6 +95,9 @@ class FakeRepository:
 
   def list_storage_referenced_videos(self) -> list[dict]:
     return self.referenced_videos
+
+  def has_active_analysis_job(self, video_id: str) -> bool:
+    return video_id in self.active_job_video_ids
 
   def delete_video_with_analysis(self, video_id: str) -> None:
     self.deleted_video_ids.append(video_id)
@@ -196,6 +201,27 @@ class StorageCleanupServiceTest(unittest.TestCase):
     self.assertEqual(report.stale_pending_videos, 1)
     self.assertEqual(repository.deleted_video_ids, [stale_id])
     self.assertEqual(storage.deleted_paths, [stale_path])
+
+  def test_active_durable_job_prevents_retention_cleanup_after_worker_outage(self) -> None:
+    video_id = "11111111-1111-1111-1111-111111111111"
+    source_path = f"{USER_ID}/{video_id}.mp4"
+    repository = FakeRepository(
+      stale_videos=[
+        video(video_id, status_value="processing", storage_path=source_path, updated_hours_ago=7),
+      ],
+      referenced_videos=[
+        video(video_id, status_value="processing", storage_path=source_path, updated_hours_ago=7),
+      ],
+      active_job_video_ids={video_id},
+    )
+    storage = FakeStorage([storage_object(source_path, 200, 7)])
+
+    report = StorageCleanupService(repository, storage, settings()).run(now=NOW)
+
+    self.assertEqual(report.deleted_count, 0)
+    self.assertEqual(report.stale_pending_videos, 0)
+    self.assertEqual(repository.deleted_video_ids, [])
+    self.assertEqual(storage.deleted_paths, [])
 
   def test_old_exports_are_temporary_and_regenerated_on_demand(self) -> None:
     old_export = f"{USER_ID}/exports/11111111-1111-1111-1111-111111111111-analysis-h264-v1.mp4"

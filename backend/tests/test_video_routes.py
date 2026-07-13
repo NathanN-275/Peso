@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 from uuid import UUID
 
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import HTTPException
 
 from app.analysis.versioning import annotate_analysis_freshness, analysis_is_current
 from app.routes.videos import (
@@ -36,24 +36,19 @@ class VideoRoutesTest(unittest.TestCase):
       "status": "uploaded",
       "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
     }
-    repository.queue_owned_video_if_status.return_value = {"status": "queued"}
     storage = MagicMock()
-    background_tasks = BackgroundTasks()
+    jobs = MagicMock()
 
     with (
       patch("app.routes.videos.VideoRepository", return_value=repository),
       patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.AnalysisJobQueue", return_value=jobs),
     ):
-      response = queue_analysis(VIDEO_ID, background_tasks, USER_ID)
+      response = queue_analysis(VIDEO_ID, USER_ID)
 
     storage.validate_video_object.assert_called_once_with(f"{USER_ID}/uploads/{VIDEO_ID}.mov")
-    repository.queue_owned_video_if_status.assert_called_once_with(
-      str(VIDEO_ID),
-      USER_ID,
-      ("uploaded", "failed"),
-    )
+    jobs.enqueue.assert_called_once_with(str(VIDEO_ID))
     self.assertEqual(response.status, "queued")
-    self.assertEqual(len(background_tasks.tasks), 1)
 
   def test_storage_usage_endpoint_returns_quota_report_without_mutation(self) -> None:
     quota_service = MagicMock()
@@ -124,18 +119,18 @@ class VideoRoutesTest(unittest.TestCase):
       "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
     }
     storage = MagicMock()
-    background_tasks = BackgroundTasks()
+    jobs = MagicMock()
 
     with (
       patch("app.routes.videos.VideoRepository", return_value=repository),
       patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.AnalysisJobQueue", return_value=jobs),
     ):
-      response = queue_analysis(VIDEO_ID, background_tasks, USER_ID)
+      response = queue_analysis(VIDEO_ID, USER_ID)
 
     storage.validate_video_object.assert_not_called()
-    repository.queue_owned_video_if_status.assert_not_called()
+    jobs.enqueue.assert_not_called()
     self.assertEqual(response.status, "processing")
-    self.assertEqual(len(background_tasks.tasks), 0)
 
   def test_queue_analysis_rejects_unqueueable_status(self) -> None:
     repository = MagicMock()
@@ -152,10 +147,9 @@ class VideoRoutesTest(unittest.TestCase):
       patch("app.routes.videos.StorageService", return_value=storage),
       self.assertRaises(HTTPException) as raised,
     ):
-      queue_analysis(VIDEO_ID, BackgroundTasks(), USER_ID)
+      queue_analysis(VIDEO_ID, USER_ID)
 
     storage.validate_video_object.assert_not_called()
-    repository.queue_owned_video_if_status.assert_not_called()
     self.assertEqual(raised.exception.status_code, 409)
 
   def test_queue_analysis_propagates_ownership_errors(self) -> None:
@@ -169,7 +163,7 @@ class VideoRoutesTest(unittest.TestCase):
       patch("app.routes.videos.VideoRepository", return_value=repository),
       self.assertRaises(HTTPException) as raised,
     ):
-      queue_analysis(VIDEO_ID, BackgroundTasks(), USER_ID)
+      queue_analysis(VIDEO_ID, USER_ID)
 
     self.assertEqual(raised.exception.status_code, 403)
 
@@ -317,10 +311,12 @@ class VideoRoutesTest(unittest.TestCase):
       "thumbnail_path": f"{USER_ID}/thumbnails/{VIDEO_ID}-thumb-v3.jpg",
     }
     storage = MagicMock()
+    jobs = MagicMock()
 
     with (
       patch("app.routes.videos.VideoRepository", return_value=repository),
       patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.AnalysisJobQueue", return_value=jobs),
     ):
       response = discard_video(VIDEO_ID, USER_ID)
 
@@ -329,6 +325,7 @@ class VideoRoutesTest(unittest.TestCase):
     storage.delete_storage_path.assert_any_call(f"{USER_ID}/thumbnails/{VIDEO_ID}-thumb-v3.jpg")
     storage.list_storage_prefix.assert_called_once_with(f"{USER_ID}/exports/{VIDEO_ID}-")
     storage.delete_storage_prefix.assert_not_called()
+    jobs.cancel_for_video.assert_called_once_with(str(VIDEO_ID))
     repository.mark_discarded.assert_called_once_with(str(VIDEO_ID))
     repository.delete_video_with_analysis.assert_not_called()
     self.assertTrue(response.discarded)
@@ -344,14 +341,17 @@ class VideoRoutesTest(unittest.TestCase):
     }
     storage = MagicMock()
     storage.list_storage_prefix.return_value = []
+    jobs = MagicMock()
 
     with (
       patch("app.routes.videos.VideoRepository", return_value=repository),
       patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.AnalysisJobQueue", return_value=jobs),
     ):
       response = discard_video(VIDEO_ID, USER_ID)
 
     storage.delete_storage_path.assert_called_once_with(f"{USER_ID}/uploads/{VIDEO_ID}.mov")
+    jobs.cancel_for_video.assert_called_once_with(str(VIDEO_ID))
     repository.mark_discarded.assert_called_once_with(str(VIDEO_ID))
     self.assertTrue(response.discarded)
 

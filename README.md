@@ -75,6 +75,8 @@ YOLO_TRACKING_MAX_COAST_SECONDS=0.25
 FFMPEG_BINARY=
 BACKEND_CORS_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhost:8082,http://127.0.0.1:8082,http://localhost:19006,http://127.0.0.1:19006,http://localhost:3000,http://127.0.0.1:3000
 BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true
+ANALYSIS_JOB_LEASE_SECONDS=3600
+ANALYSIS_WORKER_POLL_SECONDS=5
 ```
 
 For videos that do not match the current supported setup, Peso should return a clear, limited-analysis result instead of failing silently or pretending the analysis is more complete than it is.
@@ -121,7 +123,7 @@ Current priorities:
 1. The user records or uploads a lifting video.
 2. The app stores the video through Supabase.
 3. The backend receives an analysis request.
-4. The backend downloads the video and processes it frame by frame.
+4. A separate durable analysis worker claims the request, then downloads and processes the video frame by frame.
 5. Pose and barbell tracking are used to estimate movement quality.
 6. Rep summaries, diagnostics, overlays, and coaching feedback are saved.
 7. The mobile app displays the analyzed result to the user.
@@ -187,6 +189,7 @@ To run the frontend and backend separately:
 ```bash
 npm run start:frontend
 npm run start:backend
+npm run start:backend-worker
 ```
 
 For Expo Go on a physical phone, the backend must bind to `0.0.0.0` so another device on the same network can reach it.
