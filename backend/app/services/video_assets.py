@@ -36,7 +36,7 @@ def create_video_thumbnail(source_path: Path, output_path: Path, at_seconds: flo
     "-map",
     "0:v:0",
     "-vf",
-    "scale=720:720:force_original_aspect_ratio=decrease:force_divisible_by=2",
+    "format=yuv420p,scale=720:720:force_original_aspect_ratio=decrease:force_divisible_by=2",
     "-q:v",
     "3",
     str(output_path),

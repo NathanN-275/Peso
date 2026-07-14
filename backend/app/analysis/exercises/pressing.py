@@ -184,6 +184,12 @@ def _average_elbow_angle(frame: dict[str, Any] | None) -> float | None:
   return sum(angles) / len(angles) if angles else None
 
 
+def _elbow_angle_for_side(frame: dict[str, Any] | None, side: str | None) -> float | None:
+  if side in {"left", "right"}:
+    return _elbow_angle(frame or {}, side)
+  return _average_elbow_angle(frame)
+
+
 def _front_symmetry_delta(frame: dict[str, Any] | None) -> float | None:
   if frame is None:
     return None
@@ -204,6 +210,7 @@ class PressingAnalyzer(BaseExerciseAnalyzer):
     frames: list[dict[str, Any]],
     sampled_frame_count: int | None = None,
     barbell_path: dict[str, Any] | None = None,
+    selected_side: str | None = None,
   ) -> dict[str, Any]:
     signal = _signal_from_barbell_path(barbell_path) or _signal_from_pose(frames)
     reps, rep_detection = _detect_press_reps(signal)
@@ -240,8 +247,8 @@ class PressingAnalyzer(BaseExerciseAnalyzer):
     for index, rep in enumerate(reps, start=1):
       top_frame = _nearest_frame(frames, rep["top_time"])
       bottom_frame = _nearest_frame(frames, rep["bottom_time"])
-      top_elbow_angle = _average_elbow_angle(top_frame)
-      bottom_elbow_angle = _average_elbow_angle(bottom_frame)
+      top_elbow_angle = _elbow_angle_for_side(top_frame, selected_side)
+      bottom_elbow_angle = _elbow_angle_for_side(bottom_frame, selected_side)
       elbow_range = (
         abs(top_elbow_angle - bottom_elbow_angle)
         if top_elbow_angle is not None and bottom_elbow_angle is not None
@@ -311,6 +318,10 @@ class PressingAnalyzer(BaseExerciseAnalyzer):
         "pressing_analysis": {
           "barbell_path_used": bool(_signal_from_barbell_path(barbell_path)),
           "signal_point_count": len(signal),
+          "selected_side": selected_side if selected_side in {"left", "right"} else None,
+          "pin_guided_wrist_signal_used": any(
+            point.get("source") == "manual_wrist_lane" for point in signal
+          ),
         },
       },
       "videoQuality": {

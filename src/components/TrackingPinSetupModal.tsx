@@ -36,6 +36,8 @@ type TrackingPinSetupModalProps = {
   videoDurationMs?: number | null;
   initialSetup?: TrackingSetup | null;
   barbellTarget?: TrackingSetup['barbell_target'];
+  pinNames?: readonly TrackingPinName[];
+  cameraView?: 'side' | 'front';
   onSave: (setup: TrackingSetup) => void;
   onCancel: () => void;
 };
@@ -106,6 +108,8 @@ export default function TrackingPinSetupModal({
   videoDurationMs,
   initialSetup,
   barbellTarget = 'near_side_collar',
+  pinNames = TRACKING_PIN_NAMES,
+  cameraView = 'side',
   onSave,
   onCancel,
 }: TrackingPinSetupModalProps) {
@@ -133,6 +137,11 @@ export default function TrackingPinSetupModal({
   const [suppressFrameChangeWarning, setSuppressFrameChangeWarning] = useState(false);
   const [dontShowFrameChangeWarningAgain, setDontShowFrameChangeWarningAgain] = useState(false);
   const videoViewRef = useRef<VideoView | null>(null);
+  const allowedPinNames = useMemo(
+    () => Array.from(new Set(pinNames)),
+    [pinNames]
+  );
+  const allowedPinSet = useMemo(() => new Set(allowedPinNames), [allowedPinNames]);
   const player = useVideoPlayer(videoUri, (videoPlayer) => {
     videoPlayer.loop = false;
     videoPlayer.muted = true;
@@ -162,8 +171,15 @@ export default function TrackingPinSetupModal({
       return;
     }
     const referenceTime = (initialSetup?.reference_time_ms ?? 0) / 1000;
-    setPins(initialSetup?.anchors ?? {});
-    setPlacementOrder(initialSetup ? (Object.keys(initialSetup.anchors) as TrackingPinName[]) : []);
+    const initialPins = Object.fromEntries(
+      Object.entries(initialSetup?.anchors ?? {}).filter(([name]) => allowedPinSet.has(name as TrackingPinName))
+    ) as Partial<Record<TrackingPinName, NormalizedTrackingPoint>>;
+    setPins(initialPins);
+    setPlacementOrder(
+      initialSetup
+        ? (Object.keys(initialPins) as TrackingPinName[])
+        : []
+    );
     setSkippedPins([]);
     setCurrentTime(referenceTime);
     setPinnedFrameTime(initialSetup ? referenceTime : null);
@@ -176,7 +192,7 @@ export default function TrackingPinSetupModal({
     }
     player.pause();
     player.currentTime = referenceTime;
-  }, [initialSetup, player, videoDurationMs, videoSize.height, videoSize.width, visible]);
+  }, [allowedPinSet, initialSetup, player, videoDurationMs, videoSize.height, videoSize.width, visible]);
 
   useEffect(() => {
     if (!visible) {
@@ -230,7 +246,7 @@ export default function TrackingPinSetupModal({
     [displayVideoSize, videoLayout]
   );
   const renderedPins = useMemo(() => layoutTrackingLabels(
-    TRACKING_PIN_NAMES.flatMap((name) => {
+    allowedPinNames.flatMap((name) => {
       const point = pins[name];
       if (!point) {
         return [];
@@ -245,16 +261,16 @@ export default function TrackingPinSetupModal({
     }),
     videoLayout,
     { gap: 7 }
-  ), [pins, videoLayout, videoRect]);
-  const nextPin = TRACKING_PIN_NAMES.find((name) => !pins[name] && !skippedPins.includes(name)) ?? null;
-  const pinCount = TRACKING_PIN_NAMES.filter((name) => pins[name]).length;
+  ), [allowedPinNames, pins, videoLayout, videoRect]);
+  const nextPin = allowedPinNames.find((name) => !pins[name] && !skippedPins.includes(name)) ?? null;
+  const pinCount = allowedPinNames.filter((name) => pins[name]).length;
   const skippedPinCount = skippedPins.length;
   const actionCount = placementOrder.length;
   const canSavePins = pinCount > 0;
   const placementInstruction = nextPin === 'barbell'
     ? 'Place the center of the + on the near-side hub where the sleeve meets the plate.'
     : nextPin
-      ? 'Choose a clear side-view frame, then tap each landmark. Drag any pin to adjust it.'
+      ? `Choose a clear ${cameraView}-view frame, then tap each landmark. Drag any pin to adjust it.`
       : 'Use the placed pins or reset if you want to add skipped landmarks.';
 
   const pointFromTouch = (x: number, y: number): NormalizedTrackingPoint | null => {
@@ -277,7 +293,7 @@ export default function TrackingPinSetupModal({
   const closestPin = (x: number, y: number) => {
     let closest: TrackingPinName | null = null;
     let closestDistance = 30;
-    TRACKING_PIN_NAMES.forEach((name) => {
+    allowedPinNames.forEach((name) => {
       const point = pins[name];
       if (!point) {
         return;
@@ -418,11 +434,14 @@ export default function TrackingPinSetupModal({
     if (!canSavePins) {
       return;
     }
+    const anchors = Object.fromEntries(
+      allowedPinNames.flatMap((name) => pins[name] ? [[name, pins[name]]] : [])
+    ) as TrackingSetup['anchors'];
     onSave({
       version: 1,
       reference_time_ms: Math.round(currentTime * 1000),
       barbell_target: barbellTarget,
-      anchors: pins,
+      anchors,
     });
   };
 
@@ -448,7 +467,7 @@ export default function TrackingPinSetupModal({
             {placementInstruction}
           </Text>
           <Text style={styles.progressText}>
-            {pinCount}/5 pins placed{skippedPinCount > 0 ? `, ${skippedPinCount} skipped` : ''}
+            {pinCount}/{allowedPinNames.length} pins placed{skippedPinCount > 0 ? `, ${skippedPinCount} skipped` : ''}
           </Text>
         </View>
 

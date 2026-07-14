@@ -42,6 +42,11 @@ DEFAULT_MAX_USER_UPLOADS_PER_HOUR = 20
 DEFAULT_MAX_VIDEO_DURATION_MS = 5 * 60 * 1000
 DEFAULT_SIGNED_URL_TTL_SECONDS = 300
 DEFAULT_STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS = 120
+DEFAULT_SUPABASE_HTTP_MAX_CONNECTIONS = 20
+DEFAULT_SUPABASE_HTTP_MAX_KEEPALIVE_CONNECTIONS = 10
+DEFAULT_SUPABASE_HTTP_KEEPALIVE_EXPIRY_SECONDS = 30
+DEFAULT_SUPABASE_POSTGREST_TIMEOUT_SECONDS = 30
+DEFAULT_SUPABASE_STORAGE_TIMEOUT_SECONDS = 60
 DEFAULT_FFMPEG_TIMEOUT_SECONDS = 120
 DEFAULT_MAX_GLOBAL_VIDEO_WORKERS = 2
 DEFAULT_EXPORT_COOLDOWN_SECONDS = 30
@@ -82,6 +87,11 @@ class Settings:
   max_video_duration_ms: int = DEFAULT_MAX_VIDEO_DURATION_MS
   signed_url_ttl_seconds: int = DEFAULT_SIGNED_URL_TTL_SECONDS
   storage_download_signed_url_ttl_seconds: int = DEFAULT_STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS
+  supabase_http_max_connections: int = DEFAULT_SUPABASE_HTTP_MAX_CONNECTIONS
+  supabase_http_max_keepalive_connections: int = DEFAULT_SUPABASE_HTTP_MAX_KEEPALIVE_CONNECTIONS
+  supabase_http_keepalive_expiry_seconds: int = DEFAULT_SUPABASE_HTTP_KEEPALIVE_EXPIRY_SECONDS
+  supabase_postgrest_timeout_seconds: int = DEFAULT_SUPABASE_POSTGREST_TIMEOUT_SECONDS
+  supabase_storage_timeout_seconds: int = DEFAULT_SUPABASE_STORAGE_TIMEOUT_SECONDS
   ffmpeg_timeout_seconds: int = DEFAULT_FFMPEG_TIMEOUT_SECONDS
   max_global_video_workers: int = DEFAULT_MAX_GLOBAL_VIDEO_WORKERS
   export_cooldown_seconds: int = DEFAULT_EXPORT_COOLDOWN_SECONDS
@@ -267,6 +277,26 @@ def get_settings() -> Settings:
     "STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS",
     DEFAULT_STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS,
   )
+  supabase_http_max_connections = _parse_positive_int_env(
+    "SUPABASE_HTTP_MAX_CONNECTIONS",
+    DEFAULT_SUPABASE_HTTP_MAX_CONNECTIONS,
+  )
+  supabase_http_max_keepalive_connections = _parse_positive_int_env(
+    "SUPABASE_HTTP_MAX_KEEPALIVE_CONNECTIONS",
+    DEFAULT_SUPABASE_HTTP_MAX_KEEPALIVE_CONNECTIONS,
+  )
+  supabase_http_keepalive_expiry_seconds = _parse_positive_int_env(
+    "SUPABASE_HTTP_KEEPALIVE_EXPIRY_SECONDS",
+    DEFAULT_SUPABASE_HTTP_KEEPALIVE_EXPIRY_SECONDS,
+  )
+  supabase_postgrest_timeout_seconds = _parse_positive_int_env(
+    "SUPABASE_POSTGREST_TIMEOUT_SECONDS",
+    DEFAULT_SUPABASE_POSTGREST_TIMEOUT_SECONDS,
+  )
+  supabase_storage_timeout_seconds = _parse_positive_int_env(
+    "SUPABASE_STORAGE_TIMEOUT_SECONDS",
+    DEFAULT_SUPABASE_STORAGE_TIMEOUT_SECONDS,
+  )
   ffmpeg_timeout_seconds = _parse_positive_int_env(
     "FFMPEG_TIMEOUT_SECONDS",
     DEFAULT_FFMPEG_TIMEOUT_SECONDS,
@@ -385,6 +415,11 @@ def get_settings() -> Settings:
     max_video_duration_ms=max_video_duration_ms,
     signed_url_ttl_seconds=signed_url_ttl_seconds,
     storage_download_signed_url_ttl_seconds=storage_download_signed_url_ttl_seconds,
+    supabase_http_max_connections=supabase_http_max_connections,
+    supabase_http_max_keepalive_connections=supabase_http_max_keepalive_connections,
+    supabase_http_keepalive_expiry_seconds=supabase_http_keepalive_expiry_seconds,
+    supabase_postgrest_timeout_seconds=supabase_postgrest_timeout_seconds,
+    supabase_storage_timeout_seconds=supabase_storage_timeout_seconds,
     ffmpeg_timeout_seconds=ffmpeg_timeout_seconds,
     max_global_video_workers=max_global_video_workers,
     export_cooldown_seconds=export_cooldown_seconds,

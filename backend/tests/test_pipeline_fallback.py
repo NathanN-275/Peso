@@ -147,8 +147,9 @@ class PipelineFallbackTest(unittest.TestCase):
         HTTP_409_CONFLICT=409,
       ),
     )
+    fake_httpx = SimpleNamespace(Client=MagicMock(), Limits=MagicMock())
     fake_supabase = SimpleNamespace(Client=object, create_client=MagicMock())
-    with patch.dict(sys.modules, {"fastapi": fake_fastapi, "supabase": fake_supabase}):
+    with patch.dict(sys.modules, {"fastapi": fake_fastapi, "httpx": fake_httpx, "supabase": fake_supabase}):
       from app.analysis import pipeline
 
     sys.modules[pipeline.__name__] = pipeline
@@ -614,6 +615,54 @@ class PipelineFallbackTest(unittest.TestCase):
       tracker.track.call_args.kwargs["rep_windows"],
       [{"rep_index": 1, "start": 0.5, "bottom": 1.2, "end": 2.0}],
     )
+
+  def test_analyze_saves_stage_timings_and_completes_before_asset_finalization(self) -> None:
+    pipeline = self._import_pipeline()
+    repository = self._repository()
+    storage = MagicMock()
+    storage.download_to_tempfile.return_value = "/tmp/video.mov"
+    estimator = MagicMock()
+    estimator.config = PoseEstimatorConfig(pose_backend="hybrid", pose_fallback_enabled=True)
+    estimator.run.return_value = self._estimation()
+    call_order: list[str] = []
+
+    def save_analysis_result(*_args) -> None:
+      call_order.append("save_analysis_result")
+
+    def update_video(_video_id: str, payload: dict) -> None:
+      if payload.get("status"):
+        call_order.append(f"status:{payload['status']}")
+
+    def finalize_assets(**_kwargs) -> None:
+      call_order.append("finalize_storage_assets")
+
+    repository.save_analysis_result.side_effect = save_analysis_result
+    repository.update_video.side_effect = update_video
+
+    with (
+      patch("app.analysis.pipeline.VideoRepository", return_value=repository),
+      patch("app.analysis.pipeline.StorageService", return_value=storage),
+      patch("app.analysis.pipeline.get_settings", return_value=SimpleNamespace(model_version="test-model")),
+      patch("app.analysis.pipeline.PoseEstimator", return_value=estimator),
+      patch("app.analysis.pipeline._attach_barbell_tracking"),
+      patch("app.analysis.pipeline._refresh_pressing_result_from_barbell", side_effect=lambda result, **_kwargs: result),
+      patch("app.analysis.pipeline._finalize_storage_assets", side_effect=finalize_assets),
+      patch("app.analysis.pipeline._analyze_squat_result", return_value=self._depth_result(status="hit_depth", delta_px=12.0)),
+    ):
+      pipeline.analyze_video("video-1")
+
+    saved_result = repository.save_analysis_result.call_args.args[2]
+    timings = saved_result["analysis_stage_timings_ms"]
+    self.assertIn("download_source", timings)
+    self.assertIn("pose_estimation", timings)
+    self.assertIn("pin_assistance", timings)
+    self.assertIn("exercise_metrics", timings)
+    self.assertIn("barbell_tracking", timings)
+    self.assertIn("analysis_payload_ready", timings)
+    self.assertEqual(saved_result["diagnostics"]["analysis_stage_timings_ms"], timings)
+    self.assertEqual(saved_result["video_metadata"]["analysis_stage_timings_ms"], timings)
+    self.assertLess(call_order.index("save_analysis_result"), call_order.index("status:completed"))
+    self.assertLess(call_order.index("status:completed"), call_order.index("finalize_storage_assets"))
 
   def test_analyze_skips_barbell_path_for_unsupported_non_side_video(self) -> None:
     pipeline = self._import_pipeline()

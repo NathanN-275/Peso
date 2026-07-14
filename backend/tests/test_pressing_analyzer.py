@@ -82,6 +82,24 @@ class PressingAnalyzerTest(unittest.TestCase):
     self.assertIn("low_tracking_confidence", result["reps"][0]["flags"])
     self.assertNotIn("front_view_asymmetry", result["reps"][0]["flags"])
 
+  def test_selected_side_uses_the_pin_guided_arm_for_elbow_metrics(self) -> None:
+    frames = [frame(index, wrist_y) for index, wrist_y in enumerate([0.34, 0.56, 0.33])]
+    for current in frames:
+      current["landmarks"]["right_elbow"] = landmark(0.58, 0.45, 0.9)
+      current["landmarks"]["right_wrist"] = landmark(0.68, 0.45, 0.9)
+
+    result = PressingAnalyzer().analyze(
+      video_id="video-1",
+      exercise_type="bench press",
+      view_type="side",
+      frames=frames,
+      sampled_frame_count=len(frames),
+      selected_side="right",
+    )
+
+    self.assertEqual(result["diagnostics"]["pressing_analysis"]["selected_side"], "right")
+    self.assertAlmostEqual(result["reps"][0]["top_elbow_angle"], 90.0, places=1)
+
 
 if __name__ == "__main__":
   unittest.main()

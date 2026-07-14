@@ -14,6 +14,7 @@ from app.analysis.barbell_tracking import tracker as tracker_module
 from app.analysis.barbell_tracker import (
   BarbellTracker,
   Candidate,
+  _bridge_isolated_motion_outliers,
   _remove_motion_outliers,
   _validate_collar_geometry,
 )
@@ -1395,6 +1396,30 @@ class BarbellTrackerTest(unittest.TestCase):
 
     self.assertEqual(removed_count, 1)
     self.assertNotIn(points[1], filtered)
+
+  def test_isolated_motion_spike_is_bridged_before_outlier_removal(self) -> None:
+    points = [
+      {"time": 0.0, "x": 0.40, "y": 0.50, "confidence": 0.9, "trackingState": "automatic"},
+      {"time": 0.1, "x": 0.74, "y": 0.18, "confidence": 0.8, "trackingState": "automatic"},
+      {"time": 0.2, "x": 0.44, "y": 0.51, "confidence": 0.9, "trackingState": "automatic"},
+    ]
+
+    bridged, bridged_count = _bridge_isolated_motion_outliers(
+      points,
+      width=320,
+      height=240,
+    )
+    filtered, removed_count = _remove_motion_outliers(bridged)
+
+    self.assertEqual(bridged_count, 1)
+    self.assertEqual(removed_count, 0)
+    self.assertEqual(len(filtered), 3)
+    self.assertEqual(filtered[1]["trackingState"], "estimated")
+    self.assertEqual(filtered[1]["selectedSource"], "motion_outlier_bridge")
+    self.assertTrue(filtered[1]["outlierBridged"])
+    self.assertAlmostEqual(filtered[1]["x"], 0.42, places=4)
+    self.assertAlmostEqual(filtered[1]["y"], 0.505, places=4)
+    self.assertEqual(filtered[1]["rawAutomaticPoint"]["x"], 0.74)
 
   def test_smoothing_reduces_manual_jitter_but_preserves_reference_pin(self) -> None:
     points = [

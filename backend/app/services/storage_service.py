@@ -6,10 +6,10 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import httpx
 from fastapi import HTTPException, status
 
 from .config import get_settings
+from .http_client import get_pooled_http_client
 from .supabase_client import get_supabase_admin_client
 
 
@@ -72,6 +72,7 @@ class StorageService:
     self.bucket = bucket or settings.video_bucket
     self.max_video_upload_bytes = settings.max_video_upload_bytes
     self.download_signed_url_ttl_seconds = settings.storage_download_signed_url_ttl_seconds
+    self.download_timeout_seconds = settings.supabase_storage_timeout_seconds
     self.client = get_supabase_admin_client()
 
   def get_object_info(self, storage_path: str) -> dict[str, Any]:
@@ -148,7 +149,12 @@ class StorageService:
       with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
         temp_path = Path(temp_file.name)
 
-        with httpx.stream("GET", signed_url, timeout=60, follow_redirects=True) as response:
+        with get_pooled_http_client().stream(
+          "GET",
+          signed_url,
+          timeout=self.download_timeout_seconds,
+          follow_redirects=True,
+        ) as response:
           response.raise_for_status()
 
           for chunk in response.iter_bytes():
