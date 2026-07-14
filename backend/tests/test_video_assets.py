@@ -3,9 +3,11 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import cv2
 
+from app.services.config import get_settings
 from app.services.video_assets import (
   THUMBNAIL_VERSION,
   build_thumbnail_storage_path,
@@ -14,6 +16,24 @@ from app.services.video_assets import (
 
 
 class VideoAssetsTest(unittest.TestCase):
+  def setUp(self) -> None:
+    self.env_patcher = patch.dict(
+      "os.environ",
+      {
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+        "SUPABASE_JWT_SECRET": "secret",
+        "CLEANUP_JOB_TOKEN": "cleanup-secret",
+      },
+      clear=False,
+    )
+    self.env_patcher.start()
+    get_settings.cache_clear()
+
+  def tearDown(self) -> None:
+    self.env_patcher.stop()
+    get_settings.cache_clear()
+
   def test_thumbnail_path_uses_current_version(self) -> None:
     self.assertEqual(THUMBNAIL_VERSION, "thumb-v3")
     self.assertTrue(

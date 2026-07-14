@@ -6,18 +6,20 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import HTTPException, status
 
 from .config import get_settings
 from .supabase_client import get_supabase_admin_client
 
 
-ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v"}
+ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm"}
 ALLOWED_VIDEO_MIME_TYPES = {
   "video/mp4",
   "video/quicktime",
   "video/x-m4v",
   "video/m4v",
+  "video/webm",
 }
 DEFAULT_CACHE_CONTROL_SECONDS = "3600"
 IMMUTABLE_CACHE_CONTROL_SECONDS = "31536000"
@@ -65,10 +67,11 @@ def _storage_item_is_folder(item: dict[str, Any]) -> bool:
 
 
 class StorageService:
-  def __init__(self) -> None:
+  def __init__(self, bucket: str | None = None) -> None:
     settings = get_settings()
-    self.bucket = settings.video_bucket
+    self.bucket = bucket or settings.video_bucket
     self.max_video_upload_bytes = settings.max_video_upload_bytes
+    self.download_signed_url_ttl_seconds = settings.storage_download_signed_url_ttl_seconds
     self.client = get_supabase_admin_client()
 
   def get_object_info(self, storage_path: str) -> dict[str, Any]:
@@ -102,16 +105,18 @@ class StorageService:
     if extension not in ALLOWED_VIDEO_EXTENSIONS:
       raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Unsupported video file type. Upload an MP4, MOV, or M4V file.",
+        detail="Unsupported video file type. Upload an MP4, MOV, M4V, or WebM file.",
       )
 
     object_info = self.get_object_info(storage_path)
     mime_type = _metadata_value(object_info, "mimetype", "mimeType", "contentType", "content_type")
 
-    if not isinstance(mime_type, str) or mime_type.lower() not in ALLOWED_VIDEO_MIME_TYPES:
+    normalized_mime_type = mime_type.split(";", 1)[0].strip().lower() if isinstance(mime_type, str) else None
+
+    if normalized_mime_type not in ALLOWED_VIDEO_MIME_TYPES:
       raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Unsupported video MIME type. Upload an MP4, MOV, or M4V video.",
+        detail="Unsupported video MIME type. Upload an MP4, MOV, M4V, or WebM video.",
       )
 
     size_bytes = _parse_size_bytes(
@@ -126,7 +131,7 @@ class StorageService:
 
     if size_bytes > self.max_video_upload_bytes:
       raise HTTPException(
-        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
         detail="Uploaded video exceeds the configured analysis limit.",
       )
 
@@ -134,13 +139,45 @@ class StorageService:
 
   def download_to_tempfile(self, storage_path: str) -> Path:
     self.validate_video_object(storage_path)
-    file_bytes = self.client.storage.from_(self.bucket).download(storage_path)
-    logger.info("Downloaded storage object path=%s size_bytes=%s", storage_path, len(file_bytes))
     suffix = Path(storage_path).suffix or ".mp4"
+    signed_url = self.create_signed_url(storage_path, expires_in=self.download_signed_url_ttl_seconds)
+    temp_path: Path | None = None
+    downloaded_bytes = 0
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
-      temp_file.write(file_bytes)
-      return Path(temp_file.name)
+    try:
+      with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+        temp_path = Path(temp_file.name)
+
+        with httpx.stream("GET", signed_url, timeout=60, follow_redirects=True) as response:
+          response.raise_for_status()
+
+          for chunk in response.iter_bytes():
+            if not chunk:
+              continue
+
+            downloaded_bytes += len(chunk)
+
+            if downloaded_bytes > self.max_video_upload_bytes:
+              raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail="Downloaded video exceeds the configured analysis limit.",
+              )
+
+            temp_file.write(chunk)
+    except HTTPException:
+      if temp_path:
+        self.remove_tempfile(temp_path)
+      raise
+    except Exception as error:
+      if temp_path:
+        self.remove_tempfile(temp_path)
+      raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="Unable to download uploaded video from storage.",
+      ) from error
+
+    logger.info("Downloaded storage object path=%s size_bytes=%s", storage_path, downloaded_bytes)
+    return temp_path
 
   def remove_tempfile(self, path: Path) -> None:
     try:

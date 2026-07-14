@@ -4,6 +4,8 @@ import type {
   SavedVideo,
   VideoAnalysisStatus,
   VideoStatusResponse,
+  SavedVideoOverview,
+  SavedVideosPage,
 } from '../src/types/videoAnalysis';
 import { Platform } from 'react-native';
 import {
@@ -11,22 +13,95 @@ import {
   getBackendConnectionDiagnostics,
   resolveBackendApiConfig,
 } from './backendConfig';
+import {
+  buildAnalyzedVideoExportPayload,
+  buildRegisterUploadedVideoPayload,
+} from './videoRequestPayloadPolicy';
 
 let loggedBackendConfig = false;
 const PLAYBACK_URL_CACHE_TTL_MS = 2 * 60 * 1000;
+const DEFAULT_BACKEND_REQUEST_TIMEOUT_MS = __DEV__ ? 10_000 : 30_000;
+const HEALTH_CHECK_TIMEOUT_MS = __DEV__ ? 3_000 : 8_000;
+const EXPORT_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 const playbackUrlCache = new Map<string, { url: string; expiresAt: number }>();
+
+type BackendRequestInit = RequestInit & {
+  timeoutMs?: number;
+};
+
+class BackendRequestTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Request timed out after ${Math.round(timeoutMs / 1000)}s.`);
+    this.name = 'BackendRequestTimeoutError';
+  }
+}
 
 function ensureBackendApiUrl() {
   // Fail fast when the backend URL is missing.
   const backend = resolveBackendApiConfig();
 
   if (!backend.url) {
-    throw new Error(
+    throw new Error(backend.error ?? (
       'Missing video analysis backend URL. Set EXPO_PUBLIC_BACKEND_URL before building or running the production app.'
-    );
+    ));
   }
 
   return backend;
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  externalSignal?: AbortSignal
+) {
+  const controller = new AbortController();
+  let didTimeout = false;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  const handleExternalAbort = () => {
+    controller.abort();
+  };
+
+  if (externalSignal?.aborted) {
+    controller.abort();
+  } else {
+    externalSignal?.addEventListener('abort', handleExternalAbort, { once: true });
+  }
+
+  if (timeoutMs > 0) {
+    timeoutId = setTimeout(() => {
+      didTimeout = true;
+      controller.abort();
+    }, timeoutMs);
+  }
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (didTimeout) {
+      throw new BackendRequestTimeoutError(timeoutMs);
+    }
+
+    throw error;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+
+    externalSignal?.removeEventListener('abort', handleExternalAbort);
+  }
+}
+
+function summarizeError(error: unknown, fallbackMessage: string) {
+  return error instanceof Error ? error.message : fallbackMessage;
+}
+
+function getFirstMessageLine(message: string) {
+  return message.split('\n').find((line) => line.trim().length > 0)?.trim() || message;
 }
 
 function getWebLoopbackFallbackUrl(requestUrl: string) {
@@ -113,12 +188,19 @@ function buildBackendUnreachableMessage({
   ].join('\n');
 }
 
-async function requestJson<T>(path: string, accessToken?: string, init?: RequestInit): Promise<T> {
+async function requestJson<T>(path: string, accessToken?: string, init: BackendRequestInit = {}): Promise<T> {
   // Every backend call flows through this helper.
   const backend = ensureBackendApiUrl();
   const requestUrl = `${backend.url}${path}`;
-  const method = init?.method ?? 'GET';
-  const hasBody = typeof init?.body !== 'undefined';
+  const {
+    timeoutMs = DEFAULT_BACKEND_REQUEST_TIMEOUT_MS,
+    signal,
+    headers: initHeaders,
+    ...fetchInit
+  } = init;
+  const externalSignal = signal ?? undefined;
+  const method = fetchInit.method ?? 'GET';
+  const hasBody = typeof fetchInit.body !== 'undefined';
   let response: Response;
 
   if (__DEV__ && !loggedBackendConfig) {
@@ -140,18 +222,18 @@ async function requestJson<T>(path: string, accessToken?: string, init?: Request
     const headers: HeadersInit = {
       ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-      ...(init?.headers ?? {}),
+      ...(initHeaders ?? {}),
     };
     const requestOptions = {
-      ...init,
+      ...fetchInit,
       headers,
     };
 
     try {
       // Try the configured backend URL first.
-      response = await fetch(requestUrl, requestOptions);
+      response = await fetchWithTimeout(requestUrl, requestOptions, timeoutMs, externalSignal);
     } catch (error) {
-      if (init?.signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+      if (externalSignal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
         throw error;
       }
       const fallbackUrl = getWebLoopbackFallbackUrl(requestUrl);
@@ -168,14 +250,14 @@ async function requestJson<T>(path: string, accessToken?: string, init?: Request
         });
       }
 
-      response = await fetch(fallbackUrl, requestOptions);
+      response = await fetchWithTimeout(fallbackUrl, requestOptions, timeoutMs, externalSignal);
     }
   } catch (error) {
-    if (init?.signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+    if (externalSignal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
       throw error;
     }
     // Expand network failures with the exact URL and environment details.
-    const message = error instanceof Error ? error.message : 'Unknown network error.';
+    const message = summarizeError(error, 'Unknown network error.');
     const fallbackUrl = getWebLoopbackFallbackUrl(requestUrl);
     const diagnostics = getBackendConnectionDiagnostics();
 
@@ -231,9 +313,46 @@ export type VideoCapabilitiesResponse = {
   reason: string | null;
 };
 
-export async function testBackendConnection(signal?: AbortSignal) {
+export type AnalyzedVideoExportOptions = {
+  pose: boolean;
+  barbell: boolean;
+};
+
+export type RegisterUploadedVideoRequest = {
+  storage_path: string;
+  source_type: 'camera' | 'camera_roll';
+  exercise_type: string;
+  view_type: string;
+  duration_ms: number | null;
+  tracking_setup?: unknown;
+};
+
+export async function testBackendConnection(signal?: AbortSignal, timeoutMs = HEALTH_CHECK_TIMEOUT_MS) {
   // Health checks confirm the backend is reachable before upload starts.
-  return requestJson<{ status: string }>('/health', undefined, { signal });
+  return requestJson<{ status: string }>('/health', undefined, { signal, timeoutMs });
+}
+
+export async function describeBackendRequestFailure(error: unknown, fallbackMessage: string) {
+  const requestMessage = summarizeError(error, fallbackMessage);
+  const diagnostics = getBackendConnectionDiagnostics();
+
+  try {
+    await testBackendConnection(undefined, HEALTH_CHECK_TIMEOUT_MS);
+
+    return [
+      requestMessage,
+      `Health check succeeded at ${diagnostics.url}/health, so the backend is running but this request failed.`,
+    ].join('\n');
+  } catch (healthError) {
+    const healthMessage = getFirstMessageLine(
+      summarizeError(healthError, 'Backend health check failed.')
+    );
+
+    return [
+      requestMessage,
+      `Health check failed for ${diagnostics.url}/health: ${healthMessage}`,
+    ].join('\n');
+  }
 }
 
 export async function fetchStorageUsage(uploadSizeBytes: number, accessToken: string) {
@@ -246,6 +365,30 @@ export async function fetchStorageUsage(uploadSizeBytes: number, accessToken: st
 
 export async function fetchVideoCapabilities(accessToken: string) {
   return requestJson<VideoCapabilitiesResponse>('/videos/capabilities', accessToken);
+}
+
+export async function registerUploadedVideo(payload: RegisterUploadedVideoRequest, accessToken: string) {
+  const requestPayload = buildRegisterUploadedVideoPayload(payload);
+
+  return requestJson<{
+    video_id: string;
+    status: 'uploaded';
+    storage_path: string;
+    uploaded_size_bytes: number;
+  }>('/videos', accessToken, {
+    method: 'POST',
+    body: JSON.stringify(requestPayload),
+  });
+}
+
+export async function markVideoUploadFailed(videoId: string, accessToken: string) {
+  return requestJson<{ video_id: string; status: 'failed' }>(
+    `/videos/${videoId}/upload-failed`,
+    accessToken,
+    {
+      method: 'POST',
+    }
+  );
 }
 
 export async function triggerVideoAnalysis(videoId: string, accessToken: string, signal?: AbortSignal) {
@@ -272,9 +415,38 @@ export async function fetchAnalysisResult(videoId: string, accessToken: string, 
   return requestJson<AnalysisResponse>(`/analysis/${videoId}`, accessToken, { signal });
 }
 
-export async function getSavedVideos(accessToken: string) {
+export async function getSavedVideos(accessToken: string, signal?: AbortSignal) {
   // Saved video lists include thumbnail URLs only; playback URLs are fetched on demand.
-  return requestJson<SavedVideo[]>('/videos/saved', accessToken);
+  return requestJson<SavedVideo[]>('/videos/saved', accessToken, { signal });
+}
+
+export async function getSavedVideosPage(
+  accessToken: string,
+  options: {
+    exerciseType?: string | null;
+    limit?: number;
+    cursor?: string | null;
+  } = {},
+  signal?: AbortSignal
+) {
+  const params = new URLSearchParams();
+  const normalizedLimit = Math.max(1, Math.min(50, Math.floor(options.limit ?? 20)));
+
+  params.set('limit', `${normalizedLimit}`);
+
+  if (options.exerciseType) {
+    params.set('exercise_type', options.exerciseType);
+  }
+
+  if (options.cursor) {
+    params.set('cursor', options.cursor);
+  }
+
+  return requestJson<SavedVideosPage>(`/videos/saved-page?${params.toString()}`, accessToken, { signal });
+}
+
+export async function getSavedVideoOverview(accessToken: string, signal?: AbortSignal) {
+  return requestJson<SavedVideoOverview>('/videos/saved-overview', accessToken, { signal });
 }
 
 export async function getVideoPlaybackUrl(videoId: string, accessToken: string) {
@@ -314,20 +486,35 @@ export async function saveAnalyzedVideo(videoId: string, accessToken: string) {
   );
 }
 
-export async function exportAnalyzedVideo(videoId: string, accessToken: string) {
-  // Render and sign an analyzed copy with the pose overlay burned in.
+export async function exportAnalyzedVideo(
+  videoId: string,
+  accessToken: string,
+  options: AnalyzedVideoExportOptions = { pose: true, barbell: false }
+) {
+  const requestPayload = buildAnalyzedVideoExportPayload(options);
+
+  // Render and sign an analyzed copy with the requested overlays burned in.
   return requestJson<{
     video_id: string;
     analysis_id: string;
     storage_path: string;
     export_url: string;
+    variant: string;
   }>(
     `/videos/${videoId}/analyzed-export`,
     accessToken,
     {
       method: 'POST',
+      body: JSON.stringify(requestPayload),
+      timeoutMs: EXPORT_REQUEST_TIMEOUT_MS,
     }
   );
+}
+
+export async function deleteAccount(accessToken: string) {
+  return requestJson<{ deleted: boolean }>('/account', accessToken, {
+    method: 'DELETE',
+  });
 }
 
 export async function getSavedVideoPlaybackUrl(videoId: string, accessToken: string) {

@@ -9,6 +9,7 @@ from typing import Any
 from .config import Settings, get_settings
 from .storage_service import StorageService
 from .video_repository import VideoRepository
+from .video_storage_paths import storage_path_belongs_to_user
 
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,10 @@ class StorageCleanupReport:
 
 
 def cleanup_requires_token(settings: Settings) -> bool:
-  return settings.backend_env not in LOCAL_DEVELOPMENT_ENVS
+  return not (
+    settings.backend_env in LOCAL_DEVELOPMENT_ENVS
+    and settings.allow_unauthenticated_dev_cleanup
+  )
 
 
 def _parse_datetime(value: Any) -> datetime | None:
@@ -189,10 +193,11 @@ class StorageCleanupService:
     referenced_paths: set[str] = set()
 
     for video in videos:
+      user_id = str(video.get("user_id") or "")
       for key in ("storage_path", "original_storage_path", "playback_path", "thumbnail_path"):
         path = video.get(key)
 
-        if isinstance(path, str) and path:
+        if isinstance(path, str) and storage_path_belongs_to_user(path, user_id):
           referenced_paths.add(path)
 
     return referenced_paths
@@ -248,9 +253,14 @@ class StorageCleanupService:
         continue
 
       source_path = video.get("storage_path")
+      user_id = str(video.get("user_id") or "")
 
-      if not isinstance(source_path, str) or not is_app_storage_path(source_path):
-        report.errors.append(f"Skipped video {video_id} because its storage path is outside the app layout.")
+      if (
+        not isinstance(source_path, str)
+        or not is_app_storage_path(source_path)
+        or not storage_path_belongs_to_user(source_path, user_id)
+      ):
+        report.errors.append(f"Skipped video {video_id} because its storage path is outside the owning user folder.")
         continue
 
       if reason == "expired":
@@ -307,11 +317,16 @@ class StorageCleanupService:
 
   def _video_storage_paths(self, video: dict[str, Any]) -> list[str]:
     storage_paths: list[str] = []
+    user_id = str(video.get("user_id") or "")
 
     for key in ("storage_path", "original_storage_path", "playback_path", "thumbnail_path"):
       path = video.get(key)
 
-      if isinstance(path, str) and is_app_storage_path(path):
+      if (
+        isinstance(path, str)
+        and is_app_storage_path(path)
+        and storage_path_belongs_to_user(path, user_id)
+      ):
         storage_paths.append(path)
 
     return storage_paths

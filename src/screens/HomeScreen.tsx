@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Image,
   Pressable,
   ScrollView,
@@ -11,10 +10,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
-import { getSavedVideos } from '../../lib/backendApi';
-import type { SavedVideo } from '../../lib/backendApi';
+import { describeBackendRequestFailure, getSavedVideoOverview } from '../../lib/backendApi';
 import BottomNav, { NAV_HEIGHT } from '../components/BottomNav';
+import { SkeletonBlock } from '../components/Skeleton';
 import tokens from '../theme/tokens';
+import type { SavedVideo, SavedVideoOverview } from '../types/videoAnalysis';
 import {
   formatExerciseLabel,
 } from '../utils/savedVideos';
@@ -23,13 +23,17 @@ type HomeScreenProps = {
   email?: string | null;
   refreshKey?: number;
   onNavigateToAddVideo?: () => void;
+  onNavigateToProfile?: () => void;
   onOpenSavedLiftFolder?: (exerciseType: string) => void;
-  onSavedVideosLoaded?: (videos: SavedVideo[]) => void;
+  cachedSavedOverview?: SavedVideoOverview | null;
+  savedOverviewLoaded?: boolean;
+  onSavedOverviewLoaded?: (overview: SavedVideoOverview) => void;
 };
 
 type SavedVideoGroup = {
   exerciseType: string;
   label: string;
+  count: number;
   videos: SavedVideo[];
 };
 
@@ -37,20 +41,25 @@ const MAX_PREVIEW_TILES = 4;
 const FOLDER_HEIGHT = 208;
 const PREVIEW_TILE_HEIGHT = FOLDER_HEIGHT / 2;
 const PREVIEW_TILE_WIDTH = 96;
+const EMPTY_SAVED_OVERVIEW: SavedVideoOverview = {
+  stats: {
+    total_saved: 0,
+    exercise_count: 0,
+    total_reps: 0,
+    latest_exercise_type: null,
+    latest_saved_at: null,
+    most_trained_exercise_type: null,
+    most_trained_count: 0,
+  },
+  groups: [],
+};
 
-function groupSavedVideos(videos: SavedVideo[]): SavedVideoGroup[] {
-  const groups = new Map<string, SavedVideo[]>();
-
-  for (const video of videos) {
-    const currentVideos = groups.get(video.exercise_type) ?? [];
-    currentVideos.push(video);
-    groups.set(video.exercise_type, currentVideos);
-  }
-
-  return Array.from(groups.entries()).map(([exerciseType, groupVideos]) => ({
-    exerciseType,
-    label: formatExerciseLabel(exerciseType),
-    videos: groupVideos,
+function groupSavedOverview(overview: SavedVideoOverview | null): SavedVideoGroup[] {
+  return (overview?.groups ?? []).map((group) => ({
+    exerciseType: group.exercise_type,
+    label: formatExerciseLabel(group.exercise_type),
+    count: group.count,
+    videos: group.preview_items,
   }));
 }
 
@@ -83,7 +92,7 @@ function LiftFolderCard({
   onPress?: () => void;
 }) {
   const previewVideos = group.videos.slice(0, MAX_PREVIEW_TILES);
-  const extraCount = Math.max(group.videos.length - previewVideos.length, 0);
+  const extraCount = Math.max(group.count - previewVideos.length, 0);
 
   return (
     <View style={styles.folderBlock}>
@@ -106,28 +115,68 @@ function LiftFolderCard({
   );
 }
 
+function SavedFoldersSkeleton() {
+  return (
+    <View style={styles.skeletonList}>
+      {[0, 1, 2].map((index) => (
+        <View key={index} style={styles.skeletonFolder}>
+          <SkeletonBlock width="54%" height={32} radius={6} style={styles.skeletonTitle} />
+          <View style={styles.skeletonPreviewStrip}>
+            {[0, 1, 2, 3].map((tileIndex) => (
+              <SkeletonBlock
+                key={tileIndex}
+                width={PREVIEW_TILE_WIDTH}
+                height={PREVIEW_TILE_HEIGHT}
+                radius={0}
+              />
+            ))}
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export default function HomeScreen({
   refreshKey = 0,
   onNavigateToAddVideo,
+  onNavigateToProfile,
   onOpenSavedLiftFolder,
-  onSavedVideosLoaded,
+  cachedSavedOverview = null,
+  savedOverviewLoaded = false,
+  onSavedOverviewLoaded,
 }: HomeScreenProps) {
-  const { session, signOut } = useAuth();
-  const [submitting, setSubmitting] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [savedVideos, setSavedVideos] = useState<SavedVideo[]>([]);
+  const { session } = useAuth();
+  const [loading, setLoading] = useState(!savedOverviewLoaded);
+  const [savedOverview, setSavedOverview] = useState<SavedVideoOverview | null>(cachedSavedOverview);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [logoutError, setLogoutError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    if (!savedOverviewLoaded) {
+      return;
+    }
+
+    setSavedOverview(cachedSavedOverview);
+    setLoadError(null);
+    setLoading(false);
+  }, [cachedSavedOverview, savedOverviewLoaded]);
+
+  useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
 
     const loadSavedVideos = async () => {
       if (!session?.access_token) {
         setLoading(false);
-        setSavedVideos([]);
-        onSavedVideosLoaded?.([]);
+        setSavedOverview(EMPTY_SAVED_OVERVIEW);
+        onSavedOverviewLoaded?.(EMPTY_SAVED_OVERVIEW);
+        return;
+      }
+
+      if (savedOverviewLoaded) {
+        setLoading(false);
+        setLoadError(null);
         return;
       }
 
@@ -135,30 +184,40 @@ export default function HomeScreen({
       setLoadError(null);
 
       try {
-        const videos = await getSavedVideos(session.access_token);
+        const overview = await getSavedVideoOverview(session.access_token, controller.signal);
 
         if (cancelled) {
           return;
         }
 
         if (__DEV__) {
-          const missingThumbnailCount = videos.filter((video) => !video.thumbnail_url).length;
+          const previewVideos = overview.groups.flatMap((group) => group.preview_items);
+          const missingThumbnailCount = previewVideos.filter((video) => !video.thumbnail_url).length;
 
           if (missingThumbnailCount > 0) {
-            console.warn('Saved videos missing thumbnail URLs.', {
+            console.warn('Saved overview previews missing thumbnail URLs.', {
               count: missingThumbnailCount,
-              videoIds: videos
+              videoIds: previewVideos
                 .filter((video) => !video.thumbnail_url)
                 .map((video) => video.id),
             });
           }
         }
 
-        setSavedVideos(videos);
-        onSavedVideosLoaded?.(videos);
+        setSavedOverview(overview);
+        onSavedOverviewLoaded?.(overview);
       } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          return;
+        }
+
+        const message = await describeBackendRequestFailure(
+          error,
+          'Unable to load saved videos.'
+        );
+
         if (!cancelled) {
-          setLoadError(error instanceof Error ? error.message : 'Unable to load saved videos.');
+          setLoadError(message);
         }
       } finally {
         if (!cancelled) {
@@ -171,38 +230,15 @@ export default function HomeScreen({
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [session?.access_token, refreshKey, reloadKey]);
+  }, [session?.access_token, refreshKey, reloadKey, savedOverviewLoaded]);
 
-  const groups = useMemo(() => groupSavedVideos(savedVideos), [savedVideos]);
-
-  const handleLogout = async () => {
-    setSubmitting(true);
-    setLogoutError(null);
-
-    try {
-      await signOut();
-    } catch (error) {
-      setLogoutError(error instanceof Error ? error.message : 'Unable to log out.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  const groups = useMemo(() => groupSavedOverview(savedOverview), [savedOverview]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        <View style={styles.header}>
-          <Pressable
-            onPress={handleLogout}
-            disabled={submitting}
-            accessibilityRole="button"
-            style={[styles.logoutButton, submitting && styles.disabledButton]}
-          >
-            <Text style={styles.logoutText}>{submitting ? 'Logging Out...' : 'Log Out'}</Text>
-          </Pressable>
-        </View>
-
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
@@ -211,10 +247,7 @@ export default function HomeScreen({
           <Text style={styles.pageTitle}>Saved Lifts</Text>
 
           {loading ? (
-            <View style={styles.stateBlock}>
-              <ActivityIndicator color={tokens.colors.brand} />
-              <Text style={styles.stateText}>Loading saved videos...</Text>
-            </View>
+            <SavedFoldersSkeleton />
           ) : null}
 
           {!loading && loadError ? (
@@ -253,10 +286,14 @@ export default function HomeScreen({
             </View>
           ) : null}
 
-          {logoutError ? <Text style={styles.errorText}>{logoutError}</Text> : null}
         </ScrollView>
 
-        <BottomNav activeTab="home" onHomePress={() => {}} onAddPress={onNavigateToAddVideo} />
+        <BottomNav
+          activeTab="home"
+          onHomePress={() => {}}
+          onAddPress={onNavigateToAddVideo}
+          onProfilePress={onNavigateToProfile}
+        />
       </View>
     </SafeAreaView>
   );
@@ -271,34 +308,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000',
   },
-  header: {
-    minHeight: 58,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    paddingHorizontal: 18,
-    paddingTop: 6,
-  },
-  logoutButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: tokens.colors.brand,
-    borderRadius: 999,
-  },
-  logoutText: {
-    color: tokens.colors.brand,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  disabledButton: {
-    opacity: 0.6,
-  },
   scroll: {
     flex: 1,
   },
   scrollContent: {
     paddingHorizontal: 0,
+    paddingTop: 40,
     paddingBottom: NAV_HEIGHT + 34,
   },
   pageTitle: {
@@ -312,6 +327,21 @@ const styles = StyleSheet.create({
   },
   folderList: {
     gap: 24,
+  },
+  skeletonList: {
+    gap: 24,
+  },
+  skeletonFolder: {
+    gap: 8,
+  },
+  skeletonTitle: {
+    marginHorizontal: 14,
+  },
+  skeletonPreviewStrip: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 2,
+    overflow: 'hidden',
   },
   folderBlock: {
     gap: 6,
@@ -367,11 +397,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 12,
-  },
-  stateText: {
-    color: tokens.colors.textMuted,
-    fontSize: 14,
-    lineHeight: 20,
+    paddingHorizontal: 18,
   },
   errorText: {
     color: '#FF8A8A',

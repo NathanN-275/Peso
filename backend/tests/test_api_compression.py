@@ -16,6 +16,7 @@ class ApiCompressionTest(unittest.TestCase):
         "SUPABASE_URL": "https://example.supabase.co",
         "SUPABASE_SERVICE_ROLE_KEY": "service-role",
         "SUPABASE_JWT_SECRET": "jwt-secret",
+        "CLEANUP_JOB_TOKEN": "cleanup-secret",
       },
       clear=False,
     ):

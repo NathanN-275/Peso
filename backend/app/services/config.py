@@ -37,6 +37,14 @@ DEFAULT_PLAYBACK_STORAGE_ESTIMATE_RATIO = 1.0
 DEFAULT_THUMBNAIL_STORAGE_ALLOWANCE_BYTES = 1024 * 1024
 DEFAULT_ANALYSIS_JOB_LEASE_SECONDS = 60 * 60
 DEFAULT_ANALYSIS_WORKER_POLL_SECONDS = 5
+DEFAULT_MAX_USER_IN_PROGRESS_VIDEOS = 3
+DEFAULT_MAX_USER_UPLOADS_PER_HOUR = 20
+DEFAULT_MAX_VIDEO_DURATION_MS = 5 * 60 * 1000
+DEFAULT_SIGNED_URL_TTL_SECONDS = 300
+DEFAULT_STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS = 120
+DEFAULT_FFMPEG_TIMEOUT_SECONDS = 120
+DEFAULT_MAX_GLOBAL_VIDEO_WORKERS = 2
+DEFAULT_EXPORT_COOLDOWN_SECONDS = 30
 
 
 @dataclass(frozen=True)
@@ -67,6 +75,16 @@ class Settings:
   thumbnail_storage_allowance_bytes: int = DEFAULT_THUMBNAIL_STORAGE_ALLOWANCE_BYTES
   analysis_job_lease_seconds: int = DEFAULT_ANALYSIS_JOB_LEASE_SECONDS
   analysis_worker_poll_seconds: int = DEFAULT_ANALYSIS_WORKER_POLL_SECONDS
+  allow_unauthenticated_dev_cleanup: bool = False
+  expose_storage_quota_details: bool = False
+  max_user_in_progress_videos: int = DEFAULT_MAX_USER_IN_PROGRESS_VIDEOS
+  max_user_uploads_per_hour: int = DEFAULT_MAX_USER_UPLOADS_PER_HOUR
+  max_video_duration_ms: int = DEFAULT_MAX_VIDEO_DURATION_MS
+  signed_url_ttl_seconds: int = DEFAULT_SIGNED_URL_TTL_SECONDS
+  storage_download_signed_url_ttl_seconds: int = DEFAULT_STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS
+  ffmpeg_timeout_seconds: int = DEFAULT_FFMPEG_TIMEOUT_SECONDS
+  max_global_video_workers: int = DEFAULT_MAX_GLOBAL_VIDEO_WORKERS
+  export_cooldown_seconds: int = DEFAULT_EXPORT_COOLDOWN_SECONDS
 
 
 def _parse_positive_int_env(name: str, default: int, *aliases: str) -> int:
@@ -106,9 +124,63 @@ def _parse_positive_float_env(name: str, default: float) -> float:
   return parsed_value
 
 
+def _parse_bool_env(name: str, default: bool = False) -> bool:
+  raw_value = os.getenv(name, "").strip().lower()
+
+  if not raw_value:
+    return default
+
+  return raw_value in {"1", "true", "yes", "on"}
+
+
+def _origin_is_local(origin: str) -> bool:
+  return (
+    origin.startswith("http://localhost")
+    or origin.startswith("https://localhost")
+    or origin.startswith("http://127.0.0.1")
+    or origin.startswith("https://127.0.0.1")
+    or origin.startswith("http://0.0.0.0")
+    or origin.startswith("https://0.0.0.0")
+  )
+
+
+def _origin_is_wildcard(origin: str) -> bool:
+  return origin == "*" or origin == "null"
+
+
+def _private_network_origin_regex_is_unsafe(value: str | None) -> bool:
+  if not value:
+    return False
+
+  normalized_value = value.lower()
+  return (
+    "localhost" in normalized_value
+    or "127\\." in normalized_value
+    or "127." in normalized_value
+    or "0\\.0\\.0\\.0" in normalized_value
+    or "0.0.0.0" in normalized_value
+    or "10\\." in normalized_value
+    or "10." in normalized_value
+    or "172\\." in normalized_value
+    or "172." in normalized_value
+    or "192\\.168" in normalized_value
+    or "192\\\\.168" in normalized_value
+    or "192.168" in normalized_value
+  )
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-  backend_env = os.getenv("BACKEND_ENV", "development").strip().lower() or "development"
+  backend_env_raw = os.getenv("BACKEND_ENV", "").strip().lower()
+  deployed_environment = any(
+    os.getenv(name, "").strip()
+    for name in ("RENDER", "RAILWAY_ENVIRONMENT", "FLY_APP_NAME", "VERCEL", "NETLIFY", "AWS_REGION")
+  )
+
+  if not backend_env_raw and deployed_environment:
+    raise RuntimeError("BACKEND_ENV must be explicitly configured in deployed environments.")
+
+  backend_env = backend_env_raw or "development"
   supabase_url = os.getenv("SUPABASE_URL", "").strip()
   supabase_service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
   supabase_jwt_secret = os.getenv("SUPABASE_JWT_SECRET", "").strip()
@@ -175,6 +247,38 @@ def get_settings() -> Settings:
     "ANALYSIS_WORKER_POLL_SECONDS",
     DEFAULT_ANALYSIS_WORKER_POLL_SECONDS,
   )
+  max_user_in_progress_videos = _parse_positive_int_env(
+    "MAX_USER_IN_PROGRESS_VIDEOS",
+    DEFAULT_MAX_USER_IN_PROGRESS_VIDEOS,
+  )
+  max_user_uploads_per_hour = _parse_positive_int_env(
+    "MAX_USER_UPLOADS_PER_HOUR",
+    DEFAULT_MAX_USER_UPLOADS_PER_HOUR,
+  )
+  max_video_duration_ms = _parse_positive_int_env(
+    "MAX_VIDEO_DURATION_MS",
+    DEFAULT_MAX_VIDEO_DURATION_MS,
+  )
+  signed_url_ttl_seconds = _parse_positive_int_env(
+    "SIGNED_URL_TTL_SECONDS",
+    DEFAULT_SIGNED_URL_TTL_SECONDS,
+  )
+  storage_download_signed_url_ttl_seconds = _parse_positive_int_env(
+    "STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS",
+    DEFAULT_STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS,
+  )
+  ffmpeg_timeout_seconds = _parse_positive_int_env(
+    "FFMPEG_TIMEOUT_SECONDS",
+    DEFAULT_FFMPEG_TIMEOUT_SECONDS,
+  )
+  max_global_video_workers = _parse_positive_int_env(
+    "MAX_GLOBAL_VIDEO_WORKERS",
+    DEFAULT_MAX_GLOBAL_VIDEO_WORKERS,
+  )
+  export_cooldown_seconds = _parse_positive_int_env(
+    "EXPORT_COOLDOWN_SECONDS",
+    DEFAULT_EXPORT_COOLDOWN_SECONDS,
+  )
 
   if storage_warning_ratio >= storage_block_ratio or storage_block_ratio > 1:
     raise RuntimeError(
@@ -191,6 +295,11 @@ def get_settings() -> Settings:
     ",".join(DEFAULT_CORS_ORIGINS),
   )
   cors_origins = tuple(origin.strip() for origin in cors_origins_raw.split(",") if origin.strip())
+  allow_unauthenticated_dev_cleanup = _parse_bool_env(
+    "BACKEND_ALLOW_UNAUTHENTICATED_DEV_CLEANUP",
+    False,
+  )
+  expose_storage_quota_details = _parse_bool_env("BACKEND_EXPOSE_STORAGE_QUOTA_DETAILS", False)
   cors_origin_regex = (
     None
     if backend_env in {"production", "prod"}
@@ -201,6 +310,33 @@ def get_settings() -> Settings:
     and os.getenv("BACKEND_CORS_ALLOW_PRIVATE_NETWORK", "true").strip().lower()
     in {"1", "true", "yes", "on"}
   )
+
+  if backend_env in {"production", "prod"}:
+    if not cleanup_job_token:
+      raise RuntimeError("CLEANUP_JOB_TOKEN must be configured in production.")
+
+    if not os.getenv("BACKEND_CORS_ORIGINS", "").strip():
+      raise RuntimeError("BACKEND_CORS_ORIGINS must be explicitly configured in production.")
+
+    if any(_origin_is_local(origin) for origin in cors_origins):
+      raise RuntimeError("BACKEND_CORS_ORIGINS must not include local origins in production.")
+
+    if any(_origin_is_wildcard(origin) for origin in cors_origins):
+      raise RuntimeError("BACKEND_CORS_ORIGINS must not include wildcard origins in production.")
+
+    if _private_network_origin_regex_is_unsafe(os.getenv("BACKEND_CORS_ORIGIN_REGEX", "").strip() or None):
+      raise RuntimeError("BACKEND_CORS_ORIGIN_REGEX must not allow local or private-network origins in production.")
+
+    if _parse_bool_env("BACKEND_CORS_ALLOW_PRIVATE_NETWORK", False):
+      raise RuntimeError("BACKEND_CORS_ALLOW_PRIVATE_NETWORK must not be enabled in production.")
+
+    if os.getenv("POSE_DEBUG_LANDMARK_EXPORT_DIR", "").strip():
+      raise RuntimeError("POSE_DEBUG_LANDMARK_EXPORT_DIR must not be enabled in production.")
+
+  if cleanup_job_token is None and not (
+    backend_env in {"development", "dev", "local", "test"} and allow_unauthenticated_dev_cleanup
+  ):
+    raise RuntimeError("CLEANUP_JOB_TOKEN must be configured unless unauthenticated dev cleanup is explicitly enabled.")
 
   missing = [
     name
@@ -242,4 +378,14 @@ def get_settings() -> Settings:
     thumbnail_storage_allowance_bytes=thumbnail_storage_allowance_bytes,
     analysis_job_lease_seconds=analysis_job_lease_seconds,
     analysis_worker_poll_seconds=analysis_worker_poll_seconds,
+    allow_unauthenticated_dev_cleanup=allow_unauthenticated_dev_cleanup,
+    expose_storage_quota_details=expose_storage_quota_details,
+    max_user_in_progress_videos=max_user_in_progress_videos,
+    max_user_uploads_per_hour=max_user_uploads_per_hour,
+    max_video_duration_ms=max_video_duration_ms,
+    signed_url_ttl_seconds=signed_url_ttl_seconds,
+    storage_download_signed_url_ttl_seconds=storage_download_signed_url_ttl_seconds,
+    ffmpeg_timeout_seconds=ffmpeg_timeout_seconds,
+    max_global_video_workers=max_global_video_workers,
+    export_cooldown_seconds=export_cooldown_seconds,
   )

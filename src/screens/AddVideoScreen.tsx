@@ -8,6 +8,7 @@ type AddVideoScreenProps = {
   onHomePress?: () => void;
   onAddPress?: () => void;
   onProfilePress?: () => void;
+  onRecordVideoPress?: () => void;
   onUploadVideoPress?: () => void;
 };
 
@@ -15,6 +16,7 @@ export default function AddVideoScreen({
   onHomePress,
   onAddPress,
   onProfilePress,
+  onRecordVideoPress,
   onUploadVideoPress,
 }: AddVideoScreenProps) {
   // This screen branches into recording or picking an existing video.
@@ -23,7 +25,7 @@ export default function AddVideoScreen({
       <View style={styles.container}>
         <View style={styles.content}>
           {/* The record action stays first because it is the primary path. */}
-          <Button label="Record New Video" style={styles.actionButton} />
+          <Button label="Record New Video" onPress={onRecordVideoPress} style={styles.actionButton} />
           <Button label="Upload Video" onPress={onUploadVideoPress} style={styles.actionButton} />
         </View>
 

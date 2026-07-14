@@ -144,6 +144,7 @@ export default function ResetPasswordFormScreen({
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry
+                showPasswordToggle
                 textContentType="newPassword"
                 editable={!submitting && passwordRecoveryMode}
               />
@@ -153,6 +154,7 @@ export default function ResetPasswordFormScreen({
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
                 secureTextEntry
+                showPasswordToggle
                 textContentType="newPassword"
                 editable={!submitting && passwordRecoveryMode}
               />

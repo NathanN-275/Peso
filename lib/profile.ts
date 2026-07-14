@@ -1,0 +1,346 @@
+import type { ImagePickerAsset } from 'expo-image-picker';
+import Constants, { AppOwnership } from 'expo-constants';
+import { Platform } from 'react-native';
+import type { User } from '@supabase/supabase-js';
+import { supabase, supabaseConfigError } from './supabase';
+
+const PROFILE_AVATAR_BUCKET = 'profile-avatars';
+const AVATAR_SIGNED_URL_EXPIRES_IN_SECONDS = 60 * 60;
+const MAX_AVATAR_UPLOAD_BYTES = 512 * 1024;
+const AVATAR_COMPRESS_MAX_DIMENSION = 512;
+const AVATAR_COMPRESS_QUALITY = 0.72;
+const ALLOWED_AVATAR_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+
+type NativeImageCompressor = {
+  compress: (
+    value: string,
+    options?: {
+      compressionMethod?: 'auto' | 'manual';
+      maxWidth?: number;
+      maxHeight?: number;
+      quality?: number;
+      input?: 'base64' | 'uri';
+      output?: 'jpg' | 'png';
+      returnableOutputType?: 'uri' | 'base64';
+    }
+  ) => Promise<string>;
+};
+
+type WebImageAsset = ImagePickerAsset & {
+  file?: File | null;
+};
+
+let cachedNativeImageCompressor: NativeImageCompressor | null | undefined;
+
+export type UserProfile = {
+  id: string;
+  username: string | null;
+  display_name: string | null;
+  avatar_path: string | null;
+  avatar_url?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type ProfileUpdate = {
+  username?: string | null;
+  display_name?: string | null;
+  avatar_path?: string | null;
+};
+
+function requireSupabase() {
+  if (!supabase) {
+    throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
+  }
+
+  return supabase;
+}
+
+function normalizeOptionalText(value?: string | null) {
+  const trimmedValue = value?.trim() ?? '';
+  return trimmedValue ? trimmedValue : null;
+}
+
+function normalizeMimeType(value?: string | null) {
+  return value?.split(';')[0]?.trim().toLowerCase() ?? '';
+}
+
+function assertSupportedAvatarSource(contentType: string, sizeBytes: number) {
+  const normalizedContentType = normalizeMimeType(contentType);
+
+  if (
+    !ALLOWED_AVATAR_MIME_TYPES.includes(
+      normalizedContentType as (typeof ALLOWED_AVATAR_MIME_TYPES)[number]
+    )
+  ) {
+    throw new Error('Unsupported profile image format. Choose a JPG, PNG, or WebP image.');
+  }
+
+  if (sizeBytes > MAX_AVATAR_UPLOAD_BYTES) {
+    throw new Error('Profile image is too large. Choose an image under 512 KB.');
+  }
+}
+
+function getNativeImageCompressor() {
+  if (Platform.OS === 'web' || Constants.appOwnership === AppOwnership.Expo) {
+    return null;
+  }
+
+  if (cachedNativeImageCompressor !== undefined) {
+    return cachedNativeImageCompressor;
+  }
+
+  try {
+    const compressorModule = require('react-native-compressor') as typeof import('react-native-compressor');
+    cachedNativeImageCompressor = compressorModule.Image ?? null;
+  } catch (error) {
+    cachedNativeImageCompressor = null;
+
+    if (__DEV__) {
+      console.warn(
+        'Native image compressor module is not available in this build.',
+        error instanceof Error ? error.message : 'unknown_native_module_load_error'
+      );
+    }
+  }
+
+  return cachedNativeImageCompressor;
+}
+
+async function maybeCompressAvatarAsset(asset: ImagePickerAsset) {
+  const compressor = getNativeImageCompressor();
+
+  if (!compressor) {
+    return asset;
+  }
+
+  const compressedUri = await compressor.compress(asset.uri, {
+    compressionMethod: 'manual',
+    maxWidth: AVATAR_COMPRESS_MAX_DIMENSION,
+    maxHeight: AVATAR_COMPRESS_MAX_DIMENSION,
+    quality: AVATAR_COMPRESS_QUALITY,
+    input: 'uri',
+    output: 'jpg',
+    returnableOutputType: 'uri',
+  });
+
+  return {
+    ...asset,
+    uri: compressedUri,
+    fileName: 'avatar.jpg',
+    mimeType: 'image/jpeg',
+  };
+}
+
+function isMissingProfileInfrastructureError(error: unknown) {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const code = 'code' in error ? error.code : undefined;
+  const message = 'message' in error ? error.message : undefined;
+  const normalizedMessage = typeof message === 'string' ? message.toLowerCase() : '';
+
+  return (
+    code === 'PGRST205' ||
+    normalizedMessage.includes("could not find the table 'public.profiles'") ||
+    normalizedMessage.includes("relation \"public.profiles\" does not exist") ||
+    normalizedMessage.includes('bucket not found') ||
+    normalizedMessage.includes('profile-avatars')
+  );
+}
+
+export function deriveUsernameFromUser(user: User | null) {
+  const metadataUsername =
+    typeof user?.user_metadata?.username === 'string' ? user.user_metadata.username : null;
+
+  if (metadataUsername) {
+    return metadataUsername;
+  }
+
+  if (user?.email) {
+    return user.email.split('@')[0] ?? null;
+  }
+
+  return user?.phone ?? null;
+}
+
+export function getProfileDisplayName(profile: UserProfile | null, user: User | null) {
+  return profile?.display_name || profile?.username || deriveUsernameFromUser(user) || 'Username';
+}
+
+export async function getProfileAvatarUrl(avatarPath?: string | null) {
+  if (!avatarPath) {
+    return null;
+  }
+
+  const client = requireSupabase();
+  const { data, error } = await client.storage
+    .from(PROFILE_AVATAR_BUCKET)
+    .createSignedUrl(avatarPath, AVATAR_SIGNED_URL_EXPIRES_IN_SECONDS);
+
+  if (error) {
+    if (isMissingProfileInfrastructureError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
+
+  return data.signedUrl;
+}
+
+export async function loadOwnProfile(user: User): Promise<UserProfile> {
+  const client = requireSupabase();
+  const fallbackProfile: UserProfile = {
+    id: user.id,
+    username: deriveUsernameFromUser(user),
+    display_name: typeof user.user_metadata?.name === 'string' ? user.user_metadata.name : null,
+    avatar_path: null,
+  };
+  const { data, error } = await client
+    .from('profiles')
+    .select('id, username, display_name, avatar_path, created_at, updated_at')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingProfileInfrastructureError(error)) {
+      return {
+        ...fallbackProfile,
+        avatar_url: null,
+      };
+    }
+
+    throw error;
+  }
+
+  const profile = (data ?? fallbackProfile) as UserProfile;
+  const avatarUrl = await getProfileAvatarUrl(profile.avatar_path);
+
+  return {
+    ...fallbackProfile,
+    ...profile,
+    avatar_url: avatarUrl,
+  };
+}
+
+export async function saveOwnProfile(user: User, update: ProfileUpdate): Promise<UserProfile> {
+  const client = requireSupabase();
+  const profilePayload = {
+    id: user.id,
+    username: normalizeOptionalText(update.username),
+    display_name: normalizeOptionalText(update.display_name),
+    avatar_path: normalizeOptionalText(update.avatar_path),
+  };
+  const { data, error } = await client
+    .from('profiles')
+    .upsert(profilePayload, { onConflict: 'id' })
+    .select('id, username, display_name, avatar_path, created_at, updated_at')
+    .single();
+
+  if (error) {
+    if (isMissingProfileInfrastructureError(error)) {
+      throw new Error('Profile editing needs the user profile migration to be applied.');
+    }
+
+    throw error;
+  }
+
+  const profile = data as UserProfile;
+  const avatarUrl = await getProfileAvatarUrl(profile.avatar_path);
+
+  return {
+    ...profile,
+    avatar_url: avatarUrl,
+  };
+}
+
+function inferImageExtension(asset: ImagePickerAsset, contentType: string) {
+  const filename = asset.fileName ?? asset.uri.split('/').pop() ?? '';
+  const extension = filename.split(/[?#]/)[0].split('.').pop()?.toLowerCase();
+  const normalizedContentType = normalizeMimeType(contentType);
+
+  if (extension && ['jpg', 'jpeg', 'png', 'webp'].includes(extension)) {
+    return extension === 'jpeg' ? 'jpg' : extension;
+  }
+
+  if (normalizedContentType === 'image/png') {
+    return 'png';
+  }
+
+  if (normalizedContentType === 'image/webp') {
+    return 'webp';
+  }
+
+  return 'jpg';
+}
+
+async function resolveAvatarUploadSource(asset: ImagePickerAsset) {
+  const uploadAsset = await maybeCompressAvatarAsset(asset);
+  const webAsset = asset as WebImageAsset;
+
+  if (Platform.OS === 'web' && webAsset.file) {
+    const contentType = webAsset.file.type || uploadAsset.mimeType || 'image/jpeg';
+    assertSupportedAvatarSource(contentType, webAsset.file.size);
+    return {
+      body: webAsset.file,
+      contentType,
+      extension: inferImageExtension(uploadAsset, contentType),
+      sizeBytes: webAsset.file.size,
+    };
+  }
+
+  const response = await fetch(uploadAsset.uri);
+
+  if (!response.ok) {
+    throw new Error('Unable to read selected profile image.');
+  }
+
+  const blob = await response.blob();
+  const contentType = uploadAsset.mimeType || blob.type || 'image/jpeg';
+  assertSupportedAvatarSource(contentType, blob.size);
+
+  return {
+    body: blob,
+    contentType,
+    extension: inferImageExtension(uploadAsset, contentType),
+    sizeBytes: blob.size,
+  };
+}
+
+export async function uploadProfileAvatar(
+  user: User,
+  asset: ImagePickerAsset,
+  previousAvatarPath?: string | null
+) {
+  const client = requireSupabase();
+  const uploadSource = await resolveAvatarUploadSource(asset);
+  const avatarPath = `${user.id}/avatar-${Date.now()}.${uploadSource.extension}`;
+  const { error: uploadError } = await client.storage
+    .from(PROFILE_AVATAR_BUCKET)
+    .upload(avatarPath, uploadSource.body, {
+      cacheControl: '3600',
+      contentType: uploadSource.contentType,
+      upsert: false,
+    });
+
+  if (uploadError) {
+    throw uploadError;
+  }
+
+  if (previousAvatarPath && previousAvatarPath.startsWith(`${user.id}/`)) {
+    const { error: removeError } = await client.storage
+      .from(PROFILE_AVATAR_BUCKET)
+      .remove([previousAvatarPath]);
+
+    if (removeError && __DEV__) {
+      console.warn('Unable to remove previous profile avatar.', removeError);
+    }
+  }
+
+  return {
+    avatarPath,
+    avatarUrl: await getProfileAvatarUrl(avatarPath),
+  };
+}

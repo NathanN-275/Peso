@@ -131,7 +131,8 @@ class PipelineFallbackTest(unittest.TestCase):
     repository = MagicMock()
     repository.get_video.return_value = {
       "id": "video-1",
-      "storage_path": "videos/video-1.mov",
+      "user_id": "33333333-3333-3333-3333-333333333333",
+      "storage_path": "33333333-3333-3333-3333-333333333333/uploads/video-1.mov",
       "exercise_type": "squat",
       "view_type": "side",
     }
@@ -344,14 +345,39 @@ class PipelineFallbackTest(unittest.TestCase):
     self.assertEqual(repaired["yolo_tracking"]["mode"], "shadow")
     self.assertEqual(repaired["pose_repair"]["detector_occlusion_count"], 0)
 
-  def test_non_squat_variation_remains_limited(self) -> None:
+  def test_pressing_variation_uses_pressing_analyzer(self) -> None:
+    pipeline = self._import_pipeline()
+    analyzer = MagicMock()
+    analyzer.analyze.return_value = {
+      "video_id": "video-1",
+      "exercise": "bench press",
+      "view": "side",
+      "rep_count": 0,
+      "reps": [],
+    }
+
+    with patch("app.analysis.pipeline.PressingAnalyzer", return_value=analyzer):
+      result = pipeline._analyze_squat_result(
+        video_id="video-1",
+        video={
+          "id": "video-1",
+          "exercise_type": "bench press",
+          "view_type": "side",
+        },
+        estimation=self._estimation(),
+      )
+
+    self.assertFalse(result.get("analysis_limited", False))
+    analyzer.analyze.assert_called_once()
+
+  def test_unsupported_variation_remains_limited(self) -> None:
     pipeline = self._import_pipeline()
 
     result = pipeline._analyze_squat_result(
       video_id="video-1",
       video={
         "id": "video-1",
-        "exercise_type": "bench press",
+        "exercise_type": "deadlift",
         "view_type": "side",
       },
       estimation=self._estimation(),
@@ -589,10 +615,11 @@ class PipelineFallbackTest(unittest.TestCase):
       [{"rep_index": 1, "start": 0.5, "bottom": 1.2, "end": 2.0}],
     )
 
-  def test_analyze_skips_barbell_path_for_non_side_video(self) -> None:
+  def test_analyze_skips_barbell_path_for_unsupported_non_side_video(self) -> None:
     pipeline = self._import_pipeline()
     repository = self._repository()
     repository.get_video.return_value["view_type"] = "front"
+    repository.get_video.return_value["exercise_type"] = "deadlift"
     storage = MagicMock()
     storage.download_to_tempfile.return_value = "/tmp/video.mov"
     estimator = MagicMock()
@@ -611,6 +638,51 @@ class PipelineFallbackTest(unittest.TestCase):
 
     saved_result = repository.save_analysis_result.call_args.args[2]
     self.assertNotIn("barbellPath", saved_result)
+    tracker.track.assert_not_called()
+
+  def test_analyze_attaches_pressing_bar_center_for_front_view(self) -> None:
+    pipeline = self._import_pipeline()
+    repository = self._repository()
+    repository.get_video.return_value["exercise_type"] = "bench press"
+    repository.get_video.return_value["view_type"] = "front"
+    storage = MagicMock()
+    storage.download_to_tempfile.return_value = "/tmp/video.mov"
+    estimation = self._estimation()
+    estimation["frames"] = [
+      {
+        "source_frame_index": index,
+        "timestamp_ms": index * 100,
+        "landmarks": {
+          "left_wrist": {"x": 0.45, "y": y, "z": 0.0, "visibility": 0.9},
+          "right_wrist": {"x": 0.55, "y": y, "z": 0.0, "visibility": 0.9},
+          "left_shoulder": {"x": 0.42, "y": 0.35, "z": 0.0, "visibility": 0.9},
+          "right_shoulder": {"x": 0.58, "y": 0.35, "z": 0.0, "visibility": 0.9},
+          "left_elbow": {"x": 0.43, "y": (0.35 + y) / 2, "z": 0.0, "visibility": 0.9},
+          "right_elbow": {"x": 0.57, "y": (0.35 + y) / 2, "z": 0.0, "visibility": 0.9},
+          "left_hip": {"x": 0.44, "y": 0.7, "z": 0.0, "visibility": 0.9},
+          "right_hip": {"x": 0.56, "y": 0.7, "z": 0.0, "visibility": 0.9},
+        },
+      }
+      for index, y in enumerate([0.34, 0.57, 0.33])
+    ]
+    estimator = MagicMock()
+    estimator.config = PoseEstimatorConfig(pose_backend="hybrid", pose_fallback_enabled=True)
+    estimator.run.return_value = estimation
+    tracker = MagicMock()
+
+    with (
+      patch("app.analysis.pipeline.VideoRepository", return_value=repository),
+      patch("app.analysis.pipeline.StorageService", return_value=storage),
+      patch("app.analysis.pipeline.get_settings", return_value=SimpleNamespace(model_version="test-model")),
+      patch("app.analysis.pipeline.PoseEstimator", return_value=estimator),
+      patch("app.analysis.pipeline.BarbellTracker", return_value=tracker),
+    ):
+      pipeline.analyze_video("video-1")
+
+    saved_result = repository.save_analysis_result.call_args.args[2]
+    self.assertEqual(saved_result["barbellPath"]["target"], "bar_center")
+    self.assertEqual(saved_result["barbellPath"]["source"], "pose_wrist_proxy")
+    self.assertEqual(saved_result["rep_count"], 1)
     tracker.track.assert_not_called()
 
   def test_model_disagreement_downgrades_depth_to_uncertain(self) -> None:

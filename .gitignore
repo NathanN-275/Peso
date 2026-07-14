@@ -43,6 +43,7 @@ yarn-error.*
 
 # Python
 backend/.venv/
+backend/.env.*
 .venv/
 __pycache__/
 *.pyc
@@ -52,3 +53,4 @@ __pycache__/
 *.mp4
 
 supabase/.temp/
+.agents/skills/
