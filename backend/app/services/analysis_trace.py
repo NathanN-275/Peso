@@ -6,7 +6,6 @@ import io
 import json
 import math
 import threading
-import time
 import zipfile
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
@@ -15,7 +14,7 @@ from pathlib import Path
 from typing import Any, Generator
 from uuid import uuid4
 
-from .config import Settings, get_settings
+from .config import get_settings
 
 
 TRACE_FORMAT_VERSION = 1
@@ -37,6 +36,19 @@ EXPORT_REDACTED_KEYS = {
   "video_url",
   "signed_url",
   "export_url",
+}
+EXPORT_REDACTED_COMPACT_KEYS = {
+  "userid",
+  "videoid",
+  "storagepath",
+  "playbackpath",
+  "playbackurl",
+  "originalstoragepath",
+  "thumbnailpath",
+  "videourl",
+  "signedurl",
+  "exporturl",
+  "downloadurl",
 }
 
 
@@ -65,9 +77,15 @@ def _json_safe(value: Any) -> Any:
 
 def _redact_export(value: Any, key: str | None = None) -> Any:
   normalized_key = (key or "").lower()
-  if normalized_key in EXPORT_REDACTED_KEYS or any(
-    sensitive in normalized_key
-    for sensitive in ("token", "secret", "authorization", "storage_path", "signed_url", "video_url")
+  compact_key = "".join(character for character in normalized_key if character.isalnum())
+  if (
+    normalized_key in EXPORT_REDACTED_KEYS
+    or compact_key in EXPORT_REDACTED_COMPACT_KEYS
+    or compact_key.endswith("url")
+    or any(
+      sensitive in normalized_key
+      for sensitive in ("token", "secret", "authorization", "service_role", "storage_path", "signed_url", "video_url")
+    )
   ):
     return "[redacted]"
   if isinstance(value, dict):
@@ -189,7 +207,8 @@ class AnalysisTraceService:
       document = self._document_locked(run_id)
       if document is None or not self._is_owned_by(document, user_id):
         return None
-      return copy.deepcopy(document)
+      stored = copy.deepcopy(document)
+      return {**stored, **self._summary(stored)}
 
   def iter_events(
     self,
@@ -326,7 +345,7 @@ class AnalysisTraceService:
         "at": event.get("at"),
         "type": event.get("type"),
         "stage": payload.get("name") or payload.get("stage") or "",
-        "duration_ms": payload.get("duration_ms") or "",
+        "duration_ms": payload.get("duration_ms") if payload.get("duration_ms") is not None else "",
         "payload": json.dumps(payload, separators=(",", ":")),
       })
     return output.getvalue()
@@ -357,8 +376,8 @@ class AnalysisTraceService:
         }
         writer.writerow({
           "snapshot": payload.get("name") or "",
-          "source_frame_index": frame.get("source_frame_index") or "",
-          "timestamp_ms": frame.get("timestamp_ms") or "",
+          "source_frame_index": frame.get("source_frame_index") if frame.get("source_frame_index") is not None else "",
+          "timestamp_ms": frame.get("timestamp_ms") if frame.get("timestamp_ms") is not None else "",
           "landmark_sources": json.dumps(sources, separators=(",", ":")),
           "repair_reasons": json.dumps(repair_reasons, separators=(",", ":")),
         })

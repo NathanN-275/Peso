@@ -1401,18 +1401,22 @@ def analyze_video(video_id: str) -> None:
       manual_tracking=estimation.get("manual_tracking") or {},
       tracking_assistance=estimation.get("tracking_assistance") or {},
     )
+    stage_started = time.perf_counter()
     estimation = _run_yolo_tracking_prepass(
       file_path=str(temp_file),
       video=video,
       estimation=estimation,
     )
+    record_stage_timing("detector_prepass", stage_started)
     trace_call(
       "snapshot",
       "detector_prepass",
       yolo_tracking=estimation.get("yolo_tracking") or {},
       detector_frames=estimation.get("yolo_detection_frames") or [],
     )
+    stage_started = time.perf_counter()
     estimation = _apply_pose_repair(estimation)
+    record_stage_timing("pose_repair", stage_started)
     trace_call(
       "snapshot",
       "pose_repair",
@@ -1493,12 +1497,16 @@ def analyze_video(video_id: str) -> None:
           estimation=fallback_estimation,
         )
         record_stage_timing("pin_assistance_fallback", stage_started)
+        stage_started = time.perf_counter()
         fallback_estimation = _run_yolo_tracking_prepass(
           file_path=str(temp_file),
           video=video,
           estimation=fallback_estimation,
         )
+        record_stage_timing("detector_prepass_fallback", stage_started)
+        stage_started = time.perf_counter()
         fallback_estimation = _apply_pose_repair(fallback_estimation)
+        record_stage_timing("pose_repair_fallback", stage_started)
         trace_call(
           "snapshot",
           "fallback_pose_repair",
@@ -1675,7 +1683,6 @@ def analyze_video(video_id: str) -> None:
       video_id,
       record_stage_timing("mark_completed", stage_started),
     )
-    trace_call("complete", result, dict(stage_timings_ms))
     stage_started = time.perf_counter()
     try:
       _finalize_storage_assets(
@@ -1691,6 +1698,11 @@ def analyze_video(video_id: str) -> None:
         video_id,
         asset_error,
       )
+      trace_call(
+        "event",
+        "storage_asset_finalization_failed",
+        {"error": {"type": type(asset_error).__name__, "message": str(asset_error)}},
+      )
     logger.info(
       "Finalized storage assets for video %s in %sms.",
       video_id,
@@ -1701,6 +1713,7 @@ def analyze_video(video_id: str) -> None:
       video_id,
       int((time.perf_counter() - analysis_started) * 1000),
     )
+    trace_call("complete", result, dict(stage_timings_ms))
   except Exception as error:
     trace_call("fail", error, dict(stage_timings_ms))
     repository.update_video(video_id, {"status": "failed"})

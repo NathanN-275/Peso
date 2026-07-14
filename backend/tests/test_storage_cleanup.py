@@ -375,6 +375,43 @@ class ConfigSecurityTest(unittest.TestCase):
     self.assertEqual(loaded.backend_env, "production")
     self.assertEqual(loaded.cors_origins, ("https://app.example.com",))
 
+  def test_development_enables_local_analysis_tracing_by_default(self) -> None:
+    with patch.dict(
+      os.environ,
+      {
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+        "SUPABASE_JWT_SECRET": "secret",
+        "BACKEND_ENV": "development",
+        "CLEANUP_JOB_TOKEN": "cleanup-secret",
+      },
+      clear=True,
+    ):
+      load_settings.cache_clear()
+      loaded = load_settings()
+
+    self.assertTrue(loaded.analysis_trace_enabled)
+    self.assertEqual(str(loaded.analysis_trace_dir), ".peso/analysis-traces")
+    self.assertEqual(loaded.analysis_trace_max_runs, 20)
+
+  def test_production_rejects_analysis_tracing(self) -> None:
+    with patch.dict(
+      os.environ,
+      {
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+        "SUPABASE_JWT_SECRET": "secret",
+        "BACKEND_ENV": "production",
+        "CLEANUP_JOB_TOKEN": "cleanup-secret",
+        "BACKEND_CORS_ORIGINS": "https://app.example.com",
+        "ANALYSIS_TRACE_ENABLED": "true",
+      },
+      clear=True,
+    ):
+      load_settings.cache_clear()
+      with self.assertRaisesRegex(RuntimeError, "ANALYSIS_TRACE_ENABLED"):
+        load_settings()
+
   def test_development_requires_cleanup_token_without_explicit_allow_flag(self) -> None:
     with patch.dict(
       os.environ,

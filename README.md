@@ -215,6 +215,27 @@ npm run start:frontend
 npm run start:backend
 ```
 
+### Local analysis observability dashboard
+
+The desktop dashboard is a development-only tool for diagnosing a local analysis run without exposing diagnostics in the athlete app. It stores the most recent 20 traces under `backend/.peso/analysis-traces/`, which is ignored by Git. Production startup rejects `ANALYSIS_TRACE_ENABLED=true`.
+
+With the backend running locally, start it in a second terminal from the project root:
+
+```bash
+npm --prefix dashboard install
+npm run dashboard
+```
+
+Sign in with the same Supabase account used in Peso. The dashboard reads only traces owned by that account and retrieves playback through the existing owner-checked playback endpoint. It shows raw pose, pin/manual tracks, repaired pose, barbell path, stage timings, frame-level source and rejection decisions, and lift-specific diagnostics. Use **Export redacted trace ZIP** to create `summary.json`, `trace.json`, `frame-timeline.csv`, and `stage-events.csv`; exports omit user/video IDs, storage paths, URLs, bearer credentials, and video or still-frame media.
+
+Tracing is enabled by default only when `BACKEND_ENV` is `development`, `dev`, or `local`. These optional backend variables make the behavior explicit:
+
+```dotenv
+ANALYSIS_TRACE_ENABLED=true
+ANALYSIS_TRACE_DIR=.peso/analysis-traces
+ANALYSIS_TRACE_MAX_RUNS=20
+```
+
 For Expo Go on a physical phone, the backend must bind to `0.0.0.0` so another device on the same network can reach it.
 
 ### Static web hosting
@@ -310,6 +331,7 @@ The current version demonstrates the core product idea: upload a lifting video, 
 .
 ├── assets/                 # App assets and README demo media
 ├── backend/                # FastAPI video-analysis backend
+├── dashboard/              # Local development-only analysis trace dashboard
 ├── lib/                    # Shared frontend utilities
 ├── scripts/                # Development scripts
 ├── src/                    # Mobile app source code

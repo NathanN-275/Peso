@@ -102,6 +102,9 @@ POSE_REPAIR_ENABLED=true
 POSE_REPAIR_MAX_GAP_FRAMES=3
 POSE_REPAIR_VELOCITY_GAP_FRAMES=2
 POSE_REPAIR_RECOVERY_HYSTERESIS_FRAMES=2
+ANALYSIS_TRACE_ENABLED=true
+ANALYSIS_TRACE_DIR=.peso/analysis-traces
+ANALYSIS_TRACE_MAX_RUNS=20
 YOLO_TRACKING_MODE=off
 YOLO_TRACKING_MODEL_PATH=
 YOLO_TRACKING_CLASS_NAMES=barbell_collar,rack_upright,j_hook,safety_arm,storage_peg,sleeve,plate_face
@@ -294,6 +297,19 @@ To run the two processes separately:
 npm run start:backend
 npm run start:frontend
 ```
+
+## Local analysis trace dashboard
+
+`ANALYSIS_TRACE_ENABLED` defaults to `true` only for `development`, `dev`, and `local` backend environments. Every local analysis writes an atomic, local-only trace to `ANALYSIS_TRACE_DIR`; completed traces are pruned to `ANALYSIS_TRACE_MAX_RUNS` (20 by default). The artifacts are ignored by Git and tracing is rejected when `BACKEND_ENV=production`.
+
+From the repository root, run the desktop dashboard in a second terminal after the API is available:
+
+```bash
+npm --prefix dashboard install
+npm run dashboard
+```
+
+The dashboard signs in through the public Supabase client and sends that user's bearer token to the development-only `/dev/analysis-runs` endpoints. The backend enforces trace ownership, and the export endpoint strips user/video IDs, storage locations, signed URLs, tokens, and secrets before returning a ZIP of JSON and CSV diagnostics. It never includes the source video or still frames.
 
 ## Health check
 
