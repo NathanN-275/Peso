@@ -4,7 +4,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 
-from app.jobs.analysis_queue import AnalysisJobQueue
+from postgrest.exceptions import APIError
+
+from app.jobs.analysis_queue import AnalysisJobQueue, AnalysisJobsMigrationRequired
 
 
 class AnalysisJobQueueTest(unittest.TestCase):
@@ -63,3 +65,16 @@ class AnalysisJobQueueTest(unittest.TestCase):
       "cancel_video_analysis_jobs",
       {"p_video_id": "video-1"},
     )
+
+  def test_recovery_explains_when_the_hosted_schema_has_not_been_migrated(self) -> None:
+    self.client.rpc.return_value.execute.side_effect = APIError(
+      {
+        "message": "Could not find the function public.recover_expired_video_analysis_jobs",
+        "code": "PGRST202",
+        "hint": None,
+        "details": None,
+      }
+    )
+
+    with self.assertRaisesRegex(AnalysisJobsMigrationRequired, "durable_analysis_jobs"):
+      AnalysisJobQueue().recover_expired()

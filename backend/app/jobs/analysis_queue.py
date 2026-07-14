@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from postgrest.exceptions import APIError
+
 from ..services.supabase_client import get_supabase_admin_client
+
+
+class AnalysisJobsMigrationRequired(RuntimeError):
+  """The deployed Supabase project does not yet contain the durable-job RPCs."""
 
 
 @dataclass(frozen=True)
@@ -87,7 +93,16 @@ class AnalysisJobQueue:
     return str(response.data) if response.data else None
 
   def recover_expired(self) -> None:
-    self.client.rpc("recover_expired_video_analysis_jobs").execute()
+    try:
+      self.client.rpc("recover_expired_video_analysis_jobs").execute()
+    except APIError as error:
+      if self._is_missing_analysis_jobs_function(error):
+        raise AnalysisJobsMigrationRequired(
+          "The connected Supabase project is missing the durable analysis-jobs schema. "
+          "Apply supabase/migrations/20260713233319_durable_analysis_jobs.sql to this project, "
+          "then restart the analysis worker."
+        ) from error
+      raise
 
   def cancel_for_video(self, video_id: str) -> int:
     response = self.client.rpc(
@@ -104,3 +119,11 @@ class AnalysisJobQueue:
       raise RuntimeError(f"Analysis job {operation} returned no job row.")
 
     return rows[0]
+
+  @staticmethod
+  def _is_missing_analysis_jobs_function(error: APIError) -> bool:
+    message = str(getattr(error, "message", "") or error).lower()
+    return (
+      getattr(error, "code", "") == "PGRST202"
+      and "recover_expired_video_analysis_jobs" in message
+    )

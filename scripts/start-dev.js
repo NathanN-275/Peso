@@ -74,10 +74,11 @@ async function waitForBackendHealth(timeoutMs = backendStartupTimeoutMs) {
   );
 }
 
-function spawnProcess(scope, command, args, options) {
+function spawnProcess(scope, command, args, options = {}) {
+  const { continueOnExitCodes = [], ...spawnOptions } = options;
   const child = spawn(command, args, {
     stdio: 'inherit',
-    ...options,
+    ...spawnOptions,
   });
 
   children.add(child);
@@ -86,6 +87,10 @@ function spawnProcess(scope, command, args, options) {
     children.delete(child);
 
     if (!shuttingDown) {
+      if (continueOnExitCodes.includes(code)) {
+        log(scope, `stopped with code ${code}; apply the required Supabase migration before starting analysis`);
+        return;
+      }
       log(scope, `exited with code ${code ?? 0}${signal ? ` (${signal})` : ''}`);
       shutdown(code ?? 0);
     }
@@ -159,6 +164,7 @@ async function main() {
       ['-m', 'app.jobs.worker', '--env-file', '.env'],
       {
         cwd: backendDir,
+        continueOnExitCodes: [78],
       }
     );
   }

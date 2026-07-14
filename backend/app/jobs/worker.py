@@ -11,10 +11,11 @@ from uuid import uuid4
 
 from ..analysis.pipeline import analyze_video
 from ..services.config import get_settings
-from .analysis_queue import AnalysisJobQueue
+from .analysis_queue import AnalysisJobQueue, AnalysisJobsMigrationRequired
 
 
 logger = logging.getLogger(__name__)
+MISSING_ANALYSIS_JOBS_MIGRATION_EXIT_CODE = 78
 
 
 class LeaseHeartbeat:
@@ -162,19 +163,23 @@ def main() -> None:
     lease_seconds=lease_seconds,
   )
 
-  if args.once:
-    worker.run_once()
-    return
+  try:
+    if args.once:
+      worker.run_once()
+      return
 
-  logger.info(
-    "Starting analysis worker worker_id=%s poll_seconds=%s lease_seconds=%s",
-    args.worker_id,
-    poll_seconds,
-    lease_seconds,
-  )
-  while True:
-    if not worker.run_once():
-      time.sleep(poll_seconds)
+    logger.info(
+      "Starting analysis worker worker_id=%s poll_seconds=%s lease_seconds=%s",
+      args.worker_id,
+      poll_seconds,
+      lease_seconds,
+    )
+    while True:
+      if not worker.run_once():
+        time.sleep(poll_seconds)
+  except AnalysisJobsMigrationRequired as error:
+    logger.error("%s", error)
+    raise SystemExit(MISSING_ANALYSIS_JOBS_MIGRATION_EXIT_CODE) from error
 
 
 if __name__ == "__main__":
