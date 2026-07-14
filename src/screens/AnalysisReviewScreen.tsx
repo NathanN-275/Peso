@@ -71,50 +71,6 @@ function formatNumber(value: number, suffix = '') {
   return `${value.toFixed(2)}${suffix}`;
 }
 
-function formatOptionalNumber(value: number | undefined, suffix = '') {
-  if (typeof value !== 'number') {
-    return `n/a${suffix}`;
-  }
-
-  return formatNumber(value, suffix);
-}
-
-function formatMilliseconds(value: number | undefined) {
-  if (typeof value !== 'number') {
-    return 'n/a';
-  }
-
-  return `${(value / 1000).toFixed(2)}s`;
-}
-
-function formatDepthStatus(value: string | undefined) {
-  if (!value) {
-    return 'Unknown';
-  }
-
-  return formatFlagLabel(value);
-}
-
-function formatFallbackUnavailableReason(value: string | null | undefined) {
-  if (!value) {
-    return 'n/a';
-  }
-
-  if (value === 'fallback_disabled') {
-    return 'Fallback disabled';
-  }
-
-  if (value === 'fallback_dependency_missing') {
-    return 'Fallback dependency missing';
-  }
-
-  if (value === 'fallback_no_pose_detected') {
-    return 'Fallback found no pose';
-  }
-
-  return formatFlagLabel(value);
-}
-
 function SheetSection({
   title,
   children,
@@ -149,40 +105,6 @@ function SheetSection({
         <Text style={styles.sheetLabel}>{title}</Text>
       )}
       {expanded ? children : null}
-    </View>
-  );
-}
-
-function DetailDisclosure({
-  title,
-  summary,
-  children,
-}: {
-  title: string;
-  summary?: string;
-  children: React.ReactNode;
-}) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <View style={styles.debugBlock}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded }}
-        onPress={() => setExpanded((value) => !value)}
-        style={styles.detailHeader}
-      >
-        <View style={styles.detailHeaderText}>
-          <Text style={styles.detailTitle}>{title}</Text>
-          {summary ? <Text style={styles.detailSummary}>{summary}</Text> : null}
-        </View>
-        <Ionicons
-          name={expanded ? 'chevron-up-outline' : 'chevron-down-outline'}
-          size={18}
-          color={tokens.colors.textMuted}
-        />
-      </Pressable>
-      {expanded ? <View style={styles.detailBody}>{children}</View> : null}
     </View>
   );
 }
@@ -320,15 +242,6 @@ export default function AnalysisReviewScreen({
     repCount > 0
       ? `Depth hit: ${depthHitCount > 0 ? 'yes' : 'no'} (${depthHitCount}/${repCount} reps)`
       : 'Depth hit: n/a (0 reps)';
-  const poseBackend = result.pose_backend ?? result.diagnostics?.pose_backend;
-  const fallbackModel = result.fallback_model ?? result.diagnostics?.fallback_model;
-  const fallbackRecommended = result.fallback_recommended ?? result.diagnostics?.fallback_recommended ?? false;
-  const fallbackAttempted = result.fallback_attempted ?? result.diagnostics?.fallback_attempted ?? false;
-  const fallbackTriggered = result.fallback_triggered ?? result.diagnostics?.fallback_triggered ?? false;
-  const fallbackReason = result.fallback_reason ?? result.diagnostics?.fallback_reason;
-  const fallbackUnavailableReason =
-    result.fallback_unavailable_reason ?? result.diagnostics?.fallback_unavailable_reason;
-  const landmarkModel = result.landmark_model ?? result.diagnostics?.landmark_model;
   const trackingAssistanceLabel = trackingAssistance?.actualMode === 'pin_assisted'
     ? 'Pin-assisted'
     : trackingAssistance?.requestedMode === 'pins'
@@ -709,16 +622,7 @@ export default function AnalysisReviewScreen({
           scrollable
           scrollContentStyle={styles.sheetContent}
         >
-<<<<<<< HEAD
           <SheetSection title="Summary flags">
-=======
-          <ScrollView
-            style={styles.sheetScroll}
-            contentContainerStyle={styles.sheetContent}
-            showsVerticalScrollIndicator={false}
-          >
-            <SheetSection title="Summary flags">
->>>>>>> main
               <Text style={styles.sheetText}>{depthHitLabel}</Text>
               {analysisStale ? (
                 <Text style={styles.staleText}>
@@ -735,34 +639,6 @@ export default function AnalysisReviewScreen({
               )) : <Text style={styles.sheetMutedText}>No summary flags.</Text>}
             </SheetSection>
 
-            <SheetSection title="Analysis details" collapsible defaultExpanded={false}>
-              <Text style={styles.debugText}>Stale analysis: {analysisStale ? 'yes' : 'no'}</Text>
-              <Text style={styles.debugText}>Analysis incomplete: {analysisIncomplete ? 'yes' : 'no'}</Text>
-              <Text style={styles.debugText}>Pose backend: {poseBackend ?? 'n/a'}</Text>
-              <Text style={styles.debugText}>Tracking assistance: {trackingAssistance?.actualMode ?? 'automatic'}</Text>
-              {trackingAssistance?.fallbackReason ? (
-                <Text style={styles.debugText}>Tracking fallback: {trackingAssistance.fallbackReason}</Text>
-              ) : null}
-              <Text style={styles.debugText}>Fallback model: {fallbackModel === 'rtmpose' ? 'RTMPose' : 'n/a'}</Text>
-              <Text style={styles.debugText}>Fallback recommended: {fallbackRecommended ? 'yes' : 'no'}</Text>
-              <Text style={styles.debugText}>Fallback attempted: {fallbackAttempted ? 'yes' : 'no'}</Text>
-              <Text style={styles.debugText}>Fallback used: {fallbackTriggered ? 'yes' : 'no'}</Text>
-              <Text style={styles.debugText}>Fallback reason: {fallbackReason ?? 'n/a'}</Text>
-              <Text style={styles.debugText}>
-                Fallback unavailable: {formatFallbackUnavailableReason(fallbackUnavailableReason)}
-              </Text>
-              <Text style={styles.debugText}>Landmark model: {landmarkModel ?? 'n/a'}</Text>
-              <Text style={styles.debugText}>
-                Depth reps hit / insufficient / uncertain: {finalHitDepthReps.join(', ') || 'none'} / {finalInsufficientDepthReps.join(', ') || 'none'} / {finalUncertainDepthReps.join(', ') || 'none'}
-              </Text>
-              <Text style={styles.debugText}>
-                Depth summary decision: {depthSummaryDebug?.summary_depth_decision ?? 'n/a'}
-              </Text>
-              <Text style={styles.debugText}>
-                Depth summary reason: {depthSummaryDebug?.summary_depth_reason ?? 'n/a'}
-              </Text>
-            </SheetSection>
-
             <SheetSection title="Video quality">
               <Text style={styles.sheetText}>Overall quality: {formatPercent(videoQuality.overallQuality)}</Text>
               <Text style={styles.sheetText}>Pose coverage: {formatPercent(videoQuality.poseCoverage)}</Text>
@@ -776,30 +652,6 @@ export default function AnalysisReviewScreen({
             <SheetSection title="Per-rep highlights">
               {result.reps.length ? result.reps.map((rep) => {
                 const velocity = getRepVelocity(rep);
-                const depthStatus = rep.depthStatus ?? rep.depth_status;
-                const depthTimestampMs = rep.depthTimestampMs ?? rep.depth_timestamp_ms;
-                const bottomTimestampMs = rep.bottomTimestampMs ?? rep.bottom_timestamp_ms;
-                const selectedSide = rep.selectedSide ?? rep.selected_side ?? rep.depth_evidence?.selected_side;
-                const selectedSource = rep.selectedSource ?? rep.selected_source ?? rep.depth_evidence?.selectedSource ?? rep.depth_evidence?.selected_source;
-                const selectedModel = rep.selectedModel ?? rep.selected_model ?? rep.depth_evidence?.selectedModel ?? rep.depth_evidence?.selected_model;
-                const depthReason = rep.depthReason ?? rep.depth_reason ?? rep.depth_evidence?.depthReason ?? rep.depth_evidence?.depth_reason ?? rep.depth_components?.depthReason ?? rep.depth_components?.depth_reason;
-                const hipKneeDelta = rep.depth_evidence?.hip_knee_delta ?? rep.depth_components?.hip_knee_delta;
-                const rawHipKneeDelta = rep.depth_components?.raw_hip_knee_delta;
-                const hipY = rep.depth_evidence?.hipY;
-                const kneeY = rep.depth_evidence?.kneeY;
-                const ankleY = rep.depth_evidence?.ankleY;
-                const hipConfidence = rep.depth_evidence?.hipConfidence;
-                const kneeConfidence = rep.depth_evidence?.kneeConfidence;
-                const ankleConfidence = rep.depth_evidence?.ankleConfidence;
-                const estimatedHipCreaseY = rep.depth_evidence?.estimatedHipCreaseY ?? rep.depth_evidence?.estimated_hip_crease_y ?? rep.depth_components?.estimated_hip_crease_y;
-                const estimatedKneeTopY = rep.depth_evidence?.estimatedKneeTopY ?? rep.depth_evidence?.estimated_knee_top_y ?? rep.depth_components?.estimated_knee_top_y;
-                const depthDeltaPx = rep.depth_evidence?.depthDeltaPx ?? rep.depth_evidence?.depth_delta_px ?? rep.depth_components?.depth_delta_px;
-                const depthTolerancePx = rep.depth_evidence?.depthTolerancePx ?? rep.depth_evidence?.depth_tolerance_px ?? rep.depth_components?.depth_tolerance_px;
-                const parallelScore = rep.depth_evidence?.parallel_score ?? rep.depth_components?.parallel_score;
-                const depthConfidence =
-                  rep.depth_evidence?.depth_confidence ?? rep.depthConfidence ?? rep.depth_confidence;
-                const scoredFrameDiffers = rep.depth_evidence?.scored_frame_differs_from_bottom;
-                const plateRackOcclusion = rep.depth_evidence?.plate_rack_occlusion_suspected;
                 return (
                   <View key={rep.rep_index} style={styles.repBlock}>
                     <Text style={styles.sheetText}>Rep {rep.repIndex ?? rep.rep_index}</Text>
@@ -811,37 +663,6 @@ export default function AnalysisReviewScreen({
                     <Text style={styles.sheetMutedText}>
                       Depth {formatNumber(rep.depthScore ?? rep.depth_score)}, torso change {formatNumber(rep.torsoAngleChangeDeg ?? rep.torso_angle_change, ' deg')}
                     </Text>
-                    <DetailDisclosure
-                      title="Depth details"
-                      summary={`${formatDepthStatus(depthStatus)} · ${depthReason ?? 'no reason'}`}
-                    >
-                      <Text style={styles.debugText}>Depth status: {formatDepthStatus(depthStatus)}</Text>
-                      <Text style={styles.debugText}>Hip-knee delta: {formatOptionalNumber(hipKneeDelta)}</Text>
-                      <Text style={styles.debugText}>Raw hip-knee delta: {formatOptionalNumber(rawHipKneeDelta)}</Text>
-                      <Text style={styles.debugText}>Parallel score: {formatOptionalNumber(parallelScore)}</Text>
-                      <Text style={styles.debugText}>Depth confidence: {formatOptionalNumber(depthConfidence)}</Text>
-                      <Text style={styles.debugText}>Depth reason: {depthReason ?? 'n/a'}</Text>
-                      <Text style={styles.debugText}>
-                        Scored frame: {formatMilliseconds(depthTimestampMs)} · bottom: {formatMilliseconds(bottomTimestampMs)}
-                      </Text>
-                      <Text style={styles.debugText}>Selected side: {selectedSide ?? selectedPoseSide ?? 'n/a'}</Text>
-                      <Text style={styles.debugText}>Selected source: {selectedSource ?? 'n/a'}</Text>
-                      <Text style={styles.debugText}>Selected model: {selectedModel ?? 'n/a'}</Text>
-                      <Text style={styles.debugText}>
-                        Hip/knee/ankle Y: {formatOptionalNumber(hipY)} / {formatOptionalNumber(kneeY)} / {formatOptionalNumber(ankleY)}
-                      </Text>
-                      <Text style={styles.debugText}>
-                        Hip/knee/ankle confidence: {formatOptionalNumber(hipConfidence)} / {formatOptionalNumber(kneeConfidence)} / {formatOptionalNumber(ankleConfidence)}
-                      </Text>
-                      <Text style={styles.debugText}>
-                        Hip crease / knee top: {formatOptionalNumber(estimatedHipCreaseY)} / {formatOptionalNumber(estimatedKneeTopY)}
-                      </Text>
-                      <Text style={styles.debugText}>
-                        Depth delta / tolerance px: {formatOptionalNumber(depthDeltaPx)} / {formatOptionalNumber(depthTolerancePx)}
-                      </Text>
-                      <Text style={styles.debugText}>Scored frame differs: {scoredFrameDiffers ? 'yes' : 'no'}</Text>
-                      <Text style={styles.debugText}>Rack/plate occlusion: {plateRackOcclusion ? 'yes' : 'no'}</Text>
-                    </DetailDisclosure>
                   </View>
                 );
               }) : <Text style={styles.sheetMutedText}>No reps detected.</Text>}
@@ -855,21 +676,9 @@ export default function AnalysisReviewScreen({
           scrollable
           scrollContentStyle={styles.sheetContent}
         >
-<<<<<<< HEAD
           {coachingFeedback.length ? coachingFeedback.map((feedback) => (
             <Text key={feedback} style={styles.sheetText}>{feedback}</Text>
           )) : <Text style={styles.sheetMutedText}>No coaching feedback available.</Text>}
-=======
-          <ScrollView
-            style={styles.sheetScroll}
-            contentContainerStyle={styles.sheetContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {coachingFeedback.length ? coachingFeedback.map((feedback) => (
-              <Text key={feedback} style={styles.sheetText}>{feedback}</Text>
-            )) : <Text style={styles.sheetMutedText}>No coaching feedback available.</Text>}
-          </ScrollView>
->>>>>>> main
         </ReviewBottomSheet>
 
         <ReviewBottomSheet
@@ -1162,44 +971,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#0C1016',
     padding: 12,
     gap: 3,
-  },
-  debugBlock: {
-    marginTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#243044',
-    paddingTop: 8,
-  },
-  detailHeader: {
-    minHeight: 36,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  detailHeaderText: {
-    flex: 1,
-    minWidth: 0,
-    gap: 2,
-  },
-  detailTitle: {
-    color: tokens.colors.textPrimary,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '700',
-  },
-  detailSummary: {
-    color: '#9FB6D9',
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  detailBody: {
-    paddingTop: 8,
-    gap: 2,
-  },
-  debugText: {
-    color: '#9FB6D9',
-    fontSize: 12,
-    lineHeight: 17,
   },
   discardSheet: {
     maxHeight: '46%',

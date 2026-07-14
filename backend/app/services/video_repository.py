@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import httpx
 from fastapi import HTTPException, status
 
 from .supabase_client import get_supabase_admin_client
@@ -21,6 +23,8 @@ VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING = (
 )
 VIDEO_STORAGE_COLUMNS = f"{VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING},tracking_setup"
 ANALYSIS_RESULT_COLUMNS = "id,video_id,model_version,result_json,created_at"
+ANALYSIS_RESULT_SAVE_MAX_ATTEMPTS = 3
+ANALYSIS_RESULT_SAVE_RETRY_BACKOFF_SECONDS = 0.5
 
 
 class VideoRepository:
@@ -461,20 +465,40 @@ class VideoRepository:
     return parsed.astimezone(timezone.utc)
 
   def save_analysis_result(self, video_id: str, model_version: str, result_json: dict[str, Any]) -> dict[str, Any]:
-    # Store the latest analysis result for this model version.
-    response = (
-      self.client.table("analysis_results")
-      .upsert(
-        {
-          "video_id": video_id,
-          "model_version": model_version,
-          "result_json": result_json,
-        },
-        on_conflict="video_id,model_version",
-      )
-      .execute()
-    )
-    return response.data[0]
+    # This upsert can be retried safely: the conflict key preserves one result
+    # per video/model pair even when the previous request reached PostgREST
+    # before its connection was interrupted.
+    for attempt in range(ANALYSIS_RESULT_SAVE_MAX_ATTEMPTS):
+      try:
+        response = (
+          self.client.table("analysis_results")
+          .upsert(
+            {
+              "video_id": video_id,
+              "model_version": model_version,
+              "result_json": result_json,
+            },
+            on_conflict="video_id,model_version",
+          )
+          .execute()
+        )
+        return response.data[0]
+      except httpx.TransportError as error:
+        if attempt == ANALYSIS_RESULT_SAVE_MAX_ATTEMPTS - 1:
+          raise
+
+        retry_delay_seconds = ANALYSIS_RESULT_SAVE_RETRY_BACKOFF_SECONDS * (2 ** attempt)
+        logger.warning(
+          "Supabase transport error while saving analysis video_id=%s attempt=%s/%s; retrying in %.1fs: %s",
+          video_id,
+          attempt + 1,
+          ANALYSIS_RESULT_SAVE_MAX_ATTEMPTS,
+          retry_delay_seconds,
+          error,
+        )
+        time.sleep(retry_delay_seconds)
+
+    raise RuntimeError("Analysis result save retry loop exited unexpectedly.")
 
   def get_analysis_result(self, video_id: str) -> dict[str, Any] | None:
     # Return the newest analysis result for review.

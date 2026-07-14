@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+import httpx
 from fastapi import HTTPException
 
 from app.services.video_repository import VideoRepository
@@ -93,6 +94,42 @@ class VideoRepositoryCapabilitiesTest(unittest.TestCase):
 
     self.assertEqual(result["id"], "11111111-1111-1111-1111-111111111111")
     repository.client.table.assert_called_once_with("videos")
+
+  def test_save_analysis_result_retries_a_transient_supabase_transport_error(self) -> None:
+    repository = VideoRepository.__new__(VideoRepository)
+    repository.client = MagicMock()
+    response = type("Response", (), {"data": [{"id": "analysis-1"}]})()
+    execute = repository.client.table.return_value.upsert.return_value.execute
+    execute.side_effect = [httpx.RemoteProtocolError("Server disconnected"), response]
+
+    with patch("app.services.video_repository.time.sleep") as sleep:
+      result = repository.save_analysis_result(
+        "11111111-1111-1111-1111-111111111111",
+        "model-v1",
+        {"rep_count": 1},
+      )
+
+    self.assertEqual(result["id"], "analysis-1")
+    self.assertEqual(execute.call_count, 2)
+    sleep.assert_called_once_with(0.5)
+
+  def test_save_analysis_result_stops_after_bounded_transport_retries(self) -> None:
+    repository = VideoRepository.__new__(VideoRepository)
+    repository.client = MagicMock()
+    execute = repository.client.table.return_value.upsert.return_value.execute
+    execute.side_effect = httpx.RemoteProtocolError("Server disconnected")
+
+    with patch("app.services.video_repository.time.sleep") as sleep:
+      with self.assertRaises(httpx.RemoteProtocolError):
+        repository.save_analysis_result(
+          "11111111-1111-1111-1111-111111111111",
+          "model-v1",
+          {"rep_count": 1},
+        )
+
+    self.assertEqual(execute.call_count, 3)
+    self.assertEqual(sleep.call_args_list[0].args, (0.5,))
+    self.assertEqual(sleep.call_args_list[1].args, (1.0,))
 
 
 if __name__ == "__main__":

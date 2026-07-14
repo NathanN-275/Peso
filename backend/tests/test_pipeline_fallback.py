@@ -210,7 +210,6 @@ class PipelineFallbackTest(unittest.TestCase):
       "right",
     )
 
-<<<<<<< HEAD
   def test_pipeline_passes_repaired_pose_stream_to_squat_analyzer(self) -> None:
     pipeline = self._import_pipeline()
 
@@ -347,8 +346,6 @@ class PipelineFallbackTest(unittest.TestCase):
     self.assertEqual(repaired["yolo_tracking"]["mode"], "shadow")
     self.assertEqual(repaired["pose_repair"]["detector_occlusion_count"], 0)
 
-  def test_non_squat_variation_remains_limited(self) -> None:
-=======
   def test_pressing_variation_uses_pressing_analyzer(self) -> None:
     pipeline = self._import_pipeline()
     analyzer = MagicMock()
@@ -375,7 +372,6 @@ class PipelineFallbackTest(unittest.TestCase):
     analyzer.analyze.assert_called_once()
 
   def test_unsupported_variation_remains_limited(self) -> None:
->>>>>>> main
     pipeline = self._import_pipeline()
 
     result = pipeline._analyze_squat_result(

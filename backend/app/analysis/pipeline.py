@@ -31,6 +31,7 @@ from .pose_repair import repair_selected_side_pose
 from .pose_validator import is_body_point_occluded_by_plate, validate_squat_pose_frames
 from .tracking_core import detect_tracking_objects, run_apache_v1_tracking, tracking_core_config_from_env
 from ..services.config import get_settings
+from ..services.analysis_trace import get_analysis_trace_service
 from ..services.storage_service import IMMUTABLE_CACHE_CONTROL_SECONDS, StorageService
 from ..services.video_assets import (
   build_playback_storage_path,
@@ -1312,15 +1313,37 @@ def analyze_video(video_id: str) -> None:
   repository = VideoRepository()
   storage = StorageService()
   settings = get_settings()
+  trace = None
+
+  def trace_call(method: str, *args: Any, **kwargs: Any) -> None:
+    if trace is None:
+      return
+    try:
+      getattr(trace, method)(*args, **kwargs)
+    except Exception as trace_error:
+      logger.warning("Analysis trace %s failed for video %s: %s", method, video_id, trace_error)
 
   def record_stage_timing(name: str, started_at: float) -> int:
     duration_ms = int((time.perf_counter() - started_at) * 1000)
     stage_timings_ms[name] = duration_ms
+    trace_call("stage", name, duration_ms)
     return duration_ms
 
   video = repository.get_video(video_id)
   if not video:
     raise RuntimeError(f"Video {video_id} was not found.")
+
+  try:
+    trace = get_analysis_trace_service().start(
+      video_id=video_id,
+      user_id=str(video.get("user_id") or ""),
+      exercise_type=str(video.get("exercise_type") or "unknown"),
+      view_type=str(video.get("view_type") or "unknown"),
+      model_version=settings.model_version,
+    )
+    trace_call("event", "video_loaded", {"status": video.get("status")})
+  except Exception as trace_error:
+    logger.warning("Unable to initialize analysis trace for video %s: %s", video_id, trace_error)
 
   temp_file = None
 
@@ -1344,25 +1367,21 @@ def analyze_video(video_id: str) -> None:
     # Pose estimation is the first stage of the backend analysis flow.
     estimator = PoseEstimator()
     stage_started = time.perf_counter()
-<<<<<<< HEAD
-    estimation = _apply_tracking_assistance(
-      file_path=str(temp_file),
-      video=video,
-      estimation=estimator.run(str(temp_file)),
-    )
-    estimation = _run_yolo_tracking_prepass(
-      file_path=str(temp_file),
-      video=video,
-      estimation=estimation,
-    )
-    estimation = _apply_pose_repair(estimation)
-=======
     estimation = estimator.run(str(temp_file))
->>>>>>> main
     logger.info(
       "Estimated pose for video %s in %sms.",
       video_id,
       record_stage_timing("pose_estimation", stage_started),
+    )
+    trace_call(
+      "snapshot",
+      "raw_pose",
+      frames=estimation.get("frames") or [],
+      metadata={
+        "pose_backend": estimation.get("pose_backend"),
+        "landmark_model": estimation.get("landmark_model"),
+        "processing_duration_ms": estimation.get("processing_duration_ms"),
+      },
     )
     stage_started = time.perf_counter()
     estimation = _apply_tracking_assistance(
@@ -1374,6 +1393,32 @@ def analyze_video(video_id: str) -> None:
       "Applied tracking assistance for video %s in %sms.",
       video_id,
       record_stage_timing("pin_assistance", stage_started),
+    )
+    trace_call(
+      "snapshot",
+      "pin_fusion",
+      frames=estimation.get("frames") or [],
+      manual_tracking=estimation.get("manual_tracking") or {},
+      tracking_assistance=estimation.get("tracking_assistance") or {},
+    )
+    estimation = _run_yolo_tracking_prepass(
+      file_path=str(temp_file),
+      video=video,
+      estimation=estimation,
+    )
+    trace_call(
+      "snapshot",
+      "detector_prepass",
+      yolo_tracking=estimation.get("yolo_tracking") or {},
+      detector_frames=estimation.get("yolo_detection_frames") or [],
+    )
+    estimation = _apply_pose_repair(estimation)
+    trace_call(
+      "snapshot",
+      "pose_repair",
+      frames=estimation.get("frames") or [],
+      raw_frames=estimation.get("raw_pose_frames") or [],
+      pose_repair=estimation.get("pose_repair") or {},
     )
     repository.update_video(
       video_id,
@@ -1398,6 +1443,12 @@ def analyze_video(video_id: str) -> None:
       "Analyzed squat metrics for video %s in %sms.",
       video_id,
       record_stage_timing("exercise_metrics", stage_started),
+    )
+    trace_call(
+      "snapshot",
+      "exercise_metrics",
+      result=result,
+      diagnostics=result.get("diagnostics") or {},
     )
 
     fallback_reason = (
@@ -1426,22 +1477,37 @@ def analyze_video(video_id: str) -> None:
       try:
         fallback_estimation = PoseEstimator(config=fallback_config).run(str(temp_file))
         record_stage_timing("pose_fallback", stage_started)
+        trace_call(
+          "snapshot",
+          "fallback_raw_pose",
+          frames=fallback_estimation.get("frames") or [],
+          metadata={
+            "pose_backend": fallback_estimation.get("pose_backend"),
+            "landmark_model": fallback_estimation.get("landmark_model"),
+          },
+        )
         stage_started = time.perf_counter()
         fallback_estimation = _apply_tracking_assistance(
           file_path=str(temp_file),
           video=video,
           estimation=fallback_estimation,
         )
-<<<<<<< HEAD
+        record_stage_timing("pin_assistance_fallback", stage_started)
         fallback_estimation = _run_yolo_tracking_prepass(
           file_path=str(temp_file),
           video=video,
           estimation=fallback_estimation,
         )
         fallback_estimation = _apply_pose_repair(fallback_estimation)
-=======
-        record_stage_timing("pin_assistance_fallback", stage_started)
->>>>>>> main
+        trace_call(
+          "snapshot",
+          "fallback_pose_repair",
+          frames=fallback_estimation.get("frames") or [],
+          raw_frames=fallback_estimation.get("raw_pose_frames") or [],
+          manual_tracking=fallback_estimation.get("manual_tracking") or {},
+          tracking_assistance=fallback_estimation.get("tracking_assistance") or {},
+          pose_repair=fallback_estimation.get("pose_repair") or {},
+        )
         if fallback_estimation["frames"]:
           fallback_result = _analyze_squat_result(
             video_id=video_id,
@@ -1547,6 +1613,12 @@ def analyze_video(video_id: str) -> None:
       video_id,
       record_stage_timing("barbell_tracking", stage_started),
     )
+    trace_call(
+      "snapshot",
+      "barbell_tracking",
+      barbell_path=result.get("barbellPath") or {},
+      diagnostics=result.get("diagnostics") or {},
+    )
     analysis_payload_ready_duration_ms = int((time.perf_counter() - analysis_started) * 1000)
     stage_timings_ms["analysis_payload_ready"] = analysis_payload_ready_duration_ms
     video_metadata = {
@@ -1603,6 +1675,7 @@ def analyze_video(video_id: str) -> None:
       video_id,
       record_stage_timing("mark_completed", stage_started),
     )
+    trace_call("complete", result, dict(stage_timings_ms))
     stage_started = time.perf_counter()
     try:
       _finalize_storage_assets(
@@ -1629,6 +1702,7 @@ def analyze_video(video_id: str) -> None:
       int((time.perf_counter() - analysis_started) * 1000),
     )
   except Exception as error:
+    trace_call("fail", error, dict(stage_timings_ms))
     repository.update_video(video_id, {"status": "failed"})
     raise RuntimeError(
       f"Video analysis failed for {video_id}: {error}\n{traceback.format_exc()}"
