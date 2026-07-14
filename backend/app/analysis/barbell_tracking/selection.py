@@ -179,9 +179,6 @@ def _plate_rejection_reason(
     offset = _shoulder_relative_offset(candidate, shoulder)
     if offset and "dx" in previous and "dy" in previous:
       relative_jump = math.hypot(offset[0] - previous["dx"], offset[1] - previous["dy"])
-      if not bootstrapping and relative_jump > max(width, height) * 0.08:
-        return "relative_offset_jump"
-
       previous_shoulder_x = previous.get("shoulder_x")
       previous_shoulder_y = previous.get("shoulder_y")
       if not bootstrapping and previous_shoulder_x is not None and previous_shoulder_y is not None and shoulder:
@@ -189,6 +186,8 @@ def _plate_rejection_reason(
         pose_relative_motion = _pose_relative_displacement(candidate, previous=previous, shoulder=shoulder)
         if pose_relative_motion is not None and shoulder_motion >= 3.0 and pose_relative_motion > max(2.5, shoulder_motion * 0.45):
           return "stationary_hardware_like"
+      if not bootstrapping and relative_jump > max(width, height) * 0.08:
+        return "relative_offset_jump"
 
   return None
 

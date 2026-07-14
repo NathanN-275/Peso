@@ -165,6 +165,63 @@ class PoseEstimatorConfigTest(unittest.TestCase):
     backend.process.assert_called_once_with(ANY, 123)
     backend.close.assert_called_once()
 
+  def test_backend_grabs_unsampled_frames_without_decoding(self) -> None:
+    frame = np.zeros((24, 32, 3), dtype=np.uint8)
+
+    class Capture:
+      def __init__(self) -> None:
+        self.position = 0
+        self.read_count = 0
+        self.grab_count = 0
+        self.last_decoded_index = 0
+
+      def isOpened(self) -> bool:
+        return self.position < 5
+
+      def grab(self) -> bool:
+        if self.position >= 5:
+          return False
+        self.grab_count += 1
+        self.position += 1
+        return True
+
+      def read(self):
+        if self.position >= 5:
+          return False, None
+        self.read_count += 1
+        self.last_decoded_index = self.position
+        self.position += 1
+        return True, frame
+
+      def get(self, property_id: int) -> float:
+        self.timestamp_property = property_id
+        return self.last_decoded_index * 100.0
+
+    capture = Capture()
+    backend = Mock()
+    backend.landmark_model = "test"
+    backend.process.return_value = {"left_hip": {"x": 0.5, "y": 0.5, "visibility": 1.0}}
+    estimator = PoseEstimator(config=PoseEstimatorConfig(pose_backend="mediapipe"))
+
+    with patch("app.analysis.pose_estimator._create_pose_backend", return_value=backend):
+      frames, sampled_count = estimator._run_backend(
+        capture=capture,
+        cv2=cv2,
+        fps=30.0,
+        frame_step=3,
+        processed_width=32,
+        processed_height=24,
+        backend_name="mediapipe",
+      )
+
+    self.assertEqual(capture.read_count, 2)
+    self.assertEqual(capture.grab_count, 3)
+    self.assertEqual(sampled_count, 2)
+    self.assertEqual([frame["source_frame_index"] for frame in frames], [0, 3])
+    self.assertEqual([frame["timestamp_ms"] for frame in frames], [0, 300])
+    self.assertEqual(backend.process.call_count, 2)
+    backend.close.assert_called_once()
+
 
 if __name__ == "__main__":
   unittest.main()

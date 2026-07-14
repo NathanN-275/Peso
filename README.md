@@ -7,17 +7,13 @@ The current version focuses on side-view squat analysis. A user uploads or recor
 ## Demo
 
 <p align="center">
-  <a href="assets/demo/peso-pin-assisted-bar-path.mp4">
-    <img src="assets/demo/peso-pin-assisted-bar-path.jpg" alt="Peso pin-assisted bar path demo" width="260">
-  </a>
+  <img src="assets/demo/peso-pin-assisted-tracking.gif" alt="Peso pin-assisted tracking demo" width="280">
   &nbsp;
-  <a href="assets/demo/peso-pose-overlay.mp4">
-    <img src="assets/demo/peso-pose-overlay.jpg" alt="Peso pose overlay demo" width="260">
-  </a>
+  <img src="assets/demo/peso-pose-overlay.gif" alt="Peso pose overlay demo" width="280">
 </p>
 
 <p align="center">
-  <em>Tap a preview to watch the demo video.</em>
+  <em>Animated previews of Peso’s squat tracking and analysis playback.</em>
 </p>
 
 ## What it does
@@ -45,7 +41,13 @@ The main analysis pipeline is focused on:
 ```bash
 BACKEND_ENV=development
 VIDEO_BUCKET=videos
-CLEANUP_JOB_TOKEN=
+CLEANUP_JOB_TOKEN=replace-with-random-cleanup-secret
+MAX_VIDEO_DURATION_MS=300000
+SIGNED_URL_TTL_SECONDS=300
+STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS=120
+FFMPEG_TIMEOUT_SECONDS=120
+MAX_GLOBAL_VIDEO_WORKERS=2
+EXPORT_COOLDOWN_SECONDS=30
 EXPORT_CACHE_TTL_HOURS=24
 ORPHAN_STORAGE_MIN_AGE_HOURS=24
 STALE_PROCESSING_HOURS=6
@@ -157,7 +159,31 @@ Backend variables include:
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_JWT_SECRET=
+CLEANUP_JOB_TOKEN=replace-with-random-cleanup-secret
 ```
+
+Production backend deployments must also set `BACKEND_ENV=production`, `CLEANUP_JOB_TOKEN`, and an explicit non-local `BACKEND_CORS_ORIGINS` value.
+
+### Supabase profile infrastructure
+
+Profile editing depends on the `public.profiles` table and the private `profile-avatars` storage bucket. If Settings shows `Profile editing needs the user profile migration to be applied.` or avatar upload returns `Bucket not found`, apply the latest Supabase migrations to the hosted project before testing profile changes.
+
+This repo does not include a linked Supabase CLI config by default. Link the project and push migrations:
+
+```bash
+npx supabase link --project-ref <project-ref>
+npx supabase db push
+```
+
+If the project cannot be linked locally, run `supabase/migrations/202607120001_profile_infrastructure_repair.sql` in the Supabase Dashboard SQL editor. The repair migration creates or updates:
+
+* `public.profiles` with owner-scoped RLS
+* the private `profile-avatars` bucket
+* avatar storage policies scoped to the authenticated user's folder
+* avatar MIME limits for JPG, PNG, and WebP
+* a 512 KB per-avatar storage limit
+
+Avatar bytes are stored in Supabase Storage, not on the FastAPI backend filesystem. The app keeps one active avatar path on the profile row and best-effort deletes the user's previous avatar after a successful replacement.
 
 ### Install frontend dependencies
 

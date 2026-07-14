@@ -1,22 +1,25 @@
 import { Ionicons } from '@expo/vector-icons';
 import { File, Paths } from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   Image,
   Modal,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import type { ListRenderItemInfo } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
-import { exportAnalyzedVideo } from '../../lib/backendApi';
+import { describeBackendRequestFailure, exportAnalyzedVideo, getSavedVideosPage } from '../../lib/backendApi';
+import type { AnalyzedVideoExportOptions } from '../../lib/backendApi';
 import type { SavedVideo } from '../../lib/backendApi';
+import { SkeletonBlock } from '../components/Skeleton';
 import tokens from '../theme/tokens';
 import {
   formatExerciseLabel,
@@ -26,14 +29,16 @@ import {
 } from '../utils/savedVideos';
 
 type SortOrder = 'newest' | 'oldest';
+type ExportVariant = 'clean' | 'pose' | 'barbell' | 'pose-barbell';
 
 type SavedLiftVideosScreenProps = {
   exerciseType: string;
-  videos: SavedVideo[];
   onBack: () => void;
   onOpenSavedVideo: (video: SavedVideo) => Promise<void>;
   onDeleteSavedVideos: (videoIds: string[]) => Promise<void>;
 };
+
+const PAGE_SIZE = 20;
 
 function getVideoTimestamp(video: SavedVideo) {
   const timestamp = Date.parse(video.saved_at ?? video.created_at);
@@ -44,9 +49,29 @@ function getSelectionLabel(count: number) {
   return `${count} ${count === 1 ? 'Video' : 'Videos'} Selected`;
 }
 
-function getExportFileName(video: SavedVideo, index: number) {
+function getExportVariant(options: AnalyzedVideoExportOptions): ExportVariant {
+  if (options.pose && options.barbell) {
+    return 'pose-barbell';
+  }
+  if (options.pose) {
+    return 'pose';
+  }
+  if (options.barbell) {
+    return 'barbell';
+  }
+  return 'clean';
+}
+
+function getExportFileName(video: SavedVideo, index: number, variant: ExportVariant) {
   const exercise = formatExerciseLabel(video.exercise_type).replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
-  return `peso-${exercise || 'video'}-${video.id.slice(0, 8)}-${index + 1}.mp4`;
+  return `peso-${exercise || 'video'}-${variant}-${video.id.slice(0, 8)}-${index + 1}.mp4`;
+}
+
+function selectedExportAvailability(videos: SavedVideo[]) {
+  return {
+    pose: videos.length > 0 && videos.every((video) => video.export_options?.pose === true),
+    barbell: videos.length > 0 && videos.every((video) => video.export_options?.barbell === true),
+  };
 }
 
 function SavedVideoThumb({ video }: { video: SavedVideo }) {
@@ -70,19 +95,48 @@ function SavedVideoThumb({ video }: { video: SavedVideo }) {
   return <View style={styles.thumbnailPlaceholder} />;
 }
 
+function SavedVideoRowsSkeleton() {
+  return (
+    <View style={styles.videoList}>
+      {[0, 1, 2, 3].map((index) => (
+        <View key={index} style={styles.videoCard}>
+          <SkeletonBlock width={82} height={94} radius={12} />
+          <View style={styles.skeletonInfo}>
+            <SkeletonBlock width="62%" height={20} radius={6} />
+            <SkeletonBlock width="38%" height={14} radius={6} />
+            <SkeletonBlock width="44%" height={14} radius={6} />
+            <SkeletonBlock width="86%" height={18} radius={6} style={styles.skeletonSummary} />
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export default function SavedLiftVideosScreen({
   exerciseType,
-  videos,
   onBack,
   onOpenSavedVideo,
   onDeleteSavedVideos,
 }: SavedLiftVideosScreenProps) {
   const { session } = useAuth();
   const title = formatExerciseLabel(exerciseType);
+  const loadingMoreRef = useRef(false);
+  const [videos, setVideos] = useState<SavedVideo[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingInitial, setLoadingInitial] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [sortOrder, setSortOrder] = useState<SortOrder>('newest');
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportOptions, setExportOptions] = useState<AnalyzedVideoExportOptions>({
+    pose: false,
+    barbell: false,
+  });
   const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -98,6 +152,112 @@ export default function SavedLiftVideosScreen({
     () => sortedVideos.filter((video) => selectedIds.has(video.id)),
     [selectedIds, sortedVideos]
   );
+  const exportAvailability = useMemo(
+    () => selectedExportAvailability(selectedVideos),
+    [selectedVideos]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const loadInitialPage = async () => {
+      if (!session?.access_token) {
+        setVideos([]);
+        setNextCursor(null);
+        setLoadingInitial(false);
+        setLoadError('You need to be signed in to view saved videos.');
+        return;
+      }
+
+      setLoadingInitial(true);
+      setLoadError(null);
+      setActionMessage(null);
+      setSelectedIds(new Set());
+      setSelecting(false);
+
+      try {
+        const page = await getSavedVideosPage(
+          session.access_token,
+          {
+            exerciseType,
+            limit: PAGE_SIZE,
+          },
+          controller.signal
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        setVideos(page.items);
+        setNextCursor(page.next_cursor);
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          return;
+        }
+
+        const message = await describeBackendRequestFailure(
+          error,
+          'Unable to load saved videos.'
+        );
+
+        if (!cancelled) {
+          setLoadError(message);
+          setVideos([]);
+          setNextCursor(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingInitial(false);
+        }
+      }
+    };
+
+    void loadInitialPage();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [session?.access_token, exerciseType, reloadKey]);
+
+  const loadMoreVideos = useCallback(async () => {
+    if (!session?.access_token || !nextCursor || loadingInitial || loadingMoreRef.current) {
+      return;
+    }
+
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+
+    try {
+      const page = await getSavedVideosPage(session.access_token, {
+        exerciseType,
+        limit: PAGE_SIZE,
+        cursor: nextCursor,
+      });
+
+      setVideos((currentVideos) => {
+        const byId = new Map(currentVideos.map((video) => [video.id, video]));
+
+        for (const video of page.items) {
+          byId.set(video.id, video);
+        }
+
+        return Array.from(byId.values());
+      });
+      setNextCursor(page.next_cursor);
+    } catch (error) {
+      const message = await describeBackendRequestFailure(
+        error,
+        'Unable to load more saved videos.'
+      );
+      setActionMessage(message);
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
+  }, [exerciseType, loadingInitial, nextCursor, session?.access_token]);
 
   useEffect(() => {
     setSelectedIds((currentIds) => {
@@ -110,6 +270,7 @@ export default function SavedLiftVideosScreen({
   const clearSelection = () => {
     setSelecting(false);
     setSelectedIds(new Set());
+    setShowExportModal(false);
     setActionMessage(null);
   };
 
@@ -143,6 +304,20 @@ export default function SavedLiftVideosScreen({
     }
   };
 
+  const openExportModal = () => {
+    if (exporting || selectedVideos.length === 0) {
+      return;
+    }
+
+    const availability = selectedExportAvailability(selectedVideos);
+    setExportOptions({
+      pose: availability.pose,
+      barbell: availability.barbell,
+    });
+    setActionMessage(null);
+    setShowExportModal(true);
+  };
+
   const handleExportSelected = async () => {
     if (exporting || selectedVideos.length === 0) {
       return;
@@ -156,17 +331,20 @@ export default function SavedLiftVideosScreen({
         throw new Error('You need to be signed in to export saved videos.');
       }
 
+      const variant = getExportVariant(exportOptions);
+
       if (Platform.OS === 'web') {
         const webGlobal = globalThis as typeof globalThis & {
           open?: (url?: string | URL, target?: string) => Window | null;
         };
 
         for (const video of selectedVideos) {
-          const exportResponse = await exportAnalyzedVideo(video.id, session.access_token);
+          const exportResponse = await exportAnalyzedVideo(video.id, session.access_token, exportOptions);
           webGlobal.open?.(exportResponse.export_url, '_blank');
         }
 
-        setActionMessage(`Opened ${selectedVideos.length} analyzed ${selectedVideos.length === 1 ? 'video' : 'videos'} for download.`);
+        setShowExportModal(false);
+        setActionMessage(`Opened ${selectedVideos.length} ${variant} ${selectedVideos.length === 1 ? 'video' : 'videos'} for download.`);
         return;
       }
 
@@ -187,8 +365,8 @@ export default function SavedLiftVideosScreen({
       }
 
       for (const [index, video] of selectedVideos.entries()) {
-        const exportResponse = await exportAnalyzedVideo(video.id, session.access_token);
-        const destination = new File(Paths.cache, getExportFileName(video, index));
+        const exportResponse = await exportAnalyzedVideo(video.id, session.access_token, exportOptions);
+        const destination = new File(Paths.cache, getExportFileName(video, index, variant));
         const downloadedFile = await File.downloadFileAsync(exportResponse.export_url, destination, {
           idempotent: true,
         });
@@ -202,6 +380,7 @@ export default function SavedLiftVideosScreen({
         }
       }
 
+      setShowExportModal(false);
       setActionMessage(`Saved ${selectedVideos.length} ${selectedVideos.length === 1 ? 'video' : 'videos'} to your device.`);
     } catch (error) {
       setActionMessage(error instanceof Error ? error.message : 'Unable to export selected videos.');
@@ -232,10 +411,14 @@ export default function SavedLiftVideosScreen({
     setShowDeleteModal(false);
 
     if (failedIds.length === 0) {
+      const deletedIds = new Set(selectedVideos.map((video) => video.id));
+      setVideos((currentVideos) => currentVideos.filter((video) => !deletedIds.has(video.id)));
       clearSelection();
       return;
     }
 
+    const successfulIds = new Set(selectedVideos.map((video) => video.id).filter((id) => !failedIds.includes(id)));
+    setVideos((currentVideos) => currentVideos.filter((video) => !successfulIds.has(video.id)));
     setSelectedIds(new Set(failedIds));
     setActionMessage(
       `Deleted ${selectedVideos.length - failedIds.length} ${selectedVideos.length - failedIds.length === 1 ? 'video' : 'videos'}, but ${failedIds.length} failed.`
@@ -272,74 +455,96 @@ export default function SavedLiftVideosScreen({
           </Pressable>
         </View>
 
-        <ScrollView
+        <FlatList
+          data={sortedVideos}
+          keyExtractor={(video) => video.id}
           style={styles.scroll}
           contentContainerStyle={[
             styles.scrollContent,
             selecting && styles.scrollContentWithSelectionBar,
+            sortedVideos.length === 0 && styles.scrollContentEmpty,
           ]}
           showsVerticalScrollIndicator={false}
-        >
-          <Text style={styles.countText}>
-            {videos.length} saved {videos.length === 1 ? 'video' : 'videos'}
-          </Text>
+          onEndReached={() => {
+            void loadMoreVideos();
+          }}
+          onEndReachedThreshold={0.45}
+          ListHeaderComponent={(
+            <View>
+              <Text style={styles.countText}>
+                {videos.length}{nextCursor ? '+' : ''} saved {videos.length === 1 ? 'video' : 'videos'}
+              </Text>
 
-          {actionMessage ? <Text style={styles.actionMessage}>{actionMessage}</Text> : null}
-
-          {videos.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyTitle}>No saved videos</Text>
-              <Text style={styles.emptyCopy}>Saved {title} videos will appear here.</Text>
-            </View>
-          ) : (
-            <View style={styles.videoList}>
-              {sortedVideos.map((video) => {
-                const selected = selectedIds.has(video.id);
-
-                return (
-                  <Pressable
-                    key={video.id}
-                    accessibilityRole="button"
-                    onPress={() => {
-                      void handleVideoPress(video);
-                    }}
-                    style={[styles.videoCard, selected && styles.selectedVideoCard]}
-                  >
-                    <View style={styles.thumbnailWrap}>
-                      <SavedVideoThumb video={video} />
-                      {selecting ? (
-                        <View style={[styles.selectionBadge, selected && styles.selectionBadgeActive]}>
-                          {selected ? (
-                            <Ionicons name="checkmark" size={15} color={tokens.colors.textPrimary} />
-                          ) : null}
-                        </View>
-                      ) : null}
-                    </View>
-                    <View style={styles.videoInfo}>
-                      <Text style={styles.videoTitle}>{formatExerciseLabel(video.exercise_type)}</Text>
-                      <Text style={styles.videoMeta}>{formatViewLabel(video.view_type)} view</Text>
-                      <Text style={styles.videoMeta}>{formatSavedDate(video.saved_at)}</Text>
-                      <Text style={styles.videoSummary} numberOfLines={2}>
-                        {getSavedVideoSummary(video)}
-                      </Text>
-                    </View>
-                    {selecting ? null : (
-                      <Ionicons name="chevron-forward" size={22} color={tokens.colors.textMuted} />
-                    )}
-                  </Pressable>
-                );
-              })}
+              {actionMessage ? <Text style={styles.actionMessage}>{actionMessage}</Text> : null}
             </View>
           )}
-        </ScrollView>
+          ListEmptyComponent={(
+            loadingInitial ? (
+              <SavedVideoRowsSkeleton />
+            ) : loadError ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.errorText}>{loadError}</Text>
+                <Pressable accessibilityRole="button" onPress={() => setReloadKey((key) => key + 1)}>
+                  <Text style={styles.retryText}>Try Again</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyTitle}>No saved videos</Text>
+                <Text style={styles.emptyCopy}>Saved {title} videos will appear here.</Text>
+              </View>
+            )
+          )}
+          ListFooterComponent={(
+            loadingMore ? (
+              <View style={styles.footerSkeleton}>
+                <SkeletonBlock width="100%" height={92} radius={12} />
+              </View>
+            ) : null
+          )}
+          ItemSeparatorComponent={() => <View style={styles.videoSeparator} />}
+          renderItem={({ item: video }: ListRenderItemInfo<SavedVideo>) => {
+            const selected = selectedIds.has(video.id);
+
+            return (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  void handleVideoPress(video);
+                }}
+                style={[styles.videoCard, selected && styles.selectedVideoCard]}
+              >
+                <View style={styles.thumbnailWrap}>
+                  <SavedVideoThumb video={video} />
+                  {selecting ? (
+                    <View style={[styles.selectionBadge, selected && styles.selectionBadgeActive]}>
+                      {selected ? (
+                        <Ionicons name="checkmark" size={15} color={tokens.colors.textPrimary} />
+                      ) : null}
+                    </View>
+                  ) : null}
+                </View>
+                <View style={styles.videoInfo}>
+                  <Text style={styles.videoTitle}>{formatExerciseLabel(video.exercise_type)}</Text>
+                  <Text style={styles.videoMeta}>{formatViewLabel(video.view_type)} view</Text>
+                  <Text style={styles.videoMeta}>{formatSavedDate(video.saved_at)}</Text>
+                  <Text style={styles.videoSummary} numberOfLines={2}>
+                    {getSavedVideoSummary(video)}
+                  </Text>
+                </View>
+                {selecting ? null : (
+                  <Ionicons name="chevron-forward" size={22} color={tokens.colors.textMuted} />
+                )}
+              </Pressable>
+            );
+          }}
+        />
 
         {selecting ? (
           <View style={styles.selectionBar}>
             <Pressable
               accessibilityRole="button"
-              onPress={() => {
-                void handleExportSelected();
-              }}
+              onPress={openExportModal}
               disabled={exporting || selectedVideos.length === 0}
               style={[styles.selectionIconButton, (exporting || selectedVideos.length === 0) && styles.disabledButton]}
             >
@@ -366,6 +571,100 @@ export default function SavedLiftVideosScreen({
             </Pressable>
           </View>
         ) : null}
+
+        <Modal
+          animationType="fade"
+          transparent
+          visible={showExportModal}
+          onRequestClose={() => {
+            if (!exporting) {
+              setShowExportModal(false);
+            }
+          }}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.confirmModal}>
+              <Text style={styles.confirmTitle}>Export Video</Text>
+              <Text style={styles.confirmCopy}>
+                Choose the overlays to include. Leave both unchecked for a clean video.
+              </Text>
+              <Pressable
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: exportOptions.pose, disabled: !exportAvailability.pose }}
+                onPress={() => {
+                  if (exportAvailability.pose) {
+                    setExportOptions((current) => ({ ...current, pose: !current.pose }));
+                  }
+                }}
+                disabled={!exportAvailability.pose || exporting}
+                style={[
+                  styles.checkboxRow,
+                  (!exportAvailability.pose || exporting) && styles.disabledButton,
+                ]}
+              >
+                <View style={[styles.squareCheckbox, exportOptions.pose && styles.squareCheckboxChecked]}>
+                  {exportOptions.pose ? (
+                    <Ionicons name="checkmark" size={18} color={tokens.colors.textPrimary} />
+                  ) : null}
+                </View>
+                <View style={styles.checkboxTextWrap}>
+                  <Text style={styles.checkboxLabel}>Pose model</Text>
+                  {!exportAvailability.pose ? (
+                    <Text style={styles.checkboxHelp}>Unavailable for one or more selected videos.</Text>
+                  ) : null}
+                </View>
+              </Pressable>
+              <Pressable
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: exportOptions.barbell, disabled: !exportAvailability.barbell }}
+                onPress={() => {
+                  if (exportAvailability.barbell) {
+                    setExportOptions((current) => ({ ...current, barbell: !current.barbell }));
+                  }
+                }}
+                disabled={!exportAvailability.barbell || exporting}
+                style={[
+                  styles.checkboxRow,
+                  (!exportAvailability.barbell || exporting) && styles.disabledButton,
+                ]}
+              >
+                <View style={[styles.squareCheckbox, exportOptions.barbell && styles.squareCheckboxChecked]}>
+                  {exportOptions.barbell ? (
+                    <Ionicons name="checkmark" size={18} color={tokens.colors.textPrimary} />
+                  ) : null}
+                </View>
+                <View style={styles.checkboxTextWrap}>
+                  <Text style={styles.checkboxLabel}>Barbell tracking</Text>
+                  {!exportAvailability.barbell ? (
+                    <Text style={styles.checkboxHelp}>Unavailable for one or more selected videos.</Text>
+                  ) : null}
+                </View>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  void handleExportSelected();
+                }}
+                disabled={exporting}
+                style={[styles.confirmExportButton, exporting && styles.disabledButton]}
+              >
+                {exporting ? (
+                  <ActivityIndicator color={tokens.colors.textPrimary} />
+                ) : (
+                  <Text style={styles.confirmDeleteText}>Download</Text>
+                )}
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setShowExportModal(false)}
+                disabled={exporting}
+                style={[styles.confirmCancelButton, exporting && styles.disabledButton]}
+              >
+                <Text style={styles.confirmCancelText}>Cancel</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
 
         <Modal
           animationType="fade"
@@ -503,6 +802,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 22,
     paddingBottom: 30,
   },
+  scrollContentEmpty: {
+    flexGrow: 1,
+  },
   scrollContentWithSelectionBar: {
     paddingBottom: 126,
   },
@@ -520,6 +822,12 @@ const styles = StyleSheet.create({
   },
   videoList: {
     gap: 14,
+  },
+  videoSeparator: {
+    height: 14,
+  },
+  footerSkeleton: {
+    paddingTop: 14,
   },
   videoCard: {
     minHeight: 118,
@@ -574,6 +882,14 @@ const styles = StyleSheet.create({
     minWidth: 0,
     gap: 3,
   },
+  skeletonInfo: {
+    flex: 1,
+    minWidth: 0,
+    gap: 8,
+  },
+  skeletonSummary: {
+    marginTop: 4,
+  },
   videoTitle: {
     color: tokens.colors.textPrimary,
     fontSize: 18,
@@ -610,6 +926,19 @@ const styles = StyleSheet.create({
     color: tokens.colors.textMuted,
     fontSize: 15,
     lineHeight: 22,
+    textAlign: 'center',
+  },
+  errorText: {
+    color: '#FF8A8A',
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  retryText: {
+    color: tokens.colors.brand,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
     textAlign: 'center',
   },
   selectionBar: {
@@ -688,6 +1017,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#D93025',
     paddingHorizontal: 16,
   },
+  confirmExportButton: {
+    minHeight: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    backgroundColor: tokens.colors.brand,
+    paddingHorizontal: 16,
+  },
   confirmDeleteText: {
     color: tokens.colors.textPrimary,
     fontSize: 16,
@@ -709,5 +1046,47 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 20,
     fontWeight: '700',
+  },
+  checkboxRow: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#363D4D',
+    backgroundColor: '#151923',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  squareCheckbox: {
+    width: 26,
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: tokens.colors.textMuted,
+    backgroundColor: '#050505',
+  },
+  squareCheckboxChecked: {
+    borderColor: tokens.colors.brand,
+    backgroundColor: tokens.colors.brand,
+  },
+  checkboxTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  checkboxLabel: {
+    color: tokens.colors.textPrimary,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '800',
+  },
+  checkboxHelp: {
+    marginTop: 2,
+    color: tokens.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 16,
   },
 });

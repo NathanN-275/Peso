@@ -439,4 +439,34 @@ export type SavedVideo = {
   saved_at: string | null;
   created_at: string;
   analysis: SavedVideoAnalysis | null;
+  export_options?: {
+    pose: boolean;
+    barbell: boolean;
+  } | null;
+};
+
+export type SavedVideosPage = {
+  items: SavedVideo[];
+  next_cursor: string | null;
+};
+
+export type SavedVideoOverviewGroup = {
+  exercise_type: string;
+  count: number;
+  preview_items: SavedVideo[];
+};
+
+export type SavedVideoOverviewStats = {
+  total_saved: number;
+  exercise_count: number;
+  total_reps: number;
+  latest_exercise_type: string | null;
+  latest_saved_at: string | null;
+  most_trained_exercise_type: string | null;
+  most_trained_count: number;
+};
+
+export type SavedVideoOverview = {
+  stats: SavedVideoOverviewStats;
+  groups: SavedVideoOverviewGroup[];
 };

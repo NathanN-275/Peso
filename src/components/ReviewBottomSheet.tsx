@@ -51,7 +51,11 @@ export default function ReviewBottomSheet({
           <ScrollView
             className="review-sheet-scroll"
             style={styles.scroll}
+<<<<<<< HEAD
             contentContainerStyle={[styles.scrollContent, scrollContentStyle]}
+=======
+            contentContainerStyle={styles.scrollContent}
+>>>>>>> main
             showsVerticalScrollIndicator={false}
           >
             {children}

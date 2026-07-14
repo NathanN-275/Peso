@@ -67,7 +67,22 @@ Optional variables:
 ```bash
 BACKEND_ENV=development
 VIDEO_BUCKET=videos
-CLEANUP_JOB_TOKEN=
+CLEANUP_JOB_TOKEN=replace-with-random-cleanup-secret
+BACKEND_ALLOW_UNAUTHENTICATED_DEV_CLEANUP=false
+BACKEND_EXPOSE_STORAGE_QUOTA_DETAILS=false
+MAX_USER_IN_PROGRESS_VIDEOS=3
+MAX_USER_UPLOADS_PER_HOUR=20
+MAX_VIDEO_DURATION_MS=300000
+SIGNED_URL_TTL_SECONDS=300
+STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS=120
+SUPABASE_HTTP_MAX_CONNECTIONS=20
+SUPABASE_HTTP_MAX_KEEPALIVE_CONNECTIONS=10
+SUPABASE_HTTP_KEEPALIVE_EXPIRY_SECONDS=30
+SUPABASE_POSTGREST_TIMEOUT_SECONDS=30
+SUPABASE_STORAGE_TIMEOUT_SECONDS=60
+FFMPEG_TIMEOUT_SECONDS=120
+MAX_GLOBAL_VIDEO_WORKERS=2
+EXPORT_COOLDOWN_SECONDS=30
 EXPORT_CACHE_TTL_HOURS=24
 ORPHAN_STORAGE_MIN_AGE_HOURS=24
 STALE_PROCESSING_HOURS=6
@@ -98,6 +113,8 @@ FFMPEG_BINARY=
 BACKEND_CORS_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhost:8082,http://127.0.0.1:8082,http://localhost:19006,http://127.0.0.1:19006,http://localhost:3000,http://127.0.0.1:3000
 BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true
 ```
+
+The backend reuses a singleton Supabase admin client and a bounded pooled HTTP client for signed storage downloads. Supabase SQL poolers, such as Supavisor or PgBouncer, apply when the backend is changed to use a direct Postgres connection string through a Postgres driver or ORM.
 
 ## Pose analysis settings
 
@@ -158,6 +175,28 @@ balanced
 ```
 
 The original and processed video dimensions are preserved in saved analysis metadata.
+
+## Analysis performance benchmark
+
+`tests/fixtures/analysis_benchmark/pressing_manifest.json` defines the required 15-second press cases for side and front bench press, incline bench press, and overhead press. Save one completed analysis result per case as `<case-id>.json`, then summarize latency and enforce the 30-second payload-ready target with:
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/summarize_analysis_benchmark.py \
+  --results-dir /path/to/analysis-results
+```
+
+The manifest deliberately does not ship synthetic lift clips or expected rep counts. Populate it with reviewed, representative recordings before using it as a release gate.
+Run the same corpus for the manifest's `current`, `balanced_15fps_640px`, and `fast_12fps_640px` profiles by setting `POSE_TARGET_FPS` and `POSE_MAX_FRAME_DIMENSION`; promote only a profile that passes every case and whose payload-ready p95 is within the target.
+
+For a private two-minute recording, copy `tests/fixtures/analysis_benchmark/slow_recording.template.json` outside the repository, replace its exercise, view, and expected rep count, then compare all profiles without committing the source video or its results:
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/summarize_analysis_benchmark.py \
+  --manifest /private/slow-recording.json \
+  --profile-results current=/private/peso-results/current \
+  --profile-results balanced_15fps_640px=/private/peso-results/15fps \
+  --profile-results fast_12fps_640px=/private/peso-results/12fps
+```
 
 ## CORS behavior
 

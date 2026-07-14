@@ -1,4 +1,4 @@
-export const TRACKING_PIN_NAMES = ['shoulder', 'hip', 'knee', 'ankle', 'barbell'] as const;
+export const TRACKING_PIN_NAMES = ['shoulder', 'hip', 'knee', 'ankle', 'elbow', 'wrist', 'barbell'] as const;
 
 export type TrackingPinName = (typeof TRACKING_PIN_NAMES)[number];
 export type TrackingBodySource =
@@ -16,11 +16,13 @@ export type TrackingBodySourceName = 'upper_back' | 'hip' | 'knee' | 'ankle';
 export type TrackingDiagnosticPinName = TrackingPinName | 'upper_back';
 export type TrackingBarbellSource =
   | 'manual_pin_lane'
+  | 'manual_wrist_lane'
   | 'manual_pin_blend'
   | 'automatic_lane'
   | 'kinematic_coast'
   | 'detector_tracklet'
   | 'detector_pin_prior'
+  | 'pose_wrist_proxy'
   | 'pending_lock'
   | 'coast'
   | 'gap';
@@ -33,15 +35,15 @@ export type NormalizedTrackingPoint = {
 export type TrackingSetup = {
   version: 1;
   reference_time_ms: number;
-  barbell_target: 'near_side_collar';
-  anchors: Record<TrackingPinName, NormalizedTrackingPoint>;
+  barbell_target: 'near_side_collar' | 'bar_center';
+  anchors: Partial<Record<TrackingPinName, NormalizedTrackingPoint>>;
 };
 
 export type TrackingReference = {
   version: 1;
   timeMs: number;
   selectedSide?: 'left' | 'right' | null;
-  anchors: Record<TrackingPinName, NormalizedTrackingPoint>;
+  anchors: Partial<Record<TrackingPinName, NormalizedTrackingPoint>>;
 };
 
 export type TrackingAssistance = {
@@ -62,7 +64,14 @@ export type TrackingAssistance = {
   coverage?: Partial<Record<TrackingDiagnosticPinName, number>>;
   barbellSeedUsed?: boolean;
   manualBarbellPointCount?: number;
+  manualWristPointCount?: number;
   automaticBarbellPointCount?: number;
+  pressingSelectedSide?: 'left' | 'right' | null;
+  pressingPinCoverage?: Partial<Record<'shoulder' | 'elbow' | 'wrist', number>>;
+  pressingFallbackCount?: number;
+  pressingWristSignalUsed?: boolean;
+  pinFrameDecodeDurationMs?: number;
+  pinTrackingDurationMs?: number;
   barbellCoastingPointCount?: number;
   barbellGapPointCount?: number;
   barbellSourceCounts?: Partial<Record<TrackingBarbellSource, number>>;

@@ -9,6 +9,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from .routes.videos import router as videos_router
 from .services.config import get_settings
+from .services.http_client import close_pooled_http_client
 
 
 logging.basicConfig(level=logging.INFO)
@@ -43,3 +44,8 @@ app.include_router(videos_router)
 @app.get("/health")
 def healthcheck() -> dict[str, str]:
   return {"status": "ok"}
+
+
+@app.on_event("shutdown")
+def shutdown_http_clients() -> None:
+  close_pooled_http_client()

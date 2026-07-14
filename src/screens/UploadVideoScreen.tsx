@@ -44,7 +44,12 @@ import ConfirmationDialog from '../components/ConfirmationDialog';
 import SelectedVideoPreview from '../components/SelectedVideoPreview';
 import TrackingPinSetupModal from '../components/TrackingPinSetupModal';
 import VideoSetupModal from '../components/VideoSetupModal';
-import { supportsPinAssistedTracking, VideoSetupSelection } from '../constants/videoSetup';
+import {
+  supportsPinAssistedTracking,
+  trackingBarbellTarget,
+  trackingPinNames,
+  VideoSetupSelection,
+} from '../constants/videoSetup';
 import AnalysisReviewScreen from './AnalysisReviewScreen';
 import { VideoAnalysisResult, VideoAnalysisStatus } from '../types/videoAnalysis';
 import tokens from '../theme/tokens';
@@ -52,8 +57,12 @@ import type { TrackingSetup } from '../types/trackingSetup';
 import { createLocalVideoThumbnail, getUriScheme } from '../utils/localVideoThumbnail';
 
 type UploadVideoScreenProps = {
+  sourceMode?: 'camera' | 'library';
+  initialSelectedVideo?: ImagePicker.ImagePickerAsset | null;
+  initialVideoSetup?: VideoSetupSelection | null;
   onBack?: () => void;
-  onAnalysisSaved?: () => void;
+  onRecordVideoPress?: () => void;
+  onAnalysisSaved?: (videoId: string) => void | Promise<void>;
 };
 
 function formatFileSize(fileSize?: number | null) {
@@ -102,14 +111,26 @@ function formatPercent(value?: number | null) {
   return `${Math.round(value * 100)}%`;
 }
 
-export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVideoScreenProps) {
+function getSetupKey(setup?: VideoSetupSelection | null) {
+  return setup ? `${setup.exercise}:${setup.angle}` : null;
+}
+
+export default function UploadVideoScreen({
+  sourceMode = 'library',
+  initialSelectedVideo = null,
+  initialVideoSetup = null,
+  onBack,
+  onRecordVideoPress,
+  onAnalysisSaved,
+}: UploadVideoScreenProps) {
   // This screen handles selection, upload, queueing, and polling.
   const { user } = useAuth();
   const isWeb = Platform.select<boolean>({ web: true, default: false }) ?? false;
   const [permissionStatus, setPermissionStatus] = useState<ImagePicker.PermissionStatus | null>(null);
+  const [cameraPermissionStatus, setCameraPermissionStatus] = useState<ImagePicker.PermissionStatus | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [setupModalVisible, setSetupModalVisible] = useState(true);
-  const [videoSetup, setVideoSetup] = useState<VideoSetupSelection | null>(null);
+  const [setupModalVisible, setSetupModalVisible] = useState(!initialVideoSetup);
+  const [videoSetup, setVideoSetup] = useState<VideoSetupSelection | null>(initialVideoSetup);
   const [selectedVideo, setSelectedVideo] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [trackingSetup, setTrackingSetup] = useState<TrackingSetup | null>(null);
   const [trackingDetailsExpanded, setTrackingDetailsExpanded] = useState(false);
@@ -131,6 +152,8 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   const analysisRunGenerationRef = useRef(0);
   const activeAnalysisRunRef = useRef<AnalysisRun | null>(null);
   const analysisPollInFlightRef = useRef(false);
+  const initializedVideoUriRef = useRef<string | null>(null);
+  const initializedSetupKeyRef = useRef<string | null>(getSetupKey(initialVideoSetup));
 
   const analysisRunIsCurrent = (run: AnalysisRun) => (
     isAnalysisRunCurrent(analysisRunGenerationRef.current, run)
@@ -177,6 +200,41 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
       typeof asset.fileSize === 'number' && !Number.isNaN(asset.fileSize) ? asset.fileSize : null
     );
   };
+
+  useEffect(() => {
+    if (!initialSelectedVideo?.uri || initializedVideoUriRef.current === initialSelectedVideo.uri) {
+      return;
+    }
+
+    initializedVideoUriRef.current = initialSelectedVideo.uri;
+    handleSelectedVideo(initialSelectedVideo);
+    setSetupModalVisible(!initialVideoSetup);
+  }, [initialSelectedVideo?.uri, initialVideoSetup]);
+
+  useEffect(() => {
+    if (!initialVideoSetup) {
+      return;
+    }
+
+    const nextInitialSetupKey = getSetupKey(initialVideoSetup);
+    if (initializedSetupKeyRef.current === nextInitialSetupKey) {
+      return;
+    }
+
+    initializedSetupKeyRef.current = nextInitialSetupKey;
+
+    const setupChanged =
+      videoSetup?.exercise !== initialVideoSetup.exercise ||
+      videoSetup?.angle !== initialVideoSetup.angle;
+
+    setVideoSetup(initialVideoSetup);
+    if (setupChanged) {
+      setTrackingSetup(null);
+      setTrackingDetailsExpanded(false);
+      setRemovePinsDialogVisible(false);
+    }
+    setSetupModalVisible(false);
+  }, [initialVideoSetup]);
 
   const handleStartAnalysis = async () => {
     // Upload first, then ask the backend to begin analysis.
@@ -237,6 +295,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
         asset: selectedVideo,
         exercise: videoSetup.exercise,
         angle: videoSetup.angle,
+        sourceType: sourceMode === 'camera' ? 'camera' : 'camera_roll',
         trackingSetup,
         onStatusChange: (message) => {
           if (analysisRunIsCurrent(run)) {
@@ -366,6 +425,47 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     }
   };
 
+  const launchCamera = async () => {
+    if (isWeb) {
+      onRecordVideoPress?.();
+      return;
+    }
+
+    if (pickerOpen || uploading) {
+      return;
+    }
+
+    setPickerOpen(true);
+
+    try {
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['videos'],
+        allowsEditing: true,
+        quality: 1,
+        videoMaxDuration: 0,
+        cameraType: ImagePicker.CameraType.back,
+        ...(Platform.OS === 'ios'
+          ? {
+              videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
+              videoQuality: ImagePicker.UIImagePickerControllerQualityType.High,
+            }
+          : {}),
+      });
+
+      if (result.canceled) {
+        return;
+      }
+
+      const nextAsset = result.assets[0];
+
+      if (nextAsset) {
+        handleSelectedVideo(nextAsset);
+      }
+    } finally {
+      setPickerOpen(false);
+    }
+  };
+
   const promptForSettings = () => {
     // Fall back to settings when the app cannot prompt again.
     Alert.alert(
@@ -389,10 +489,38 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     );
   };
 
+  const promptForCameraSettings = () => {
+    Alert.alert(
+      'Camera access needed',
+      'Peso needs camera access to record lift videos.',
+      [
+        {
+          text: 'Accept',
+          onPress: () => {
+            void requestCameraPermission(true);
+          },
+        },
+        {
+          text: 'Settings',
+          onPress: () => {
+            void Linking.openSettings();
+          },
+        },
+      ],
+      { cancelable: true }
+    );
+  };
+
   const syncPermissionStatus = async () => {
     // Keep the cached gallery permission in sync with the OS.
     const currentPermission = await ImagePicker.getMediaLibraryPermissionsAsync();
     setPermissionStatus(currentPermission.status);
+    return currentPermission;
+  };
+
+  const syncCameraPermissionStatus = async () => {
+    const currentPermission = await ImagePicker.getCameraPermissionsAsync();
+    setCameraPermissionStatus(currentPermission.status);
     return currentPermission;
   };
 
@@ -425,6 +553,34 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     }
   };
 
+  const requestCameraPermission = async (forcePrompt = false) => {
+    if (isWeb) {
+      onRecordVideoPress?.();
+      return;
+    }
+
+    const currentPermission = await syncCameraPermissionStatus();
+
+    if (currentPermission.granted) {
+      await launchCamera();
+      return;
+    }
+
+    if (currentPermission.canAskAgain || forcePrompt) {
+      const requestedPermission = await ImagePicker.requestCameraPermissionsAsync();
+      setCameraPermissionStatus(requestedPermission.status);
+
+      if (requestedPermission.granted) {
+        await launchCamera();
+        return;
+      }
+    }
+
+    if (!isWeb) {
+      promptForCameraSettings();
+    }
+  };
+
   useEffect(() => {
     // Emit a warning if native compression is being tested in Expo Go.
     if (__DEV__ && Platform.OS === 'ios' && Constants.appOwnership === AppOwnership.Expo) {
@@ -437,6 +593,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
   useEffect(() => {
     // Read the current permission once when the screen mounts.
     void syncPermissionStatus();
+    void syncCameraPermissionStatus();
   }, []);
 
   useEffect(() => () => {
@@ -627,7 +784,11 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     setStatusMessage(null);
 
     if (!selectedVideo) {
-      await requestPermission(true);
+      if (sourceMode === 'camera') {
+        await requestCameraPermission(true);
+      } else {
+        await requestPermission(true);
+      }
     }
   };
 
@@ -654,10 +815,37 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     void requestPermission(true);
   };
 
+  const handleRecordVideoPress = () => {
+    if (uploading) {
+      return;
+    }
+
+    if (isWeb) {
+      onRecordVideoPress?.();
+      return;
+    }
+
+    if (cameraPermissionStatus === 'granted') {
+      void launchCamera();
+      return;
+    }
+
+    void requestCameraPermission(true);
+  };
+
   const resolvedVideoName =
     selectedVideo?.fileName ?? selectedVideo?.uri.split('/').pop() ?? 'Selected video';
   const resolvedFileSize = formatFileSize(displayedVideoSizeBytes ?? selectedVideo?.fileSize);
   const inlineMessage = errorMessage ?? statusMessage;
+  const isCameraMode = sourceMode === 'camera';
+  const screenTitle = isCameraMode ? (isWeb ? 'Review Recording' : 'Record Video') : 'Upload Video';
+  const screenCopy = isCameraMode
+    ? isWeb
+      ? 'Confirm the exercise and camera angle, then start analysis.'
+      : 'Confirm the exercise and camera angle, then record and trim your lift.'
+    : 'Confirm the exercise and camera angle, then select a video from your camera roll.';
+  const chooseVideoLabel = isCameraMode ? 'Record Video' : 'Choose Video';
+  const changeVideoLabel = isCameraMode ? 'Record Again' : 'Choose Another Video';
   const diagnostics = analysisResult?.diagnostics;
   const videoQualityRows = diagnostics
     ? [
@@ -692,6 +880,27 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     setScreenLayout({ width, height });
   };
 
+  const clearCompletedAnalysisForRecordedReview = () => {
+    const run = activeAnalysisRunRef.current;
+    if (run) {
+      analysisRunGenerationRef.current = cancelAnalysisRun(analysisRunGenerationRef.current, run);
+    } else {
+      analysisRunGenerationRef.current += 1;
+    }
+    activeAnalysisRunRef.current = null;
+    analysisStartInFlightRef.current = false;
+    analysisQueuedForVideoRef.current = null;
+    analysisPollInFlightRef.current = false;
+    setUploading(false);
+    setAnalysisRunning(false);
+    setAnalysisVideoId(null);
+    setAnalysisStatus(null);
+    setAnalysisResult(null);
+    setErrorMessage(null);
+    setQuotaWarningMessage(null);
+    setStatusMessage('Recording saved. You can edit setup or pins, then run analysis again.');
+  };
+
   const handleReviewDiscarded = () => {
     // Clearing the review screen resets the upload flow.
     cancelActiveAnalysis();
@@ -713,13 +922,34 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
     setDisplayedVideoSizeBytes(null);
   };
 
+  const handleAnalysisReviewSaved = async (videoId: string) => {
+    if (sourceMode === 'camera') {
+      await onAnalysisSaved?.(videoId);
+      clearCompletedAnalysisForRecordedReview();
+      return;
+    }
+
+    if (onAnalysisSaved) {
+      await onAnalysisSaved(videoId);
+      return;
+    }
+
+    if (onBack) {
+      onBack();
+      return;
+    }
+
+    handleReviewDiscarded();
+  };
+
   if (analysisResult && selectedVideo) {
     return (
       <AnalysisReviewScreen
         videoUri={selectedVideo.uri}
         result={analysisResult}
         onDiscarded={handleReviewDiscarded}
-        onSaved={onAnalysisSaved ?? onBack ?? handleReviewDiscarded}
+        onSaved={handleAnalysisReviewSaved}
+        saveOnBack={sourceMode === 'camera'}
       />
     );
   }
@@ -760,6 +990,9 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
           }}
           videoDurationMs={selectedVideo.duration ?? undefined}
           initialSetup={trackingSetup}
+          barbellTarget={trackingBarbellTarget(videoSetup)}
+          pinNames={trackingPinNames(videoSetup)}
+          cameraView={videoSetup?.angle === 'Front' ? 'front' : 'side'}
           onSave={(setup) => {
             setTrackingSetup(setup);
             setTrackingPinModalVisible(false);
@@ -776,11 +1009,13 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
         <Button label="Back" onPress={onBack} variant="secondary" style={styles.backButton} />
 
         <View style={styles.content}>
-          <Ionicons name="cloud-upload-outline" size={72} color={tokens.colors.textPrimary} />
-          <Text style={styles.title}>Upload Video</Text>
-          <Text style={styles.copy}>
-            Confirm the exercise and camera angle, then select a video from your camera roll.
-          </Text>
+          <Ionicons
+            name={isCameraMode ? 'videocam-outline' : 'cloud-upload-outline'}
+            size={72}
+            color={tokens.colors.textPrimary}
+          />
+          <Text style={styles.title}>{screenTitle}</Text>
+          <Text style={styles.copy}>{screenCopy}</Text>
 
           {videoSetup ? (
             <View style={styles.summaryCard}>
@@ -855,7 +1090,7 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
               {trackingDetailsExpanded ? (
                 <View style={styles.trackingDetails}>
                   <Text style={styles.trackingSetupDescription}>
-                    Place five pins on one clear frame to help the pose and barbell trackers stay locked on you.
+                    Place any visible pins on one clear frame to help the pose and barbell trackers stay locked on you.
                   </Text>
                   <Text style={styles.accuracyDisclaimer}>
                     Automatic tracking may be less accurate when joints or the barbell are obscured.
@@ -878,8 +1113,8 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
           {selectedVideo ? (
             <View style={styles.actions}>
               <Button
-                label="Choose Another Video"
-                onPress={handlePickVideoPress}
+                label={changeVideoLabel}
+                onPress={sourceMode === 'camera' ? handleRecordVideoPress : handlePickVideoPress}
                 disabled={uploading}
                 variant="secondary"
                 style={styles.primaryAction}
@@ -974,8 +1209,8 @@ export default function UploadVideoScreen({ onBack, onAnalysisSaved }: UploadVid
           {!selectedVideo ? (
             <View style={styles.actions}>
               <Button
-                label="Choose Video"
-                onPress={handlePickVideoPress}
+                label={chooseVideoLabel}
+                onPress={sourceMode === 'camera' ? handleRecordVideoPress : handlePickVideoPress}
                 disabled={uploading}
                 variant="secondary"
                 style={styles.primaryAction}

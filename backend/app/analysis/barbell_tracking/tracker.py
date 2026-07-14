@@ -40,7 +40,12 @@ from .geometry import (
 from .local_tracker import _make_tracking_lock, _track_local_patch
 from .pin_tracker import build_pin_assisted_barbell_result
 from .pose import _pose_bounds, _side_wrist_points
-from .postprocess import _interpolate_missing, _remove_motion_outliers, _smooth_points_with_diagnostics
+from .postprocess import (
+  _bridge_isolated_motion_outliers,
+  _interpolate_missing,
+  _remove_motion_outliers,
+  _smooth_points_with_diagnostics,
+)
 from .results import _empty_result
 from .selection import (
   _plate_rejection_reason,
@@ -2246,6 +2251,9 @@ class BarbellTracker:
           if collar_rejection_reason:
             hub_rejected_count += 1
             final_bar_reason_counts[collar_rejection_reason] = final_bar_reason_counts.get(collar_rejection_reason, 0) + 1
+            rejection_reason_counts[collar_rejection_reason] = (
+              rejection_reason_counts.get(collar_rejection_reason, 0) + 1
+            )
           if collar_rejection_reason == "stationary_hardware_like":
             stationary_hardware_rejection_count += 1
           if consecutive_local_failures <= MAX_LOCAL_TRACKING_FAILURES:
@@ -3025,6 +3033,11 @@ class BarbellTracker:
       samples,
       blocked_gap_indices=non_interpolable_gap_indices,
     )
+    points, outlier_bridged_count = _bridge_isolated_motion_outliers(
+      points,
+      width=width,
+      height=height,
+    )
     points, outlier_removed_count = _remove_motion_outliers(points)
     manual_lane_points = (
       list((pin_lane_result.get("barbellPath") or {}).get("points") or [])
@@ -3113,6 +3126,7 @@ class BarbellTracker:
         local_tracking_failure_count=local_tracking_failure_count,
         coasted_estimated_point_count=coasted_estimated_point_count,
         interpolated_point_count=interpolated_count,
+        outlier_bridged_count=outlier_bridged_count,
         outlier_removed_count=outlier_removed_count,
         bar_vertical_range_px=round(bar_vertical_range_px, 2),
         shoulder_vertical_range_px=round(shoulder_vertical_range_px, 2),
@@ -3185,6 +3199,7 @@ class BarbellTracker:
         local_tracking_failure_count=local_tracking_failure_count,
         coasted_estimated_point_count=coasted_estimated_point_count,
         interpolated_point_count=interpolated_count,
+        outlier_bridged_count=outlier_bridged_count,
         outlier_removed_count=outlier_removed_count,
         bar_vertical_range_px=round(bar_vertical_range_px, 2),
         shoulder_vertical_range_px=round(shoulder_vertical_range_px, 2),
@@ -3348,6 +3363,7 @@ class BarbellTracker:
         "reacquisition_count": reacquisition_count,
         "local_tracking_failure_count": local_tracking_failure_count,
         "local_descriptor_bridge_count": local_descriptor_bridge_count,
+        "outlier_bridged_count": outlier_bridged_count,
         "outlier_removed_count": outlier_removed_count,
         "bar_vertical_range_px": round(bar_vertical_range_px, 2),
         "shoulder_vertical_range_px": round(shoulder_vertical_range_px, 2),
