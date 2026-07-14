@@ -279,6 +279,13 @@ From the project root, this command starts both the local FastAPI backend and Ex
 npm start
 ```
 
+This reuses Metro's cache for faster restarts. Clear it only after changing
+dependencies or when Metro serves a stale bundle:
+
+```bash
+npm run start:clear
+```
+
 If a backend is already responding on:
 
 ```text

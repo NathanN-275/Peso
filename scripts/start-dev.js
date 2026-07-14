@@ -5,10 +5,12 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const { createDevEnvironment } = require('./start-dev-env');
+const { buildExpoStartArgs, parseStartOptions } = require('./start-dev-options');
 
 const rootDir = path.resolve(__dirname, '..');
 const backendDir = path.join(rootDir, 'backend');
-const startWeb = process.argv.includes('--web');
+const startupOptions = parseStartOptions(process.argv.slice(2));
+const { startWeb } = startupOptions;
 const devEnvironment = createDevEnvironment({
   rootDir,
   baseEnv: process.env,
@@ -130,6 +132,8 @@ async function main() {
 
   const backendAlreadyRunning = await checkBackendHealth();
 
+  let backendHealthPromise = Promise.resolve();
+
   if (backendAlreadyRunning) {
     log('backend', `using existing backend at ${backendHealthUrl}`);
   } else {
@@ -152,8 +156,9 @@ async function main() {
         cwd: backendDir,
       }
     );
-    await waitForBackendHealth();
-    log('backend', `healthy at ${backendHealthUrl}`);
+    backendHealthPromise = waitForBackendHealth().then(() => {
+      log('backend', `healthy at ${backendHealthUrl}`);
+    });
   }
 
   if (startAnalysisWorker) {
@@ -169,11 +174,18 @@ async function main() {
     );
   }
 
-  log('expo', `starting Expo ${startWeb ? 'web' : 'native'} with backend ${expoEnv.EXPO_PUBLIC_BACKEND_URL}`);
-  spawnProcess('expo', expoBinary, ['start', ...(startWeb ? ['--web'] : []), '--clear'], {
+  const expoArgs = buildExpoStartArgs(startupOptions);
+  log(
+    'expo',
+    `starting Expo ${startWeb ? 'web' : 'native'} with backend ${expoEnv.EXPO_PUBLIC_BACKEND_URL}`
+      + (startupOptions.clearMetroCache ? ' (clearing Metro cache)' : ' (using Metro cache)')
+  );
+  spawnProcess('expo', expoBinary, expoArgs, {
     cwd: rootDir,
     env: expoEnv,
   });
+
+  await backendHealthPromise;
 }
 
 process.on('SIGINT', () => shutdown(0));

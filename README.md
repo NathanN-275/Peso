@@ -210,6 +210,13 @@ From the project root:
 npm start
 ```
 
+This reuses Metro's cache for faster restarts. Clear it only after changing
+dependencies or when Metro serves a stale bundle:
+
+```bash
+npm run start:clear
+```
+
 To run the frontend and backend separately:
 
 ```bash

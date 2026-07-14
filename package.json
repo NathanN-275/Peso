@@ -4,6 +4,7 @@
   "main": "index.ts",
   "scripts": {
     "start": "node scripts/start-dev.js",
+    "start:clear": "node scripts/start-dev.js --clear",
     "start:frontend": "expo start",
     "start:backend": "cd backend && .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --env-file .env",
     "start:backend-worker": "cd backend && .venv/bin/python -m app.jobs.worker --env-file .env",
@@ -11,6 +12,7 @@
     "ios": "expo run:ios",
     "web:export": "expo export --platform web --output-dir dist",
     "web": "node scripts/start-dev.js --web",
+    "web:clear": "node scripts/start-dev.js --web --clear",
     "start:physical": "node scripts/start-dev.js",
     "typecheck": "tsc --noEmit",
     "test:policy": "node --test scripts/*.test.js"
