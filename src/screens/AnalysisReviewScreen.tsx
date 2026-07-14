@@ -610,7 +610,6 @@ export default function AnalysisReviewScreen({
           poseEnabled={poseOverlayEnabled}
           barbellAvailable={hasBarbellPath}
           barbellEnabled={barbellPathEnabled}
-          trackingAssistance={trackingAssistance}
           onPoseEnabledChange={setPoseOverlayEnabled}
           onBarbellEnabledChange={setBarbellPathEnabled}
           onClose={() => setActiveSheet(null)}

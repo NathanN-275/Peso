@@ -226,7 +226,9 @@ npm --prefix dashboard install
 npm run dashboard
 ```
 
-Sign in with the same Supabase account used in Peso. The dashboard reads only traces owned by that account and retrieves playback through the existing owner-checked playback endpoint. It shows raw pose, pin/manual tracks, repaired pose, barbell path, stage timings, frame-level source and rejection decisions, and lift-specific diagnostics. Use **Export redacted trace ZIP** to create `summary.json`, `trace.json`, `frame-timeline.csv`, and `stage-events.csv`; exports omit user/video IDs, storage paths, URLs, bearer credentials, and video or still-frame media.
+Sign in with the same Supabase account used in Peso. The dashboard reads only traces owned by that account and retrieves playback through the existing owner-checked playback endpoint. It shows raw pose, pin/manual tracks, repaired pose, barbell path, stage timings, frame-level source and rejection decisions, and lift-specific diagnostics.
+
+Use **Feedback annotations** to review a time interval and selected keyframes as good, bad, or uncertain; identify affected systems and landmarks; record expected fallback behavior; and place optional ground-truth pose or barbell corrections on a frame. Annotations are owner-scoped local files under `backend/.peso/analysis-feedback/`, not Supabase data. **Export feedback bundle** produces the redacted trace files plus `feedback.json` and a readable `feedback-summary.md`; it still excludes user/video IDs, storage paths, URLs, bearer credentials, source video, and still-frame media.
 
 Tracing is enabled by default only when `BACKEND_ENV` is `development`, `dev`, or `local`. These optional backend variables make the behavior explicit:
 

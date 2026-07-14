@@ -18,6 +18,7 @@ from .config import get_settings
 
 
 TRACE_FORMAT_VERSION = 1
+FEEDBACK_FORMAT_VERSION = 1
 EXPORT_REDACTED_KEYS = {
   "authorization",
   "access_token",
@@ -128,6 +129,7 @@ class AnalysisTraceService:
   def __init__(self, *, enabled: bool, trace_dir: Path, max_runs: int) -> None:
     self.enabled = enabled
     self.trace_dir = trace_dir
+    self.feedback_dir = trace_dir.parent / "analysis-feedback"
     self.max_runs = max_runs
     self._runs: dict[str, dict[str, Any]] = {}
     self._condition = threading.Condition(threading.RLock())
@@ -243,23 +245,65 @@ class AnalysisTraceService:
     if document is None:
       return None
     redacted = _redact_export(document)
-    summary = {
-      "format_version": TRACE_FORMAT_VERSION,
-      "run_id": redacted["run_id"],
-      "status": redacted["status"],
-      "created_at": redacted["created_at"],
-      "finished_at": redacted["finished_at"],
-      "exercise_type": redacted.get("metadata", {}).get("exercise_type"),
-      "view_type": redacted.get("metadata", {}).get("view_type"),
-      "model_version": redacted.get("metadata", {}).get("model_version"),
-      "event_count": len(redacted.get("events") or []),
-    }
     stream = io.BytesIO()
     with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-      archive.writestr("summary.json", json.dumps(summary, indent=2, sort_keys=True))
-      archive.writestr("trace.json", json.dumps(redacted, indent=2, sort_keys=True))
-      archive.writestr("stage-events.csv", self._stage_events_csv(redacted))
-      archive.writestr("frame-timeline.csv", self._frame_timeline_csv(redacted))
+      self._write_trace_export(archive, redacted)
+    return stream.getvalue()
+
+  def get_feedback(self, run_id: str, user_id: str) -> dict[str, Any] | None:
+    """Return local review annotations for one owned trace, without local owner metadata."""
+    if not self.enabled:
+      return None
+    with self._condition:
+      trace = self._document_locked(run_id)
+      if trace is None or not self._is_owned_by(trace, user_id):
+        return None
+      feedback = self._feedback_document_locked(run_id)
+      if feedback is None or str(feedback.get("user_id") or "") != user_id:
+        return {
+          "format_version": FEEDBACK_FORMAT_VERSION,
+          "run_id": run_id,
+          "updated_at": None,
+          "annotations": [],
+        }
+      return self._public_feedback(feedback)
+
+  def save_feedback(
+    self,
+    run_id: str,
+    user_id: str,
+    annotations: list[dict[str, Any]],
+  ) -> dict[str, Any] | None:
+    """Atomically persist validated dashboard annotations beside local traces."""
+    if not self.enabled:
+      return None
+    with self._condition:
+      trace = self._document_locked(run_id)
+      if trace is None or not self._is_owned_by(trace, user_id):
+        return None
+      document = {
+        "format_version": FEEDBACK_FORMAT_VERSION,
+        "run_id": run_id,
+        "user_id": user_id,
+        "updated_at": _utc_now(),
+        "annotations": _json_safe(annotations),
+      }
+      self._persist_feedback_locked(document)
+      return self._public_feedback(document)
+
+  def build_feedback_export(self, run_id: str, user_id: str) -> bytes | None:
+    """Build a redacted trace bundle augmented with local review annotations."""
+    document = self.get_run(run_id, user_id)
+    feedback = self.get_feedback(run_id, user_id)
+    if document is None or feedback is None:
+      return None
+    redacted_trace = _redact_export(document)
+    redacted_feedback = _redact_export(feedback)
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+      self._write_trace_export(archive, redacted_trace)
+      archive.writestr("feedback.json", json.dumps(redacted_feedback, indent=2, sort_keys=True))
+      archive.writestr("feedback-summary.md", self._feedback_summary_markdown(redacted_trace, redacted_feedback))
     return stream.getvalue()
 
   def _append_event_locked(self, document: dict[str, Any], event_type: str, payload: dict[str, Any]) -> None:
@@ -273,6 +317,13 @@ class AnalysisTraceService:
   def _persist_locked(self, document: dict[str, Any]) -> None:
     self.trace_dir.mkdir(parents=True, exist_ok=True)
     destination = self.trace_dir / f"{document['run_id']}.json"
+    temporary = destination.with_suffix(".tmp")
+    temporary.write_text(json.dumps(document, separators=(",", ":")), encoding="utf-8")
+    temporary.replace(destination)
+
+  def _persist_feedback_locked(self, document: dict[str, Any]) -> None:
+    self.feedback_dir.mkdir(parents=True, exist_ok=True)
+    destination = self._feedback_path(document["run_id"])
     temporary = destination.with_suffix(".tmp")
     temporary.write_text(json.dumps(document, separators=(",", ":")), encoding="utf-8")
     temporary.replace(destination)
@@ -300,6 +351,19 @@ class AnalysisTraceService:
           continue
     return list(documents.values())
 
+  def _feedback_document_locked(self, run_id: str) -> dict[str, Any] | None:
+    path = self._feedback_path(run_id)
+    if not path.is_file():
+      return None
+    try:
+      document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+      return None
+    return document if str(document.get("run_id") or "") == run_id else None
+
+  def _feedback_path(self, run_id: str) -> Path:
+    return self.feedback_dir / f"{run_id}.json"
+
   @staticmethod
   def _is_owned_by(document: dict[str, Any], user_id: str) -> bool:
     return str((document.get("metadata") or {}).get("user_id") or "") == user_id
@@ -319,6 +383,71 @@ class AnalysisTraceService:
       "event_count": len(document.get("events") or []),
     }
 
+  @staticmethod
+  def _public_feedback(document: dict[str, Any]) -> dict[str, Any]:
+    return {
+      "format_version": document.get("format_version", FEEDBACK_FORMAT_VERSION),
+      "run_id": document.get("run_id"),
+      "updated_at": document.get("updated_at"),
+      "annotations": copy.deepcopy(document.get("annotations") or []),
+    }
+
+  def _write_trace_export(self, archive: zipfile.ZipFile, redacted: dict[str, Any]) -> None:
+    summary = {
+      "format_version": TRACE_FORMAT_VERSION,
+      "run_id": redacted["run_id"],
+      "status": redacted["status"],
+      "created_at": redacted["created_at"],
+      "finished_at": redacted["finished_at"],
+      "exercise_type": redacted.get("metadata", {}).get("exercise_type"),
+      "view_type": redacted.get("metadata", {}).get("view_type"),
+      "model_version": redacted.get("metadata", {}).get("model_version"),
+      "event_count": len(redacted.get("events") or []),
+    }
+    archive.writestr("summary.json", json.dumps(summary, indent=2, sort_keys=True))
+    archive.writestr("trace.json", json.dumps(redacted, indent=2, sort_keys=True))
+    archive.writestr("stage-events.csv", self._stage_events_csv(redacted))
+    archive.writestr("frame-timeline.csv", self._frame_timeline_csv(redacted))
+
+  @staticmethod
+  def _feedback_summary_markdown(trace: dict[str, Any], feedback: dict[str, Any]) -> str:
+    metadata = trace.get("metadata") or {}
+    lines = [
+      "# Peso analysis feedback",
+      "",
+      f"- Run: {trace.get('run_id')}",
+      f"- Exercise: {metadata.get('exercise_type') or 'unknown'} · {metadata.get('view_type') or 'unknown'}",
+      f"- Model: {metadata.get('model_version') or 'unknown'}",
+      f"- Updated: {feedback.get('updated_at') or 'not yet saved'}",
+      "",
+      "## Annotations",
+      "",
+    ]
+    annotations = feedback.get("annotations") or []
+    if not annotations:
+      lines.append("No annotations recorded.")
+      return "\n".join(lines) + "\n"
+
+    for index, annotation in enumerate(annotations, start=1):
+      start_ms = annotation.get("start_ms", 0)
+      end_ms = annotation.get("end_ms", start_ms)
+      lines.extend([
+        f"### {index}. {annotation.get('status', 'uncertain').title()} · {start_ms / 1000:.2f}s–{end_ms / 1000:.2f}s",
+        "",
+        f"- Systems: {', '.join(annotation.get('systems') or []) or 'none'}",
+        f"- Issue types: {', '.join(annotation.get('issue_types') or []) or 'none'}",
+        f"- Landmarks: {', '.join(annotation.get('landmarks') or []) or 'none'}",
+        f"- Expected behavior: {', '.join(annotation.get('expected_behaviors') or []) or 'none'}",
+        f"- Severity: {annotation.get('severity') or 'not set'}",
+        f"- Keyframes: {len(annotation.get('keyframes') or [])}",
+        f"- Point corrections: {len(annotation.get('corrections') or [])}",
+      ])
+      note = str(annotation.get("notes") or "").strip()
+      if note:
+        lines.append(f"- Notes: {note}")
+      lines.append("")
+    return "\n".join(lines)
+
   def _prune_locked(self) -> None:
     documents = sorted(
       self._all_documents_locked(),
@@ -332,6 +461,7 @@ class AnalysisTraceService:
         continue
       self._runs.pop(run_id, None)
       (self.trace_dir / f"{run_id}.json").unlink(missing_ok=True)
+      self._feedback_path(run_id).unlink(missing_ok=True)
 
   @staticmethod
   def _stage_events_csv(document: dict[str, Any]) -> str:
