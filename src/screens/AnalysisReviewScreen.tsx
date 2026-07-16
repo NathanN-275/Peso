@@ -8,11 +8,12 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
-import { discardAnalyzedVideo, saveAnalyzedVideo } from '../../lib/backendApi';
+import { discardAnalyzedVideo, saveAnalyzedVideo, SaveVideoMetadata } from '../../lib/backendApi';
 import BarbellPathOverlay from '../components/BarbellPathOverlay';
 import PoseOverlay from '../components/PoseOverlay';
 import TrackingReferenceOverlay from '../components/TrackingReferenceOverlay';
@@ -134,6 +135,11 @@ export default function AnalysisReviewScreen({
   const [saved, setSaved] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showDiscardSheet, setShowDiscardSheet] = useState(false);
+  const [showSaveSheet, setShowSaveSheet] = useState(false);
+  const [weightText, setWeightText] = useState('');
+  const [weightUnit, setWeightUnit] = useState<'lb' | 'kg'>('lb');
+  const [repText, setRepText] = useState(String(result.rep_count || result.reps.length));
+  const [userNotes, setUserNotes] = useState('');
   const [showSavedDeleteSheet, setShowSavedDeleteSheet] = useState(false);
   const [wasPlayingBeforeScrub, setWasPlayingBeforeScrub] = useState(false);
   const mediaAvailable = Boolean(videoUri);
@@ -333,7 +339,7 @@ export default function AnalysisReviewScreen({
     player.play();
   };
 
-  const handleSave = async () => {
+  const handleSave = async (metadata: SaveVideoMetadata = {}) => {
     // Save is gated by a valid session token.
     if (isSavedMode || !session?.access_token || saving) {
       return;
@@ -343,7 +349,7 @@ export default function AnalysisReviewScreen({
     setErrorMessage(null);
 
     try {
-      await saveAnalyzedVideo(result.video_id, session.access_token);
+      await saveAnalyzedVideo(result.video_id, session.access_token, metadata);
       setSaved(true);
       if (mediaAvailable) {
         player.pause();
@@ -354,6 +360,20 @@ export default function AnalysisReviewScreen({
     } finally {
       setSaving(false);
     }
+  };
+
+  const confirmSave = async () => {
+    const metadata: SaveVideoMetadata = {};
+    const weight = Number(weightText);
+    const reps = Number(repText);
+    if (weightText.trim() && Number.isFinite(weight) && weight >= 0) {
+      metadata.weight = weight;
+      metadata.weight_unit = weightUnit;
+    }
+    if (repText.trim() && Number.isInteger(reps) && reps >= 0) metadata.corrected_rep_count = reps;
+    if (userNotes.trim()) metadata.user_notes = userNotes.trim();
+    setShowSaveSheet(false);
+    await handleSave(metadata);
   };
 
   const discardVideo = async () => {
@@ -468,9 +488,7 @@ export default function AnalysisReviewScreen({
           ) : (
             <Pressable
               accessibilityRole="button"
-              onPress={() => {
-                void handleSave();
-              }}
+              onPress={() => setShowSaveSheet(true)}
               disabled={saving || discarding}
               style={[styles.topButton, (saving || discarding) && styles.disabledButton]}
             >
@@ -614,6 +632,29 @@ export default function AnalysisReviewScreen({
           onBarbellEnabledChange={setBarbellPathEnabled}
           onClose={() => setActiveSheet(null)}
         />
+        <ReviewBottomSheet
+          visible={!isSavedMode && showSaveSheet}
+          title="Save workout"
+          onClose={() => setShowSaveSheet(false)}
+          scrollable
+          scrollContentStyle={styles.sheetContent}
+        >
+          <Text style={styles.sheetMutedText}>Add details now or leave them blank.</Text>
+          <TextInput value={weightText} onChangeText={setWeightText} placeholder="Weight (optional)" placeholderTextColor={tokens.colors.textMuted} keyboardType="decimal-pad" style={styles.metadataInput} />
+          <View style={styles.unitRow}>
+            {(['lb', 'kg'] as const).map((unit) => (
+              <Pressable key={unit} onPress={() => setWeightUnit(unit)} style={[styles.unitButton, weightUnit === unit && styles.unitButtonActive]}>
+                <Text style={styles.unitButtonText}>{unit}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <TextInput value={repText} onChangeText={setRepText} placeholder="Reps" placeholderTextColor={tokens.colors.textMuted} keyboardType="number-pad" style={styles.metadataInput} />
+          <TextInput value={userNotes} onChangeText={setUserNotes} placeholder="Notes (optional)" placeholderTextColor={tokens.colors.textMuted} multiline style={[styles.metadataInput, styles.notesInput]} />
+          <Pressable onPress={() => void confirmSave()} disabled={saving} style={styles.saveConfirmButton}>
+            {saving ? <ActivityIndicator color={tokens.colors.textPrimary} /> : <Text style={styles.discardButtonText}>Save video</Text>}
+          </Pressable>
+        </ReviewBottomSheet>
+
         <ReviewBottomSheet
           visible={activeSheet === 'summary'}
           title="Summary"
@@ -956,6 +997,40 @@ const styles = StyleSheet.create({
     color: tokens.colors.textMuted,
     fontSize: 13,
     lineHeight: 19,
+  },
+  metadataInput: {
+    minHeight: 48,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: tokens.colors.inputBorder,
+    backgroundColor: '#0C1016',
+    color: tokens.colors.textPrimary,
+    paddingHorizontal: 12,
+    fontSize: 15,
+  },
+  notesInput: {
+    minHeight: 84,
+    textAlignVertical: 'top',
+    paddingTop: 12,
+  },
+  unitRow: { flexDirection: 'row', gap: 8 },
+  unitButton: {
+    flex: 1,
+    minHeight: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: tokens.colors.inputBorder,
+  },
+  unitButtonActive: { backgroundColor: tokens.colors.brand, borderColor: tokens.colors.brand },
+  unitButtonText: { color: tokens.colors.textPrimary, fontWeight: '700' },
+  saveConfirmButton: {
+    minHeight: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    backgroundColor: tokens.colors.brand,
   },
   staleText: {
     color: '#FFB020',

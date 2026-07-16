@@ -770,24 +770,12 @@ function AppContent() {
     setSavedOverview(overview);
     setSavedOverviewLoaded(true);
   };
-  const handleAnalysisSaved = () => {
+  const handleAnalysisSaved = (_videoId?: string) => {
     setRecordedUploadVideo(null);
     setRecordedUploadSetup(null);
     setRecordedReviewSavedVideoId(null);
     invalidateSavedVideoCaches();
     authNavigation.toHome();
-  };
-  const handleRecordedAnalysisSaved = (videoId: string) => {
-    const previousSavedVideoId = recordedReviewSavedVideoId;
-
-    setRecordedReviewSavedVideoId(videoId);
-    invalidateSavedVideoCaches();
-
-    if (previousSavedVideoId && previousSavedVideoId !== videoId && session?.access_token) {
-      deleteSavedVideo(previousSavedVideoId, session.access_token).catch((error) => {
-        console.warn('Unable to discard replaced recorded review video.', error);
-      });
-    }
   };
   const handleOpenSavedLiftFolder = (exerciseType: string) => {
     setSelectedSavedExerciseType(exerciseType);
@@ -1094,7 +1082,7 @@ function AppContent() {
             initialVideoSetup={recordedUploadSetup}
             onBack={handleUploadBack}
             onRecordVideoPress={Platform.OS === 'web' ? handleRecordVideoRoute : undefined}
-            onAnalysisSaved={uploadSourceMode === 'camera' ? handleRecordedAnalysisSaved : handleAnalysisSaved}
+            onAnalysisSaved={handleAnalysisSaved}
           />
         );
       }

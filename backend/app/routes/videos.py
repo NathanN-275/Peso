@@ -14,6 +14,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, 
 from pydantic import BaseModel, ConfigDict
 
 from ..analysis.pipeline import analyze_video
+from ..analysis.coaching_history import technique_trend_cue
 from ..analysis.manual_tracking import validate_tracking_setup
 from ..analysis.versioning import annotate_analysis_freshness, analysis_is_current
 from ..services.analyzed_video_renderer import render_analyzed_video
@@ -127,6 +128,10 @@ class SavedVideoResponse(BaseModel):
   save_state: str
   saved_at: str | None = None
   created_at: str
+  weight: float | None = None
+  weight_unit: str | None = None
+  corrected_rep_count: int | None = None
+  user_notes: str | None = None
   analysis: SavedVideoAnalysisResponse | None = None
   export_options: SavedVideoExportOptionsResponse | None = None
 
@@ -160,6 +165,13 @@ class SavedVideoOverviewResponse(BaseModel):
 class SaveVideoResponse(BaseModel):
   video_id: UUID
   save_state: str
+
+
+class SaveVideoRequest(StrictRequestModel):
+  weight: float | None = None
+  weight_unit: str | None = None
+  corrected_rep_count: int | None = None
+  user_notes: str | None = None
 
 
 class DiscardVideoResponse(BaseModel):
@@ -526,6 +538,10 @@ def _saved_video_response(
     save_state=video.get("save_state") or ("saved" if video.get("is_saved") else "pending"),
     saved_at=video.get("saved_at"),
     created_at=video["created_at"],
+    weight=video.get("weight"),
+    weight_unit=video.get("weight_unit"),
+    corrected_rep_count=video.get("corrected_rep_count"),
+    user_notes=video.get("user_notes"),
     analysis=normalized_analysis,
     export_options=(
       SavedVideoExportOptionsResponse(**export_options)
@@ -840,6 +856,7 @@ def queue_analysis(
 @router.post("/videos/{video_id}/save", response_model=SaveVideoResponse)
 def save_video(
   video_id: UUID,
+  request: SaveVideoRequest | None = None,
   user_id: str = Depends(get_current_user_id),
 ) -> SaveVideoResponse:
   # Mark a finished analysis as saved in the user's library.
@@ -850,7 +867,14 @@ def save_video(
       status_code=status.HTTP_409_CONFLICT,
       detail="Discarded videos cannot be saved.",
     )
-  saved_video = repository.mark_saved(str(video_id))
+  metadata = request.model_dump(exclude_none=True) if request else {}
+  if metadata.get("weight_unit") not in {None, "lb", "kg"}:
+    raise HTTPException(status_code=400, detail="Weight unit must be lb or kg.")
+  if metadata.get("weight") is not None and metadata["weight"] < 0:
+    raise HTTPException(status_code=400, detail="Weight cannot be negative.")
+  if metadata.get("corrected_rep_count") is not None and metadata["corrected_rep_count"] < 0:
+    raise HTTPException(status_code=400, detail="Rep count cannot be negative.")
+  saved_video = repository.mark_saved(str(video_id), metadata)
   return SaveVideoResponse(video_id=video_id, save_state=saved_video["save_state"])
 
 
@@ -863,12 +887,27 @@ def list_saved_videos(
   videos = repository.list_saved_videos(user_id)
   analyses_by_video_id = _load_latest_analyses(repository, videos)
 
-  return _saved_video_responses(
+  responses = _saved_video_responses(
     videos=videos,
     analyses_by_video_id=analyses_by_video_id,
     storage=storage,
     user_id=user_id,
   )
+  for response in responses:
+    analysis = response.analysis
+    if not analysis:
+      continue
+    cue = technique_trend_cue(
+      video=next(video for video in videos if str(video["id"]) == str(response.id)),
+      analysis=analyses_by_video_id.get(str(response.id)),
+      saved_videos=videos,
+      analyses_by_video_id=analyses_by_video_id,
+    )
+    if cue:
+      response.coaching_feedback.append(cue)
+      response.result_json["coach_feedback"] = response.coaching_feedback
+      response.result_json["coachingFeedback"] = response.coaching_feedback
+  return responses
 
 
 @router.get("/videos/saved-page", response_model=SavedVideosPageResponse)

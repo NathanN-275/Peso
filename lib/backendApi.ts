@@ -475,13 +475,25 @@ export async function getVideoPlaybackUrl(videoId: string, accessToken: string) 
   return response;
 }
 
-export async function saveAnalyzedVideo(videoId: string, accessToken: string) {
+export type SaveVideoMetadata = {
+  weight?: number;
+  weight_unit?: 'lb' | 'kg';
+  corrected_rep_count?: number;
+  user_notes?: string;
+};
+
+export async function saveAnalyzedVideo(
+  videoId: string,
+  accessToken: string,
+  metadata: SaveVideoMetadata = {}
+) {
   // Persist the analyzed clip to the user's saved list.
   return requestJson<{ video_id: string; save_state: SaveState }>(
     `/videos/${videoId}/save`,
     accessToken,
     {
       method: 'POST',
+      body: JSON.stringify(metadata),
     }
   );
 }

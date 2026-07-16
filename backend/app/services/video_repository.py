@@ -15,7 +15,7 @@ from .video_storage_paths import VIDEO_STORAGE_PATH_FIELDS, require_user_storage
 logger = logging.getLogger(__name__)
 VIDEO_BASE_COLUMNS = (
   "id,user_id,storage_path,source_type,exercise_type,view_type,status,duration_ms,"
-  "save_state,saved_at,expires_at,created_at,updated_at"
+  "save_state,saved_at,expires_at,weight,weight_unit,corrected_rep_count,user_notes,created_at,updated_at"
 )
 VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING = (
   f"{VIDEO_BASE_COLUMNS},is_saved,discarded_at,thumbnail_path,playback_path,original_storage_path,"
@@ -188,7 +188,7 @@ class VideoRepository:
 
     return response.data[0] if response.data else None
 
-  def mark_saved(self, video_id: str) -> dict[str, Any]:
+  def mark_saved(self, video_id: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
     # Saved videos stay visible in the home flow.
     saved_at = datetime.now(timezone.utc).isoformat()
     fields = {
@@ -198,6 +198,8 @@ class VideoRepository:
       "discarded_at": None,
       "expires_at": None,
     }
+    if metadata:
+      fields.update(metadata)
 
     try:
       return self.update_video(video_id, fields)
