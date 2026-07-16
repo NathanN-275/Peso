@@ -438,6 +438,7 @@ class AnalysisTraceService:
         f"- Issue types: {', '.join(annotation.get('issue_types') or []) or 'none'}",
         f"- Landmarks: {', '.join(annotation.get('landmarks') or []) or 'none'}",
         f"- Expected behavior: {', '.join(annotation.get('expected_behaviors') or []) or 'none'}",
+        f"- Responsible stages: {', '.join(annotation.get('source_stages') or []) or 'not attributed'}",
         f"- Severity: {annotation.get('severity') or 'not set'}",
         f"- Keyframes: {len(annotation.get('keyframes') or [])}",
         f"- Point corrections: {len(annotation.get('corrections') or [])}",

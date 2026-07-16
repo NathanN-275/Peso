@@ -42,6 +42,7 @@ class FeedbackAnnotation(StrictFeedbackModel):
   issue_types: list[str] = Field(default_factory=list, max_length=12)
   landmarks: list[str] = Field(default_factory=list, max_length=20)
   expected_behaviors: list[str] = Field(default_factory=list, max_length=12)
+  source_stages: list[Literal["raw_pose", "pin_fusion", "pose_repair", "barbell_tracking"]] = Field(default_factory=list, max_length=4)
   severity: Literal["visual_only", "metric_changing", "blocking"] = "visual_only"
   notes: str = Field(default="", max_length=4000)
   keyframes: list[FeedbackKeyframe] = Field(default_factory=list, max_length=100)

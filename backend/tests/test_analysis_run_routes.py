@@ -85,6 +85,7 @@ class AnalysisRunRoutesTest(unittest.TestCase):
             "issue_types": ["drift"],
             "landmarks": ["right_knee"],
             "expected_behaviors": ["hold_last_reliable", "interpolate_briefly"],
+            "source_stages": ["raw_pose", "pose_repair"],
             "severity": "metric_changing",
             "notes": "Do not swap to the left knee when the plate blocks the view.",
             "keyframes": [{"timestamp_ms": 4200, "source_frame_index": 126}],
@@ -104,6 +105,7 @@ class AnalysisRunRoutesTest(unittest.TestCase):
     )
     self.assertEqual(save.status_code, 200)
     self.assertEqual(save.json()["annotations"][0]["corrections"][0]["target"], "right_knee")
+    self.assertEqual(save.json()["annotations"][0]["source_stages"], ["raw_pose", "pose_repair"])
     self.assertTrue((self.service.feedback_dir / f"{self.trace.run_id}.json").is_file())
 
     export = self.client.get(f"/dev/analysis-runs/{self.trace.run_id}/feedback/export")
@@ -117,6 +119,7 @@ class AnalysisRunRoutesTest(unittest.TestCase):
       feedback_payload = archive.read("feedback.json").decode("utf-8")
       trace_payload = archive.read("trace.json").decode("utf-8")
       self.assertIn("right_knee", feedback_payload)
+      self.assertIn("Responsible stages: raw_pose, pose_repair", archive.read("feedback-summary.md").decode("utf-8"))
       self.assertIn("Do not swap", archive.read("feedback-summary.md").decode("utf-8"))
       self.assertNotIn(USER_ID, trace_payload)
       self.assertNotIn("11111111-1111-1111-1111-111111111111", trace_payload)
