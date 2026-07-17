@@ -23,6 +23,7 @@
     "@supabase/supabase-js": "^2.99.1",
     "expo": "~55.0.24",
     "expo-build-properties": "~55.0.14",
+    "expo-dev-client": "~55.0.37",
     "expo-file-system": "~55.0.21",
     "expo-font": "~55.0.7",
     "expo-image-picker": "~55.0.20",
