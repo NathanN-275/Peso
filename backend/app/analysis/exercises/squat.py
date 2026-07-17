@@ -237,6 +237,18 @@ def _has_unreliable_bottom_occlusion_landmarks(pose_validation: dict[str, Any], 
   )
 
 
+def _rep_has_unreliable_motion_window(pose_validation: dict[str, Any], rep: dict[str, Any]) -> bool:
+  """Reject a candidate rep whose bottom is built from an unreliable leg chain."""
+  bottom_index = int(rep["bottom_index"])
+  window = range(max(0, bottom_index - DEPTH_BOTTOM_WINDOW), bottom_index + DEPTH_BOTTOM_WINDOW + 1)
+  return any(
+    landmark.get("frame_index") in window
+    and landmark.get("joint") in {"hip", "knee", "ankle"}
+    and landmark.get("status") in {"rejected", "kinematic_estimate"}
+    for landmark in pose_validation.get("unreliable_landmarks", [])
+  )
+
+
 def _rep_bottom_depth_assessment(
   *,
   frames: list[dict[str, Any]],
@@ -598,6 +610,13 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
       hip_flexions=hip_flexions,
       frames=frames,
     )
+    unreliable_reps = [rep for rep in reps if _rep_has_unreliable_motion_window(pose_validation, rep)]
+    if unreliable_reps:
+      reps = [rep for rep in reps if rep not in unreliable_reps]
+      rep_detection["suppressed_unreliable_rep_count"] = len(unreliable_reps)
+      rep_detection["suppression_reason"] = "unreliable_lower_body_bottom_window"
+    else:
+      rep_detection["suppressed_unreliable_rep_count"] = 0
     diagnostics["rep_detection"] = rep_detection
 
     if rep_detection.get("reason") and rep_detection["reason"] not in diagnostics["quality_flags"]:

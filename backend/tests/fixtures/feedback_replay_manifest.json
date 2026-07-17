@@ -1,0 +1,24 @@
+{
+  "format_version": 1,
+  "policy": "development_only_then_frozen",
+  "runs": [
+    {
+      "run_id": "9e16d9f2-4f77-43af-a156-4534e8177d30",
+      "source_video": null,
+      "source_video_required": true,
+      "expected_modes": ["pin_assisted"]
+    },
+    {
+      "run_id": "f6e485a9-1aa0-4abd-84b4-b0166a344c10",
+      "source_video": null,
+      "source_video_required": true,
+      "expected_modes": ["automatic"]
+    },
+    {
+      "run_id": "ccd34b94-e316-479a-a9ca-5aa75a05d0c2",
+      "source_video": null,
+      "source_video_required": true,
+      "expected_modes": ["pin_assisted"]
+    }
+  ]
+}

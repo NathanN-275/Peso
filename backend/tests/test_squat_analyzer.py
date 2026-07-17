@@ -46,6 +46,22 @@ def frame(
 
 
 class SquatAnalyzerTest(unittest.TestCase):
+  def test_unreliable_bottom_window_cannot_create_an_extra_rep(self) -> None:
+    frames = [frame(index * 500) for index in range(6)]
+    detected_reps = [
+      {"start_index": 0, "bottom_index": 1, "end_index": 2, "start_timestamp_ms": 0, "bottom_timestamp_ms": 500, "end_timestamp_ms": 1000},
+      {"start_index": 3, "bottom_index": 4, "end_index": 5, "start_timestamp_ms": 1500, "bottom_timestamp_ms": 2000, "end_timestamp_ms": 2500},
+    ]
+    with patch("app.analysis.exercises.squat.detect_reps", return_value=(detected_reps, {"motion_amplitude": 0.5, "reason": None, "rep_count": 2})):
+      result = SquatAnalyzer().analyze(
+        video_id="video-1", exercise_type="squat", view_type="side", frames=frames,
+        pose_validation_override={"selected_side": "left", "quality_score_penalty": 0.0, "unreliable_landmarks": [
+          {"frame_index": 4, "joint": "knee", "status": "rejected"},
+        ]},
+      )
+    self.assertEqual(result["rep_count"], 1)
+    self.assertEqual(result["diagnostics"]["rep_detection"]["suppressed_unreliable_rep_count"], 1)
+
   def test_public_pose_frames_do_not_emit_pin_metadata_for_automatic_points(self) -> None:
     pose_frames = _build_pose_frames([frame(0)])
 
