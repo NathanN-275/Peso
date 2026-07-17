@@ -55,9 +55,5 @@ __pycache__/
 # Local analysis observability artifacts
 backend/.peso/
 
-# Local developer dashboard (intentionally not versioned)
-dashboard/
-scripts/start-dashboard.js
-
 supabase/.temp/
 .agents/skills/

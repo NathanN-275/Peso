@@ -26,3 +26,18 @@ missing observation. Recovery may produce a gap when identity cannot be proven.
 
 A frame whose tracking evidence is insufficient for reliable geometry, depth,
 or rep decisions. It must not be treated as a confident observation.
+
+## Review Projection
+
+The bounded subset of an Analysis Run needed for interactive dashboard review.
+It is distinct from the complete trace export.
+
+## Playback Session
+
+The independently loaded signed-video resource used to review an Analysis Run.
+It may be refreshed without reloading trace or annotation data.
+
+## Annotation Draft
+
+An unsaved annotation held locally for one Analysis Run. It survives browser
+reloads until saved to feedback or explicitly discarded.

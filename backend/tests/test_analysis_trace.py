@@ -137,6 +137,38 @@ class AnalysisTraceServiceTest(unittest.TestCase):
       self.assertIn("source_frame_index", bundle.read("frame-timeline.csv").decode("utf-8"))
       self.assertIn("duration_ms", bundle.read("stage-events.csv").decode("utf-8"))
 
+  def test_review_projection_keeps_only_dashboard_landmarks_and_bounded_diagnostics(self) -> None:
+    service = self._service()
+    trace = self._start(service)
+    trace.snapshot("raw_pose", frames=[{
+      "source_frame_index": 4,
+      "timestamp_ms": 220,
+      "frame_width": 405,
+      "frame_height": 720,
+      "landmarks": {
+        "right_knee": {"x": 0.4, "y": 0.7, "visibility": 0.9, "z": -0.2},
+        "right_eye": {"x": 0.5, "y": 0.2, "visibility": 0.9},
+      },
+    }])
+    trace.snapshot("pin_fusion", manual_tracking={"tracks": {"upper_back": {
+      "4": {"x": 0.3, "y": 0.4, "confidence": 0.9, "unneeded": "omit"},
+    }}})
+    trace.snapshot("barbell_tracking", barbell_path={"available": True, "points": [{"time": 0.22, "x": 0.5, "y": 0.4, "descriptor": "not-for-review"}]}, diagnostics={"frames": list(range(30))})
+    trace.complete({}, {})
+
+    review = service.get_review(trace.run_id, USER_ID)
+
+    self.assertIsNotNone(review)
+    assert review is not None
+    raw = next(event for event in review["events"] if event["payload"].get("name") == "raw_pose")
+    self.assertEqual(set(raw["payload"]["frames"][0]["landmarks"]), {"right_knee"})
+    pins = next(event for event in review["events"] if event["payload"].get("name") == "pin_fusion")
+    self.assertEqual(pins["payload"]["manual_tracking"]["tracks"]["upper_back"]["4"], {"x": 0.3, "y": 0.4, "confidence": 0.9})
+    barbell = next(event for event in review["events"] if event["payload"].get("name") == "barbell_tracking")
+    self.assertEqual(barbell["payload"]["barbell_path"]["points"][0]["x"], 0.5)
+    self.assertNotIn("descriptor", barbell["payload"]["barbell_path"]["points"][0])
+    self.assertEqual(barbell["payload"]["diagnostics"]["frames"], {"item_count": 30})
+
   def test_owner_cannot_read_another_users_trace(self) -> None:
     service = self._service()
     trace = self._start(service)

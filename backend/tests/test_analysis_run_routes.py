@@ -52,6 +52,7 @@ class AnalysisRunRoutesTest(unittest.TestCase):
 
     listing = self.client.get("/dev/analysis-runs")
     detail = self.client.get(f"/dev/analysis-runs/{self.trace.run_id}")
+    review = self.client.get(f"/dev/analysis-runs/{self.trace.run_id}/review")
     stream = self.client.get(f"/dev/analysis-runs/{self.trace.run_id}/events")
     export = self.client.get(f"/dev/analysis-runs/{self.trace.run_id}/export")
 
@@ -60,6 +61,8 @@ class AnalysisRunRoutesTest(unittest.TestCase):
     self.assertEqual(detail.status_code, 200)
     self.assertEqual(detail.json()["status"], "completed")
     self.assertEqual(detail.json()["video_id"], "11111111-1111-1111-1111-111111111111")
+    self.assertEqual(review.status_code, 200)
+    self.assertEqual(review.json()["run_id"], self.trace.run_id)
     self.assertEqual(stream.status_code, 200)
     self.assertIn("analysis_started", stream.text)
     self.assertEqual(export.status_code, 200)
@@ -129,6 +132,7 @@ class AnalysisRunRoutesTest(unittest.TestCase):
 
     self.assertEqual(self.client.get("/dev/analysis-runs").json(), {"runs": []})
     self.assertEqual(self.client.get(f"/dev/analysis-runs/{self.trace.run_id}").status_code, 404)
+    self.assertEqual(self.client.get(f"/dev/analysis-runs/{self.trace.run_id}/review").status_code, 404)
     self.assertEqual(self.client.get(f"/dev/analysis-runs/{self.trace.run_id}/events").status_code, 404)
     self.assertEqual(self.client.get(f"/dev/analysis-runs/{self.trace.run_id}/export").status_code, 404)
     self.assertEqual(self.client.get(f"/dev/analysis-runs/{self.trace.run_id}/feedback").status_code, 404)

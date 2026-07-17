@@ -90,6 +90,18 @@ def get_analysis_run(
   return _owned_run_or_404(service, run_id, user_id)
 
 
+@router.get("/{run_id}/review")
+def get_analysis_run_review(
+  run_id: str,
+  user_id: str = Depends(get_current_user_id),
+  service: AnalysisTraceService = Depends(_trace_service),
+) -> dict:
+  review = service.get_review(run_id, user_id)
+  if review is None:
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis trace not found.")
+  return review
+
+
 @router.get("/{run_id}/feedback")
 def get_analysis_feedback(
   run_id: str,

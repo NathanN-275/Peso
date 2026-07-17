@@ -19,6 +19,10 @@ from .config import get_settings
 
 TRACE_FORMAT_VERSION = 1
 FEEDBACK_FORMAT_VERSION = 1
+REVIEW_SNAPSHOT_NAMES = {"raw_pose", "pin_fusion", "pose_repair", "barbell_tracking", "exercise_metrics"}
+REVIEW_LANDMARK_SUFFIXES = {
+  "shoulder", "upper_back", "hip", "knee", "ankle", "elbow", "wrist",
+}
 EXPORT_REDACTED_KEYS = {
   "authorization",
   "access_token",
@@ -212,6 +216,17 @@ class AnalysisTraceService:
       stored = copy.deepcopy(document)
       return {**stored, **self._summary(stored)}
 
+  def get_review(self, run_id: str, user_id: str) -> dict[str, Any] | None:
+    """Return the small, dashboard-specific projection of one owned trace."""
+    if not self.enabled:
+      return None
+    with self._condition:
+      document = self._document_locked(run_id)
+      if document is None or not self._is_owned_by(document, user_id):
+        return None
+      stored = copy.deepcopy(document)
+    return self._review_projection(stored)
+
   def iter_events(
     self,
     run_id: str,
@@ -382,6 +397,127 @@ class AnalysisTraceService:
       "model_version": metadata.get("model_version"),
       "event_count": len(document.get("events") or []),
     }
+
+  @classmethod
+  def _review_projection(cls, document: dict[str, Any]) -> dict[str, Any]:
+    """Keep browser review data bounded while retaining full-trace export."""
+    events: list[dict[str, Any]] = []
+    for event in document.get("events") or []:
+      payload = event.get("payload") or {}
+      snapshot_name = payload.get("name") if event.get("type") == "snapshot" else None
+      if snapshot_name and snapshot_name not in REVIEW_SNAPSHOT_NAMES:
+        continue
+      projected_payload: dict[str, Any]
+      if snapshot_name:
+        projected_payload = {"name": snapshot_name}
+        frames = payload.get("frames")
+        if isinstance(frames, list):
+          projected_payload["frames"] = [cls._review_frame(frame) for frame in frames if isinstance(frame, dict)]
+        if snapshot_name == "barbell_tracking":
+          projected_payload["barbell_path"] = cls._review_barbell_path(payload.get("barbell_path"))
+          projected_payload["diagnostics"] = cls._review_value(payload.get("diagnostics"))
+        elif snapshot_name == "pose_repair":
+          projected_payload["pose_repair"] = cls._review_value(payload.get("pose_repair"))
+        elif snapshot_name == "pin_fusion":
+          projected_payload["manual_tracking"] = cls._review_manual_tracking(payload.get("manual_tracking"))
+          projected_payload["tracking_assistance"] = cls._review_value(payload.get("tracking_assistance"))
+        elif snapshot_name == "exercise_metrics":
+          projected_payload["result"] = cls._review_value(payload.get("result"))
+      else:
+        projected_payload = cls._review_value(payload)
+      events.append({
+        "index": event.get("index"),
+        "type": event.get("type"),
+        "at": event.get("at"),
+        "payload": projected_payload,
+      })
+    return {
+      "format_version": document.get("format_version", TRACE_FORMAT_VERSION),
+      **cls._summary(document),
+      "metadata": {
+        "exercise_type": (document.get("metadata") or {}).get("exercise_type"),
+        "view_type": (document.get("metadata") or {}).get("view_type"),
+        "model_version": (document.get("metadata") or {}).get("model_version"),
+      },
+      "events": events,
+    }
+
+  @staticmethod
+  def _review_frame(frame: dict[str, Any]) -> dict[str, Any]:
+    landmarks = frame.get("landmarks") or {}
+    projected_landmarks = {
+      name: {
+        key: point.get(key)
+        for key in (
+          "x", "y", "visibility", "confidence", "accepted_source", "tracking_state",
+          "manual_source", "pose_repair_reasons", "chain_failure_reason", "occluded",
+          "tracking_lost", "stale_track", "chain_valid", "visual_only",
+        )
+        if key in point
+      }
+      for name, point in landmarks.items()
+      if isinstance(point, dict) and (
+        name.endswith("_upper_back") or name.rsplit("_", 1)[-1] in REVIEW_LANDMARK_SUFFIXES
+      )
+    }
+    return {
+      key: frame.get(key)
+      for key in ("source_frame_index", "timestamp_ms", "frame_width", "frame_height", "processed_frame_width", "processed_frame_height")
+      if key in frame
+    } | {"landmarks": projected_landmarks}
+
+  @staticmethod
+  def _review_barbell_path(value: Any) -> dict[str, Any]:
+    path = value if isinstance(value, dict) else {}
+    points = path.get("points") if isinstance(path.get("points"), list) else []
+    return {
+      "available": path.get("available"),
+      "coverage": path.get("coverage"),
+      "target": path.get("target"),
+      "points": [
+        {
+          key: point.get(key)
+          for key in ("time", "x", "y", "markerX", "markerY", "confidence", "trackingState", "tracking_state", "selectedSource", "selected_source", "manual_assisted", "gap_reason")
+          if key in point
+        }
+        for point in points
+        if isinstance(point, dict)
+      ],
+    }
+
+  @staticmethod
+  def _review_manual_tracking(value: Any) -> dict[str, Any]:
+    manual_tracking = value if isinstance(value, dict) else {}
+    tracks = manual_tracking.get("tracks") if isinstance(manual_tracking.get("tracks"), dict) else {}
+    return {
+      "tracks": {
+        str(name): {
+          str(frame_index): {
+            key: point.get(key)
+            for key in ("x", "y", "confidence", "visibility", "accepted_source", "tracking_state")
+            if key in point
+          }
+          for frame_index, point in track.items()
+          if isinstance(point, dict)
+        }
+        for name, track in tracks.items()
+        if isinstance(track, dict)
+      },
+    }
+
+  @classmethod
+  def _review_value(cls, value: Any, *, depth: int = 0) -> Any:
+    if value is None or isinstance(value, (str, bool, int, float)):
+      return value
+    if depth >= 3:
+      return {"item_count": len(value)} if isinstance(value, (dict, list)) else str(value)
+    if isinstance(value, list):
+      if len(value) > 24:
+        return {"item_count": len(value)}
+      return [cls._review_value(item, depth=depth + 1) for item in value]
+    if isinstance(value, dict):
+      return {str(key): cls._review_value(item, depth=depth + 1) for key, item in value.items()}
+    return str(value)
 
   @staticmethod
   def _public_feedback(document: dict[str, Any]) -> dict[str, Any]:
