@@ -18,6 +18,14 @@ const PIN_LABELS: Record<TrackingPinName, string> = {
   elbow: 'Elbow',
   wrist: 'Wrist',
   barbell: 'Barbell collar',
+  left_shoulder: 'L Shoulder',
+  right_shoulder: 'R Shoulder',
+  left_hip: 'L Hip',
+  right_hip: 'R Hip',
+  left_knee: 'L Knee',
+  right_knee: 'R Knee',
+  left_ankle: 'L Ankle',
+  right_ankle: 'R Ankle',
 };
 
 const PIN_COLORS: Record<TrackingPinName, string> = {
@@ -28,6 +36,14 @@ const PIN_COLORS: Record<TrackingPinName, string> = {
   elbow: '#F973B7',
   wrist: '#2DD4BF',
   barbell: '#FF6577',
+  left_shoulder: '#5DA9FF',
+  right_shoulder: '#8CC0FF',
+  left_hip: '#A77BFF',
+  right_hip: '#C3A6FF',
+  left_knee: '#FFB454',
+  right_knee: '#FFD090',
+  left_ankle: '#5DDBA6',
+  right_ankle: '#92E8C6',
 };
 
 type TrackingReferenceOverlayProps = {
@@ -85,7 +101,7 @@ export default function TrackingReferenceOverlay({
       id: name,
       x: rect.x + (point.x * rect.width),
       y: rect.y + (point.y * rect.height),
-      labelWidth: name === 'barbell' ? 104 : name === 'shoulder' ? 104 : 76,
+      labelWidth: name === 'barbell' || name === 'shoulder' ? 104 : 76,
       labelHeight: LABEL_HEIGHT,
     }];
   });

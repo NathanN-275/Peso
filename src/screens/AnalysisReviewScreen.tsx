@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
 import { discardAnalyzedVideo, saveAnalyzedVideo } from '../../lib/backendApi';
 import BarbellPathOverlay from '../components/BarbellPathOverlay';
+import JointMotionTrailOverlay from '../components/JointMotionTrailOverlay';
 import PoseOverlay from '../components/PoseOverlay';
 import TrackingReferenceOverlay from '../components/TrackingReferenceOverlay';
 import ReviewBottomSheet from '../components/ReviewBottomSheet';
@@ -62,9 +63,9 @@ function formatFlagLabel(value: string) {
   return value.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function formatNumber(value: number, suffix = '') {
+function formatNumber(value?: number | null, suffix = '') {
   // Keep numeric debug values compact on screen.
-  if (!Number.isFinite(value)) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
     return `0${suffix}`;
   }
 
@@ -211,6 +212,9 @@ export default function AnalysisReviewScreen({
   const showPoseOverlay = hasPoseTimeline && poseOverlayEnabled && !showReferencePins;
   const showBarbellPath = hasBarbellPath && barbellPathEnabled && !showReferencePins;
   const cameraView = result.cameraView ?? result.view;
+  const isFrontSquatTracking = result.analysisMode === 'front_squat_tracking_v1';
+  const depthAssessmentAvailable = result.analysisCapabilities?.depthAssessment
+    ?? !isFrontSquatTracking;
   const selectedPoseSide = resolveSelectedTrackingSide(trackingAssistance, result.diagnostics);
   const analysisStale = result.analysis_stale ?? result.diagnostics?.analysis_stale ?? false;
   const analysisIncomplete = result.analysis_incomplete ?? result.diagnostics?.analysis_incomplete ?? false;
@@ -492,6 +496,17 @@ export default function AnalysisReviewScreen({
                   onFirstFrameRender={() => setErrorMessage(null)}
                 />
                 {showPoseOverlay ? (
+                  <JointMotionTrailOverlay
+                    frames={result.poseFrames}
+                    currentTime={currentTime}
+                    containerSize={videoLayout}
+                    videoSize={videoSize}
+                    contentFit="cover"
+                    exercise={result.exercise}
+                    cameraView={cameraView}
+                  />
+                ) : null}
+                {showPoseOverlay ? (
                   <PoseOverlay
                     frame={poseFrame}
                     containerSize={videoLayout}
@@ -622,7 +637,11 @@ export default function AnalysisReviewScreen({
           scrollContentStyle={styles.sheetContent}
         >
           <SheetSection title="Summary flags">
-              <Text style={styles.sheetText}>{depthHitLabel}</Text>
+              {depthAssessmentAvailable ? (
+                <Text style={styles.sheetText}>{depthHitLabel}</Text>
+              ) : (
+                <Text style={styles.sheetText}>Front tracking: {repCount} reps</Text>
+              )}
               {analysisStale ? (
                 <Text style={styles.staleText}>
                   This result was created by an older or incomplete model payload. Re-run analysis before trusting depth flags.
@@ -642,7 +661,9 @@ export default function AnalysisReviewScreen({
               <Text style={styles.sheetText}>Overall quality: {formatPercent(videoQuality.overallQuality)}</Text>
               <Text style={styles.sheetText}>Pose coverage: {formatPercent(videoQuality.poseCoverage)}</Text>
               <Text style={styles.sheetText}>Lower body visibility: {formatPercent(videoQuality.lowerBodyVisibility)}</Text>
-              <Text style={styles.sheetText}>Side-view confidence: {formatPercent(videoQuality.sideViewConfidence)}</Text>
+              {!isFrontSquatTracking ? (
+                <Text style={styles.sheetText}>Side-view confidence: {formatPercent(videoQuality.sideViewConfidence)}</Text>
+              ) : null}
               <Text style={styles.sheetText}>
                 Squat motion signal: {formatNumber(videoQuality.squatMotionSignal ?? 0)}
               </Text>
@@ -656,12 +677,20 @@ export default function AnalysisReviewScreen({
                     <Text style={styles.sheetText}>Rep {rep.repIndex ?? rep.rep_index}</Text>
                     <Text style={styles.sheetMutedText}>Duration: {formatNumber(getRepDuration(rep), 's')}</Text>
                     <Text style={styles.sheetMutedText}>Rep speed: {formatNumber(getRepSpeed(rep), ' reps/s')}</Text>
-                    <Text style={styles.sheetMutedText}>
-                      Estimated hip velocity: avg {formatNumber(velocity.avgVelocity)}, peak {formatNumber(velocity.peakVelocity)}
-                    </Text>
-                    <Text style={styles.sheetMutedText}>
-                      Depth {formatNumber(rep.depthScore ?? rep.depth_score)}, torso change {formatNumber(rep.torsoAngleChangeDeg ?? rep.torso_angle_change, ' deg')}
-                    </Text>
+                    {isFrontSquatTracking ? (
+                      <Text style={styles.sheetMutedText}>
+                        Tracking confidence: {formatPercent(rep.confidence)}
+                      </Text>
+                    ) : (
+                      <>
+                        <Text style={styles.sheetMutedText}>
+                          Estimated hip velocity: avg {formatNumber(velocity.avgVelocity)}, peak {formatNumber(velocity.peakVelocity)}
+                        </Text>
+                        <Text style={styles.sheetMutedText}>
+                          Depth {formatNumber(rep.depthScore ?? rep.depth_score)}, torso change {formatNumber(rep.torsoAngleChangeDeg ?? rep.torso_angle_change, ' deg')}
+                        </Text>
+                      </>
+                    )}
                   </View>
                 );
               }) : <Text style={styles.sheetMutedText}>No reps detected.</Text>}

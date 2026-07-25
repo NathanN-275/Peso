@@ -1,4 +1,8 @@
-import { TRACKING_PIN_NAMES, type TrackingPinName } from '../types/trackingSetup';
+import {
+  FRONT_BODY_PIN_NAMES,
+  TRACKING_PIN_NAMES,
+  type TrackingPinName,
+} from '../types/trackingSetup';
 
 export const EXERCISE_OPTIONS = [
   'Squat',
@@ -35,7 +39,7 @@ const PRESSING_PIN_NAMES: readonly TrackingPinName[] = ['wrist', 'elbow', 'shoul
 
 export function supportsPinAssistedTracking(selection: VideoSetupSelection | null) {
   return Boolean(
-    (selection?.angle === 'Side' && selection.exercise.endsWith('Squat'))
+    selection?.exercise.endsWith('Squat')
     || (selection && PRESSING_EXERCISES.has(selection.exercise))
   );
 }
@@ -43,6 +47,10 @@ export function supportsPinAssistedTracking(selection: VideoSetupSelection | nul
 export function trackingPinNames(selection: VideoSetupSelection | null): readonly TrackingPinName[] {
   if (selection && PRESSING_EXERCISES.has(selection.exercise)) {
     return PRESSING_PIN_NAMES;
+  }
+
+  if (selection?.angle === 'Front' && selection.exercise.endsWith('Squat')) {
+    return FRONT_BODY_PIN_NAMES;
   }
 
   if (selection?.angle === 'Side' && selection.exercise.endsWith('Squat')) {

@@ -17,6 +17,7 @@ import tokens from '../theme/tokens';
 import {
   NormalizedTrackingPoint,
   TRACKING_PIN_NAMES,
+  TrackingBarbellTarget,
   TrackingPinName,
   TrackingSetup,
 } from '../types/trackingSetup';
@@ -35,7 +36,7 @@ type TrackingPinSetupModalProps = {
   videoSize: { width: number; height: number };
   videoDurationMs?: number | null;
   initialSetup?: TrackingSetup | null;
-  barbellTarget?: TrackingSetup['barbell_target'];
+  barbellTarget?: TrackingBarbellTarget;
   pinNames?: readonly TrackingPinName[];
   cameraView?: 'side' | 'front';
   onSave: (setup: TrackingSetup) => void;
@@ -50,6 +51,14 @@ const PIN_LABELS: Record<TrackingPinName, string> = {
   elbow: 'Elbow',
   wrist: 'Wrist',
   barbell: 'Barbell collar',
+  left_shoulder: 'Lifter left shoulder',
+  right_shoulder: 'Lifter right shoulder',
+  left_hip: 'Lifter left hip',
+  right_hip: 'Lifter right hip',
+  left_knee: 'Lifter left knee',
+  right_knee: 'Lifter right knee',
+  left_ankle: 'Lifter left ankle',
+  right_ankle: 'Lifter right ankle',
 };
 
 const PIN_COLORS: Record<TrackingPinName, string> = {
@@ -60,7 +69,22 @@ const PIN_COLORS: Record<TrackingPinName, string> = {
   elbow: '#F973B7',
   wrist: '#2DD4BF',
   barbell: '#FF6577',
+  left_shoulder: '#5DA9FF',
+  right_shoulder: '#8CC0FF',
+  left_hip: '#A77BFF',
+  right_hip: '#C3A6FF',
+  left_knee: '#FFB454',
+  right_knee: '#FFD090',
+  left_ankle: '#5DDBA6',
+  right_ankle: '#92E8C6',
 };
+
+function pinLabelWidth(name: TrackingPinName) {
+  if (name.startsWith('left_') || name.startsWith('right_')) {
+    return 124;
+  }
+  return name === 'barbell' || name === 'shoulder' ? 104 : 76;
+}
 
 function orientationCorrectedVideoSize(
   size: { width: number; height: number },
@@ -255,7 +279,7 @@ export default function TrackingPinSetupModal({
         id: name,
         x: videoRect.x + (point.x * videoRect.width),
         y: videoRect.y + (point.y * videoRect.height),
-        labelWidth: name === 'barbell' ? 104 : name === 'shoulder' ? 104 : 76,
+        labelWidth: pinLabelWidth(name),
         labelHeight: 20,
       }];
     }),
@@ -437,12 +461,23 @@ export default function TrackingPinSetupModal({
     const anchors = Object.fromEntries(
       allowedPinNames.flatMap((name) => pins[name] ? [[name, pins[name]]] : [])
     ) as TrackingSetup['anchors'];
-    onSave({
-      version: 1,
-      reference_time_ms: Math.round(currentTime * 1000),
-      barbell_target: barbellTarget,
-      anchors,
-    });
+    const isFrontBodySetup = allowedPinNames.some(
+      (name) => name.startsWith('left_') || name.startsWith('right_')
+    );
+    onSave(
+      isFrontBodySetup
+        ? {
+          version: 2,
+          reference_time_ms: Math.round(currentTime * 1000),
+          anchors,
+        }
+        : {
+          version: 1,
+          reference_time_ms: Math.round(currentTime * 1000),
+          barbell_target: barbellTarget,
+          anchors,
+        }
+    );
   };
 
   if (!visible) {

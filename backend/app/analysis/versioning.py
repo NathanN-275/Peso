@@ -70,6 +70,18 @@ def analysis_payload_incomplete(result_json: dict[str, Any] | None) -> bool:
   if not (result.get("landmark_model") or diagnostics.get("landmark_model")):
     return True
 
+  capabilities = result.get("analysisCapabilities") or {}
+  if (
+    result.get("analysisMode") == "front_squat_tracking_v1"
+    and capabilities.get("depthAssessment") is False
+  ):
+    return any(
+      rep.get("startTime") is None
+      or rep.get("endTime") is None
+      or rep.get("confidence") is None
+      for rep in result.get("reps") or []
+    )
+
   for rep in result.get("reps") or []:
     depth_status = rep.get("depth_status") or rep.get("depthStatus")
     depth_evidence = rep.get("depth_evidence") or {}

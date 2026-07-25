@@ -62,7 +62,7 @@ jobs:
         run: npm run test:policy
 
       - name: Audit Node dependencies
-        run: npm audit --audit-level=high
+        run: npm run audit:ci
 
   secret-scan:
     runs-on: ubuntu-latest

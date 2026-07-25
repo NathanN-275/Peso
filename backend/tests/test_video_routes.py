@@ -333,7 +333,7 @@ class VideoRoutesTest(unittest.TestCase):
 
     repository.supports_tracking_setup.assert_called_once_with()
     self.assertTrue(response.pin_assisted_tracking)
-    self.assertEqual(response.tracking_setup_versions, [1])
+    self.assertEqual(response.tracking_setup_versions, [1, 2])
     self.assertIsNone(response.reason)
 
   def test_video_capabilities_reports_missing_tracking_migration(self) -> None:
@@ -1079,6 +1079,44 @@ class VideoRoutesTest(unittest.TestCase):
                 "depth_classification": "hit_depth",
                 "depth_reason": "depth_met",
               },
+            }
+          ],
+          "diagnostics": {},
+        },
+      }
+
+      annotated = annotate_analysis_freshness(analysis["result_json"], analysis)
+
+    self.assertTrue(analysis_is_current(analysis))
+    self.assertFalse(annotated["analysis_stale"])
+    self.assertFalse(annotated["analysis_incomplete"])
+
+  def test_front_tracking_payload_does_not_require_side_view_depth_fields(self) -> None:
+    with patch.dict(
+      os.environ,
+      {
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+        "SUPABASE_JWT_SECRET": "secret",
+        "CLEANUP_JOB_TOKEN": "cleanup-secret",
+      },
+      clear=True,
+    ):
+      get_settings.cache_clear()
+      analysis = {
+        "model_version": DEFAULT_MODEL_VERSION,
+        "result_json": {
+          "model_version": DEFAULT_MODEL_VERSION,
+          "pose_backend": "mediapipe",
+          "landmark_model": "mediapipe_pose_33",
+          "analysisMode": "front_squat_tracking_v1",
+          "analysisCapabilities": {"depthAssessment": False},
+          "reps": [
+            {
+              "rep_index": 1,
+              "startTime": 0.5,
+              "endTime": 2.0,
+              "confidence": 0.9,
             }
           ],
           "diagnostics": {},

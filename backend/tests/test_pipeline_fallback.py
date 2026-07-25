@@ -184,6 +184,85 @@ class PipelineFallbackTest(unittest.TestCase):
         analyzer.analyze.assert_called_once()
         self.assertEqual(analyzer.analyze.call_args.kwargs["exercise_type"], exercise_type)
 
+  def test_front_squat_variations_use_front_tracking_analyzer(self) -> None:
+    pipeline = self._import_pipeline()
+
+    for exercise_type in ["squat", "front squat", "zercher squat", "box squat", "goblet squat"]:
+      with self.subTest(exercise_type=exercise_type):
+        analyzer = MagicMock()
+        analyzer.analyze.return_value = {
+          "video_id": "video-1",
+          "exercise": exercise_type,
+          "view": "front",
+          "analysisMode": "front_squat_tracking_v1",
+          "rep_count": 0,
+          "reps": [],
+        }
+
+        with patch("app.analysis.pipeline.FrontSquatAnalyzer", return_value=analyzer):
+          result = pipeline._analyze_squat_result(
+            video_id="video-1",
+            video={
+              "id": "video-1",
+              "exercise_type": exercise_type,
+              "view_type": "front",
+            },
+            estimation=self._estimation(),
+          )
+
+        self.assertEqual(result["analysisMode"], "front_squat_tracking_v1")
+        analyzer.analyze.assert_called_once()
+        self.assertEqual(analyzer.analyze.call_args.kwargs["exercise_type"], exercise_type)
+
+  def test_front_visible_collar_gate_fails_closed_without_strong_identity_evidence(self) -> None:
+    pipeline = self._import_pipeline()
+    tracking = {
+      "barbellPath": {
+        "available": True,
+        "target": "near_plate_collar_center",
+        "coverage": 0.8,
+        "points": [{"time": 0.0, "x": 0.5, "y": 0.3}],
+      },
+      "diagnostics": {
+        "available": True,
+        "coverage": 0.8,
+        "initialization_confirmed": True,
+        "collar_geometry_valid": False,
+        "collar_candidate_count": 8,
+        "final_bar_confidence": 0.9,
+      },
+    }
+
+    gated = pipeline._gate_front_visible_collar_tracking(tracking)
+
+    self.assertFalse(gated["barbellPath"]["available"])
+    self.assertEqual(gated["barbellPath"]["target"], "visible_collar")
+    self.assertEqual(gated["barbellPath"]["points"], [])
+
+  def test_front_visible_collar_gate_publishes_confirmed_path(self) -> None:
+    pipeline = self._import_pipeline()
+    tracking = {
+      "barbellPath": {
+        "available": True,
+        "coverage": 0.8,
+        "points": [{"time": 0.0, "x": 0.5, "y": 0.3}],
+      },
+      "diagnostics": {
+        "available": True,
+        "coverage": 0.8,
+        "initialization_confirmed": True,
+        "collar_geometry_valid": True,
+        "collar_candidate_count": 8,
+        "final_bar_confidence": 0.9,
+      },
+    }
+
+    gated = pipeline._gate_front_visible_collar_tracking(tracking)
+
+    self.assertTrue(gated["barbellPath"]["available"])
+    self.assertEqual(gated["barbellPath"]["target"], "visible_collar")
+    self.assertTrue(gated["diagnostics"]["front_visible_collar_confirmed"])
+
   def test_pin_selected_side_is_passed_to_squat_analysis(self) -> None:
     pipeline = self._import_pipeline()
     estimation = self._estimation()

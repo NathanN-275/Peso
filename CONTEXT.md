@@ -27,6 +27,23 @@ missing observation. Recovery may produce a gap when identity cannot be proven.
 A frame whose tracking evidence is insufficient for reliable geometry, depth,
 or rep decisions. It must not be treated as a confident observation.
 
+## Frontal squat view
+
+A direct-front through three-quarter camera view used primarily to observe both
+knees and ankles. It supports bilateral body tracking and rep counting, but does
+not imply that side-view depth or torso judgments are available.
+
+## Body anchor
+
+A user-selected reference point for one specific shoulder, hip, knee, or ankle
+on the lifter's left or right side. Any partial set of body anchors may assist
+automatic tracking without changing unpinned joint identities.
+
+## Visible collar
+
+The barbell collar that can be directly and consistently observed in
+three-quarter footage. It is distinct from an inferred bar center.
+
 ## Review Projection
 
 The bounded subset of an Analysis Run needed for interactive dashboard review.

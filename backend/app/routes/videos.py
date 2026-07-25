@@ -407,6 +407,8 @@ def _summary_analysis_payload(result_json: dict) -> dict:
     "coachingFeedback": coaching_feedback,
     "rep_count": rep_count,
     "reps": reps,
+    "analysisMode": result_json.get("analysisMode"),
+    "analysisCapabilities": result_json.get("analysisCapabilities"),
     "analysis_stale": analysis_stale,
     "analysis_incomplete": analysis_incomplete,
     "diagnostics": diagnostics,
@@ -420,6 +422,7 @@ def _summary_rep_payload(rep: dict) -> dict:
     "rep_index": rep.get("rep_index"),
     "repIndex": rep.get("repIndex"),
     "duration": rep.get("duration"),
+    "confidence": rep.get("confidence"),
     "repSpeed": rep.get("repSpeed"),
     "avgVelocity": rep.get("avgVelocity"),
     "peakVelocity": rep.get("peakVelocity"),
@@ -764,7 +767,7 @@ def get_video_capabilities(
 
   return VideoCapabilitiesResponse(
     pin_assisted_tracking=pin_assisted_tracking,
-    tracking_setup_versions=[1] if pin_assisted_tracking else [],
+    tracking_setup_versions=[1, 2] if pin_assisted_tracking else [],
     reason=None if pin_assisted_tracking else "tracking_setup_migration_missing",
   )
 

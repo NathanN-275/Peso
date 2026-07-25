@@ -1090,10 +1090,14 @@ export default function UploadVideoScreen({
               {trackingDetailsExpanded ? (
                 <View style={styles.trackingDetails}>
                   <Text style={styles.trackingSetupDescription}>
-                    Place any visible pins on one clear frame to help the pose and barbell trackers stay locked on you.
+                    {videoSetup?.angle === 'Front' && videoSetup.exercise.endsWith('Squat')
+                      ? 'Place any visible left or right body pins on one clear frame. Knees and ankles come first; hips and shoulders are optional.'
+                      : 'Place any visible pins on one clear frame to help the pose and barbell trackers stay locked on you.'}
                   </Text>
                   <Text style={styles.accuracyDisclaimer}>
-                    Automatic tracking may be less accurate when joints or the barbell are obscured.
+                    {videoSetup?.angle === 'Front' && videoSetup.exercise.endsWith('Squat')
+                      ? 'Automatic tracking may be less accurate when knees or ankles are obscured.'
+                      : 'Automatic tracking may be less accurate when joints or the barbell are obscured.'}
                   </Text>
                   {trackingSetup ? (
                     <Pressable
@@ -1197,8 +1201,9 @@ export default function UploadVideoScreen({
                   <Text style={styles.resultLabel}>Per-rep highlights</Text>
                   {analysisResult.reps.map((rep) => (
                     <Text key={rep.rep_index} style={styles.resultText}>
-                      Rep {rep.rep_index}: depth {rep.depth_score.toFixed(2)}, torso change{' '}
-                      {rep.torso_angle_change.toFixed(1)}°
+                      {typeof rep.depth_score === 'number' && typeof rep.torso_angle_change === 'number'
+                        ? `Rep ${rep.rep_index}: depth ${rep.depth_score.toFixed(2)}, torso change ${rep.torso_angle_change.toFixed(1)}°`
+                        : `Rep ${rep.rep_index}: front tracking confidence ${Math.round((rep.confidence ?? 0) * 100)}%`}
                     </Text>
                   ))}
                 </View>

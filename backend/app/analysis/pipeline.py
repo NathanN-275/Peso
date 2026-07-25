@@ -13,12 +13,14 @@ from typing import Any
 
 from .barbell_tracker import BarbellTracker
 from .feedback_engine import build_depth_summary_debug, build_feedback
+from .exercises.front_squat import FrontSquatAnalyzer, repair_front_pose_frames
 from .exercises.pressing import PressingAnalyzer, is_pressing_exercise
 from .exercises.squat import SquatAnalyzer
 from .manual_tracking import (
   PRESSING_FUSION_ANCHORS,
   USER_BODY_ANCHORS,
   barbell_track_priors,
+  fuse_manual_front_body_tracks,
   fuse_manual_body_tracks,
   fuse_manual_pressing_tracks,
   fuse_partial_manual_body_tracks,
@@ -110,6 +112,16 @@ def _apply_tracking_assistance(
       assistance["actualMode"] = "automatic_fallback"
     return assisted_estimation
 
+  is_front_body_setup = (
+    validated_setup.get("version") == 2
+    and _is_squat_variation(video.get("exercise_type") or "")
+    and video.get("view_type") == "front"
+  )
+  if validated_setup.get("version") == 2 and not is_front_body_setup:
+    assistance["actualMode"] = "automatic_fallback"
+    assistance["fallbackReason"] = "front_body_pins_require_front_squat"
+    return assisted_estimation
+
   try:
     width = int(estimation.get("processed_frame_width") or estimation.get("frame_width") or 0)
     height = int(estimation.get("processed_frame_height") or estimation.get("frame_height") or 0)
@@ -130,7 +142,9 @@ def _apply_tracking_assistance(
       for name in USER_BODY_ANCHORS
     )
     fuser = (
-      fuse_manual_pressing_tracks
+      fuse_manual_front_body_tracks
+      if is_front_body_setup
+      else fuse_manual_pressing_tracks
       if has_pressing_pins
       else fuse_manual_body_tracks if has_complete_body_chain else fuse_partial_manual_body_tracks
     )
@@ -250,7 +264,10 @@ def _run_yolo_tracking_prepass(
   return prepared
 
 
-def _apply_pose_repair(estimation: dict[str, Any]) -> dict[str, Any]:
+def _apply_pose_repair(
+  estimation: dict[str, Any],
+  video: dict[str, Any] | None = None,
+) -> dict[str, Any]:
   raw_frames = estimation.get("frames") or []
   assistance = estimation.get("tracking_assistance") or {}
   selected_side_override = (
@@ -260,6 +277,16 @@ def _apply_pose_repair(estimation: dict[str, Any]) -> dict[str, Any]:
   )
   repaired_estimation = dict(estimation)
   repaired_estimation["raw_pose_frames"] = raw_frames
+  if (
+    video
+    and _is_squat_variation(video.get("exercise_type") or "")
+    and video.get("view_type") == "front"
+  ):
+    repaired_frames, diagnostics = repair_front_pose_frames(raw_frames)
+    repaired_estimation["frames"] = repaired_frames
+    repaired_estimation["pose_repair"] = diagnostics
+    return repaired_estimation
+
   tracking_config = tracking_core_config_from_env()
   detector_frames = (
     estimation.get("yolo_detection_frames")
@@ -554,7 +581,7 @@ def build_limited_result(
     "reps": [],
     "summary_flags": [reason],
     "coach_feedback": [
-      "Detailed analysis is currently available for side-view squats and side/front bench or overhead press videos."
+      "Detailed analysis is available for side-view squats, front-view squat tracking, and side/front bench or overhead press videos."
     ],
     "videoId": video_id,
     "cameraView": view_type,
@@ -569,7 +596,7 @@ def build_limited_result(
       "squatMotionSignal": 0,
     },
     "coachingFeedback": [
-      "Detailed analysis is currently available for side-view squats and side/front bench or overhead press videos."
+      "Detailed analysis is available for side-view squats, front-view squat tracking, and side/front bench or overhead press videos."
     ],
   }
 
@@ -817,12 +844,30 @@ def _analyze_squat_result(
       selected_side=(estimation.get("tracking_assistance") or {}).get("pressingSelectedSide"),
     )
 
+  if _is_squat_variation(video["exercise_type"]) and video["view_type"] == "front":
+    if not estimation["frames"]:
+      return build_limited_result(
+        video_id=video_id,
+        exercise_type=video["exercise_type"],
+        view_type=video["view_type"],
+        reason="No pose detected. Keep both knees and ankles visible from the front.",
+        error_code="no_pose_detected",
+      )
+    return FrontSquatAnalyzer().analyze(
+      video_id=video_id,
+      exercise_type=video["exercise_type"],
+      view_type=video["view_type"],
+      frames=estimation["frames"],
+      sampled_frame_count=estimation.get("sampled_frame_count"),
+      repair_diagnostics=estimation.get("pose_repair"),
+    )
+
   if not _is_squat_variation(video["exercise_type"]) or video["view_type"] != "side":
     return build_limited_result(
       video_id=video_id,
       exercise_type=video["exercise_type"],
       view_type=video["view_type"],
-      reason="Limited analysis: full support is available only for side-view squats and side/front bench or overhead press videos.",
+      reason="Limited analysis: supported modes are side-view squats, front-view squat tracking, and side/front bench or overhead press videos.",
     )
 
   if not estimation["frames"]:
@@ -963,6 +1008,39 @@ def _finalize_storage_assets(
       storage.remove_tempfile(compressed_temp)
 
 
+def _gate_front_visible_collar_tracking(
+  tracking: dict[str, Any],
+) -> dict[str, Any]:
+  path = dict(tracking.get("barbellPath") or {})
+  diagnostics = dict(tracking.get("diagnostics") or {})
+  confirmed = bool(
+    path.get("available")
+    and diagnostics.get("initialization_confirmed")
+    and diagnostics.get("collar_geometry_valid")
+    and int(diagnostics.get("collar_candidate_count") or 0) >= 3
+    and float(diagnostics.get("coverage") or 0.0) >= 0.35
+    and float(diagnostics.get("final_bar_confidence") or 0.0) >= 0.42
+  )
+  path["target"] = "visible_collar"
+  diagnostics["target"] = "visible_collar"
+  diagnostics["front_visible_collar_confirmed"] = confirmed
+  if not confirmed:
+    path.update({
+      "available": False,
+      "coverage": 0.0,
+      "points": [],
+    })
+    diagnostics.update({
+      "available": False,
+      "failure_reason": diagnostics.get("failure_reason") or "front_visible_collar_not_confirmed",
+    })
+  return {
+    **tracking,
+    "barbellPath": path,
+    "diagnostics": diagnostics,
+  }
+
+
 def _attach_barbell_tracking(
   *,
   result: dict[str, Any],
@@ -993,7 +1071,14 @@ def _attach_barbell_tracking(
     diagnostics["tracking_assistance"] = assistance
     return
 
-  if not _is_squat_variation(video["exercise_type"]) or video["view_type"] != "side":
+  is_front_squat = (
+    _is_squat_variation(video["exercise_type"])
+    and video["view_type"] == "front"
+  )
+  if (
+    not _is_squat_variation(video["exercise_type"])
+    or video["view_type"] not in {"side", "front"}
+  ):
     return
 
   diagnostics = result.setdefault("diagnostics", {})
@@ -1023,7 +1108,7 @@ def _attach_barbell_tracking(
     pose_context_frames = estimation.get("frames") or []
     pose_context_validation: dict[str, Any] = {}
     pose_context_validated = False
-    if pose_context_frames:
+    if pose_context_frames and not is_front_squat:
       try:
         pose_context_frames, pose_context_validation = validate_squat_pose_frames(
           pose_context_frames,
@@ -1033,13 +1118,18 @@ def _attach_barbell_tracking(
       except Exception as validation_error:
         pose_context_frames = estimation.get("frames") or []
         pose_context_validation = {"error": str(validation_error), "failed_open": True}
-    barbell_pose_frames, upper_back_context_count = _barbell_pose_frames_with_upper_back_context(
-      pose_context_frames,
-      manual_tracking=estimation.get("manual_tracking") or {},
-      selected_side=selected_side,
-    )
+    if is_front_squat:
+      barbell_pose_frames = pose_context_frames
+      upper_back_context_count = 0
+      selected_side = None
+    else:
+      barbell_pose_frames, upper_back_context_count = _barbell_pose_frames_with_upper_back_context(
+        pose_context_frames,
+        manual_tracking=estimation.get("manual_tracking") or {},
+        selected_side=selected_side,
+      )
     detector_candidate_requested = tracking_core_config.yolo_mode == "candidate"
-    if tracking_core_config.enabled or detector_candidate_requested:
+    if not is_front_squat and (tracking_core_config.enabled or detector_candidate_requested):
       apache_tracking = run_apache_v1_tracking(
         video_path=file_path,
         pose_frames=barbell_pose_frames,
@@ -1093,9 +1183,11 @@ def _attach_barbell_tracking(
       processed_width=estimation.get("processed_frame_width") or estimation.get("frame_width"),
       processed_height=estimation.get("processed_frame_height") or estimation.get("frame_height"),
       selected_side=selected_side,
-      rep_windows=rep_windows,
+      rep_windows=[] if is_front_squat else rep_windows,
       manual_barbell_priors=barbell_track_priors(estimation.get("manual_tracking") or {}),
     )
+    if is_front_squat:
+      tracking = _gate_front_visible_collar_tracking(tracking)
     manual_seed_count = tracker.manual_seed_count if isinstance(tracker.manual_seed_count, int) else 0
     tracking_diagnostics = tracking.get("diagnostics") or {}
     manual_point_count = int(
@@ -1130,6 +1222,9 @@ def _attach_barbell_tracking(
     result["trackingAssistance"] = assistance
     diagnostics["tracking_assistance"] = assistance
     result["barbellPath"] = tracking["barbellPath"]
+    if is_front_squat:
+      capabilities = result.setdefault("analysisCapabilities", {})
+      capabilities["barbellTracking"] = bool(tracking["barbellPath"].get("available"))
     tracking_diagnostics["manual_seed_count"] = manual_seed_count
     tracking_diagnostics["manual_point_count"] = manual_point_count
     tracking_diagnostics["automatic_point_count"] = automatic_point_count
@@ -1415,7 +1510,7 @@ def analyze_video(video_id: str) -> None:
       detector_frames=estimation.get("yolo_detection_frames") or [],
     )
     stage_started = time.perf_counter()
-    estimation = _apply_pose_repair(estimation)
+    estimation = _apply_pose_repair(estimation, video)
     record_stage_timing("pose_repair", stage_started)
     trace_call(
       "snapshot",
@@ -1505,7 +1600,7 @@ def analyze_video(video_id: str) -> None:
         )
         record_stage_timing("detector_prepass_fallback", stage_started)
         stage_started = time.perf_counter()
-        fallback_estimation = _apply_pose_repair(fallback_estimation)
+        fallback_estimation = _apply_pose_repair(fallback_estimation, video)
         record_stage_timing("pose_repair_fallback", stage_started)
         trace_call(
           "snapshot",

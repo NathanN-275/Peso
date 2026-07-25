@@ -4,15 +4,19 @@ import { Platform } from 'react-native';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+const supabaseConfig =
+  supabaseUrl && supabaseAnonKey
+    ? { url: supabaseUrl, anonKey: supabaseAnonKey }
+    : null;
 
 export const supabaseConfigError =
-  !supabaseUrl || !supabaseAnonKey
+  supabaseConfig === null
     ? 'Missing Supabase environment variables. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY.'
     : null;
 
 export const supabase =
-  supabaseConfigError === null
-    ? createClient(supabaseUrl, supabaseAnonKey, {
+  supabaseConfig
+    ? createClient(supabaseConfig.url, supabaseConfig.anonKey, {
         auth: {
           storage: Platform.OS === 'web' ? undefined : AsyncStorage,
           autoRefreshToken: true,

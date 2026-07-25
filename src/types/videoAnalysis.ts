@@ -13,6 +13,8 @@ export type VideoAnalysisRep = {
   startTime?: number;
   endTime?: number;
   duration?: number;
+  confidence?: number;
+  bottomTime?: number;
   repSpeed?: number;
   avgVelocity?: number;
   peakVelocity?: number;
@@ -28,7 +30,7 @@ export type VideoAnalysisRep = {
   selectedSource?: string;
   depthReason?: string;
   torsoAngleChangeDeg?: number;
-  depth_score: number;
+  depth_score?: number;
   depth_confidence?: number;
   depth_status?: DepthStatus;
   depth_frame_index?: number;
@@ -122,7 +124,7 @@ export type VideoAnalysisRep = {
     depth_status_downgraded_by_occlusion?: boolean;
   };
   torso_angle?: number;
-  torso_angle_change: number;
+  torso_angle_change?: number;
   estimated_body_velocity?: {
     avg_velocity?: number;
     peak_velocity?: number;
@@ -356,6 +358,15 @@ export type VideoAnalysisResult = {
   exercise: string;
   view: string;
   cameraView?: string;
+  analysisMode?: 'front_squat_tracking_v1' | string;
+  analysisCapabilities?: {
+    poseTracking: boolean;
+    repCounting: boolean;
+    depthAssessment: boolean;
+    torsoAssessment: boolean;
+    kneeAlignmentAssessment: boolean;
+    barbellTracking: boolean;
+  };
   duration?: number;
   videoWidth?: number | null;
   videoHeight?: number | null;

@@ -13,6 +13,7 @@ import numpy as np
 from app.analysis.manual_tracking import (
   BODY_ANCHORS,
   _track_direction,
+  fuse_manual_front_body_tracks,
   fuse_manual_body_tracks,
   fuse_manual_pressing_tracks,
   select_reference_source_index,
@@ -104,6 +105,58 @@ class ManualTrackingTest(unittest.TestCase):
 
     self.assertIsNone(error)
     self.assertEqual(set(validated["anchors"]), {"hip", "barbell"})
+
+  def test_validate_tracking_setup_accepts_partial_sided_front_payload(self) -> None:
+    setup = {
+      "version": 2,
+      "reference_time_ms": 100,
+      "anchors": {
+        "left_knee": {"x": 0.42, "y": 0.66},
+        "right_ankle": {"x": 0.61, "y": 0.88},
+      },
+    }
+
+    validated, error = validate_tracking_setup(setup, duration_ms=1000)
+
+    self.assertIsNone(error)
+    self.assertEqual(validated["version"], 2)
+    self.assertNotIn("barbell_target", validated)
+    self.assertEqual(set(validated["anchors"]), {"left_knee", "right_ankle"})
+
+  def test_front_pin_fusion_preserves_explicit_joint_side(self) -> None:
+    source = pose_frame()
+    original_right_knee = dict(source["landmarks"]["right_knee"])
+    setup = {
+      "version": 2,
+      "reference_time_ms": 100,
+      "anchors": {"left_knee": {"x": 0.41, "y": 0.65}},
+    }
+    tracking = {
+      "reference_source_index": 1,
+      "coverage": {"left_knee": 1.0},
+      "tracks": {
+        "left_knee": {
+          1: {
+            "x": 0.41,
+            "y": 0.65,
+            "confidence": 1.0,
+            "tracking_state": "reference",
+          },
+        },
+      },
+    }
+
+    fused, diagnostics = fuse_manual_front_body_tracks(
+      [source],
+      setup=setup,
+      tracking=tracking,
+    )
+
+    self.assertEqual(fused[0]["landmarks"]["left_knee"]["x"], 0.41)
+    self.assertTrue(fused[0]["landmarks"]["left_knee"]["front_bilateral_pin"])
+    self.assertEqual(fused[0]["landmarks"]["right_knee"], original_right_knee)
+    self.assertIsNone(diagnostics["selected_side"])
+    self.assertTrue(diagnostics["front_bilateral"])
 
   def test_validate_tracking_setup_rejects_empty_and_unknown_anchors(self) -> None:
     empty = tracking_setup()
