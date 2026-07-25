@@ -3,6 +3,7 @@ const test = require('node:test');
 
 const {
   frontTrailWindowFrames,
+  resolveSquatTorsoStart,
   shouldConnectFrontTrailSamples,
   shouldShowFrontMotionTrails,
 } = require('../lib/frontTrackingPolicy');
@@ -26,4 +27,19 @@ test('front trail history contains only the preceding second', () => {
 test('front trails break across long pose gaps', () => {
   assert.equal(shouldConnectFrontTrailSamples(1, 1.19), true);
   assert.equal(shouldConnectFrontTrailSamples(1, 1.21), false);
+});
+
+test('squat torso connections prefer upper back and fall back to shoulder', () => {
+  assert.equal(
+    resolveSquatTorsoStart(
+      new Set(['left_upper_back', 'left_shoulder', 'left_hip']),
+      'left'
+    ),
+    'left_upper_back'
+  );
+  assert.equal(
+    resolveSquatTorsoStart(new Set(['right_shoulder', 'right_hip']), 'right'),
+    'right_shoulder'
+  );
+  assert.equal(resolveSquatTorsoStart(new Set(['left_hip']), 'left'), null);
 });

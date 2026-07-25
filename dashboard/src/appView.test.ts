@@ -20,6 +20,37 @@ describe('app view projection', () => {
     ]);
   });
 
+  it('matches the app torso fallback for bilateral front squats', () => {
+    const shoulderOnly = appViewKeypoints({
+      landmarks: {
+        left_shoulder: { x: .3, y: .2, visibility: .9 },
+        left_hip: { x: .32, y: .45, visibility: .9 },
+        right_shoulder: { x: .6, y: .2, visibility: .9 },
+        right_hip: { x: .58, y: .45, visibility: .9 },
+      },
+    }, 'back_squat', 'front');
+
+    expect(appViewConnections(shoulderOnly, 'back_squat', 'front')).toContainEqual(
+      ['left_shoulder', 'left_hip'],
+    );
+    expect(appViewConnections(shoulderOnly, 'back_squat', 'front')).toContainEqual(
+      ['right_shoulder', 'right_hip'],
+    );
+
+    const upperBackPreferred = appViewKeypoints({
+      landmarks: {
+        left_upper_back: { x: .31, y: .2, visibility: .9 },
+        left_shoulder: { x: .3, y: .2, visibility: .9 },
+        left_hip: { x: .32, y: .45, visibility: .9 },
+      },
+    }, 'back_squat', 'front');
+
+    expect(upperBackPreferred.map((point) => point.name)).not.toContain('left_shoulder');
+    expect(appViewConnections(upperBackPreferred, 'back_squat', 'front')).toContainEqual(
+      ['left_upper_back', 'left_hip'],
+    );
+  });
+
   it('maps normalized coordinates through a cover crop', () => {
     expect(mapPointToCoverStage({ x: .5, y: .5 }, 16 / 9)).toEqual({ x: .5, y: .5 });
     expect(mapPointToCoverStage({ x: 0, y: .5 }, 16 / 9).x).toBeLessThan(0);

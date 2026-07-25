@@ -880,27 +880,6 @@ export default function UploadVideoScreen({
     setScreenLayout({ width, height });
   };
 
-  const clearCompletedAnalysisForRecordedReview = () => {
-    const run = activeAnalysisRunRef.current;
-    if (run) {
-      analysisRunGenerationRef.current = cancelAnalysisRun(analysisRunGenerationRef.current, run);
-    } else {
-      analysisRunGenerationRef.current += 1;
-    }
-    activeAnalysisRunRef.current = null;
-    analysisStartInFlightRef.current = false;
-    analysisQueuedForVideoRef.current = null;
-    analysisPollInFlightRef.current = false;
-    setUploading(false);
-    setAnalysisRunning(false);
-    setAnalysisVideoId(null);
-    setAnalysisStatus(null);
-    setAnalysisResult(null);
-    setErrorMessage(null);
-    setQuotaWarningMessage(null);
-    setStatusMessage('Recording saved. You can edit setup or pins, then run analysis again.');
-  };
-
   const handleReviewDiscarded = () => {
     // Clearing the review screen resets the upload flow.
     cancelActiveAnalysis();
@@ -923,12 +902,6 @@ export default function UploadVideoScreen({
   };
 
   const handleAnalysisReviewSaved = async (videoId: string) => {
-    if (sourceMode === 'camera') {
-      await onAnalysisSaved?.(videoId);
-      clearCompletedAnalysisForRecordedReview();
-      return;
-    }
-
     if (onAnalysisSaved) {
       await onAnalysisSaved(videoId);
       return;
@@ -949,7 +922,6 @@ export default function UploadVideoScreen({
         result={analysisResult}
         onDiscarded={handleReviewDiscarded}
         onSaved={handleAnalysisReviewSaved}
-        saveOnBack={sourceMode === 'camera'}
       />
     );
   }

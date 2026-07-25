@@ -411,8 +411,6 @@ function AppContent() {
   const [uploadSourceMode, setUploadSourceMode] = useState<'camera' | 'library'>('library');
   const [recordedUploadVideo, setRecordedUploadVideo] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [recordedUploadSetup, setRecordedUploadSetup] = useState<VideoSetupSelection | null>(null);
-  const [recordedReviewSavedVideoId, setRecordedReviewSavedVideoId] = useState<string | null>(null);
-  const [deletingRecordedReviewVideo, setDeletingRecordedReviewVideo] = useState(false);
   const [pendingRecordingSetup, setPendingRecordingSetup] = useState<VideoSetupSelection | null>(null);
   const [recordingSetupModalVisible, setRecordingSetupModalVisible] = useState(false);
   const [recordingSetupResumeKey, setRecordingSetupResumeKey] = useState(0);
@@ -720,19 +718,9 @@ function AppContent() {
   const handleUploadVideoRoute = () => {
     setRecordedUploadVideo(null);
     setRecordedUploadSetup(null);
-    setRecordedReviewSavedVideoId(null);
     setPendingRecordingSetup(null);
     setUploadSourceMode('library');
     authNavigation.toUploadVideo();
-  };
-
-  const discardRecordedReviewVideo = async (videoId: string) => {
-    if (!session?.access_token) {
-      throw new Error('You need to be signed in to delete this recording.');
-    }
-
-    await deleteSavedVideo(videoId, session.access_token);
-    invalidateSavedVideoCaches();
   };
 
   const invalidateSavedVideoCaches = () => {
@@ -740,29 +728,9 @@ function AppContent() {
     setHomeRefreshKey((key) => key + 1);
   };
 
-  const handleUploadBack = async () => {
-    if (deletingRecordedReviewVideo) {
-      return;
-    }
-
-    if (uploadSourceMode === 'camera' && recordedReviewSavedVideoId) {
-      setDeletingRecordedReviewVideo(true);
-      try {
-        await discardRecordedReviewVideo(recordedReviewSavedVideoId);
-      } catch (error) {
-        Alert.alert(
-          'Unable to delete recording',
-          error instanceof Error ? error.message : 'The saved recording could not be deleted. Try again.'
-        );
-        return;
-      } finally {
-        setDeletingRecordedReviewVideo(false);
-      }
-    }
-
+  const handleUploadBack = () => {
     setRecordedUploadVideo(null);
     setRecordedUploadSetup(null);
-    setRecordedReviewSavedVideoId(null);
     setPendingRecordingSetup(null);
     authNavigation.toAddVideo();
   };
@@ -773,21 +741,8 @@ function AppContent() {
   const handleAnalysisSaved = () => {
     setRecordedUploadVideo(null);
     setRecordedUploadSetup(null);
-    setRecordedReviewSavedVideoId(null);
     invalidateSavedVideoCaches();
     authNavigation.toHome();
-  };
-  const handleRecordedAnalysisSaved = (videoId: string) => {
-    const previousSavedVideoId = recordedReviewSavedVideoId;
-
-    setRecordedReviewSavedVideoId(videoId);
-    invalidateSavedVideoCaches();
-
-    if (previousSavedVideoId && previousSavedVideoId !== videoId && session?.access_token) {
-      deleteSavedVideo(previousSavedVideoId, session.access_token).catch((error) => {
-        console.warn('Unable to discard replaced recorded review video.', error);
-      });
-    }
   };
   const handleOpenSavedLiftFolder = (exerciseType: string) => {
     setSelectedSavedExerciseType(exerciseType);
@@ -1094,7 +1049,7 @@ function AppContent() {
             initialVideoSetup={recordedUploadSetup}
             onBack={handleUploadBack}
             onRecordVideoPress={Platform.OS === 'web' ? handleRecordVideoRoute : undefined}
-            onAnalysisSaved={uploadSourceMode === 'camera' ? handleRecordedAnalysisSaved : handleAnalysisSaved}
+            onAnalysisSaved={handleAnalysisSaved}
           />
         );
       }
@@ -1122,6 +1077,17 @@ function AppContent() {
             mode="saved"
             videoUri={selectedSavedVideoPlaybackUri}
             result={selectedSavedVideoAnalysisResult}
+            workoutDetails={
+              selectedSavedVideo.performed_reps !== null
+              && selectedSavedVideo.load_value !== null
+              && selectedSavedVideo.load_unit !== null
+                ? {
+                    performed_reps: selectedSavedVideo.performed_reps,
+                    load_value: selectedSavedVideo.load_value,
+                    load_unit: selectedSavedVideo.load_unit,
+                  }
+                : null
+            }
             onBack={handleSavedVideoReviewBack}
             onDeleteSavedVideo={handleDeleteSavedVideoFromReview}
           />

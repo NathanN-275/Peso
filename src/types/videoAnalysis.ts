@@ -441,6 +441,9 @@ export type SavedVideo = {
   id: string;
   exercise_type: string;
   view_type: string;
+  performed_reps: number | null;
+  load_value: number | null;
+  load_unit: 'lb' | 'kg' | null;
   storage_path: string | null;
   thumbnail_path: string | null;
   video_url: string | null;

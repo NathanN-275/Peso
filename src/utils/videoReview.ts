@@ -6,6 +6,7 @@ import {
   VideoPoseFrame,
   VideoPoseKeypoint,
 } from '../types/videoAnalysis';
+import { resolveSquatTorsoStart } from '../../lib/frontTrackingPolicy';
 
 export type ContentFit = 'contain' | 'cover';
 
@@ -521,15 +522,10 @@ export function getSquatPoseConnections(
   keypoints: VideoPoseKeypoint[],
   cameraView?: string,
   lockedSide?: string | null,
-  preferUpperBackKeypoint = false
+  _preferUpperBackKeypoint = false
 ) {
-  const torsoStart = (side: 'left' | 'right') => {
-    const upperBackName = `${side}_upper_back`;
-    if (keypoints.some((keypoint) => keypoint.name === upperBackName)) {
-      return upperBackName;
-    }
-    return preferUpperBackKeypoint ? null : `${side}_shoulder`;
-  };
+  const pointNames = new Set(keypoints.map((keypoint) => keypoint.name));
+  const torsoStart = (side: 'left' | 'right') => resolveSquatTorsoStart(pointNames, side);
 
   // Render either the full body or a single visible side.
   if (cameraView?.toLowerCase() !== 'side') {

@@ -37,6 +37,31 @@ def _is_reliable(point: dict[str, Any] | None) -> bool:
   )
 
 
+def _is_front_reliable(point: dict[str, Any] | None) -> bool:
+  if not _is_reliable(point):
+    return False
+  accepted_source = str(point.get("accepted_source") or "")
+  tracking_state = str(point.get("tracking_state") or "")
+  return (
+    accepted_source != "gap"
+    and not (
+      tracking_state == "estimated"
+      and accepted_source != "front_short_gap_estimate"
+    )
+  )
+
+
+def _mark_front_gap(target: dict[str, Any]) -> None:
+  target.update({
+    "visibility": 0.0,
+    "tracking_state": "uncertain",
+    "accepted_source": "gap",
+    "chain_valid": False,
+    "visual_only": True,
+    "front_gap_estimated": False,
+  })
+
+
 def repair_front_pose_frames(
   frames: list[dict[str, Any]],
   *,
@@ -45,16 +70,38 @@ def repair_front_pose_frames(
   """Interpolate short bilateral landmark gaps without changing joint identity."""
   repaired = copy.deepcopy(frames)
   estimated_counts = {name: 0 for name in FRONT_BODY_LANDMARKS}
+  gap_counts = {name: 0 for name in FRONT_BODY_LANDMARKS}
+  identity_switch_counts = {joint: 0 for joint in ("shoulder", "hip", "knee", "ankle")}
+
+  for joint in identity_switch_counts:
+    differences = []
+    for current in repaired:
+      left = _landmark(current, f"left_{joint}")
+      right = _landmark(current, f"right_{joint}")
+      if _is_front_reliable(left) and _is_front_reliable(right):
+        differences.append(float(left["x"]) - float(right["x"]))
+    expected_sign = 1.0 if sum(value > 0 for value in differences) >= sum(value < 0 for value in differences) else -1.0
+    for current in repaired:
+      left = _landmark(current, f"left_{joint}")
+      right = _landmark(current, f"right_{joint}")
+      if (
+        _is_front_reliable(left)
+        and _is_front_reliable(right)
+        and (float(left["x"]) - float(right["x"])) * expected_sign <= 0
+      ):
+        _mark_front_gap(left)
+        _mark_front_gap(right)
+        identity_switch_counts[joint] += 1
 
   for name in FRONT_BODY_LANDMARKS:
     index = 0
     while index < len(repaired):
-      if _is_reliable(_landmark(repaired[index], name)):
+      if _is_front_reliable(_landmark(repaired[index], name)):
         index += 1
         continue
 
       gap_start = index
-      while index < len(repaired) and not _is_reliable(_landmark(repaired[index], name)):
+      while index < len(repaired) and not _is_front_reliable(_landmark(repaired[index], name)):
         index += 1
       gap_end = index - 1
       gap_length = gap_end - gap_start + 1
@@ -65,11 +112,15 @@ def repair_front_pose_frames(
         or previous_index < 0
         or next_index >= len(repaired)
       ):
+        for frame_index in range(gap_start, gap_end + 1):
+          target = repaired[frame_index].setdefault("landmarks", {}).setdefault(name, {})
+          _mark_front_gap(target)
+          gap_counts[name] += 1
         continue
 
       previous = _landmark(repaired[previous_index], name)
       following = _landmark(repaired[next_index], name)
-      if not _is_reliable(previous) or not _is_reliable(following):
+      if not _is_front_reliable(previous) or not _is_front_reliable(following):
         continue
 
       for offset, frame_index in enumerate(range(gap_start, gap_end + 1), start=1):
@@ -102,6 +153,10 @@ def repair_front_pose_frames(
     "max_gap_frames": max_gap_frames,
     "estimated_landmark_count": estimated_count,
     "estimated_counts": estimated_counts,
+    "gap_landmark_count": sum(gap_counts.values()),
+    "gap_counts": gap_counts,
+    "identity_switch_frame_count": sum(identity_switch_counts.values()),
+    "identity_switch_counts": identity_switch_counts,
   }
 
 
@@ -225,6 +280,11 @@ class FrontSquatAnalyzer(BaseExerciseAnalyzer):
       knee_flexions=knee_flexion,
       hip_flexions=pelvis_drop,
       frames=frames,
+      high_threshold_ratio=0.45,
+      low_threshold_ratio=0.30,
+      minimum_half_duration_ms=250,
+      peak_spacing_ms=900,
+      boundary_search_ms=3200,
     )
 
     quality_flags: list[str] = []
@@ -297,6 +357,16 @@ class FrontSquatAnalyzer(BaseExerciseAnalyzer):
           (repair_diagnostics or {}).get("estimated_landmark_count") or 0
         ),
         "estimated_counts": (repair_diagnostics or {}).get("estimated_counts") or {},
+        "gap_landmark_count": int(
+          (repair_diagnostics or {}).get("gap_landmark_count") or 0
+        ),
+        "gap_counts": (repair_diagnostics or {}).get("gap_counts") or {},
+        "identity_switch_frame_count": int(
+          (repair_diagnostics or {}).get("identity_switch_frame_count") or 0
+        ),
+        "identity_switch_counts": (
+          (repair_diagnostics or {}).get("identity_switch_counts") or {}
+        ),
       },
     }
     capabilities = {

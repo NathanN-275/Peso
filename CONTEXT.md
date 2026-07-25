@@ -33,6 +33,28 @@ A direct-front through three-quarter camera view used primarily to observe both
 knees and ankles. It supports bilateral body tracking and rep counting, but does
 not imply that side-view depth or torso judgments are available.
 
+## Hip
+
+The anatomical center of the hip joint used for pose geometry. It is not the
+outer hip crease, clothing edge, or visual edge of the pelvis. When that joint
+cannot be located without risking an identity switch, the frame is a gap.
+
+## Performed Reps
+
+The rep count entered by the user when saving an analyzed video. It is the
+official workout fact used by Home and Profile totals.
+
+## Detected Reps
+
+The rep count observed by the analysis model. It remains a diagnostic in the
+review and analysis payload and does not replace Performed Reps on new saves.
+Legacy saved rows without Performed Reps may use Detected Reps in totals.
+
+## Load
+
+The non-negative weight entered by the user when saving, represented by a
+numeric value and either `lb` or `kg`. Zero is valid for unloaded movements.
+
 ## Body anchor
 
 A user-selected reference point for one specific shoulder, hip, knee, or ankle

@@ -67,6 +67,36 @@ class FrontSquatAnalyzerTest(unittest.TestCase):
     self.assertEqual(result["rep_count"], 1)
     self.assertIn("lower_body_occluded", result["diagnostics"]["quality_flags"])
 
+  def test_counts_fast_shallow_rep_before_deeper_rep(self) -> None:
+    shifts = [0.0] * 50
+    for index, shift in enumerate(
+      [0.0, 0.024, 0.072, 0.12, 0.072, 0.024, 0.0],
+      start=3,
+    ):
+      shifts[index] = shift
+    for index, shift in enumerate(
+      [0.0, 0.03, 0.08, 0.15, 0.18, 0.15, 0.08, 0.03, 0.0],
+      start=34,
+    ):
+      shifts[index] = shift
+    frames = [frame(index, shift) for index, shift in enumerate(shifts)]
+    for index, current in enumerate(frames):
+      current["timestamp_ms"] = index * 100
+
+    result = FrontSquatAnalyzer().analyze(
+      video_id="video-1",
+      exercise_type="squat",
+      view_type="front",
+      frames=frames,
+      sampled_frame_count=len(frames),
+    )
+
+    self.assertEqual(result["rep_count"], 2)
+    self.assertEqual(
+      [round(rep["bottomTime"], 1) for rep in result["reps"]],
+      [0.5, 3.8],
+    )
+
   def test_repairs_only_short_interior_gaps(self) -> None:
     frames = [frame(index) for index in range(8)]
     for index in range(1, 4):
@@ -83,7 +113,70 @@ class FrontSquatAnalyzerTest(unittest.TestCase):
       )
     self.assertEqual(diagnostics["estimated_counts"]["left_knee"], 3)
     self.assertEqual(diagnostics["estimated_counts"]["right_ankle"], 0)
-    self.assertNotIn("tracking_state", repaired[4]["landmarks"]["right_ankle"])
+    self.assertEqual(
+      repaired[4]["landmarks"]["right_ankle"]["tracking_state"],
+      "uncertain",
+    )
+    self.assertEqual(
+      repaired[4]["landmarks"]["right_ankle"]["accepted_source"],
+      "gap",
+    )
+
+  def test_front_repair_does_not_treat_invented_hips_as_confident(self) -> None:
+    frames = [frame(index) for index in range(7)]
+    frames[3]["landmarks"]["left_hip"].update({
+      "x": 0.50,
+      "y": 0.30,
+      "visibility": 0.99,
+      "tracking_state": "estimated",
+      "accepted_source": "kinematic_estimate",
+    })
+
+    repaired, diagnostics = repair_front_pose_frames(frames)
+    repaired_hip = repaired[3]["landmarks"]["left_hip"]
+
+    self.assertEqual(repaired_hip["accepted_source"], "front_short_gap_estimate")
+    self.assertEqual(repaired_hip["tracking_state"], "estimated")
+    self.assertLessEqual(repaired_hip["visibility"], 0.48)
+    self.assertAlmostEqual(repaired_hip["x"], 0.44)
+    self.assertAlmostEqual(repaired_hip["y"], 0.47)
+    self.assertEqual(diagnostics["estimated_counts"]["left_hip"], 1)
+
+  def test_front_repair_marks_long_uncertain_hip_runs_as_gaps(self) -> None:
+    frames = [frame(index) for index in range(8)]
+    for index in range(1, 6):
+      frames[index]["landmarks"]["right_hip"].update({
+        "visibility": 0.99,
+        "tracking_state": "estimated",
+        "accepted_source": "pose_repair_interpolated_constrained",
+      })
+
+    repaired, diagnostics = repair_front_pose_frames(frames)
+
+    for index in range(1, 6):
+      repaired_hip = repaired[index]["landmarks"]["right_hip"]
+      self.assertEqual(repaired_hip["accepted_source"], "gap")
+      self.assertEqual(repaired_hip["tracking_state"], "uncertain")
+      self.assertEqual(repaired_hip["visibility"], 0.0)
+      self.assertFalse(repaired_hip["chain_valid"])
+    self.assertEqual(diagnostics["gap_counts"]["right_hip"], 5)
+
+  def test_front_repair_removes_bilateral_side_swaps(self) -> None:
+    frames = [frame(index) for index in range(7)]
+    frames[3]["landmarks"]["left_hip"]["x"] = 0.57
+    frames[3]["landmarks"]["right_hip"]["x"] = 0.43
+
+    repaired, diagnostics = repair_front_pose_frames(frames)
+
+    self.assertLess(
+      repaired[3]["landmarks"]["left_hip"]["x"],
+      repaired[3]["landmarks"]["right_hip"]["x"],
+    )
+    self.assertEqual(
+      repaired[3]["landmarks"]["left_hip"]["tracking_state"],
+      "estimated",
+    )
+    self.assertEqual(diagnostics["identity_switch_counts"]["hip"], 1)
 
 
 if __name__ == "__main__":

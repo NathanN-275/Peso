@@ -20,8 +20,10 @@ import TrackingReferenceOverlay from '../components/TrackingReferenceOverlay';
 import ReviewBottomSheet from '../components/ReviewBottomSheet';
 import TimelineScrubber from '../components/TimelineScrubber';
 import TrackingDisplaySheet from '../components/TrackingDisplaySheet';
+import WorkoutDetailsSheet from '../components/WorkoutDetailsSheet';
 import tokens from '../theme/tokens';
 import { BarbellPath, VideoAnalysisResult } from '../types/videoAnalysis';
+import type { WorkoutSaveDetails } from '../../lib/workoutSavePolicy';
 import {
   isReferenceTrackingTime,
   resolveSelectedTrackingSide,
@@ -46,7 +48,7 @@ type AnalysisReviewScreenProps = {
   onDiscarded?: () => void;
   onSaved?: (videoId: string) => void | Promise<void>;
   onDeleteSavedVideo?: (videoId: string) => Promise<void>;
-  saveOnBack?: boolean;
+  workoutDetails?: WorkoutSaveDetails | null;
 };
 
 type BarbellPathCarrier = VideoAnalysisResult & {
@@ -118,7 +120,7 @@ export default function AnalysisReviewScreen({
   onDiscarded,
   onSaved,
   onDeleteSavedVideo,
-  saveOnBack = false,
+  workoutDetails,
 }: AnalysisReviewScreenProps) {
   // This screen plays the analyzed clip and overlays pose feedback.
   const { session } = useAuth();
@@ -136,6 +138,7 @@ export default function AnalysisReviewScreen({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showDiscardSheet, setShowDiscardSheet] = useState(false);
   const [showSavedDeleteSheet, setShowSavedDeleteSheet] = useState(false);
+  const [showWorkoutDetailsSheet, setShowWorkoutDetailsSheet] = useState(false);
   const [wasPlayingBeforeScrub, setWasPlayingBeforeScrub] = useState(false);
   const mediaAvailable = Boolean(videoUri);
 
@@ -337,7 +340,7 @@ export default function AnalysisReviewScreen({
     player.play();
   };
 
-  const handleSave = async () => {
+  const handleSave = async (details: WorkoutSaveDetails) => {
     // Save is gated by a valid session token.
     if (isSavedMode || !session?.access_token || saving) {
       return;
@@ -347,14 +350,16 @@ export default function AnalysisReviewScreen({
     setErrorMessage(null);
 
     try {
-      await saveAnalyzedVideo(result.video_id, session.access_token);
+      await saveAnalyzedVideo(result.video_id, details, session.access_token);
       setSaved(true);
+      setShowWorkoutDetailsSheet(false);
       if (mediaAvailable) {
         player.pause();
       }
       await onSaved?.(result.video_id);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to save this video.');
+      throw error;
     } finally {
       setSaving(false);
     }
@@ -435,11 +440,6 @@ export default function AnalysisReviewScreen({
       return;
     }
 
-    if (saveOnBack) {
-      void handleSave();
-      return;
-    }
-
     setShowDiscardSheet(true);
   };
 
@@ -472,9 +472,7 @@ export default function AnalysisReviewScreen({
           ) : (
             <Pressable
               accessibilityRole="button"
-              onPress={() => {
-                void handleSave();
-              }}
+              onPress={() => setShowWorkoutDetailsSheet(true)}
               disabled={saving || discarding}
               style={[styles.topButton, (saving || discarding) && styles.disabledButton]}
             >
@@ -636,6 +634,17 @@ export default function AnalysisReviewScreen({
           scrollable
           scrollContentStyle={styles.sheetContent}
         >
+          {workoutDetails ? (
+            <SheetSection title="Workout facts">
+              <Text style={styles.sheetText}>
+                Performed reps: {workoutDetails.performed_reps}
+              </Text>
+              <Text style={styles.sheetText}>
+                Load: {workoutDetails.load_value} {workoutDetails.load_unit}
+              </Text>
+              <Text style={styles.sheetMutedText}>Detected reps: {repCount}</Text>
+            </SheetSection>
+          ) : null}
           <SheetSection title="Summary flags">
               {depthAssessmentAvailable ? (
                 <Text style={styles.sheetText}>{depthHitLabel}</Text>
@@ -696,6 +705,13 @@ export default function AnalysisReviewScreen({
               }) : <Text style={styles.sheetMutedText}>No reps detected.</Text>}
           </SheetSection>
         </ReviewBottomSheet>
+
+        <WorkoutDetailsSheet
+          visible={!isSavedMode && showWorkoutDetailsSheet}
+          detectedReps={repCount}
+          onCancel={() => setShowWorkoutDetailsSheet(false)}
+          onSubmit={handleSave}
+        />
 
         <ReviewBottomSheet
           visible={activeSheet === 'coaching'}

@@ -152,6 +152,11 @@ def detect_reps(
   knee_flexions: list[float],
   hip_flexions: list[float],
   frames: list[dict[str, Any]],
+  high_threshold_ratio: float = 0.58,
+  low_threshold_ratio: float = 0.30,
+  minimum_half_duration_ms: int = 450,
+  peak_spacing_ms: int = 2600,
+  boundary_search_ms: int = 3200,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
   # Rep detection turns the motion signal into rep boundaries.
   if len(hip_depths) < 5:
@@ -184,13 +189,20 @@ def detect_reps(
     diagnostics["reason"] = "low_squat_motion"
     return [], diagnostics
 
-  upper_threshold = minimum + (amplitude * 0.58)
-  lower_threshold = minimum + (amplitude * 0.30)
-  minimum_frame_gap = _frame_gap_for_min_duration(frames, 450)
-  peak_spacing_frames = _frame_gap_for_min_duration(frames, 2600)
-  boundary_search_frames = _frame_gap_for_min_duration(frames, 3200)
+  upper_threshold = minimum + (amplitude * high_threshold_ratio)
+  lower_threshold = minimum + (amplitude * low_threshold_ratio)
+  minimum_frame_gap = _frame_gap_for_min_duration(frames, minimum_half_duration_ms)
+  peak_spacing_frames = _frame_gap_for_min_duration(frames, peak_spacing_ms)
+  boundary_search_frames = _frame_gap_for_min_duration(frames, boundary_search_ms)
   diagnostics["low_threshold"] = round(lower_threshold, 3)
   diagnostics["high_threshold"] = round(upper_threshold, 3)
+  diagnostics["profile"] = {
+    "high_threshold_ratio": high_threshold_ratio,
+    "low_threshold_ratio": low_threshold_ratio,
+    "minimum_half_duration_ms": minimum_half_duration_ms,
+    "peak_spacing_ms": peak_spacing_ms,
+    "boundary_search_ms": boundary_search_ms,
+  }
 
   reps: list[dict[str, Any]] = []
   peak_candidates = _find_peak_candidates(

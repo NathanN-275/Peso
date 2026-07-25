@@ -18,3 +18,8 @@ export function shouldConnectFrontTrailSamples(
   previousTime: number,
   currentTime: number
 ): boolean;
+
+export function resolveSquatTorsoStart(
+  pointNames: ReadonlySet<string>,
+  side: 'left' | 'right'
+): string | null;
