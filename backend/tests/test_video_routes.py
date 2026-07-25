@@ -295,6 +295,56 @@ class VideoRoutesTest(unittest.TestCase):
     self.assertEqual(raised.exception.status_code, 400)
     repository.create_uploaded_video.assert_not_called()
 
+  def test_register_video_treats_zero_duration_as_unknown_for_tracking_bounds(self) -> None:
+    repository = MagicMock()
+    repository.count_user_in_progress_videos.return_value = 0
+    repository.count_recent_user_uploads.return_value = 0
+    repository.create_uploaded_video.return_value = {
+      "id": str(VIDEO_ID),
+      "status": "uploaded",
+      "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mp4",
+    }
+    storage = MagicMock()
+    storage.validate_video_object.return_value = {"metadata": {"size": "2048", "mimetype": "video/mp4"}}
+    storage.storage_object_size_bytes.return_value = 2048
+    settings = MagicMock(
+      saved_video_storage_ttl_hours=24,
+      max_user_in_progress_videos=3,
+      max_user_uploads_per_hour=20,
+      max_video_duration_ms=300000,
+    )
+    tracking_setup = {
+      "version": 1,
+      "reference_time_ms": 5000,
+      "barbell_target": "near_side_collar",
+      "anchors": {
+        "barbell": {"x": 0.5, "y": 0.4},
+      },
+    }
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.get_settings", return_value=settings),
+      patch("app.routes.videos.uuid4", return_value=VIDEO_ID),
+    ):
+      response = register_video(
+        RegisterVideoRequest(
+          storage_path=f"{USER_ID}/uploads/{VIDEO_ID}.mp4",
+          source_type="camera_roll",
+          exercise_type="squat",
+          view_type="side",
+          duration_ms=0,
+          tracking_setup=tracking_setup,
+        ),
+        USER_ID,
+      )
+
+    fields = repository.create_uploaded_video.call_args.args[0]
+    self.assertEqual(fields["duration_ms"], 0)
+    self.assertEqual(fields["tracking_setup"]["reference_time_ms"], 5000)
+    self.assertEqual(response.video_id, VIDEO_ID)
+
   def test_register_video_rate_limits_active_user_work(self) -> None:
     repository = MagicMock()
     repository.count_user_in_progress_videos.return_value = 3

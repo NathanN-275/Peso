@@ -24,6 +24,10 @@ import {
 import { calculateVideoRect } from '../utils/videoReview';
 import { getPinnedFrameChangeAction } from '../../lib/trackingPinFramePolicy';
 import { layoutTrackingLabels } from '../../lib/trackingOverlayPolicy';
+import {
+  clampTrackingReferenceTimeMs,
+  resolveVideoDurationMs,
+} from '../../lib/videoDurationPolicy';
 import Button from './Button';
 import ConfirmationDialog from './ConfirmationDialog';
 import TimelineScrubber from './TimelineScrubber';
@@ -39,7 +43,7 @@ type TrackingPinSetupModalProps = {
   barbellTarget?: TrackingBarbellTarget;
   pinNames?: readonly TrackingPinName[];
   cameraView?: 'side' | 'front';
-  onSave: (setup: TrackingSetup) => void;
+  onSave: (setup: TrackingSetup, resolvedDurationMs: number | null) => void;
   onCancel: () => void;
 };
 
@@ -139,9 +143,7 @@ export default function TrackingPinSetupModal({
 }: TrackingPinSetupModalProps) {
   const [currentTime, setCurrentTime] = useState((initialSetup?.reference_time_ms ?? 0) / 1000);
   const [duration, setDuration] = useState(
-    typeof videoDurationMs === 'number' && Number.isFinite(videoDurationMs)
-      ? videoDurationMs / 1000
-      : 0
+    (resolveVideoDurationMs({ pickerDurationMs: videoDurationMs }) ?? 0) / 1000
   );
   const [videoLayout, setVideoLayout] = useState({ width: 0, height: 0 });
   const [displayVideoSize, setDisplayVideoSize] = useState(videoSize);
@@ -211,12 +213,22 @@ export default function TrackingPinSetupModal({
     setFrameChangeDialogVisible(false);
     setDontShowFrameChangeWarningAgain(false);
     setDisplayVideoSize({ width: videoSize.width, height: videoSize.height });
-    if (typeof videoDurationMs === 'number' && Number.isFinite(videoDurationMs)) {
-      setDuration(videoDurationMs / 1000);
-    }
+    const resolvedDurationMs = resolveVideoDurationMs({
+      playerDurationSeconds: player.duration || sourceLoad.duration,
+      pickerDurationMs: videoDurationMs,
+    });
+    setDuration((resolvedDurationMs ?? 0) / 1000);
     player.pause();
     player.currentTime = referenceTime;
-  }, [allowedPinSet, initialSetup, player, videoDurationMs, videoSize.height, videoSize.width, visible]);
+  }, [
+    allowedPinSet,
+    initialSetup,
+    player,
+    videoDurationMs,
+    videoSize.height,
+    videoSize.width,
+    visible,
+  ]);
 
   useEffect(() => {
     if (!visible) {
@@ -237,14 +249,18 @@ export default function TrackingPinSetupModal({
     if (loadedTrack?.size?.width > 0 && loadedTrack.size.height > 0) {
       setDisplayVideoSize(orientationCorrectedVideoSize(loadedTrack.size, videoSize));
     }
-    const nextDuration = sourceLoad.duration || player.duration || 0;
-    if (nextDuration > 0) {
-      setDuration(nextDuration);
+    const resolvedDurationMs = resolveVideoDurationMs({
+      playerDurationSeconds: sourceLoad.duration || player.duration,
+      pickerDurationMs: videoDurationMs,
+    });
+    if (resolvedDurationMs !== null) {
+      setDuration(resolvedDurationMs / 1000);
     }
   }, [
     player.duration,
     sourceLoad.availableVideoTracks,
     sourceLoad.duration,
+    videoDurationMs,
     videoSize.height,
     videoSize.width,
   ]);
@@ -253,11 +269,14 @@ export default function TrackingPinSetupModal({
     if (statusChange.status !== 'readyToPlay') {
       return;
     }
-    const nextDuration = player.duration || 0;
-    if (nextDuration > 0) {
-      setDuration(nextDuration);
+    const resolvedDurationMs = resolveVideoDurationMs({
+      playerDurationSeconds: player.duration,
+      pickerDurationMs: videoDurationMs,
+    });
+    if (resolvedDurationMs !== null) {
+      setDuration(resolvedDurationMs / 1000);
     }
-  }, [player.duration, statusChange.status]);
+  }, [player.duration, statusChange.status, videoDurationMs]);
 
   useEffect(() => {
     if (visible) {
@@ -437,9 +456,12 @@ export default function TrackingPinSetupModal({
     const nativeVideo = videoViewRef.current?.nativeRef?.current as
       | { duration?: number; videoWidth?: number; videoHeight?: number }
       | undefined;
-    const nextDuration = nativeVideo?.duration || player.duration || 0;
-    if (nextDuration > 0 && Number.isFinite(nextDuration)) {
-      setDuration(nextDuration);
+    const resolvedDurationMs = resolveVideoDurationMs({
+      playerDurationSeconds: nativeVideo?.duration || player.duration,
+      pickerDurationMs: videoDurationMs,
+    });
+    if (resolvedDurationMs !== null) {
+      setDuration(resolvedDurationMs / 1000);
     }
     if (
       nativeVideo?.videoWidth
@@ -458,6 +480,11 @@ export default function TrackingPinSetupModal({
     if (!canSavePins) {
       return;
     }
+    const resolvedDurationMs = resolveVideoDurationMs({
+      playerDurationSeconds: player.duration || sourceLoad.duration || duration,
+      pickerDurationMs: videoDurationMs,
+    });
+    const referenceTimeMs = clampTrackingReferenceTimeMs(currentTime, resolvedDurationMs);
     const anchors = Object.fromEntries(
       allowedPinNames.flatMap((name) => pins[name] ? [[name, pins[name]]] : [])
     ) as TrackingSetup['anchors'];
@@ -468,15 +495,16 @@ export default function TrackingPinSetupModal({
       isFrontBodySetup
         ? {
           version: 2,
-          reference_time_ms: Math.round(currentTime * 1000),
+          reference_time_ms: referenceTimeMs,
           anchors,
         }
         : {
           version: 1,
-          reference_time_ms: Math.round(currentTime * 1000),
+          reference_time_ms: referenceTimeMs,
           barbell_target: barbellTarget,
           anchors,
-        }
+        },
+      resolvedDurationMs
     );
   };
 

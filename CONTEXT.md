@@ -61,6 +61,11 @@ A user-selected reference point for one specific shoulder, hip, knee, or ankle
 on the lifter's left or right side. Any partial set of body anchors may assist
 automatic tracking without changing unpinned joint identities.
 
+## Tracking reference frame
+
+The user-selected video frame on which body or barbell anchors are placed. Its
+timestamp belongs to the same playback timeline as the uploaded source video.
+
 ## Visible collar
 
 The barbell collar that can be directly and consistently observed in

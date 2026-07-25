@@ -702,9 +702,10 @@ def register_video(
 
   normalized_tracking_setup = None
   if request.tracking_setup is not None:
+    tracking_duration_ms = request.duration_ms if request.duration_ms and request.duration_ms > 0 else None
     normalized_tracking_setup, tracking_error = validate_tracking_setup(
       request.tracking_setup,
-      duration_ms=request.duration_ms,
+      duration_ms=tracking_duration_ms,
     )
 
     if tracking_error:

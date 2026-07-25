@@ -17,6 +17,7 @@ import {
   buildAnalyzedVideoExportPayload,
   buildRegisterUploadedVideoPayload,
 } from './videoRequestPayloadPolicy';
+import { getBackendErrorMessage } from './backendErrorPolicy';
 
 let loggedBackendConfig = false;
 const PLAYBACK_URL_CACHE_TTL_MS = 2 * 60 * 1000;
@@ -281,7 +282,7 @@ async function requestJson<T>(path: string, accessToken?: string, init: BackendR
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(errorText || `Backend request failed with status ${response.status}.`);
+    throw new Error(getBackendErrorMessage(errorText, response.status));
   }
 
   return (await response.json()) as T;

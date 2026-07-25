@@ -55,6 +55,7 @@ import { VideoAnalysisResult, VideoAnalysisStatus } from '../types/videoAnalysis
 import tokens from '../theme/tokens';
 import type { TrackingSetup } from '../types/trackingSetup';
 import { createLocalVideoThumbnail, getUriScheme } from '../utils/localVideoThumbnail';
+import { resolveVideoDurationMs } from '../../lib/videoDurationPolicy';
 
 type UploadVideoScreenProps = {
   sourceMode?: 'camera' | 'library';
@@ -132,6 +133,7 @@ export default function UploadVideoScreen({
   const [setupModalVisible, setSetupModalVisible] = useState(!initialVideoSetup);
   const [videoSetup, setVideoSetup] = useState<VideoSetupSelection | null>(initialVideoSetup);
   const [selectedVideo, setSelectedVideo] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [resolvedVideoDurationMs, setResolvedVideoDurationMs] = useState<number | null>(null);
   const [trackingSetup, setTrackingSetup] = useState<TrackingSetup | null>(null);
   const [trackingDetailsExpanded, setTrackingDetailsExpanded] = useState(false);
   const [trackingPinModalVisible, setTrackingPinModalVisible] = useState(false);
@@ -186,6 +188,7 @@ export default function UploadVideoScreen({
     analysisQueuedForVideoRef.current = null;
     analysisPollInFlightRef.current = false;
     setSelectedVideo(asset);
+    setResolvedVideoDurationMs(resolveVideoDurationMs({ pickerDurationMs: asset.duration }));
     setTrackingSetup(null);
     setTrackingDetailsExpanded(false);
     setTrackingPinModalVisible(false);
@@ -297,6 +300,7 @@ export default function UploadVideoScreen({
         angle: videoSetup.angle,
         sourceType: sourceMode === 'camera' ? 'camera' : 'camera_roll',
         trackingSetup,
+        durationMs: resolvedVideoDurationMs,
         onStatusChange: (message) => {
           if (analysisRunIsCurrent(run)) {
             setStatusMessage(message);
@@ -887,6 +891,7 @@ export default function UploadVideoScreen({
     analysisQueuedForVideoRef.current = null;
     analysisPollInFlightRef.current = false;
     setSelectedVideo(null);
+    setResolvedVideoDurationMs(null);
     setTrackingSetup(null);
     setTrackingDetailsExpanded(false);
     setTrackingPinModalVisible(false);
@@ -960,13 +965,14 @@ export default function UploadVideoScreen({
             width: selectedVideo.width || 1080,
             height: selectedVideo.height || 1920,
           }}
-          videoDurationMs={selectedVideo.duration ?? undefined}
+          videoDurationMs={resolvedVideoDurationMs}
           initialSetup={trackingSetup}
           barbellTarget={trackingBarbellTarget(videoSetup)}
           pinNames={trackingPinNames(videoSetup)}
           cameraView={videoSetup?.angle === 'Front' ? 'front' : 'side'}
-          onSave={(setup) => {
+          onSave={(setup, durationMs) => {
             setTrackingSetup(setup);
+            setResolvedVideoDurationMs(durationMs);
             setTrackingPinModalVisible(false);
           }}
           onCancel={() => setTrackingPinModalVisible(false)}

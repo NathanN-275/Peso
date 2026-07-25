@@ -16,6 +16,7 @@ import {
   verifyPinTrackingCapability,
 } from './pinTrackingCapabilityPolicy';
 import { supabase, supabaseConfigError } from './supabase';
+import { normalizePositiveDurationMs } from './videoDurationPolicy';
 
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = resolveFrontendMaxUploadBytes();
@@ -41,6 +42,7 @@ type UploadVideoForAnalysisArgs = {
   angle: CameraAngle;
   sourceType?: 'camera' | 'camera_roll';
   trackingSetup?: TrackingSetup | null;
+  durationMs?: number | null;
   onStatusChange?: (message: string | null) => void;
   onQuotaWarning?: (message: string) => void;
 };
@@ -626,6 +628,7 @@ export async function uploadVideoForAnalysis({
   angle,
   sourceType = 'camera_roll',
   trackingSetup,
+  durationMs,
   onStatusChange,
   onQuotaWarning,
 }: UploadVideoForAnalysisArgs): Promise<UploadVideoForAnalysisResult> {
@@ -716,10 +719,9 @@ export async function uploadVideoForAnalysis({
     throw uploadError;
   }
 
-  const durationMs =
-    typeof asset.duration === 'number' && !Number.isNaN(asset.duration)
-      ? Math.round(asset.duration)
-      : null;
+  const resolvedDurationMs =
+    normalizePositiveDurationMs(durationMs)
+    ?? normalizePositiveDurationMs(asset.duration);
   const normalizedExerciseType = normalizeExerciseType(exercise);
   const normalizedViewType = normalizeViewType(angle);
 
@@ -728,7 +730,7 @@ export async function uploadVideoForAnalysis({
     source_type: sourceType,
     exercise_type: normalizedExerciseType,
     view_type: normalizedViewType,
-    duration_ms: durationMs,
+    duration_ms: resolvedDurationMs,
     ...(trackingSetup ? { tracking_setup: trackingSetup } : {}),
   };
 
