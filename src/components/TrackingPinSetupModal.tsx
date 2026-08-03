@@ -683,7 +683,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   webOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     width: '100%',
     height: '100%',
     backgroundColor: '#05070A',
@@ -712,7 +712,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
     overflow: 'hidden',
   },
-  video: { ...StyleSheet.absoluteFillObject },
+  video: { ...StyleSheet.absoluteFill },
   pinMarker: { position: 'absolute' },
   pinLeaderLine: {
     position: 'absolute',
