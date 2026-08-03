@@ -58,3 +58,10 @@ backend/.peso/
 
 supabase/.temp/
 .agents/skills/
+
+# Services and development-only content not used by the mobile build
+/backend
+/dashboard
+/docs
+/supabase
+/PIN_TRACKING_WORK_SUMMARY.md
