@@ -208,6 +208,17 @@ From the project root:
 npm start
 ```
 
+Press `i` in the Expo terminal to open the iOS Simulator or `w` to open web.
+Both clients use the same FastAPI process: the simulator connects to
+`localhost:8000`, while web uses a same-origin Metro proxy at `/__peso_api` so
+local browser previews do not need direct access to port 8000.
+
+To open web immediately while still starting FastAPI:
+
+```bash
+npm run web
+```
+
 To run the frontend and backend separately:
 
 ```bash

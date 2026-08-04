@@ -35,15 +35,20 @@ export function formatSavedDate(value?: string | null) {
 }
 
 export function getSavedWorkoutFacts(video: SavedVideo) {
-  if (
-    typeof video.performed_reps !== 'number'
-    || typeof video.load_value !== 'number'
-    || (video.load_unit !== 'lb' && video.load_unit !== 'kg')
-  ) {
-    return null;
+  const facts: string[] = [];
+
+  if (typeof video.performed_reps === 'number') {
+    facts.push(`${video.performed_reps} reps`);
   }
 
-  return `${video.performed_reps} reps · ${video.load_value} ${video.load_unit}`;
+  if (
+    typeof video.load_value === 'number'
+    && (video.load_unit === 'lb' || video.load_unit === 'kg')
+  ) {
+    facts.push(`${video.load_value} ${video.load_unit}`);
+  }
+
+  return facts.length ? facts.join(' · ') : null;
 }
 
 export function getSavedVideoSummary(video: SavedVideo) {

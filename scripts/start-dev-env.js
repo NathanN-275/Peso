@@ -1,8 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { DEV_BACKEND_PROXY_PATH } = require('../lib/backendDevProxyPolicy');
 
 const DEFAULT_BACKEND_PORT = '8000';
-const DEFAULT_WEB_BACKEND_HOST = 'localhost';
 
 function parseDotenv(contents) {
   const values = {};
@@ -71,32 +71,14 @@ function resolveBackendPort(env) {
   return env.BACKEND_PORT || env.EXPO_PUBLIC_BACKEND_PORT || DEFAULT_BACKEND_PORT;
 }
 
-function isLoopbackBackendUrl(value) {
-  try {
-    const hostname = new URL(value).hostname;
-    return hostname === 'localhost' || hostname === '127.0.0.1';
-  } catch {
-    return false;
-  }
-}
-
 function resolveExpoBackendUrl(env, backendPort, options = {}) {
   const frontendTarget = options.frontendTarget || 'native';
   const configuredUrl = env.EXPO_PUBLIC_BACKEND_URL;
 
   if (frontendTarget === 'web') {
-    if (configuredUrl && isLoopbackBackendUrl(configuredUrl)) {
-      return {
-        url: configuredUrl,
-        source: options.envSources?.EXPO_PUBLIC_BACKEND_URL || 'environment',
-      };
-    }
-
     return {
-      url: `http://${env.EXPO_PUBLIC_WEB_BACKEND_HOST || DEFAULT_WEB_BACKEND_HOST}:${backendPort}`,
-      source: configuredUrl
-        ? `web loopback default; ignored ${options.envSources?.EXPO_PUBLIC_BACKEND_URL || 'environment'} LAN override`
-        : 'default',
+      url: DEV_BACKEND_PROXY_PATH,
+      source: 'web same-origin proxy',
     };
   }
 

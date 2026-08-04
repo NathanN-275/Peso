@@ -1079,8 +1079,10 @@ function AppContent() {
             result={selectedSavedVideoAnalysisResult}
             workoutDetails={
               selectedSavedVideo.performed_reps !== null
-              && selectedSavedVideo.load_value !== null
-              && selectedSavedVideo.load_unit !== null
+              || (
+                selectedSavedVideo.load_value !== null
+                && selectedSavedVideo.load_unit !== null
+              )
                 ? {
                     performed_reps: selectedSavedVideo.performed_reps,
                     load_value: selectedSavedVideo.load_value,

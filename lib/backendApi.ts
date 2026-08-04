@@ -157,7 +157,11 @@ function buildBackendUnreachableMessage({
       );
     }
 
-    if (Platform.OS === 'web' && isLoopbackUrl(backend.url)) {
+    if (Platform.OS === 'web' && backend.source === 'web same-origin proxy') {
+      hints.push(
+        'The Expo web proxy could not reach FastAPI. Start both services with npm run web or npm start.'
+      );
+    } else if (Platform.OS === 'web' && isLoopbackUrl(backend.url)) {
       hints.push('For Expo web, start the backend with npm start or run FastAPI on 127.0.0.1:8000.');
     }
 
@@ -479,9 +483,9 @@ export async function getVideoPlaybackUrl(videoId: string, accessToken: string) 
 export async function saveAnalyzedVideo(
   videoId: string,
   details: {
-    performed_reps: number;
-    load_value: number;
-    load_unit: 'lb' | 'kg';
+    performed_reps: number | null;
+    load_value: number | null;
+    load_unit: 'lb' | 'kg' | null;
   },
   accessToken: string
 ) {
@@ -489,9 +493,9 @@ export async function saveAnalyzedVideo(
   return requestJson<{
     video_id: string;
     save_state: SaveState;
-    performed_reps: number;
-    load_value: number;
-    load_unit: 'lb' | 'kg';
+    performed_reps: number | null;
+    load_value: number | null;
+    load_unit: 'lb' | 'kg' | null;
   }>(
     `/videos/${videoId}/save`,
     accessToken,

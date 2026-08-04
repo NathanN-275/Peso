@@ -13,7 +13,7 @@ All FastAPI calls flow through `lib/backendApi.ts`, which adds bearer auth when 
 - `POST /analyze/{video_id}`: authenticated analysis queueing. Backend revalidates video ownership and storage path ownership.
 - `GET /videos/{video_id}/status`: authenticated polling for owned video status.
 - `GET /analysis/{video_id}`: authenticated owned analysis result fetch.
-- `POST /videos/{video_id}/save`: authenticated saved-library transition. Requires `performed_reps` (integer, at least 1), `load_value` (number, at least 0), and `load_unit` (`lb` or `kg`). The backend stores all three workout facts in the same update as the saved state; incomplete payloads are rejected.
+- `POST /videos/{video_id}/save`: authenticated saved-library transition. Accepts optional `performed_reps` (integer, at least 1) and optional load details (`load_value`, a number at least 0, paired with `load_unit`, `lb` or `kg`). The backend stores any supplied workout facts in the same update as the saved state.
 - `GET /videos/saved`: authenticated legacy saved list. Kept for compatibility; analysis is batch-loaded.
 - `GET /videos/saved-page`: authenticated paginated saved-library list. Frontend folder screens use this endpoint.
 - `GET /videos/saved-overview`: authenticated lightweight Home/Profile overview. Only preview thumbnails are signed.

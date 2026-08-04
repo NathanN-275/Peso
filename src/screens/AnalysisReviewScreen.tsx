@@ -636,12 +636,16 @@ export default function AnalysisReviewScreen({
         >
           {workoutDetails ? (
             <SheetSection title="Workout facts">
-              <Text style={styles.sheetText}>
-                Performed reps: {workoutDetails.performed_reps}
-              </Text>
-              <Text style={styles.sheetText}>
-                Load: {workoutDetails.load_value} {workoutDetails.load_unit}
-              </Text>
+              {workoutDetails.performed_reps !== null ? (
+                <Text style={styles.sheetText}>
+                  Performed reps: {workoutDetails.performed_reps}
+                </Text>
+              ) : null}
+              {workoutDetails.load_value !== null && workoutDetails.load_unit !== null ? (
+                <Text style={styles.sheetText}>
+                  Load: {workoutDetails.load_value} {workoutDetails.load_unit}
+                </Text>
+              ) : null}
               <Text style={styles.sheetMutedText}>Detected reps: {repCount}</Text>
             </SheetSection>
           ) : null}

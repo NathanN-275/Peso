@@ -195,9 +195,9 @@ class VideoRepository:
     self,
     video_id: str,
     *,
-    performed_reps: int,
-    load_value: float,
-    load_unit: str,
+    performed_reps: int | None,
+    load_value: float | None,
+    load_unit: str | None,
   ) -> dict[str, Any]:
     # Saved videos stay visible in the home flow.
     saved_at = datetime.now(timezone.utc).isoformat()

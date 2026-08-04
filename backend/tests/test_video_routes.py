@@ -1009,7 +1009,35 @@ class VideoRoutesTest(unittest.TestCase):
 
     self.assertEqual(response.load_value, 0)
 
-  def test_save_video_request_requires_valid_workout_details(self) -> None:
+  def test_save_video_accepts_omitted_workout_details(self) -> None:
+    request = SaveVideoRequest()
+    repository = MagicMock()
+    repository.require_owned_video.return_value = {
+      "id": str(VIDEO_ID),
+      "user_id": USER_ID,
+      "discarded_at": None,
+    }
+    repository.mark_saved.return_value = {
+      "save_state": "saved",
+      "performed_reps": None,
+      "load_value": None,
+      "load_unit": None,
+    }
+
+    with patch("app.routes.videos.VideoRepository", return_value=repository):
+      response = save_video(VIDEO_ID, request, USER_ID)
+
+    repository.mark_saved.assert_called_once_with(
+      str(VIDEO_ID),
+      performed_reps=None,
+      load_value=None,
+      load_unit=None,
+    )
+    self.assertIsNone(response.performed_reps)
+    self.assertIsNone(response.load_value)
+    self.assertIsNone(response.load_unit)
+
+  def test_save_video_request_validates_entered_workout_details(self) -> None:
     with self.assertRaises(ValidationError):
       SaveVideoRequest(performed_reps=0, load_value=225, load_unit="lb")
     with self.assertRaises(ValidationError):
@@ -1018,6 +1046,8 @@ class VideoRoutesTest(unittest.TestCase):
       SaveVideoRequest(performed_reps=2, load_value=225, load_unit="stone")
     with self.assertRaises(ValidationError):
       SaveVideoRequest(performed_reps=2, load_value=225)
+    with self.assertRaises(ValidationError):
+      SaveVideoRequest(performed_reps=2, load_unit="lb")
 
   def test_discard_deletes_storage_and_marks_row_discarded(self) -> None:
     repository = MagicMock()

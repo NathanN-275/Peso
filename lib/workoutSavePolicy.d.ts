@@ -1,9 +1,9 @@
 export type LoadUnit = 'lb' | 'kg';
 
 export type WorkoutSaveDetails = {
-  performed_reps: number;
-  load_value: number;
-  load_unit: LoadUnit;
+  performed_reps: number | null;
+  load_value: number | null;
+  load_unit: LoadUnit | null;
 };
 
 export type WorkoutSaveParseResult =

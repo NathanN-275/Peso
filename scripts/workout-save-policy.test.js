@@ -6,11 +6,22 @@ const {
   resolveStoredLoadUnit,
 } = require('../lib/workoutSavePolicy');
 
-test('workout save details require an integer rep count of at least one', () => {
-  assert.deepEqual(parseWorkoutSaveDetails('', '225', 'lb'), {
-    ok: false,
-    error: 'Enter the reps you performed.',
+test('workout save details allow reps and weight to be omitted', () => {
+  assert.deepEqual(parseWorkoutSaveDetails('', '', 'lb'), {
+    ok: true,
+    value: { performed_reps: null, load_value: null, load_unit: null },
   });
+  assert.deepEqual(parseWorkoutSaveDetails('', '225', 'lb'), {
+    ok: true,
+    value: { performed_reps: null, load_value: 225, load_unit: 'lb' },
+  });
+  assert.deepEqual(parseWorkoutSaveDetails('2', '', 'kg'), {
+    ok: true,
+    value: { performed_reps: 2, load_value: null, load_unit: null },
+  });
+});
+
+test('workout save details require entered reps to be an integer of at least one', () => {
   assert.deepEqual(parseWorkoutSaveDetails('1.5', '225', 'lb'), {
     ok: false,
     error: 'Reps must be a whole number of at least 1.',
@@ -32,8 +43,7 @@ test('workout save details accept zero and decimal load', () => {
   });
 });
 
-test('workout save details reject missing, negative, and malformed load', () => {
-  assert.equal(parseWorkoutSaveDetails('2', '', 'lb').ok, false);
+test('workout save details reject negative and malformed load', () => {
   assert.equal(parseWorkoutSaveDetails('2', '-1', 'lb').ok, false);
   assert.equal(parseWorkoutSaveDetails('2', 'twenty', 'lb').ok, false);
 });

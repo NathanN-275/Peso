@@ -74,7 +74,7 @@ export default function WorkoutDetailsSheet({
 
     try {
       await onSubmit(parsed.value);
-      await AsyncStorage.setItem(LOAD_UNIT_PREFERENCE_KEY, parsed.value.load_unit);
+      await AsyncStorage.setItem(LOAD_UNIT_PREFERENCE_KEY, loadUnit);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to save this video.');
     } finally {
@@ -99,7 +99,10 @@ export default function WorkoutDetailsSheet({
         </Text>
 
         <View style={styles.field}>
-          <Text style={styles.label}>Reps performed</Text>
+          <View style={styles.labelRow}>
+            <Text style={styles.label}>Reps performed</Text>
+            <Text style={styles.optionalLabel}>(optional)</Text>
+          </View>
           <TextInput
             accessibilityLabel="Reps performed"
             value={repsText}
@@ -114,7 +117,10 @@ export default function WorkoutDetailsSheet({
         </View>
 
         <View style={styles.field}>
-          <Text style={styles.label}>Weight lifted</Text>
+          <View style={styles.labelRow}>
+            <Text style={styles.label}>Weight lifted</Text>
+            <Text style={styles.optionalLabel}>(optional)</Text>
+          </View>
           <View style={styles.loadRow}>
             <TextInput
               accessibilityLabel="Weight lifted"
@@ -194,11 +200,22 @@ const styles = StyleSheet.create({
   field: {
     gap: 7,
   },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 5,
+  },
   label: {
     color: tokens.colors.textPrimary,
     fontSize: 14,
     lineHeight: 18,
     fontWeight: '700',
+  },
+  optionalLabel: {
+    color: '#A7A7A7',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '400',
   },
   input: {
     minHeight: 50,

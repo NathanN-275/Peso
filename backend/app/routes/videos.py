@@ -11,7 +11,7 @@ from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..analysis.pipeline import analyze_video
 from ..analysis.manual_tracking import validate_tracking_setup
@@ -163,15 +163,21 @@ class SavedVideoOverviewResponse(BaseModel):
 class SaveVideoResponse(BaseModel):
   video_id: UUID
   save_state: str
-  performed_reps: int
-  load_value: float
-  load_unit: Literal["lb", "kg"]
+  performed_reps: int | None = None
+  load_value: float | None = None
+  load_unit: Literal["lb", "kg"] | None = None
 
 
 class SaveVideoRequest(StrictRequestModel):
-  performed_reps: int = Field(ge=1)
-  load_value: float = Field(ge=0)
-  load_unit: Literal["lb", "kg"]
+  performed_reps: int | None = Field(default=None, ge=1)
+  load_value: float | None = Field(default=None, ge=0)
+  load_unit: Literal["lb", "kg"] | None = None
+
+  @model_validator(mode="after")
+  def weight_requires_unit(self) -> "SaveVideoRequest":
+    if (self.load_value is None) != (self.load_unit is None):
+      raise ValueError("Weight and its unit must be provided together.")
+    return self
 
 
 class DiscardVideoResponse(BaseModel):
