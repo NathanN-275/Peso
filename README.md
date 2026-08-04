@@ -253,13 +253,29 @@ For Expo Go on a physical phone, the backend must bind to `0.0.0.0` so another d
 
 ### Static web hosting
 
-Expo web can be exported as static assets:
+The public beta website is split into two browser surfaces:
+
+* Astro owns `/`, `/privacy`, and `/terms` under `web/`.
+* `App.web.tsx` owns the fixture-driven Expo prototype under `/app` while
+  `App.tsx` remains the native entry point.
+
+Start the marketing site while editing public pages:
 
 ```bash
-EXPO_PUBLIC_BACKEND_URL=https://api.example.com npm run web:export
+npm run web:marketing
 ```
 
-The static build writes to `dist/`. `netlify.toml` publishes that folder, falls routes back to `index.html`, and marks immutable assets cacheable. Production web builds must set `EXPO_PUBLIC_BACKEND_URL` or `EXPO_PUBLIC_PRODUCTION_BACKEND_URL` to the deployed FastAPI backend.
+Build both surfaces and preview the combined Netlify output locally:
+
+```bash
+npm run web:build
+npm run web:preview
+```
+
+The build writes the static Astro pages to `dist/` and the Expo single-page app
+to `dist/app/`. `netlify.toml` serves existing marketing files first and rewrites
+only unknown `/app/*` paths to `/app/index.html`. The milestone-one prototype
+uses fixtures and makes no backend calls.
 
 ## Backend API overview
 

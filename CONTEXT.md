@@ -1,5 +1,39 @@
 # Peso domain glossary
 
+## Marketing Site
+
+The public, statically generated Peso website at `/`, `/privacy`, and `/terms`.
+It explains the US web beta and links into the Web App, but it does not share a
+client bundle, routing runtime, or authenticated state with the Web App.
+
+## Web App
+
+The browser-only Peso product mounted beneath `/app`. It uses the shared Peso
+visual language and will eventually use the same production accounts and Saved
+Lifts as mobile, while retaining browser-specific submission and quota rules.
+The first milestone is fixture-driven and makes no backend calls.
+
+## Dashboard Home
+
+The signed-in Web App landing surface. It presents the two submission choices,
+rolling web capacity, active processing work, pending reviews, and recent Saved
+Lifts. Its navigation becomes a full sidebar, compact rail, or bottom bar as the
+viewport narrows.
+
+## Web Analysis Job
+
+A server-owned request to analyze one squat video submitted through the Web
+App. A job records its owner, video, status, timestamps, attempts, expiry,
+failure class, and whether it currently consumes a rolling quota slot. Job state
+is not inferred from queue visibility.
+
+## Saved Lift
+
+A user-owned analysis that was explicitly saved after review. Web accepts only
+new squat submissions, but all existing Saved Lifts remain readable regardless
+of exercise. Performed Reps and Load are workout facts; detected reps remain a
+model observation.
+
 ## Analysis run
 
 A completed processing pass for one source video, producing pose landmarks,

@@ -13,6 +13,7 @@
   "exclude": [
     "dashboard",
     "dist",
+    "web",
     "node_modules"
   ]
 }
