@@ -18,7 +18,8 @@ VIDEO_LEGACY_BASE_COLUMNS = (
   "save_state,saved_at,expires_at,created_at,updated_at"
 )
 VIDEO_BASE_COLUMNS = (
-  f"{VIDEO_LEGACY_BASE_COLUMNS},performed_reps,load_value,load_unit"
+  f"{VIDEO_LEGACY_BASE_COLUMNS},performed_reps,load_value,load_unit,"
+  "weight,weight_unit,corrected_rep_count,user_notes"
 )
 VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING = (
   f"{VIDEO_BASE_COLUMNS},is_saved,discarded_at,thumbnail_path,playback_path,original_storage_path,"
@@ -198,6 +199,7 @@ class VideoRepository:
     performed_reps: int | None,
     load_value: float | None,
     load_unit: str | None,
+    metadata: dict[str, Any] | None = None,
   ) -> dict[str, Any]:
     # Saved videos stay visible in the home flow.
     saved_at = datetime.now(timezone.utc).isoformat()
@@ -211,6 +213,8 @@ class VideoRepository:
       "load_value": load_value,
       "load_unit": load_unit,
     }
+    if metadata:
+      fields.update(metadata)
 
     return self.update_video(video_id, fields)
 

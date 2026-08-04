@@ -85,3 +85,32 @@ It may be refreshed without reloading trace or annotation data.
 
 An unsaved annotation held locally for one Analysis Run. It survives browser
 reloads until saved to feedback or explicitly discarded.
+
+## Coaching
+
+The measured interpretation of one exercise video, including detected reps,
+technique metrics, and confidence signals.
+
+## Cue
+
+A short, actionable coaching instruction derived from analysis quality or
+technique findings.
+
+## Technique Trend
+
+A change in a user's measured technique across saved videos for the same
+exercise and camera view.
+
+## Corrected Reps
+
+The repetition count a user supplies when automatic detection is wrong. In the
+current save flow this is represented by the user-owned Performed Reps fact.
+
+## Saved Video
+
+An analyzed video the user has explicitly kept in their workout history.
+
+## Workout Metadata
+
+Optional user-supplied performed reps, load value and unit, and notes attached
+to a saved video.

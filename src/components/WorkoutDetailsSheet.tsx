@@ -36,6 +36,7 @@ export default function WorkoutDetailsSheet({
   const [repsText, setRepsText] = useState('');
   const [loadText, setLoadText] = useState('');
   const [loadUnit, setLoadUnit] = useState<LoadUnit>('lb');
+  const [userNotes, setUserNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -46,6 +47,7 @@ export default function WorkoutDetailsSheet({
 
     setRepsText('');
     setLoadText('');
+    setUserNotes('');
     setErrorMessage(null);
     void AsyncStorage.getItem(LOAD_UNIT_PREFERENCE_KEY)
       .then((storedUnit) => setLoadUnit(resolveStoredLoadUnit(storedUnit)))
@@ -73,7 +75,10 @@ export default function WorkoutDetailsSheet({
     setErrorMessage(null);
 
     try {
-      await onSubmit(parsed.value);
+      await onSubmit({
+        ...parsed.value,
+        user_notes: userNotes.trim() || null,
+      });
       await AsyncStorage.setItem(LOAD_UNIT_PREFERENCE_KEY, loadUnit);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to save this video.');
@@ -152,6 +157,23 @@ export default function WorkoutDetailsSheet({
           </View>
         </View>
 
+        <View style={styles.field}>
+          <View style={styles.labelRow}>
+            <Text style={styles.label}>Notes</Text>
+            <Text style={styles.optionalLabel}>(optional)</Text>
+          </View>
+          <TextInput
+            accessibilityLabel="Workout notes"
+            value={userNotes}
+            onChangeText={setUserNotes}
+            editable={!submitting}
+            multiline
+            placeholder="How did the set feel?"
+            placeholderTextColor={tokens.colors.textMuted}
+            style={[styles.input, styles.notesInput]}
+          />
+        </View>
+
         {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 
         <Pressable
@@ -226,6 +248,11 @@ const styles = StyleSheet.create({
     color: tokens.colors.textPrimary,
     paddingHorizontal: 14,
     fontSize: 17,
+  },
+  notesInput: {
+    minHeight: 84,
+    paddingTop: 13,
+    textAlignVertical: 'top',
   },
   loadRow: {
     flexDirection: 'row',

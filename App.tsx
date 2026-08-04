@@ -738,7 +738,7 @@ function AppContent() {
     setSavedOverview(overview);
     setSavedOverviewLoaded(true);
   };
-  const handleAnalysisSaved = () => {
+  const handleAnalysisSaved = (_videoId?: string) => {
     setRecordedUploadVideo(null);
     setRecordedUploadSetup(null);
     invalidateSavedVideoCaches();
@@ -1083,10 +1083,12 @@ function AppContent() {
                 selectedSavedVideo.load_value !== null
                 && selectedSavedVideo.load_unit !== null
               )
+              || Boolean(selectedSavedVideo.user_notes)
                 ? {
                     performed_reps: selectedSavedVideo.performed_reps,
                     load_value: selectedSavedVideo.load_value,
                     load_unit: selectedSavedVideo.load_unit,
+                    user_notes: selectedSavedVideo.user_notes,
                   }
                 : null
             }

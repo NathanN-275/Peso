@@ -3,6 +3,12 @@ import type { TrackingAssistance } from './trackingSetup';
 export type VideoAnalysisStatus = 'uploaded' | 'queued' | 'processing' | 'completed' | 'failed';
 
 export type SaveState = 'pending' | 'saved';
+export type SavedWorkoutMetadata = {
+  weight?: number | null;
+  weight_unit?: 'lb' | 'kg' | null;
+  corrected_rep_count?: number | null;
+  user_notes?: string | null;
+};
 export type StorageState = 'available' | 'pruned';
 
 export type DepthStatus = 'hit_depth' | 'insufficient_depth' | 'uncertain_depth';
@@ -452,6 +458,10 @@ export type SavedVideo = {
   storage_state: StorageState;
   saved_at: string | null;
   created_at: string;
+  weight?: number | null;
+  weight_unit?: 'lb' | 'kg' | null;
+  corrected_rep_count?: number | null;
+  user_notes?: string | null;
   analysis: SavedVideoAnalysis | null;
   export_options?: {
     pose: boolean;

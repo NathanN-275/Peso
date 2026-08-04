@@ -480,13 +480,16 @@ export async function getVideoPlaybackUrl(videoId: string, accessToken: string) 
   return response;
 }
 
+export type SaveVideoMetadata = {
+  performed_reps: number | null;
+  load_value: number | null;
+  load_unit: 'lb' | 'kg' | null;
+  user_notes?: string | null;
+};
+
 export async function saveAnalyzedVideo(
   videoId: string,
-  details: {
-    performed_reps: number | null;
-    load_value: number | null;
-    load_unit: 'lb' | 'kg' | null;
-  },
+  details: SaveVideoMetadata,
   accessToken: string
 ) {
   // Persist the analyzed clip to the user's saved list.
@@ -496,6 +499,7 @@ export async function saveAnalyzedVideo(
     performed_reps: number | null;
     load_value: number | null;
     load_unit: 'lb' | 'kg' | null;
+    user_notes: string | null;
   }>(
     `/videos/${videoId}/save`,
     accessToken,
