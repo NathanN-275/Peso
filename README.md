@@ -2,7 +2,7 @@
 
 Peso is a mobile-first lifting analysis app that turns a workout video into visual feedback, rep summaries, and technique cues.
 
-The current version focuses on side-view squat analysis. A user uploads or records a squat video, Peso processes the movement, tracks the lifter and barbell, and returns an analyzed playback view with movement overlays and coaching feedback.
+The current version focuses on side-view squat analysis. A front view is in development but still needs improvement to be more accurate. A user uploads or records a squat video, Peso processes the movement, tracks the lifter and barbell, and returns an analyzed playback view with movement overlays and coaching feedback. 
 
 ## Demo
 
@@ -34,67 +34,9 @@ The goal is to make lifting analysis easier to understand without requiring expe
 
 ## Current focus
 
-Peso currently works best with side-view squat videos.
+Peso currently works best with side-view squat videos, but front-view videos are also supported.
 
-The main analysis pipeline is focused on:
-
-```bash
-BACKEND_ENV=development
-VIDEO_BUCKET=videos
-CLEANUP_JOB_TOKEN=replace-with-random-cleanup-secret
-MAX_VIDEO_DURATION_MS=300000
-SIGNED_URL_TTL_SECONDS=300
-STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS=120
-FFMPEG_TIMEOUT_SECONDS=120
-MAX_GLOBAL_VIDEO_WORKERS=2
-EXPORT_COOLDOWN_SECONDS=30
-EXPORT_CACHE_TTL_HOURS=24
-ORPHAN_STORAGE_MIN_AGE_HOURS=24
-STALE_PROCESSING_HOURS=6
-MODEL_VERSION=mediapipe-rtmpose-v3-pin-assisted
-POSE_TARGET_FPS=18
-POSE_MAX_FRAME_DIMENSION=720
-POSE_MODEL_COMPLEXITY=2
-POSE_MIN_DETECTION_CONFIDENCE=0.6
-POSE_MIN_TRACKING_CONFIDENCE=0.6
-POSE_BACKEND=hybrid
-POSE_FALLBACK_ENABLED=true
-POSE_FALLBACK_DEVICE=auto
-POSE_FALLBACK_DET_FREQUENCY=3
-POSE_FALLBACK_MODE=balanced
-POSE_DEBUG_LANDMARK_EXPORT_DIR=
-POSE_REPAIR_ENABLED=true
-POSE_REPAIR_MAX_GAP_FRAMES=3
-POSE_REPAIR_VELOCITY_GAP_FRAMES=2
-POSE_REPAIR_RECOVERY_HYSTERESIS_FRAMES=2
-YOLO_TRACKING_MODE=off
-YOLO_TRACKING_MODEL_PATH=
-YOLO_TRACKING_CLASS_NAMES=barbell_collar,rack_upright,j_hook,safety_arm,storage_peg,sleeve,plate_face
-YOLO_TRACKING_CONFIDENCE_THRESHOLD=0.45
-YOLO_TRACKING_NMS_IOU_THRESHOLD=0.45
-YOLO_TRACKING_INPUT_SIZE=640
-YOLO_TRACKING_MAX_COAST_SECONDS=0.25
-FFMPEG_BINARY=
-BACKEND_CORS_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhost:8082,http://127.0.0.1:8082,http://localhost:19006,http://127.0.0.1:19006,http://localhost:3000,http://127.0.0.1:3000
-BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true
-```
-
-For videos that do not match the current supported setup, Peso should return a clear, limited-analysis result instead of failing silently or pretending the analysis is more complete than it is.
-
-Apply `supabase/migrations/202606120001_tracking_setup.sql` to enable optional pin-assisted tracking metadata. Side-view squat uploads may store a user-selected reference frame with upper back, hip, knee, ankle, and near-side collar anchors. The upper-back anchor is stored under the existing `shoulder` key for compatibility. Invalid or unavailable anchor tracks fall back to the automatic pose and barbell pipeline.
-
-`BACKEND_CORS_ORIGINS` supports common Expo web, simulator, and local browser ports used by the mobile client. In `BACKEND_ENV=development`, the API also allows local browser origins matching `localhost`, `127.0.0.1`, `0.0.0.0`, or private LAN IPs on any port so Expo web and Expo Go can still work if they choose a different local port. Set `BACKEND_ENV=production` in deployed environments to disable that local-dev regex and rely only on explicit `BACKEND_CORS_ORIGINS`.
-`BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true` supports Chrome's local private-network preflight during development. It is ignored when `BACKEND_ENV=production`.
-
-I am actively improving the tracking and playback experience.
-
-Current priorities:
-
-* making pin-assisted tracking more reliable
-* keeping the upper-back marker stable across frames
-* smoothing the barbell path overlay
-* improving pose landmark consistency during squats
-* refining the coaching feedback shown after analysis
+I'm currently working on a web version of the app so users can use and test the tool. My goal is to push out a working prototype and get user feedback. 
 
 
 ## Tech stack
