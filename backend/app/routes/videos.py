@@ -1131,12 +1131,25 @@ def get_video_playback_url(
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found.")
 
   expires_in = 300
-  playback_path, playback_url, expires_in = _create_owned_signed_url(
-    storage,
-    _playback_storage_path(video),
-    user_id,
-    "playback_path",
-  )
+  try:
+    playback_path, playback_url, expires_in = _create_owned_signed_url(
+      storage,
+      _playback_storage_path(video),
+      user_id,
+      "playback_path",
+    )
+  except Exception:
+    logger.warning(
+      "Playback object unavailable for video_id=%s; falling back to original upload path.",
+      video_id,
+      exc_info=True,
+    )
+    playback_path, playback_url, expires_in = _create_owned_signed_url(
+      storage,
+      _video_storage_path(video),
+      user_id,
+      "storage_path",
+    )
   logger.info("Signing playback URL for video_id=%s path=%s expires_in=%s", video_id, playback_path, expires_in)
   return VideoPlaybackUrlResponse(
     video_id=video_id,
