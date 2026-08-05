@@ -48,11 +48,17 @@ The user-owned collection of Saved Lifts shared across Peso web and mobile.
 Changes made to this library on either surface affect the same collection; it is
 not a separate web-only demo or copy.
 
-## Lift Folder
+## Saved Lift View
 
-An automatically created view of the Saved Lift Library containing every Saved
-Lift for one exercise type. Lift Folders are derived from saved exercises rather
-than created, named, or organized manually by the user.
+A presentation of the same Saved Lift Library. List View uses full-width lift
+rows, while Grid View uses square thumbnail cards. Changing the view does not
+change library membership, filtering, or selection.
+
+## Saved Lift Export
+
+A single ZIP archive containing exactly the Saved Lifts selected from the
+library, with each selected lift included once. A multi-lift export is delivered
+as one bundle rather than as a series of separate browser downloads.
 
 ## Analysis run
 
