@@ -1,0 +1,16 @@
+{
+  "name": "@peso/marketing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "ASTRO_TELEMETRY_DISABLED=1 astro dev",
+    "build": "ASTRO_TELEMETRY_DISABLED=1 astro build --outDir ../dist",
+    "check": "ASTRO_TELEMETRY_DISABLED=1 astro check"
+  },
+  "dependencies": {
+    "@fontsource/archivo-black": "^5.2.7",
+    "@fontsource/inter": "^5.2.8",
+    "astro": "^7.1.6"
+  }
+}

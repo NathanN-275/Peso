@@ -1,0 +1,154 @@
+---
+import BaseLayout from '../layouts/base-layout.astro';
+import SiteFooter from '../components/site-footer.astro';
+import SiteHeader from '../components/site-header.astro';
+
+const feedback = [
+  ['Depth', 'See which reps reached depth and where the pattern changed.'],
+  ['Bar path', 'Follow the visible collar through the rep with a clear movement trace.'],
+  ['Position', 'Review upper-back, hip, knee, and ankle relationships frame by frame.'],
+  ['Coaching cues', 'Leave with focused observations you can apply to your next set.'],
+];
+---
+
+<BaseLayout
+  title="Peso — A weightlifting analysis tool"
+  description="Peso is a weightlifting analysis tool for clear visual feedback, rep context, and coaching cues. Join the free US web beta."
+>
+  <div class="page-shell">
+    <SiteHeader />
+
+    <main id="main-content">
+      <section class="hero section-grid" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow"><span></span> Free US web beta</p>
+          <h1 id="hero-title">A weightlifting analysis tool</h1>
+          <p class="hero-lede">
+            Record or upload a set. Peso turns the video into visual feedback,
+            rep context, and focused coaching cues—without special equipment.
+          </p>
+          <div class="button-row">
+            <a class="button" href="/app/signup">Join the beta</a>
+            <a class="button button--secondary" href="#demo">Watch the analysis</a>
+          </div>
+          <p class="trust-line">Free during beta · Squats only · Up to 3 analyses per rolling 24 hours</p>
+        </div>
+        <div class="hero-visual" aria-label="Peso squat analysis preview">
+          <div class="ambient-glow"></div>
+          <div class="phone-card phone-card--back">
+            <img
+              src="/demo/peso-pin-assisted-bar-path.jpg"
+              width="360"
+              height="874"
+              alt="Peso analysis showing a tracked bar path during a squat"
+            />
+          </div>
+          <div class="phone-card phone-card--front">
+            <img
+              src="/demo/peso-pose-overlay.jpg"
+              width="360"
+              height="874"
+              alt="Peso analysis showing upper-back, hip, knee, and ankle tracking"
+            />
+          </div>
+          <div class="result-chip result-chip--depth"><strong>3 / 3</strong><span>reps to depth</span></div>
+          <div class="result-chip result-chip--path"><strong>Stable</strong><span>bar path</span></div>
+        </div>
+      </section>
+
+      <section class="demo-section section-grid" id="demo" aria-labelledby="demo-title">
+        <div class="section-heading">
+          <p class="eyebrow">Real analysis</p>
+          <h2 id="demo-title">Your lift, made easier to read.</h2>
+          <p id="demo-description">
+            The demo follows a side-view squat. Peso tracks the lifter’s major
+            joints and visible bar position, then keeps those overlays aligned
+            during playback. The video has no spoken audio; this description is
+            the equivalent content.
+          </p>
+        </div>
+        <div class="demo-stage">
+          <video
+            controls
+            muted
+            loop
+            playsinline
+            preload="metadata"
+            poster="/demo/peso-pose-overlay.jpg"
+            aria-describedby="demo-description"
+          >
+            <source src="/demo/peso-pose-overlay.mp4" type="video/mp4" />
+            <track kind="captions" src="/demo/peso-demo-captions.vtt" srclang="en" label="English" default />
+            Your browser cannot play this demo. The description beside it explains the analysis.
+          </video>
+          <div class="demo-readout" aria-label="Example analysis results">
+            <p class="micro-label">Set summary</p>
+            <div><strong>3</strong><span>performed reps</span></div>
+            <div><strong>Good</strong><span>depth consistency</span></div>
+            <div><strong>Side</strong><span>camera view</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="workflow-section" id="how-it-works" aria-labelledby="workflow-title">
+        <div class="section-heading section-heading--center">
+          <p class="eyebrow">How it works</p>
+          <h2 id="workflow-title">From set to signal in three steps.</h2>
+        </div>
+        <ol class="workflow-grid">
+          <li><span class="step-number">01</span><h3>Record or upload</h3><p>Use a recent browser and frame one full squat set from the side.</p></li>
+          <li><span class="step-number">02</span><h3>Confirm the setup</h3><p>Choose the view and verify that the lifter and plates remain visible.</p></li>
+          <li><span class="step-number">03</span><h3>Review and save</h3><p>Study the overlays and cues, then add optional workout details to Saved Lifts.</p></li>
+        </ol>
+      </section>
+
+      <section class="feedback-section section-grid" id="feedback" aria-labelledby="feedback-title">
+        <div class="section-heading">
+          <p class="eyebrow">Available feedback</p>
+          <h2 id="feedback-title">Useful signals, not a wall of scores.</h2>
+          <p>Peso keeps the result connected to the video so you can see the evidence behind each observation.</p>
+        </div>
+        <div class="feedback-grid">
+          {feedback.map(([title, description], index) => (
+            <article>
+              <span aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
+              <h3>{title}</h3>
+              <p>{description}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section class="history-section section-grid" aria-labelledby="history-title">
+        <div class="history-stack" aria-label="Example Saved Lifts list">
+          <article class="lift-card lift-card--featured">
+            <img src="/demo/peso-pin-assisted-bar-path.jpg" width="360" height="874" alt="" />
+            <div><span>Today · Squat</span><strong>225 lb × 3</strong><small>Analysis saved</small></div>
+          </article>
+          <article class="lift-card"><span class="lift-icon">S</span><div><span>Aug 1 · Squat</span><strong>215 lb × 5</strong><small>3 coaching cues</small></div></article>
+          <article class="lift-card"><span class="lift-icon lift-icon--muted">B</span><div><span>Jul 28 · Bench press</span><strong>165 lb × 6</strong><small>Saved on mobile</small></div></article>
+        </div>
+        <div class="section-heading">
+          <p class="eyebrow">Saved Lifts</p>
+          <h2 id="history-title">Build a history you can actually revisit.</h2>
+          <p>
+            Keep analyzed sets with optional load and rep details. Your existing
+            mobile Saved Lifts stay in view—even though new web submissions are
+            squat-only during beta.
+          </p>
+          <a class="inline-link" href="/app/saved-lifts">Explore the prototype <span aria-hidden="true">→</span></a>
+        </div>
+      </section>
+
+      <section class="final-cta" aria-labelledby="cta-title">
+        <div class="cta-glow"></div>
+        <p class="eyebrow">Your next set starts here</p>
+        <h2 id="cta-title">Bring one squat video. Leave with a clearer view.</h2>
+        <p>Join the limited free beta for US residents and help shape what Peso becomes next.</p>
+        <a class="button" href="/app/signup">Create your beta account</a>
+      </section>
+    </main>
+
+    <SiteFooter />
+  </div>
+</BaseLayout>

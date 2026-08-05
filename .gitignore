@@ -50,7 +50,11 @@ __pycache__/
 
 # Local media
 *.mov
+*.MOV
 *.mp4
+
+# Local analysis observability artifacts
+backend/.peso/
 
 supabase/.temp/
 .agents/skills/

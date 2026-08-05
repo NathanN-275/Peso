@@ -1,0 +1,40 @@
+---
+import BaseLayout from '../layouts/base-layout.astro';
+import SiteFooter from '../components/site-footer.astro';
+import SiteHeader from '../components/site-header.astro';
+---
+
+<BaseLayout
+  title="Privacy — Peso"
+  description="Read the draft privacy information for Peso’s limited US web beta."
+>
+  <div class="page-shell legal-shell">
+    <SiteHeader compact />
+    <main id="main-content" class="legal-page">
+      <p class="eyebrow">Last updated August 4, 2026</p>
+      <h1>Privacy Policy</h1>
+      <div class="legal-notice" role="note">
+        <strong>Beta draft for professional review.</strong>
+        <p>This page is product copy for the private prototype and is not approved legal advice or launch-ready policy.</p>
+      </div>
+      <p>
+        Peso is being prepared as a limited, free web beta for people who confirm
+        that they reside in the United States. This draft explains the intended
+        data handling so testers can evaluate the experience before launch.
+      </p>
+      <h2>Information the beta expects to use</h2>
+      <p>Account details such as email address and verification status; profile and optional workout details; squat videos and analysis results; security and reliability logs; and product analytics only after explicit consent.</p>
+      <h2>How information is intended to be used</h2>
+      <p>To authenticate accounts, receive and analyze squat videos, display and save results, enforce beta capacity, protect the service, diagnose failures, and improve the experience with opt-in feedback.</p>
+      <h2>Video and analysis data</h2>
+      <p>Video uploads are intended to remain private to the account owner. Unsaved completed web results expire after 24 hours. The final retention schedule, deletion process, and processor list remain launch-gated decisions.</p>
+      <h2>Optional analytics</h2>
+      <p>Peso intends to collect only a short list of product events after consent. Video names, URLs, frames, coaching results, and other video-derived data will not be sent to analytics. Session replay will remain disabled.</p>
+      <h2>Your choices</h2>
+      <p>You can decline optional analytics, discard an unsaved result, and request account or Saved Lift deletion through the support process that will be published before launch.</p>
+      <h2>Contact</h2>
+      <p>Formal privacy contact details will be added after the production domain and support address are chosen.</p>
+    </main>
+    <SiteFooter />
+  </div>
+</BaseLayout>

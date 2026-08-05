@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import httpx
 from fastapi import HTTPException, status
 
 from .supabase_client import get_supabase_admin_client
@@ -11,9 +13,12 @@ from .video_storage_paths import VIDEO_STORAGE_PATH_FIELDS, require_user_storage
 
 
 logger = logging.getLogger(__name__)
-VIDEO_BASE_COLUMNS = (
+VIDEO_LEGACY_BASE_COLUMNS = (
   "id,user_id,storage_path,source_type,exercise_type,view_type,status,duration_ms,"
   "save_state,saved_at,expires_at,created_at,updated_at"
+)
+VIDEO_BASE_COLUMNS = (
+  f"{VIDEO_LEGACY_BASE_COLUMNS},performed_reps,load_value,load_unit"
 )
 VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING = (
   f"{VIDEO_BASE_COLUMNS},is_saved,discarded_at,thumbnail_path,playback_path,original_storage_path,"
@@ -21,6 +26,8 @@ VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING = (
 )
 VIDEO_STORAGE_COLUMNS = f"{VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING},tracking_setup"
 ANALYSIS_RESULT_COLUMNS = "id,video_id,model_version,result_json,created_at"
+ANALYSIS_RESULT_SAVE_MAX_ATTEMPTS = 3
+ANALYSIS_RESULT_SAVE_RETRY_BACKOFF_SECONDS = 0.5
 
 
 class VideoRepository:
@@ -52,7 +59,7 @@ class VideoRepository:
         logger.warning("Falling back to legacy video query for video %s: %s", video_id, legacy_error)
         response = (
           self.client.table("videos")
-          .select(VIDEO_BASE_COLUMNS)
+          .select(VIDEO_LEGACY_BASE_COLUMNS)
           .eq("id", video_id)
           .limit(1)
           .execute()
@@ -184,7 +191,14 @@ class VideoRepository:
 
     return response.data[0] if response.data else None
 
-  def mark_saved(self, video_id: str) -> dict[str, Any]:
+  def mark_saved(
+    self,
+    video_id: str,
+    *,
+    performed_reps: int | None,
+    load_value: float | None,
+    load_unit: str | None,
+  ) -> dict[str, Any]:
     # Saved videos stay visible in the home flow.
     saved_at = datetime.now(timezone.utc).isoformat()
     fields = {
@@ -193,20 +207,12 @@ class VideoRepository:
       "saved_at": saved_at,
       "discarded_at": None,
       "expires_at": None,
+      "performed_reps": performed_reps,
+      "load_value": load_value,
+      "load_unit": load_unit,
     }
 
-    try:
-      return self.update_video(video_id, fields)
-    except Exception as error:
-      logger.warning("Falling back to legacy save metadata for video %s: %s", video_id, error)
-      return self.update_video(
-        video_id,
-        {
-          "save_state": "saved",
-          "saved_at": saved_at,
-          "expires_at": None,
-        },
-      )
+    return self.update_video(video_id, fields)
 
   def mark_discarded(self, video_id: str) -> dict[str, Any]:
     # Discarded rows remain as metadata, but they leave the saved library.
@@ -252,7 +258,7 @@ class VideoRepository:
       logger.warning("Falling back to legacy expired-video query: %s", error)
       response = (
         self.client.table("videos")
-        .select(VIDEO_BASE_COLUMNS)
+        .select(VIDEO_LEGACY_BASE_COLUMNS)
         .eq("save_state", "pending")
         .lt("expires_at", now)
         .execute()
@@ -273,7 +279,7 @@ class VideoRepository:
       logger.warning("Falling back to legacy stale-pending query: %s", error)
       response = (
         self.client.table("videos")
-        .select(VIDEO_BASE_COLUMNS)
+        .select(VIDEO_LEGACY_BASE_COLUMNS)
         .eq("save_state", "pending")
         .in_("status", ["queued", "processing"])
         .lt("updated_at", cutoff_iso)
@@ -286,7 +292,7 @@ class VideoRepository:
       response = self.client.table("videos").select(VIDEO_STORAGE_COLUMNS).execute()
     except Exception as error:
       logger.warning("Falling back to legacy referenced-video query: %s", error)
-      response = self.client.table("videos").select(VIDEO_BASE_COLUMNS).execute()
+      response = self.client.table("videos").select(VIDEO_LEGACY_BASE_COLUMNS).execute()
     return response.data or []
 
   def list_storage_cleanup_candidates(self, older_than_days: int = 7) -> list[dict[str, Any]]:
@@ -296,7 +302,7 @@ class VideoRepository:
       response = self.client.table("videos").select(VIDEO_STORAGE_COLUMNS).execute()
     except Exception as error:
       logger.warning("Falling back to legacy storage cleanup query: %s", error)
-      response = self.client.table("videos").select(VIDEO_BASE_COLUMNS).execute()
+      response = self.client.table("videos").select(VIDEO_LEGACY_BASE_COLUMNS).execute()
     candidates: dict[str, dict[str, Any]] = {}
 
     for video in response.data or []:
@@ -333,7 +339,7 @@ class VideoRepository:
       logger.warning("Falling back to legacy saved-video query for user %s: %s", user_id, error)
       response = (
         self.client.table("videos")
-        .select(VIDEO_BASE_COLUMNS)
+        .select(VIDEO_LEGACY_BASE_COLUMNS)
         .eq("user_id", user_id)
         .eq("save_state", "saved")
         .order("saved_at", desc=True, nullsfirst=False)
@@ -378,7 +384,7 @@ class VideoRepository:
       logger.warning("Falling back to legacy saved-video page query for user %s: %s", user_id, error)
       query = (
         self.client.table("videos")
-        .select(VIDEO_BASE_COLUMNS)
+        .select(VIDEO_LEGACY_BASE_COLUMNS)
         .eq("user_id", user_id)
         .eq("save_state", "saved")
       )
@@ -408,7 +414,7 @@ class VideoRepository:
       logger.warning("Falling back to legacy user-video query for user %s: %s", user_id, error)
       response = (
         self.client.table("videos")
-        .select(VIDEO_BASE_COLUMNS)
+        .select(VIDEO_LEGACY_BASE_COLUMNS)
         .eq("user_id", user_id)
         .execute()
       )
@@ -461,20 +467,40 @@ class VideoRepository:
     return parsed.astimezone(timezone.utc)
 
   def save_analysis_result(self, video_id: str, model_version: str, result_json: dict[str, Any]) -> dict[str, Any]:
-    # Store the latest analysis result for this model version.
-    response = (
-      self.client.table("analysis_results")
-      .upsert(
-        {
-          "video_id": video_id,
-          "model_version": model_version,
-          "result_json": result_json,
-        },
-        on_conflict="video_id,model_version",
-      )
-      .execute()
-    )
-    return response.data[0]
+    # This upsert can be retried safely: the conflict key preserves one result
+    # per video/model pair even when the previous request reached PostgREST
+    # before its connection was interrupted.
+    for attempt in range(ANALYSIS_RESULT_SAVE_MAX_ATTEMPTS):
+      try:
+        response = (
+          self.client.table("analysis_results")
+          .upsert(
+            {
+              "video_id": video_id,
+              "model_version": model_version,
+              "result_json": result_json,
+            },
+            on_conflict="video_id,model_version",
+          )
+          .execute()
+        )
+        return response.data[0]
+      except httpx.TransportError as error:
+        if attempt == ANALYSIS_RESULT_SAVE_MAX_ATTEMPTS - 1:
+          raise
+
+        retry_delay_seconds = ANALYSIS_RESULT_SAVE_RETRY_BACKOFF_SECONDS * (2 ** attempt)
+        logger.warning(
+          "Supabase transport error while saving analysis video_id=%s attempt=%s/%s; retrying in %.1fs: %s",
+          video_id,
+          attempt + 1,
+          ANALYSIS_RESULT_SAVE_MAX_ATTEMPTS,
+          retry_delay_seconds,
+          error,
+        )
+        time.sleep(retry_delay_seconds)
+
+    raise RuntimeError("Analysis result save retry loop exited unexpectedly.")
 
   def get_analysis_result(self, video_id: str) -> dict[str, Any] | None:
     # Return the newest analysis result for review.

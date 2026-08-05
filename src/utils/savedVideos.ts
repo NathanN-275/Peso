@@ -34,6 +34,23 @@ export function formatSavedDate(value?: string | null) {
   })}`;
 }
 
+export function getSavedWorkoutFacts(video: SavedVideo) {
+  const facts: string[] = [];
+
+  if (typeof video.performed_reps === 'number') {
+    facts.push(`${video.performed_reps} reps`);
+  }
+
+  if (
+    typeof video.load_value === 'number'
+    && (video.load_unit === 'lb' || video.load_unit === 'kg')
+  ) {
+    facts.push(`${video.load_value} ${video.load_unit}`);
+  }
+
+  return facts.length ? facts.join(' · ') : null;
+}
+
 export function getSavedVideoSummary(video: SavedVideo) {
   const analysis = video.analysis;
   const result = analysis?.result_json;

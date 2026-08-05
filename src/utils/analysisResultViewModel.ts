@@ -59,8 +59,12 @@ export function buildAnalysisResultViewModel(result: VideoAnalysisResult) {
   const displaySummaryFlags = analysisIncomplete ? ['Analysis needs re-run'] : sanitizedSummaryFlags;
   const depthHitCount = finalHitDepthReps.length;
   const repCount = result.rep_count || result.reps.length;
+  const depthAssessmentAvailable = result.analysisCapabilities?.depthAssessment
+    ?? result.analysisMode !== 'front_squat_tracking_v1';
   const depthHitLabel =
-    repCount > 0
+    !depthAssessmentAvailable
+      ? `Depth assessment: unavailable for front tracking (${repCount} reps)`
+      : repCount > 0
       ? `Depth hit: ${depthHitCount > 0 ? 'yes' : 'no'} (${depthHitCount}/${repCount} reps)`
       : 'Depth hit: n/a (0 reps)';
   const poseBackend = result.pose_backend ?? result.diagnostics?.pose_backend;

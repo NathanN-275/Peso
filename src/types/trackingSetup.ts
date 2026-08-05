@@ -1,4 +1,24 @@
-export const TRACKING_PIN_NAMES = ['shoulder', 'hip', 'knee', 'ankle', 'elbow', 'wrist', 'barbell'] as const;
+export const FRONT_BODY_PIN_NAMES = [
+  'left_knee',
+  'right_knee',
+  'left_ankle',
+  'right_ankle',
+  'left_hip',
+  'right_hip',
+  'left_shoulder',
+  'right_shoulder',
+] as const;
+
+export const TRACKING_PIN_NAMES = [
+  'shoulder',
+  'hip',
+  'knee',
+  'ankle',
+  'elbow',
+  'wrist',
+  'barbell',
+  ...FRONT_BODY_PIN_NAMES,
+] as const;
 
 export type TrackingPinName = (typeof TRACKING_PIN_NAMES)[number];
 export type TrackingBodySource =
@@ -12,7 +32,12 @@ export type TrackingBodySource =
   | 'stale_pin_rejected'
   | 'stale_pin_stuck'
   | 'gap';
-export type TrackingBodySourceName = 'upper_back' | 'hip' | 'knee' | 'ankle';
+export type TrackingBodySourceName =
+  | 'upper_back'
+  | 'hip'
+  | 'knee'
+  | 'ankle'
+  | (typeof FRONT_BODY_PIN_NAMES)[number];
 export type TrackingDiagnosticPinName = TrackingPinName | 'upper_back';
 export type TrackingBarbellSource =
   | 'manual_pin_lane'
@@ -32,15 +57,25 @@ export type NormalizedTrackingPoint = {
   y: number;
 };
 
-export type TrackingSetup = {
+export type TrackingBarbellTarget = 'near_side_collar' | 'bar_center';
+
+export type LegacyTrackingSetup = {
   version: 1;
   reference_time_ms: number;
-  barbell_target: 'near_side_collar' | 'bar_center';
+  barbell_target: TrackingBarbellTarget;
   anchors: Partial<Record<TrackingPinName, NormalizedTrackingPoint>>;
 };
 
+export type FrontTrackingSetup = {
+  version: 2;
+  reference_time_ms: number;
+  anchors: Partial<Record<TrackingPinName, NormalizedTrackingPoint>>;
+};
+
+export type TrackingSetup = LegacyTrackingSetup | FrontTrackingSetup;
+
 export type TrackingReference = {
-  version: 1;
+  version: 1 | 2;
   timeMs: number;
   selectedSide?: 'left' | 'right' | null;
   anchors: Partial<Record<TrackingPinName, NormalizedTrackingPoint>>;

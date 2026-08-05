@@ -55,6 +55,7 @@ import { VideoAnalysisResult, VideoAnalysisStatus } from '../types/videoAnalysis
 import tokens from '../theme/tokens';
 import type { TrackingSetup } from '../types/trackingSetup';
 import { createLocalVideoThumbnail, getUriScheme } from '../utils/localVideoThumbnail';
+import { resolveVideoDurationMs } from '../../lib/videoDurationPolicy';
 
 type UploadVideoScreenProps = {
   sourceMode?: 'camera' | 'library';
@@ -132,6 +133,7 @@ export default function UploadVideoScreen({
   const [setupModalVisible, setSetupModalVisible] = useState(!initialVideoSetup);
   const [videoSetup, setVideoSetup] = useState<VideoSetupSelection | null>(initialVideoSetup);
   const [selectedVideo, setSelectedVideo] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [resolvedVideoDurationMs, setResolvedVideoDurationMs] = useState<number | null>(null);
   const [trackingSetup, setTrackingSetup] = useState<TrackingSetup | null>(null);
   const [trackingDetailsExpanded, setTrackingDetailsExpanded] = useState(false);
   const [trackingPinModalVisible, setTrackingPinModalVisible] = useState(false);
@@ -186,6 +188,7 @@ export default function UploadVideoScreen({
     analysisQueuedForVideoRef.current = null;
     analysisPollInFlightRef.current = false;
     setSelectedVideo(asset);
+    setResolvedVideoDurationMs(resolveVideoDurationMs({ pickerDurationMs: asset.duration }));
     setTrackingSetup(null);
     setTrackingDetailsExpanded(false);
     setTrackingPinModalVisible(false);
@@ -297,6 +300,7 @@ export default function UploadVideoScreen({
         angle: videoSetup.angle,
         sourceType: sourceMode === 'camera' ? 'camera' : 'camera_roll',
         trackingSetup,
+        durationMs: resolvedVideoDurationMs,
         onStatusChange: (message) => {
           if (analysisRunIsCurrent(run)) {
             setStatusMessage(message);
@@ -880,27 +884,6 @@ export default function UploadVideoScreen({
     setScreenLayout({ width, height });
   };
 
-  const clearCompletedAnalysisForRecordedReview = () => {
-    const run = activeAnalysisRunRef.current;
-    if (run) {
-      analysisRunGenerationRef.current = cancelAnalysisRun(analysisRunGenerationRef.current, run);
-    } else {
-      analysisRunGenerationRef.current += 1;
-    }
-    activeAnalysisRunRef.current = null;
-    analysisStartInFlightRef.current = false;
-    analysisQueuedForVideoRef.current = null;
-    analysisPollInFlightRef.current = false;
-    setUploading(false);
-    setAnalysisRunning(false);
-    setAnalysisVideoId(null);
-    setAnalysisStatus(null);
-    setAnalysisResult(null);
-    setErrorMessage(null);
-    setQuotaWarningMessage(null);
-    setStatusMessage('Recording saved. You can edit setup or pins, then run analysis again.');
-  };
-
   const handleReviewDiscarded = () => {
     // Clearing the review screen resets the upload flow.
     cancelActiveAnalysis();
@@ -908,6 +891,7 @@ export default function UploadVideoScreen({
     analysisQueuedForVideoRef.current = null;
     analysisPollInFlightRef.current = false;
     setSelectedVideo(null);
+    setResolvedVideoDurationMs(null);
     setTrackingSetup(null);
     setTrackingDetailsExpanded(false);
     setTrackingPinModalVisible(false);
@@ -923,12 +907,6 @@ export default function UploadVideoScreen({
   };
 
   const handleAnalysisReviewSaved = async (videoId: string) => {
-    if (sourceMode === 'camera') {
-      await onAnalysisSaved?.(videoId);
-      clearCompletedAnalysisForRecordedReview();
-      return;
-    }
-
     if (onAnalysisSaved) {
       await onAnalysisSaved(videoId);
       return;
@@ -949,7 +927,6 @@ export default function UploadVideoScreen({
         result={analysisResult}
         onDiscarded={handleReviewDiscarded}
         onSaved={handleAnalysisReviewSaved}
-        saveOnBack={sourceMode === 'camera'}
       />
     );
   }
@@ -988,13 +965,14 @@ export default function UploadVideoScreen({
             width: selectedVideo.width || 1080,
             height: selectedVideo.height || 1920,
           }}
-          videoDurationMs={selectedVideo.duration ?? undefined}
+          videoDurationMs={resolvedVideoDurationMs}
           initialSetup={trackingSetup}
           barbellTarget={trackingBarbellTarget(videoSetup)}
           pinNames={trackingPinNames(videoSetup)}
           cameraView={videoSetup?.angle === 'Front' ? 'front' : 'side'}
-          onSave={(setup) => {
+          onSave={(setup, durationMs) => {
             setTrackingSetup(setup);
+            setResolvedVideoDurationMs(durationMs);
             setTrackingPinModalVisible(false);
           }}
           onCancel={() => setTrackingPinModalVisible(false)}
@@ -1090,10 +1068,14 @@ export default function UploadVideoScreen({
               {trackingDetailsExpanded ? (
                 <View style={styles.trackingDetails}>
                   <Text style={styles.trackingSetupDescription}>
-                    Place any visible pins on one clear frame to help the pose and barbell trackers stay locked on you.
+                    {videoSetup?.angle === 'Front' && videoSetup.exercise.endsWith('Squat')
+                      ? 'Place any visible left or right body pins on one clear frame. Knees and ankles come first; hips and shoulders are optional.'
+                      : 'Place any visible pins on one clear frame to help the pose and barbell trackers stay locked on you.'}
                   </Text>
                   <Text style={styles.accuracyDisclaimer}>
-                    Automatic tracking may be less accurate when joints or the barbell are obscured.
+                    {videoSetup?.angle === 'Front' && videoSetup.exercise.endsWith('Squat')
+                      ? 'Automatic tracking may be less accurate when knees or ankles are obscured.'
+                      : 'Automatic tracking may be less accurate when joints or the barbell are obscured.'}
                   </Text>
                   {trackingSetup ? (
                     <Pressable
@@ -1197,8 +1179,9 @@ export default function UploadVideoScreen({
                   <Text style={styles.resultLabel}>Per-rep highlights</Text>
                   {analysisResult.reps.map((rep) => (
                     <Text key={rep.rep_index} style={styles.resultText}>
-                      Rep {rep.rep_index}: depth {rep.depth_score.toFixed(2)}, torso change{' '}
-                      {rep.torso_angle_change.toFixed(1)}°
+                      {typeof rep.depth_score === 'number' && typeof rep.torso_angle_change === 'number'
+                        ? `Rep ${rep.rep_index}: depth ${rep.depth_score.toFixed(2)}, torso change ${rep.torso_angle_change.toFixed(1)}°`
+                        : `Rep ${rep.rep_index}: front tracking confidence ${Math.round((rep.confidence ?? 0) * 100)}%`}
                     </Text>
                   ))}
                 </View>

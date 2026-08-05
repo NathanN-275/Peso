@@ -880,6 +880,26 @@ class BarbellTrackerTest(unittest.TestCase):
     self.assertEqual(result["diagnostics"]["pin_source_counts"]["gap"], 3)
     self.assertEqual(diagnostics["pin_source_counts"]["gap"], 3)
 
+  def test_stale_pin_priors_remain_gaps_instead_of_becoming_collar_points(self) -> None:
+    manual_priors = {
+      index: {
+        "x": (184 + index * 3) / 320,
+        "y": (92 + index * 2) / 240,
+        "confidence": 0.95,
+        "tracking_state": "reference" if index == 0 else "guided",
+        **({"stale_track": True} if index in {2, 3, 4} else {}),
+      }
+      for index in range(6)
+    }
+    result, diagnostics = build_pin_assisted_barbell_result(
+      manual_priors=manual_priors, pose_source_indices=list(range(6)), fps=6.0,
+      width=320, height=240, tracking_frame_step=1, rep_windows=[], selected_side="left",
+      coordinate_space={"width": 320, "height": 240, "source": "processed_frame"}, started_at=0.0,
+    )
+    self.assertIsNone(result)
+    self.assertEqual(diagnostics["pin_source_counts"]["gap"], 3)
+    self.assertEqual(diagnostics["pin_frames"][2]["rejection_reason"], "stale_pin_track")
+
   def test_interpolation_skips_blocked_identity_loss_gap(self) -> None:
     samples = [
       {"time": 0.0, "x": 0.50, "y": 0.50, "confidence": 0.9},

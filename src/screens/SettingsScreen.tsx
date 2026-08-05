@@ -847,7 +847,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   deleteOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 100,
     alignItems: 'center',
     justifyContent: 'center',

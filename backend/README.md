@@ -98,6 +98,20 @@ POSE_FALLBACK_DEVICE=auto
 POSE_FALLBACK_DET_FREQUENCY=3
 POSE_FALLBACK_MODE=balanced
 POSE_DEBUG_LANDMARK_EXPORT_DIR=
+POSE_REPAIR_ENABLED=true
+POSE_REPAIR_MAX_GAP_FRAMES=3
+POSE_REPAIR_VELOCITY_GAP_FRAMES=2
+POSE_REPAIR_RECOVERY_HYSTERESIS_FRAMES=2
+ANALYSIS_TRACE_ENABLED=true
+ANALYSIS_TRACE_DIR=.peso/analysis-traces
+ANALYSIS_TRACE_MAX_RUNS=20
+YOLO_TRACKING_MODE=off
+YOLO_TRACKING_MODEL_PATH=
+YOLO_TRACKING_CLASS_NAMES=barbell_collar,rack_upright,j_hook,safety_arm,storage_peg,sleeve,plate_face
+YOLO_TRACKING_CONFIDENCE_THRESHOLD=0.45
+YOLO_TRACKING_NMS_IOU_THRESHOLD=0.45
+YOLO_TRACKING_INPUT_SIZE=640
+YOLO_TRACKING_MAX_COAST_SECONDS=0.25
 FFMPEG_BINARY=
 BACKEND_CORS_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhost:8082,http://127.0.0.1:8082,http://localhost:19006,http://127.0.0.1:19006,http://localhost:3000,http://127.0.0.1:3000
 BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true
@@ -116,6 +130,44 @@ POSE_FALLBACK_ENABLED=true
 ```
 
 and the required `rtmlib` / `onnxruntime` dependencies are installed.
+
+`POSE_REPAIR_ENABLED=true` runs a backend-only selected-side pose repair pass after
+manual pin assistance and before squat analysis. It scores visibility, temporal
+jumps, segment consistency, and side consistency; short unreliable runs are
+interpolated or velocity-estimated with segment constraints, while longer runs
+remain explicit low-confidence gaps. The analysis diagnostics expose `pose_repair`
+with quality, repair counts, gap counts, the worst frame segments, and a capped
+`raw_repair_debug` list for changed selected-side landmarks.
+
+## YOLO collar tracking
+
+`YOLO_TRACKING_MODE=off` is the safe default. `shadow` runs the externally stored
+ONNX detector on every pose-sampled frame and stores only `diagnostics.yolo_tracking`;
+the legacy OpenCV tracker and pose repair remain authoritative. `candidate` supplies
+the same detector boxes to pose repair and the existing temporal collar tracker. If
+the model cannot load or infer, analysis falls back to legacy tracking and records a
+failure reason.
+
+Model binaries must remain outside Git. Set `YOLO_TRACKING_MODEL_PATH` to an immutable
+artifact path and declare its exported class order in `YOLO_TRACKING_CLASS_NAMES`.
+The required detector classes are `barbell_collar`, `rack_upright`, `j_hook`,
+`safety_arm`, `storage_peg`, `sleeve`, and `plate_face`; hardware classes are negative
+classes used to reject rack-associated false positives.
+
+Before training, add tight `barbell_collar` boxes around CVAT collar-center point
+tracks and retain boxes for every labeled hardware class. Convert versioned CVAT
+exports with a source-video split manifest:
+
+```bash
+python scripts/convert_cvat_video_to_yolo.py \
+  --manifest /path/to/source-video-splits.json \
+  --output-dir /path/to/yolo-dataset
+```
+
+Each source video must occur in exactly one of `train`, `val`, or `test`; the current
+single clip is only a pipeline smoke dataset. Do not promote a YOLO artifact until the
+held-out set contains at least ten varied independent source videos and meets the
+existing collar-error and zero-hardware-switch benchmark gates.
 
 `POSE_FALLBACK_MODE` accepts:
 
@@ -245,6 +297,19 @@ To run the two processes separately:
 npm run start:backend
 npm run start:frontend
 ```
+
+## Local analysis trace dashboard
+
+`ANALYSIS_TRACE_ENABLED` defaults to `true` only for `development`, `dev`, and `local` backend environments. Every local analysis writes an atomic, local-only trace to `ANALYSIS_TRACE_DIR`; completed traces are pruned to `ANALYSIS_TRACE_MAX_RUNS` (20 by default). The artifacts are ignored by Git and tracing is rejected when `BACKEND_ENV=production`.
+
+From the repository root, run the desktop dashboard in a second terminal after the API is available:
+
+```bash
+npm --prefix dashboard install
+npm run dashboard
+```
+
+The dashboard signs in through the public Supabase client and sends that user's bearer token to the development-only `/dev/analysis-runs` endpoints. The backend enforces trace ownership, and the export endpoint strips user/video IDs, storage locations, signed URLs, tokens, and secrets before returning a ZIP of JSON and CSV diagnostics. It never includes the source video or still frames.
 
 ## Health check
 

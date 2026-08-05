@@ -10,17 +10,24 @@ from typing import Any
 
 
 TRACKING_SETUP_VERSION = 1
+FRONT_TRACKING_SETUP_VERSION = 2
 LEGACY_UPPER_BACK_ANCHOR = "shoulder"
 UPPER_BACK_ANCHOR = "upper_back"
 USER_BODY_ANCHORS = (UPPER_BACK_ANCHOR, "hip", "knee", "ankle")
+FRONT_BODY_ANCHORS = tuple(
+  f"{side}_{joint}"
+  for side in ("left", "right")
+  for joint in ("shoulder", "hip", "knee", "ankle")
+)
 BODY_ANCHORS = (LEGACY_UPPER_BACK_ANCHOR, "hip", "knee", "ankle")
 FUSED_BODY_ANCHORS = ("hip", "knee", "ankle")
 DISPLAY_BODY_ANCHORS = ("upper_back", *FUSED_BODY_ANCHORS)
 ALL_ANCHORS = (*USER_BODY_ANCHORS, "barbell")
 PRESSING_ANCHORS = ("elbow", "wrist")
 PRESSING_FUSION_ANCHORS = (UPPER_BACK_ANCHOR, *PRESSING_ANCHORS)
-TRACKABLE_ANCHORS = (*ALL_ANCHORS, *PRESSING_ANCHORS)
-KNOWN_INPUT_ANCHORS = (*TRACKABLE_ANCHORS, LEGACY_UPPER_BACK_ANCHOR)
+LEGACY_TRACKABLE_ANCHORS = (*ALL_ANCHORS, *PRESSING_ANCHORS)
+TRACKABLE_ANCHORS = (*LEGACY_TRACKABLE_ANCHORS, *FRONT_BODY_ANCHORS)
+KNOWN_INPUT_ANCHORS = (*LEGACY_TRACKABLE_ANCHORS, LEGACY_UPPER_BACK_ANCHOR)
 MIN_TRACK_CONFIDENCE = 0.42
 MIN_MODEL_VISIBILITY = 0.15
 PIN_PERSISTENCE_CONFIDENCE = 0.24
@@ -40,6 +47,7 @@ SOURCE_NAMES = (
 JOINT_DISPLACEMENT_RATIOS = {
   UPPER_BACK_ANCHOR: 0.042,
   LEGACY_UPPER_BACK_ANCHOR: 0.042,
+  "shoulder": 0.042,
   "hip": 0.036,
   "knee": 0.052,
   "ankle": 0.044,
@@ -47,6 +55,7 @@ JOINT_DISPLACEMENT_RATIOS = {
 JOINT_DISPLACEMENT_FLOORS_PX = {
   UPPER_BACK_ANCHOR: 24.0,
   LEGACY_UPPER_BACK_ANCHOR: 24.0,
+  "shoulder": 24.0,
   "hip": 22.0,
   "knee": 32.0,
   "ankle": 28.0,
@@ -90,6 +99,13 @@ def _normalized_tracking_setup(setup: dict[str, Any]) -> dict[str, Any]:
   return {**setup, "anchors": normalized_anchors}
 
 
+def _base_joint_name(anchor_name: str) -> str:
+  for joint in ("shoulder", "hip", "knee", "ankle"):
+    if anchor_name == joint or anchor_name.endswith(f"_{joint}"):
+      return UPPER_BACK_ANCHOR if joint == "shoulder" and "_" not in anchor_name else joint
+  return anchor_name
+
+
 def _anchor_track(
   tracking: dict[str, Any],
   name: str,
@@ -109,9 +125,13 @@ def validate_tracking_setup(value: Any, *, duration_ms: int | None = None) -> tu
     return None, None
   if not isinstance(value, dict):
     return None, "tracking_setup_not_object"
-  if value.get("version") != TRACKING_SETUP_VERSION:
+  version = value.get("version")
+  if version not in {TRACKING_SETUP_VERSION, FRONT_TRACKING_SETUP_VERSION}:
     return None, "unsupported_tracking_setup_version"
-  if value.get("barbell_target") not in {"near_side_collar", "bar_center"}:
+  if (
+    version == TRACKING_SETUP_VERSION
+    and value.get("barbell_target") not in {"near_side_collar", "bar_center"}
+  ):
     return None, "unsupported_barbell_target"
 
   reference_time_ms = value.get("reference_time_ms")
@@ -124,13 +144,27 @@ def validate_tracking_setup(value: Any, *, duration_ms: int | None = None) -> tu
   if not isinstance(anchors, dict):
     return None, "missing_tracking_anchors"
 
-  unsupported_anchor = next((name for name in anchors if name not in KNOWN_INPUT_ANCHORS), None)
+  allowed_anchors = (
+    set(FRONT_BODY_ANCHORS)
+    if version == FRONT_TRACKING_SETUP_VERSION
+    else set(KNOWN_INPUT_ANCHORS)
+  )
+  unsupported_anchor = next((name for name in anchors if name not in allowed_anchors), None)
   if unsupported_anchor is not None:
     return None, f"unsupported_{unsupported_anchor}_anchor"
 
-  anchors = _normalize_anchor_map(anchors)
+  anchors = (
+    dict(anchors)
+    if version == FRONT_TRACKING_SETUP_VERSION
+    else _normalize_anchor_map(anchors)
+  )
+  trackable_anchors = (
+    FRONT_BODY_ANCHORS
+    if version == FRONT_TRACKING_SETUP_VERSION
+    else LEGACY_TRACKABLE_ANCHORS
+  )
   normalized_anchors: dict[str, dict[str, float]] = {}
-  for name in TRACKABLE_ANCHORS:
+  for name in trackable_anchors:
     point = anchors.get(name)
     if not isinstance(point, dict):
       continue
@@ -145,19 +179,43 @@ def validate_tracking_setup(value: Any, *, duration_ms: int | None = None) -> tu
   if not normalized_anchors:
     return None, "empty_tracking_anchors"
 
-  if all(name in normalized_anchors for name in (UPPER_BACK_ANCHOR, "hip", "ankle")):
+  if (
+    version == TRACKING_SETUP_VERSION
+    and all(name in normalized_anchors for name in (UPPER_BACK_ANCHOR, "hip", "ankle"))
+  ):
     upper_back = normalized_anchors[UPPER_BACK_ANCHOR]
     hip = normalized_anchors["hip"]
     ankle = normalized_anchors["ankle"]
     if not (upper_back["y"] < hip["y"] < ankle["y"]):
       return None, "invalid_body_anchor_order"
 
-  if all(name in normalized_anchors for name in ("hip", "knee", "ankle")):
+  if (
+    version == TRACKING_SETUP_VERSION
+    and all(name in normalized_anchors for name in ("hip", "knee", "ankle"))
+  ):
     hip = normalized_anchors["hip"]
     knee = normalized_anchors["knee"]
     ankle = normalized_anchors["ankle"]
     if knee["y"] <= hip["y"] - 0.04 or knee["y"] >= ankle["y"] + 0.04:
       return None, "invalid_knee_anchor_order"
+
+  if version == FRONT_TRACKING_SETUP_VERSION:
+    for side in ("left", "right"):
+      shoulder = normalized_anchors.get(f"{side}_shoulder")
+      hip = normalized_anchors.get(f"{side}_hip")
+      knee = normalized_anchors.get(f"{side}_knee")
+      ankle = normalized_anchors.get(f"{side}_ankle")
+      if shoulder and hip and ankle and not (shoulder["y"] < hip["y"] < ankle["y"]):
+        return None, f"invalid_{side}_body_anchor_order"
+      if hip and knee and ankle and (
+        knee["y"] <= hip["y"] - 0.04 or knee["y"] >= ankle["y"] + 0.04
+      ):
+        return None, f"invalid_{side}_knee_anchor_order"
+    return {
+      "version": FRONT_TRACKING_SETUP_VERSION,
+      "reference_time_ms": int(round(reference_time_ms)),
+      "anchors": normalized_anchors,
+    }, None
 
   return {
     "version": TRACKING_SETUP_VERSION,
@@ -1140,6 +1198,139 @@ def fuse_partial_manual_body_tracks(
   }
 
 
+def fuse_manual_front_body_tracks(
+  pose_frames: list[dict[str, Any]],
+  *,
+  setup: dict[str, Any],
+  tracking: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+  """Fuse partial, explicitly sided front-view anchors without selecting one body side."""
+  anchor_names = [
+    name
+    for name in FRONT_BODY_ANCHORS
+    if name in (setup.get("anchors") or {})
+  ]
+  source_counts = {
+    name: {source: 0 for source in SOURCE_NAMES}
+    for name in FRONT_BODY_ANCHORS
+  }
+  base_result: dict[str, Any] = {
+    "used": False,
+    "selected_side": None,
+    "front_bilateral": True,
+    "fused_landmark_count": 0,
+    "directly_anchored_landmark_count": 0,
+    "blended_landmark_count": 0,
+    "fallback_landmark_count": 0,
+    "rejected_track_count": 0,
+    "rejection_reasons": {},
+    "coverage": tracking.get("coverage") or {},
+    "upper_back_anchor_key": None,
+    "upper_back_anchor_semantics": None,
+    "fused_anchor_names": anchor_names,
+    "upper_back_anchor_used_count": 0,
+    "upper_back_anchor_coverage": 0.0,
+    "pin_owned_landmark_count": 0,
+    "model_divergence_accepted_count": 0,
+    "body_barbell_occluder_rejection_count": 0,
+    "body_pin_frames": [],
+    "source_counts": source_counts,
+  }
+  if not pose_frames or not anchor_names or not tracking.get("tracks"):
+    return pose_frames, base_result
+
+  fused_frames = copy.deepcopy(pose_frames)
+  fused_count = 0
+  reference_count = 0
+  guided_count = 0
+  fallback_count = 0
+  frame_diagnostics: list[dict[str, Any]] = []
+
+  for frame in fused_frames:
+    source_index = int(frame.get("source_frame_index", -1))
+    landmarks = frame.setdefault("landmarks", {})
+    frame_diagnostic: dict[str, Any] | None = None
+    if len(frame_diagnostics) < BODY_PIN_DIAGNOSTIC_FRAME_LIMIT:
+      frame_diagnostic = {
+        "source_index": source_index,
+        "partial": len(anchor_names) < len(FRONT_BODY_ANCHORS),
+        "front_bilateral": True,
+        "joints": {},
+      }
+
+    for name in anchor_names:
+      track = _anchor_track(tracking, name).get(source_index)
+      if not _manual_track_is_usable(track):
+        source_counts[name]["automatic"] += 1
+        fallback_count += 1
+        continue
+
+      landmark = landmarks.get(name)
+      if not isinstance(landmark, dict):
+        landmark = {
+          "x": float(track["x"]),
+          "y": float(track["y"]),
+          "z": 0.0,
+          "visibility": 0.0,
+        }
+        landmarks[name] = landmark
+
+      tracking_state = "reference" if track.get("tracking_state") == "reference" else "guided"
+      manual_source = "reference_pin" if tracking_state == "reference" else "pin_guided"
+      confidence = max(
+        float(landmark.get("visibility") or 0.0),
+        min(float(track.get("confidence") or 0.0), 0.92),
+      )
+      landmark.update({
+        "x": float(track["x"]),
+        "y": float(track["y"]),
+        "visibility": confidence,
+        "manual_assisted": True,
+        "manual_source": manual_source,
+        "manual_weight": 1.0,
+        "user_pinned": True,
+        "accepted_source": manual_source,
+        "tracking_state": tracking_state,
+        "chain_valid": True,
+        "visual_only": False,
+        "partial_pin_assisted": len(anchor_names) < len(FRONT_BODY_ANCHORS),
+        "front_bilateral_pin": True,
+      })
+      source_counts[name][
+        "reference" if tracking_state == "reference" else "pin_guided"
+      ] += 1
+      fused_count += 1
+      if tracking_state == "reference":
+        reference_count += 1
+      else:
+        guided_count += 1
+
+      if frame_diagnostic is not None:
+        frame_diagnostic["joints"][name] = {
+          "source": manual_source,
+          "accepted": {
+            "x": round(float(track["x"]), 4),
+            "y": round(float(track["y"]), 4),
+            "confidence": round(confidence, 3),
+          },
+        }
+
+    if frame_diagnostic is not None:
+      frame_diagnostics.append(frame_diagnostic)
+
+  return fused_frames, {
+    **base_result,
+    "used": fused_count > 0,
+    "fused_landmark_count": fused_count,
+    "directly_anchored_landmark_count": reference_count,
+    "blended_landmark_count": guided_count,
+    "fallback_landmark_count": fallback_count,
+    "pin_owned_landmark_count": fused_count,
+    "body_pin_frames": frame_diagnostics,
+    "source_counts": source_counts,
+  }
+
+
 def fuse_manual_pressing_tracks(
   pose_frames: list[dict[str, Any]],
   *,
@@ -1313,7 +1504,7 @@ def track_manual_anchors(
       available_indices[reference_position:],
       initial_point,
       barbell=is_barbell,
-      joint_name=None if is_barbell else name,
+      joint_name=None if is_barbell else _base_joint_name(name),
       fps=fps,
     )
     backward = _track_direction(
@@ -1322,7 +1513,7 @@ def track_manual_anchors(
       list(reversed(available_indices[:reference_position + 1])),
       initial_point,
       barbell=is_barbell,
-      joint_name=None if is_barbell else name,
+      joint_name=None if is_barbell else _base_joint_name(name),
       fps=fps,
     )
     combined = {**backward, **forward}

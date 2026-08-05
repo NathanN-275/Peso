@@ -1,0 +1,36 @@
+---
+import BaseLayout from '../layouts/base-layout.astro';
+import SiteFooter from '../components/site-footer.astro';
+import SiteHeader from '../components/site-header.astro';
+---
+
+<BaseLayout
+  title="Terms — Peso"
+  description="Read the draft terms for Peso’s limited US web beta."
+>
+  <div class="page-shell legal-shell">
+    <SiteHeader compact />
+    <main id="main-content" class="legal-page">
+      <p class="eyebrow">Last updated August 4, 2026</p>
+      <h1>Terms of Use</h1>
+      <div class="legal-notice" role="note">
+        <strong>Beta draft for professional review.</strong>
+        <p>This page is product copy for the private prototype and is not approved legal advice or launch-ready terms.</p>
+      </div>
+      <p>These draft terms describe the intended rules for a limited, free Peso web beta available to verified account holders who confirm US residence.</p>
+      <h2>Beta access</h2>
+      <p>Access may be limited, changed, suspended, or discontinued while the service is tested. The beta has no payments and does not promise a mobile release or uninterrupted availability.</p>
+      <h2>Fitness disclaimer</h2>
+      <p>Peso provides automated video observations for informational purposes. It is not medical advice, diagnosis, physical therapy, or a substitute for a qualified coach or healthcare professional. Stop exercising and seek appropriate help if you feel pain, dizziness, or other concerning symptoms.</p>
+      <h2>Your responsibilities</h2>
+      <p>Upload only videos you have the right to use, keep account credentials secure, follow facility rules, use an appropriate spotter and safety equipment, and do not attempt to interfere with the service or another user’s data.</p>
+      <h2>Automated analysis</h2>
+      <p>Computer vision can be incomplete or wrong because of camera angle, visibility, equipment, clothing, lighting, and model limitations. Verify important decisions independently.</p>
+      <h2>Saved Lifts and deletion</h2>
+      <p>You choose whether to save a completed analysis. The final rules for retention, account deletion, disputes, warranties, liability, and governing law will be set only after professional US legal review.</p>
+      <h2>Contact</h2>
+      <p>Formal terms contact details will be added after the production domain and support address are chosen.</p>
+    </main>
+    <SiteFooter />
+  </div>
+</BaseLayout>

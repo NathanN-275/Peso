@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { File, Paths } from 'expo-file-system';
-import * as MediaLibrary from 'expo-media-library';
+import * as MediaLibrary from 'expo-media-library/legacy';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -25,6 +25,7 @@ import {
   formatExerciseLabel,
   formatSavedDate,
   formatViewLabel,
+  getSavedWorkoutFacts,
   getSavedVideoSummary,
 } from '../utils/savedVideos';
 
@@ -528,6 +529,9 @@ export default function SavedLiftVideosScreen({
                   <Text style={styles.videoTitle}>{formatExerciseLabel(video.exercise_type)}</Text>
                   <Text style={styles.videoMeta}>{formatViewLabel(video.view_type)} view</Text>
                   <Text style={styles.videoMeta}>{formatSavedDate(video.saved_at)}</Text>
+                  {getSavedWorkoutFacts(video) ? (
+                    <Text style={styles.workoutFacts}>{getSavedWorkoutFacts(video)}</Text>
+                  ) : null}
                   <Text style={styles.videoSummary} numberOfLines={2}>
                     {getSavedVideoSummary(video)}
                   </Text>
@@ -900,6 +904,12 @@ const styles = StyleSheet.create({
     color: tokens.colors.textMuted,
     fontSize: 12,
     lineHeight: 16,
+    fontWeight: '700',
+  },
+  workoutFacts: {
+    color: tokens.colors.textPrimary,
+    fontSize: 14,
+    lineHeight: 19,
     fontWeight: '700',
   },
   videoSummary: {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 
 DEFAULT_CORS_ORIGINS = (
   "http://localhost:8081",
@@ -48,6 +49,8 @@ DEFAULT_SUPABASE_STORAGE_TIMEOUT_SECONDS = 60
 DEFAULT_FFMPEG_TIMEOUT_SECONDS = 120
 DEFAULT_MAX_GLOBAL_VIDEO_WORKERS = 2
 DEFAULT_EXPORT_COOLDOWN_SECONDS = 30
+DEFAULT_ANALYSIS_TRACE_DIR = ".peso/analysis-traces"
+DEFAULT_ANALYSIS_TRACE_MAX_RUNS = 20
 
 
 @dataclass(frozen=True)
@@ -91,6 +94,9 @@ class Settings:
   ffmpeg_timeout_seconds: int = DEFAULT_FFMPEG_TIMEOUT_SECONDS
   max_global_video_workers: int = DEFAULT_MAX_GLOBAL_VIDEO_WORKERS
   export_cooldown_seconds: int = DEFAULT_EXPORT_COOLDOWN_SECONDS
+  analysis_trace_enabled: bool = False
+  analysis_trace_dir: Path = Path(DEFAULT_ANALYSIS_TRACE_DIR)
+  analysis_trace_max_runs: int = DEFAULT_ANALYSIS_TRACE_MAX_RUNS
 
 
 def _parse_positive_int_env(name: str, default: int, *aliases: str) -> int:
@@ -297,6 +303,18 @@ def get_settings() -> Settings:
     "EXPORT_COOLDOWN_SECONDS",
     DEFAULT_EXPORT_COOLDOWN_SECONDS,
   )
+  analysis_trace_enabled = _parse_bool_env(
+    "ANALYSIS_TRACE_ENABLED",
+    backend_env in {"development", "dev", "local"},
+  )
+  analysis_trace_dir = Path(
+    os.getenv("ANALYSIS_TRACE_DIR", DEFAULT_ANALYSIS_TRACE_DIR).strip()
+    or DEFAULT_ANALYSIS_TRACE_DIR
+  ).expanduser()
+  analysis_trace_max_runs = _parse_positive_int_env(
+    "ANALYSIS_TRACE_MAX_RUNS",
+    DEFAULT_ANALYSIS_TRACE_MAX_RUNS,
+  )
 
   if storage_warning_ratio >= storage_block_ratio or storage_block_ratio > 1:
     raise RuntimeError(
@@ -350,6 +368,9 @@ def get_settings() -> Settings:
 
     if os.getenv("POSE_DEBUG_LANDMARK_EXPORT_DIR", "").strip():
       raise RuntimeError("POSE_DEBUG_LANDMARK_EXPORT_DIR must not be enabled in production.")
+
+    if analysis_trace_enabled:
+      raise RuntimeError("ANALYSIS_TRACE_ENABLED must not be enabled in production.")
 
   if cleanup_job_token is None and not (
     backend_env in {"development", "dev", "local", "test"} and allow_unauthenticated_dev_cleanup
@@ -409,4 +430,7 @@ def get_settings() -> Settings:
     ffmpeg_timeout_seconds=ffmpeg_timeout_seconds,
     max_global_video_workers=max_global_video_workers,
     export_cooldown_seconds=export_cooldown_seconds,
+    analysis_trace_enabled=analysis_trace_enabled,
+    analysis_trace_dir=analysis_trace_dir,
+    analysis_trace_max_runs=analysis_trace_max_runs,
   )

@@ -7,11 +7,11 @@ import logging
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..analysis.pipeline import analyze_video
 from ..analysis.manual_tracking import validate_tracking_setup
@@ -120,6 +120,9 @@ class SavedVideoResponse(BaseModel):
   id: UUID
   exercise_type: str
   view_type: str
+  performed_reps: int | None = None
+  load_value: float | None = None
+  load_unit: Literal["lb", "kg"] | None = None
   storage_path: str | None = None
   thumbnail_path: str | None = None
   video_url: str | None = None
@@ -160,6 +163,21 @@ class SavedVideoOverviewResponse(BaseModel):
 class SaveVideoResponse(BaseModel):
   video_id: UUID
   save_state: str
+  performed_reps: int | None = None
+  load_value: float | None = None
+  load_unit: Literal["lb", "kg"] | None = None
+
+
+class SaveVideoRequest(StrictRequestModel):
+  performed_reps: int | None = Field(default=None, ge=1)
+  load_value: float | None = Field(default=None, ge=0)
+  load_unit: Literal["lb", "kg"] | None = None
+
+  @model_validator(mode="after")
+  def weight_requires_unit(self) -> "SaveVideoRequest":
+    if (self.load_value is None) != (self.load_unit is None):
+      raise ValueError("Weight and its unit must be provided together.")
+    return self
 
 
 class DiscardVideoResponse(BaseModel):
@@ -407,6 +425,8 @@ def _summary_analysis_payload(result_json: dict) -> dict:
     "coachingFeedback": coaching_feedback,
     "rep_count": rep_count,
     "reps": reps,
+    "analysisMode": result_json.get("analysisMode"),
+    "analysisCapabilities": result_json.get("analysisCapabilities"),
     "analysis_stale": analysis_stale,
     "analysis_incomplete": analysis_incomplete,
     "diagnostics": diagnostics,
@@ -420,6 +440,7 @@ def _summary_rep_payload(rep: dict) -> dict:
     "rep_index": rep.get("rep_index"),
     "repIndex": rep.get("repIndex"),
     "duration": rep.get("duration"),
+    "confidence": rep.get("confidence"),
     "repSpeed": rep.get("repSpeed"),
     "avgVelocity": rep.get("avgVelocity"),
     "peakVelocity": rep.get("peakVelocity"),
@@ -463,6 +484,13 @@ def _analysis_rep_count(analysis: dict | None) -> int:
 
   reps = result_json.get("reps")
   return len(reps) if isinstance(reps, list) else 0
+
+
+def _official_rep_count(video: dict, analysis: dict | None) -> int:
+  performed_reps = video.get("performed_reps")
+  if isinstance(performed_reps, int) and performed_reps >= 1:
+    return performed_reps
+  return _analysis_rep_count(analysis)
 
 
 def _load_latest_analyses(
@@ -519,6 +547,9 @@ def _saved_video_response(
     id=video["id"],
     exercise_type=video["exercise_type"],
     view_type=video["view_type"],
+    performed_reps=video.get("performed_reps"),
+    load_value=video.get("load_value"),
+    load_unit=video.get("load_unit"),
     storage_path=None,
     thumbnail_path=thumbnail_path,
     video_url=None,
@@ -677,9 +708,10 @@ def register_video(
 
   normalized_tracking_setup = None
   if request.tracking_setup is not None:
+    tracking_duration_ms = request.duration_ms if request.duration_ms and request.duration_ms > 0 else None
     normalized_tracking_setup, tracking_error = validate_tracking_setup(
       request.tracking_setup,
-      duration_ms=request.duration_ms,
+      duration_ms=tracking_duration_ms,
     )
 
     if tracking_error:
@@ -764,7 +796,7 @@ def get_video_capabilities(
 
   return VideoCapabilitiesResponse(
     pin_assisted_tracking=pin_assisted_tracking,
-    tracking_setup_versions=[1] if pin_assisted_tracking else [],
+    tracking_setup_versions=[1, 2] if pin_assisted_tracking else [],
     reason=None if pin_assisted_tracking else "tracking_setup_migration_missing",
   )
 
@@ -840,6 +872,7 @@ def queue_analysis(
 @router.post("/videos/{video_id}/save", response_model=SaveVideoResponse)
 def save_video(
   video_id: UUID,
+  request: SaveVideoRequest,
   user_id: str = Depends(get_current_user_id),
 ) -> SaveVideoResponse:
   # Mark a finished analysis as saved in the user's library.
@@ -850,8 +883,19 @@ def save_video(
       status_code=status.HTTP_409_CONFLICT,
       detail="Discarded videos cannot be saved.",
     )
-  saved_video = repository.mark_saved(str(video_id))
-  return SaveVideoResponse(video_id=video_id, save_state=saved_video["save_state"])
+  saved_video = repository.mark_saved(
+    str(video_id),
+    performed_reps=request.performed_reps,
+    load_value=request.load_value,
+    load_unit=request.load_unit,
+  )
+  return SaveVideoResponse(
+    video_id=video_id,
+    save_state=saved_video["save_state"],
+    performed_reps=saved_video["performed_reps"],
+    load_value=saved_video["load_value"],
+    load_unit=saved_video["load_unit"],
+  )
 
 
 @router.get("/videos/saved", response_model=list[SavedVideoResponse])
@@ -939,7 +983,7 @@ def get_saved_video_overview(
     reverse=True,
   )[0] if groups_by_exercise else None
   total_reps = sum(
-    _analysis_rep_count(analyses_by_video_id.get(str(video["id"])))
+    _official_rep_count(video, analyses_by_video_id.get(str(video["id"])))
     for video in videos
   )
   response_groups: list[SavedVideoOverviewGroupResponse] = []

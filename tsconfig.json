@@ -11,7 +11,9 @@
     "global.d.ts"
   ],
   "exclude": [
+    "dashboard",
     "dist",
+    "web",
     "node_modules"
   ]
 }

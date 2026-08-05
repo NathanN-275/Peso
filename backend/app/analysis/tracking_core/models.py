@@ -10,12 +10,13 @@ DetectionKind = Literal[
   "plate_face",
   "rack_upright",
   "j_hook",
+  "safety_arm",
   "storage_peg",
 ]
 
-HardwareKind = Literal["rack_upright", "j_hook", "storage_peg"]
+HardwareKind = Literal["rack_upright", "j_hook", "safety_arm", "storage_peg"]
 BODY_POINT_NAMES = ("upper_back", "hip", "knee", "ankle")
-HARDWARE_KINDS: set[str] = {"rack_upright", "j_hook", "storage_peg"}
+HARDWARE_KINDS: set[str] = {"rack_upright", "j_hook", "safety_arm", "storage_peg"}
 
 
 @dataclass(frozen=True)

@@ -77,6 +77,11 @@ def _build_pose_frames(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if isinstance(point.get("accepted_source"), str)
         else {}
       ),
+      **(
+        {"poseRepairReasons": point["pose_repair_reasons"]}
+        if isinstance(point.get("pose_repair_reasons"), list)
+        else {}
+      ),
       **({"userPinned": True} if user_pinned else {}),
       **({"preferVisualFallback": True} if point.get("prefer_visual_fallback") else {}),
       **({"chainValid": bool(point["chain_valid"])} if "chain_valid" in point else {}),
@@ -228,6 +233,18 @@ def _has_unreliable_bottom_occlusion_landmarks(pose_validation: dict[str, Any], 
   return any(
     landmark.get("frame_index") == bottom_index
     and landmark.get("joint") in {"shoulder", "hip"}
+    for landmark in pose_validation.get("unreliable_landmarks", [])
+  )
+
+
+def _rep_has_unreliable_motion_window(pose_validation: dict[str, Any], rep: dict[str, Any]) -> bool:
+  """Reject a candidate rep whose bottom is built from an unreliable leg chain."""
+  bottom_index = int(rep["bottom_index"])
+  window = range(max(0, bottom_index - DEPTH_BOTTOM_WINDOW), bottom_index + DEPTH_BOTTOM_WINDOW + 1)
+  return any(
+    landmark.get("frame_index") in window
+    and landmark.get("joint") in {"hip", "knee", "ankle"}
+    and landmark.get("status") in {"rejected", "kinematic_estimate"}
     for landmark in pose_validation.get("unreliable_landmarks", [])
   )
 
@@ -539,18 +556,25 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
     frames: list[dict[str, Any]],
     sampled_frame_count: int | None = None,
     selected_side_override: str | None = None,
+    pose_validation_override: dict[str, Any] | None = None,
+    pose_repair_diagnostics: dict[str, Any] | None = None,
   ) -> dict[str, Any]:
     # Squat analysis combines quality checks, rep detection, and feedback.
-    frames, pose_validation = validate_squat_pose_frames(
-      frames,
-      selected_side_override=selected_side_override,
-    )
+    if pose_validation_override is None:
+      frames, pose_validation = validate_squat_pose_frames(
+        frames,
+        selected_side_override=selected_side_override,
+      )
+    else:
+      pose_validation = dict(pose_validation_override)
     diagnostics = self._build_quality_report(
       frames=frames,
       sampled_frame_count=sampled_frame_count,
       selected_side_override=pose_validation.get("selected_side"),
     )
     diagnostics["pose_validation"] = pose_validation
+    if pose_repair_diagnostics is not None:
+      diagnostics["pose_repair"] = pose_repair_diagnostics
     selected_side = diagnostics["selected_side"] or "left"
     validation_penalty = pose_validation.get("quality_score_penalty", 0.0)
 
@@ -586,6 +610,13 @@ class SquatAnalyzer(BaseExerciseAnalyzer):
       hip_flexions=hip_flexions,
       frames=frames,
     )
+    unreliable_reps = [rep for rep in reps if _rep_has_unreliable_motion_window(pose_validation, rep)]
+    if unreliable_reps:
+      reps = [rep for rep in reps if rep not in unreliable_reps]
+      rep_detection["suppressed_unreliable_rep_count"] = len(unreliable_reps)
+      rep_detection["suppression_reason"] = "unreliable_lower_body_bottom_window"
+    else:
+      rep_detection["suppressed_unreliable_rep_count"] = 0
     diagnostics["rep_detection"] = rep_detection
 
     if rep_detection.get("reason") and rep_detection["reason"] not in diagnostics["quality_flags"]:

@@ -6,7 +6,6 @@ import {
   ActivityIndicator,
   LayoutChangeEvent,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -15,13 +14,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
 import { discardAnalyzedVideo, saveAnalyzedVideo } from '../../lib/backendApi';
 import BarbellPathOverlay from '../components/BarbellPathOverlay';
+import JointMotionTrailOverlay from '../components/JointMotionTrailOverlay';
 import PoseOverlay from '../components/PoseOverlay';
 import TrackingReferenceOverlay from '../components/TrackingReferenceOverlay';
 import ReviewBottomSheet from '../components/ReviewBottomSheet';
 import TimelineScrubber from '../components/TimelineScrubber';
 import TrackingDisplaySheet from '../components/TrackingDisplaySheet';
+import WorkoutDetailsSheet from '../components/WorkoutDetailsSheet';
 import tokens from '../theme/tokens';
 import { BarbellPath, VideoAnalysisResult } from '../types/videoAnalysis';
+import type { WorkoutSaveDetails } from '../../lib/workoutSavePolicy';
 import {
   isReferenceTrackingTime,
   resolveSelectedTrackingSide,
@@ -46,7 +48,7 @@ type AnalysisReviewScreenProps = {
   onDiscarded?: () => void;
   onSaved?: (videoId: string) => void | Promise<void>;
   onDeleteSavedVideo?: (videoId: string) => Promise<void>;
-  saveOnBack?: boolean;
+  workoutDetails?: WorkoutSaveDetails | null;
 };
 
 type BarbellPathCarrier = VideoAnalysisResult & {
@@ -63,57 +65,13 @@ function formatFlagLabel(value: string) {
   return value.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function formatNumber(value: number, suffix = '') {
+function formatNumber(value?: number | null, suffix = '') {
   // Keep numeric debug values compact on screen.
-  if (!Number.isFinite(value)) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
     return `0${suffix}`;
   }
 
   return `${value.toFixed(2)}${suffix}`;
-}
-
-function formatOptionalNumber(value: number | undefined, suffix = '') {
-  if (typeof value !== 'number') {
-    return `n/a${suffix}`;
-  }
-
-  return formatNumber(value, suffix);
-}
-
-function formatMilliseconds(value: number | undefined) {
-  if (typeof value !== 'number') {
-    return 'n/a';
-  }
-
-  return `${(value / 1000).toFixed(2)}s`;
-}
-
-function formatDepthStatus(value: string | undefined) {
-  if (!value) {
-    return 'Unknown';
-  }
-
-  return formatFlagLabel(value);
-}
-
-function formatFallbackUnavailableReason(value: string | null | undefined) {
-  if (!value) {
-    return 'n/a';
-  }
-
-  if (value === 'fallback_disabled') {
-    return 'Fallback disabled';
-  }
-
-  if (value === 'fallback_dependency_missing') {
-    return 'Fallback dependency missing';
-  }
-
-  if (value === 'fallback_no_pose_detected') {
-    return 'Fallback found no pose';
-  }
-
-  return formatFlagLabel(value);
 }
 
 function SheetSection({
@@ -154,40 +112,6 @@ function SheetSection({
   );
 }
 
-function DetailDisclosure({
-  title,
-  summary,
-  children,
-}: {
-  title: string;
-  summary?: string;
-  children: React.ReactNode;
-}) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <View style={styles.debugBlock}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded }}
-        onPress={() => setExpanded((value) => !value)}
-        style={styles.detailHeader}
-      >
-        <View style={styles.detailHeaderText}>
-          <Text style={styles.detailTitle}>{title}</Text>
-          {summary ? <Text style={styles.detailSummary}>{summary}</Text> : null}
-        </View>
-        <Ionicons
-          name={expanded ? 'chevron-up-outline' : 'chevron-down-outline'}
-          size={18}
-          color={tokens.colors.textMuted}
-        />
-      </Pressable>
-      {expanded ? <View style={styles.detailBody}>{children}</View> : null}
-    </View>
-  );
-}
-
 export default function AnalysisReviewScreen({
   videoUri,
   result,
@@ -196,7 +120,7 @@ export default function AnalysisReviewScreen({
   onDiscarded,
   onSaved,
   onDeleteSavedVideo,
-  saveOnBack = false,
+  workoutDetails,
 }: AnalysisReviewScreenProps) {
   // This screen plays the analyzed clip and overlays pose feedback.
   const { session } = useAuth();
@@ -214,6 +138,7 @@ export default function AnalysisReviewScreen({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showDiscardSheet, setShowDiscardSheet] = useState(false);
   const [showSavedDeleteSheet, setShowSavedDeleteSheet] = useState(false);
+  const [showWorkoutDetailsSheet, setShowWorkoutDetailsSheet] = useState(false);
   const [wasPlayingBeforeScrub, setWasPlayingBeforeScrub] = useState(false);
   const mediaAvailable = Boolean(videoUri);
 
@@ -290,6 +215,9 @@ export default function AnalysisReviewScreen({
   const showPoseOverlay = hasPoseTimeline && poseOverlayEnabled && !showReferencePins;
   const showBarbellPath = hasBarbellPath && barbellPathEnabled && !showReferencePins;
   const cameraView = result.cameraView ?? result.view;
+  const isFrontSquatTracking = result.analysisMode === 'front_squat_tracking_v1';
+  const depthAssessmentAvailable = result.analysisCapabilities?.depthAssessment
+    ?? !isFrontSquatTracking;
   const selectedPoseSide = resolveSelectedTrackingSide(trackingAssistance, result.diagnostics);
   const analysisStale = result.analysis_stale ?? result.diagnostics?.analysis_stale ?? false;
   const analysisIncomplete = result.analysis_incomplete ?? result.diagnostics?.analysis_incomplete ?? false;
@@ -321,15 +249,6 @@ export default function AnalysisReviewScreen({
     repCount > 0
       ? `Depth hit: ${depthHitCount > 0 ? 'yes' : 'no'} (${depthHitCount}/${repCount} reps)`
       : 'Depth hit: n/a (0 reps)';
-  const poseBackend = result.pose_backend ?? result.diagnostics?.pose_backend;
-  const fallbackModel = result.fallback_model ?? result.diagnostics?.fallback_model;
-  const fallbackRecommended = result.fallback_recommended ?? result.diagnostics?.fallback_recommended ?? false;
-  const fallbackAttempted = result.fallback_attempted ?? result.diagnostics?.fallback_attempted ?? false;
-  const fallbackTriggered = result.fallback_triggered ?? result.diagnostics?.fallback_triggered ?? false;
-  const fallbackReason = result.fallback_reason ?? result.diagnostics?.fallback_reason;
-  const fallbackUnavailableReason =
-    result.fallback_unavailable_reason ?? result.diagnostics?.fallback_unavailable_reason;
-  const landmarkModel = result.landmark_model ?? result.diagnostics?.landmark_model;
   const trackingAssistanceLabel = trackingAssistance?.actualMode === 'pin_assisted'
     ? 'Pin-assisted'
     : trackingAssistance?.requestedMode === 'pins'
@@ -421,7 +340,7 @@ export default function AnalysisReviewScreen({
     player.play();
   };
 
-  const handleSave = async () => {
+  const handleSave = async (details: WorkoutSaveDetails) => {
     // Save is gated by a valid session token.
     if (isSavedMode || !session?.access_token || saving) {
       return;
@@ -431,14 +350,16 @@ export default function AnalysisReviewScreen({
     setErrorMessage(null);
 
     try {
-      await saveAnalyzedVideo(result.video_id, session.access_token);
+      await saveAnalyzedVideo(result.video_id, details, session.access_token);
       setSaved(true);
+      setShowWorkoutDetailsSheet(false);
       if (mediaAvailable) {
         player.pause();
       }
       await onSaved?.(result.video_id);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to save this video.');
+      throw error;
     } finally {
       setSaving(false);
     }
@@ -519,11 +440,6 @@ export default function AnalysisReviewScreen({
       return;
     }
 
-    if (saveOnBack) {
-      void handleSave();
-      return;
-    }
-
     setShowDiscardSheet(true);
   };
 
@@ -556,9 +472,7 @@ export default function AnalysisReviewScreen({
           ) : (
             <Pressable
               accessibilityRole="button"
-              onPress={() => {
-                void handleSave();
-              }}
+              onPress={() => setShowWorkoutDetailsSheet(true)}
               disabled={saving || discarding}
               style={[styles.topButton, (saving || discarding) && styles.disabledButton]}
             >
@@ -579,6 +493,17 @@ export default function AnalysisReviewScreen({
                   allowsPictureInPicture={false}
                   onFirstFrameRender={() => setErrorMessage(null)}
                 />
+                {showPoseOverlay ? (
+                  <JointMotionTrailOverlay
+                    frames={result.poseFrames}
+                    currentTime={currentTime}
+                    containerSize={videoLayout}
+                    videoSize={videoSize}
+                    contentFit="cover"
+                    exercise={result.exercise}
+                    cameraView={cameraView}
+                  />
+                ) : null}
                 {showPoseOverlay ? (
                   <PoseOverlay
                     frame={poseFrame}
@@ -698,7 +623,6 @@ export default function AnalysisReviewScreen({
           poseEnabled={poseOverlayEnabled}
           barbellAvailable={hasBarbellPath}
           barbellEnabled={barbellPathEnabled}
-          trackingAssistance={trackingAssistance}
           onPoseEnabledChange={setPoseOverlayEnabled}
           onBarbellEnabledChange={setBarbellPathEnabled}
           onClose={() => setActiveSheet(null)}
@@ -707,14 +631,30 @@ export default function AnalysisReviewScreen({
           visible={activeSheet === 'summary'}
           title="Summary"
           onClose={() => setActiveSheet(null)}
+          scrollable
+          scrollContentStyle={styles.sheetContent}
         >
-          <ScrollView
-            style={styles.sheetScroll}
-            contentContainerStyle={styles.sheetContent}
-            showsVerticalScrollIndicator={false}
-          >
-            <SheetSection title="Summary flags">
-              <Text style={styles.sheetText}>{depthHitLabel}</Text>
+          {workoutDetails ? (
+            <SheetSection title="Workout facts">
+              {workoutDetails.performed_reps !== null ? (
+                <Text style={styles.sheetText}>
+                  Performed reps: {workoutDetails.performed_reps}
+                </Text>
+              ) : null}
+              {workoutDetails.load_value !== null && workoutDetails.load_unit !== null ? (
+                <Text style={styles.sheetText}>
+                  Load: {workoutDetails.load_value} {workoutDetails.load_unit}
+                </Text>
+              ) : null}
+              <Text style={styles.sheetMutedText}>Detected reps: {repCount}</Text>
+            </SheetSection>
+          ) : null}
+          <SheetSection title="Summary flags">
+              {depthAssessmentAvailable ? (
+                <Text style={styles.sheetText}>{depthHitLabel}</Text>
+              ) : (
+                <Text style={styles.sheetText}>Front tracking: {repCount} reps</Text>
+              )}
               {analysisStale ? (
                 <Text style={styles.staleText}>
                   This result was created by an older or incomplete model payload. Re-run analysis before trusting depth flags.
@@ -730,39 +670,13 @@ export default function AnalysisReviewScreen({
               )) : <Text style={styles.sheetMutedText}>No summary flags.</Text>}
             </SheetSection>
 
-            <SheetSection title="Analysis details" collapsible defaultExpanded={false}>
-              <Text style={styles.debugText}>Stale analysis: {analysisStale ? 'yes' : 'no'}</Text>
-              <Text style={styles.debugText}>Analysis incomplete: {analysisIncomplete ? 'yes' : 'no'}</Text>
-              <Text style={styles.debugText}>Pose backend: {poseBackend ?? 'n/a'}</Text>
-              <Text style={styles.debugText}>Tracking assistance: {trackingAssistance?.actualMode ?? 'automatic'}</Text>
-              {trackingAssistance?.fallbackReason ? (
-                <Text style={styles.debugText}>Tracking fallback: {trackingAssistance.fallbackReason}</Text>
-              ) : null}
-              <Text style={styles.debugText}>Fallback model: {fallbackModel === 'rtmpose' ? 'RTMPose' : 'n/a'}</Text>
-              <Text style={styles.debugText}>Fallback recommended: {fallbackRecommended ? 'yes' : 'no'}</Text>
-              <Text style={styles.debugText}>Fallback attempted: {fallbackAttempted ? 'yes' : 'no'}</Text>
-              <Text style={styles.debugText}>Fallback used: {fallbackTriggered ? 'yes' : 'no'}</Text>
-              <Text style={styles.debugText}>Fallback reason: {fallbackReason ?? 'n/a'}</Text>
-              <Text style={styles.debugText}>
-                Fallback unavailable: {formatFallbackUnavailableReason(fallbackUnavailableReason)}
-              </Text>
-              <Text style={styles.debugText}>Landmark model: {landmarkModel ?? 'n/a'}</Text>
-              <Text style={styles.debugText}>
-                Depth reps hit / insufficient / uncertain: {finalHitDepthReps.join(', ') || 'none'} / {finalInsufficientDepthReps.join(', ') || 'none'} / {finalUncertainDepthReps.join(', ') || 'none'}
-              </Text>
-              <Text style={styles.debugText}>
-                Depth summary decision: {depthSummaryDebug?.summary_depth_decision ?? 'n/a'}
-              </Text>
-              <Text style={styles.debugText}>
-                Depth summary reason: {depthSummaryDebug?.summary_depth_reason ?? 'n/a'}
-              </Text>
-            </SheetSection>
-
             <SheetSection title="Video quality">
               <Text style={styles.sheetText}>Overall quality: {formatPercent(videoQuality.overallQuality)}</Text>
               <Text style={styles.sheetText}>Pose coverage: {formatPercent(videoQuality.poseCoverage)}</Text>
               <Text style={styles.sheetText}>Lower body visibility: {formatPercent(videoQuality.lowerBodyVisibility)}</Text>
-              <Text style={styles.sheetText}>Side-view confidence: {formatPercent(videoQuality.sideViewConfidence)}</Text>
+              {!isFrontSquatTracking ? (
+                <Text style={styles.sheetText}>Side-view confidence: {formatPercent(videoQuality.sideViewConfidence)}</Text>
+              ) : null}
               <Text style={styles.sheetText}>
                 Squat motion signal: {formatNumber(videoQuality.squatMotionSignal ?? 0)}
               </Text>
@@ -771,93 +685,48 @@ export default function AnalysisReviewScreen({
             <SheetSection title="Per-rep highlights">
               {result.reps.length ? result.reps.map((rep) => {
                 const velocity = getRepVelocity(rep);
-                const depthStatus = rep.depthStatus ?? rep.depth_status;
-                const depthTimestampMs = rep.depthTimestampMs ?? rep.depth_timestamp_ms;
-                const bottomTimestampMs = rep.bottomTimestampMs ?? rep.bottom_timestamp_ms;
-                const selectedSide = rep.selectedSide ?? rep.selected_side ?? rep.depth_evidence?.selected_side;
-                const selectedSource = rep.selectedSource ?? rep.selected_source ?? rep.depth_evidence?.selectedSource ?? rep.depth_evidence?.selected_source;
-                const selectedModel = rep.selectedModel ?? rep.selected_model ?? rep.depth_evidence?.selectedModel ?? rep.depth_evidence?.selected_model;
-                const depthReason = rep.depthReason ?? rep.depth_reason ?? rep.depth_evidence?.depthReason ?? rep.depth_evidence?.depth_reason ?? rep.depth_components?.depthReason ?? rep.depth_components?.depth_reason;
-                const hipKneeDelta = rep.depth_evidence?.hip_knee_delta ?? rep.depth_components?.hip_knee_delta;
-                const rawHipKneeDelta = rep.depth_components?.raw_hip_knee_delta;
-                const hipY = rep.depth_evidence?.hipY;
-                const kneeY = rep.depth_evidence?.kneeY;
-                const ankleY = rep.depth_evidence?.ankleY;
-                const hipConfidence = rep.depth_evidence?.hipConfidence;
-                const kneeConfidence = rep.depth_evidence?.kneeConfidence;
-                const ankleConfidence = rep.depth_evidence?.ankleConfidence;
-                const estimatedHipCreaseY = rep.depth_evidence?.estimatedHipCreaseY ?? rep.depth_evidence?.estimated_hip_crease_y ?? rep.depth_components?.estimated_hip_crease_y;
-                const estimatedKneeTopY = rep.depth_evidence?.estimatedKneeTopY ?? rep.depth_evidence?.estimated_knee_top_y ?? rep.depth_components?.estimated_knee_top_y;
-                const depthDeltaPx = rep.depth_evidence?.depthDeltaPx ?? rep.depth_evidence?.depth_delta_px ?? rep.depth_components?.depth_delta_px;
-                const depthTolerancePx = rep.depth_evidence?.depthTolerancePx ?? rep.depth_evidence?.depth_tolerance_px ?? rep.depth_components?.depth_tolerance_px;
-                const parallelScore = rep.depth_evidence?.parallel_score ?? rep.depth_components?.parallel_score;
-                const depthConfidence =
-                  rep.depth_evidence?.depth_confidence ?? rep.depthConfidence ?? rep.depth_confidence;
-                const scoredFrameDiffers = rep.depth_evidence?.scored_frame_differs_from_bottom;
-                const plateRackOcclusion = rep.depth_evidence?.plate_rack_occlusion_suspected;
                 return (
                   <View key={rep.rep_index} style={styles.repBlock}>
                     <Text style={styles.sheetText}>Rep {rep.repIndex ?? rep.rep_index}</Text>
                     <Text style={styles.sheetMutedText}>Duration: {formatNumber(getRepDuration(rep), 's')}</Text>
                     <Text style={styles.sheetMutedText}>Rep speed: {formatNumber(getRepSpeed(rep), ' reps/s')}</Text>
-                    <Text style={styles.sheetMutedText}>
-                      Estimated hip velocity: avg {formatNumber(velocity.avgVelocity)}, peak {formatNumber(velocity.peakVelocity)}
-                    </Text>
-                    <Text style={styles.sheetMutedText}>
-                      Depth {formatNumber(rep.depthScore ?? rep.depth_score)}, torso change {formatNumber(rep.torsoAngleChangeDeg ?? rep.torso_angle_change, ' deg')}
-                    </Text>
-                    <DetailDisclosure
-                      title="Depth details"
-                      summary={`${formatDepthStatus(depthStatus)} · ${depthReason ?? 'no reason'}`}
-                    >
-                      <Text style={styles.debugText}>Depth status: {formatDepthStatus(depthStatus)}</Text>
-                      <Text style={styles.debugText}>Hip-knee delta: {formatOptionalNumber(hipKneeDelta)}</Text>
-                      <Text style={styles.debugText}>Raw hip-knee delta: {formatOptionalNumber(rawHipKneeDelta)}</Text>
-                      <Text style={styles.debugText}>Parallel score: {formatOptionalNumber(parallelScore)}</Text>
-                      <Text style={styles.debugText}>Depth confidence: {formatOptionalNumber(depthConfidence)}</Text>
-                      <Text style={styles.debugText}>Depth reason: {depthReason ?? 'n/a'}</Text>
-                      <Text style={styles.debugText}>
-                        Scored frame: {formatMilliseconds(depthTimestampMs)} · bottom: {formatMilliseconds(bottomTimestampMs)}
+                    {isFrontSquatTracking ? (
+                      <Text style={styles.sheetMutedText}>
+                        Tracking confidence: {formatPercent(rep.confidence)}
                       </Text>
-                      <Text style={styles.debugText}>Selected side: {selectedSide ?? selectedPoseSide ?? 'n/a'}</Text>
-                      <Text style={styles.debugText}>Selected source: {selectedSource ?? 'n/a'}</Text>
-                      <Text style={styles.debugText}>Selected model: {selectedModel ?? 'n/a'}</Text>
-                      <Text style={styles.debugText}>
-                        Hip/knee/ankle Y: {formatOptionalNumber(hipY)} / {formatOptionalNumber(kneeY)} / {formatOptionalNumber(ankleY)}
-                      </Text>
-                      <Text style={styles.debugText}>
-                        Hip/knee/ankle confidence: {formatOptionalNumber(hipConfidence)} / {formatOptionalNumber(kneeConfidence)} / {formatOptionalNumber(ankleConfidence)}
-                      </Text>
-                      <Text style={styles.debugText}>
-                        Hip crease / knee top: {formatOptionalNumber(estimatedHipCreaseY)} / {formatOptionalNumber(estimatedKneeTopY)}
-                      </Text>
-                      <Text style={styles.debugText}>
-                        Depth delta / tolerance px: {formatOptionalNumber(depthDeltaPx)} / {formatOptionalNumber(depthTolerancePx)}
-                      </Text>
-                      <Text style={styles.debugText}>Scored frame differs: {scoredFrameDiffers ? 'yes' : 'no'}</Text>
-                      <Text style={styles.debugText}>Rack/plate occlusion: {plateRackOcclusion ? 'yes' : 'no'}</Text>
-                    </DetailDisclosure>
+                    ) : (
+                      <>
+                        <Text style={styles.sheetMutedText}>
+                          Estimated hip velocity: avg {formatNumber(velocity.avgVelocity)}, peak {formatNumber(velocity.peakVelocity)}
+                        </Text>
+                        <Text style={styles.sheetMutedText}>
+                          Depth {formatNumber(rep.depthScore ?? rep.depth_score)}, torso change {formatNumber(rep.torsoAngleChangeDeg ?? rep.torso_angle_change, ' deg')}
+                        </Text>
+                      </>
+                    )}
                   </View>
                 );
               }) : <Text style={styles.sheetMutedText}>No reps detected.</Text>}
-            </SheetSection>
-          </ScrollView>
+          </SheetSection>
         </ReviewBottomSheet>
+
+        <WorkoutDetailsSheet
+          visible={!isSavedMode && showWorkoutDetailsSheet}
+          detectedReps={repCount}
+          onCancel={() => setShowWorkoutDetailsSheet(false)}
+          onSubmit={handleSave}
+        />
 
         <ReviewBottomSheet
           visible={activeSheet === 'coaching'}
           title="Coaching"
           onClose={() => setActiveSheet(null)}
+          scrollable
+          scrollContentStyle={styles.sheetContent}
         >
-          <ScrollView
-            style={styles.sheetScroll}
-            contentContainerStyle={styles.sheetContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {coachingFeedback.length ? coachingFeedback.map((feedback) => (
-              <Text key={feedback} style={styles.sheetText}>{feedback}</Text>
-            )) : <Text style={styles.sheetMutedText}>No coaching feedback available.</Text>}
-          </ScrollView>
+          {coachingFeedback.length ? coachingFeedback.map((feedback) => (
+            <Text key={feedback} style={styles.sheetText}>{feedback}</Text>
+          )) : <Text style={styles.sheetMutedText}>No coaching feedback available.</Text>}
         </ReviewBottomSheet>
 
         <ReviewBottomSheet
@@ -1030,7 +899,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   centerOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.2)',
@@ -1105,9 +974,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     textAlign: 'center',
   },
-  sheetScroll: {
-    flexGrow: 0,
-  },
   sheetContent: {
     gap: 18,
     paddingBottom: 8,
@@ -1153,44 +1019,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#0C1016',
     padding: 12,
     gap: 3,
-  },
-  debugBlock: {
-    marginTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#243044',
-    paddingTop: 8,
-  },
-  detailHeader: {
-    minHeight: 36,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  detailHeaderText: {
-    flex: 1,
-    minWidth: 0,
-    gap: 2,
-  },
-  detailTitle: {
-    color: tokens.colors.textPrimary,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '700',
-  },
-  detailSummary: {
-    color: '#9FB6D9',
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  detailBody: {
-    paddingTop: 8,
-    gap: 2,
-  },
-  debugText: {
-    color: '#9FB6D9',
-    fontSize: 12,
-    lineHeight: 17,
   },
   discardSheet: {
     maxHeight: '46%',

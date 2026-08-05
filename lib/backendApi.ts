@@ -17,6 +17,7 @@ import {
   buildAnalyzedVideoExportPayload,
   buildRegisterUploadedVideoPayload,
 } from './videoRequestPayloadPolicy';
+import { getBackendErrorMessage } from './backendErrorPolicy';
 
 let loggedBackendConfig = false;
 const PLAYBACK_URL_CACHE_TTL_MS = 2 * 60 * 1000;
@@ -156,7 +157,11 @@ function buildBackendUnreachableMessage({
       );
     }
 
-    if (Platform.OS === 'web' && isLoopbackUrl(backend.url)) {
+    if (Platform.OS === 'web' && backend.source === 'web same-origin proxy') {
+      hints.push(
+        'The Expo web proxy could not reach FastAPI. Start both services with npm run web or npm start.'
+      );
+    } else if (Platform.OS === 'web' && isLoopbackUrl(backend.url)) {
       hints.push('For Expo web, start the backend with npm start or run FastAPI on 127.0.0.1:8000.');
     }
 
@@ -281,7 +286,7 @@ async function requestJson<T>(path: string, accessToken?: string, init: BackendR
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(errorText || `Backend request failed with status ${response.status}.`);
+    throw new Error(getBackendErrorMessage(errorText, response.status));
   }
 
   return (await response.json()) as T;
@@ -475,13 +480,28 @@ export async function getVideoPlaybackUrl(videoId: string, accessToken: string) 
   return response;
 }
 
-export async function saveAnalyzedVideo(videoId: string, accessToken: string) {
+export async function saveAnalyzedVideo(
+  videoId: string,
+  details: {
+    performed_reps: number | null;
+    load_value: number | null;
+    load_unit: 'lb' | 'kg' | null;
+  },
+  accessToken: string
+) {
   // Persist the analyzed clip to the user's saved list.
-  return requestJson<{ video_id: string; save_state: SaveState }>(
+  return requestJson<{
+    video_id: string;
+    save_state: SaveState;
+    performed_reps: number | null;
+    load_value: number | null;
+    load_unit: 'lb' | 'kg' | null;
+  }>(
     `/videos/${videoId}/save`,
     accessToken,
     {
       method: 'POST',
+      body: JSON.stringify(details),
     }
   );
 }

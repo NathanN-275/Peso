@@ -320,7 +320,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   webOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 20,
   },
   backdrop: {

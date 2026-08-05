@@ -17,6 +17,7 @@ import tokens from '../theme/tokens';
 import type { SavedVideo, SavedVideoOverview } from '../types/videoAnalysis';
 import {
   formatExerciseLabel,
+  getSavedWorkoutFacts,
 } from '../utils/savedVideos';
 
 type HomeScreenProps = {
@@ -102,6 +103,11 @@ function LiftFolderCard({
           {previewVideos.map((video) => (
             <View key={video.id} style={styles.previewTile}>
               <PreviewTile video={video} />
+              {getSavedWorkoutFacts(video) ? (
+                <Text style={styles.previewFacts} numberOfLines={1}>
+                  {getSavedWorkoutFacts(video)}
+                </Text>
+              ) : null}
             </View>
           ))}
           {extraCount > 0 ? (
@@ -380,6 +386,21 @@ const styles = StyleSheet.create({
   previewPlaceholder: {
     flex: 1,
     backgroundColor: '#D8D8D8',
+  },
+  previewFacts: {
+    position: 'absolute',
+    right: 4,
+    bottom: 4,
+    left: 4,
+    borderRadius: 5,
+    backgroundColor: 'rgba(0, 0, 0, 0.72)',
+    color: tokens.colors.textPrimary,
+    paddingHorizontal: 4,
+    paddingVertical: 3,
+    fontSize: 9,
+    lineHeight: 11,
+    fontWeight: '800',
+    textAlign: 'center',
   },
   extraTile: {
     alignItems: 'center',

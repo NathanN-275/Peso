@@ -7,6 +7,7 @@
     "plate_face",
     "rack_upright",
     "j_hook",
+    "safety_arm",
     "storage_peg"
   ],
   "keypoints": [
@@ -20,6 +21,8 @@
   "notes": [
     "Use original source clips, not screen recordings.",
     "Label dense keyframes across setup, descent, bottom, ascent, top, occlusion, and fastest motion.",
-    "Hardware labels are required so the tracker can reject rack/J-hook/storage latch candidates."
+    "Add tight barbell_collar boxes around the collar-center point track before YOLO conversion.",
+    "Hardware labels are required so the tracker can reject rack/J-hook/safety-arm/storage candidates.",
+    "Split train, validation, and test by source video only; never split frames from one source video."
   ]
 }

@@ -1,5 +1,6 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
+import { DEV_BACKEND_PROXY_PATH } from './backendDevProxyPolicy';
 import { getProductionBackendUrlError } from './backendUrlPolicy';
 
 export type BackendTarget =
@@ -12,6 +13,7 @@ const DEFAULT_BACKEND_PORT = '8000';
 
 export type BackendUrlSource =
   | 'env override'
+  | 'web same-origin proxy'
   | 'web local default'
   | 'expo-go lan auto'
   | 'expo-go lan fallback localhost'
@@ -68,10 +70,6 @@ function getBackendPort() {
 
 function buildLocalUrl(hostname: string) {
   return `http://${hostname}:${getBackendPort()}`;
-}
-
-function getWebBackendHost() {
-  return process.env.EXPO_PUBLIC_WEB_BACKEND_HOST || 'localhost';
 }
 
 export function getBackendTarget(): BackendTarget {
@@ -227,16 +225,9 @@ export function resolveBackendApiConfig(): BackendApiConfig {
   }
 
   if (Platform.OS === 'web') {
-    if (explicitUrl && isLoopbackBackendUrl(explicitUrl)) {
-      return {
-        url: explicitUrl,
-        source: 'env override',
-      };
-    }
-
     return {
-      url: buildLocalUrl(getWebBackendHost()),
-      source: 'web local default',
+      url: DEV_BACKEND_PROXY_PATH,
+      source: 'web same-origin proxy',
     };
   }
 

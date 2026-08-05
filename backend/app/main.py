@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 from .routes.videos import router as videos_router
+from .routes.analysis_runs import router as analysis_runs_router
 from .services.config import get_settings
 from .services.http_client import close_pooled_http_client
 
@@ -39,6 +40,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(LocalDevPrivateNetworkMiddleware)
 
 app.include_router(videos_router)
+app.include_router(analysis_runs_router)
 
 
 @app.get("/health")

@@ -55,7 +55,7 @@ test('createDevEnvironment preserves root .env backend URL', () => {
   });
 });
 
-test('createDevEnvironment uses loopback for web even when root .env targets physical device', () => {
+test('createDevEnvironment uses the same-origin proxy for web even when root .env targets a device', () => {
   withTempDir((rootDir) => {
     fs.writeFileSync(
       path.join(rootDir, '.env'),
@@ -73,8 +73,43 @@ test('createDevEnvironment uses loopback for web even when root .env targets phy
       frontendTarget: 'web',
     });
 
-    assert.equal(environment.expoEnv.EXPO_PUBLIC_BACKEND_URL, 'http://127.0.0.1:8000');
-    assert.match(environment.expoBackendUrlSource, /ignored root \.env LAN override/);
+    assert.equal(environment.expoEnv.EXPO_PUBLIC_BACKEND_URL, '/__peso_api');
+    assert.equal(environment.expoBackendUrlSource, 'web same-origin proxy');
+  });
+});
+
+test('createDevEnvironment routes local web requests through the Expo origin', () => {
+  const environment = createDevEnvironment({
+    rootDir: '/path/without/an/env/file',
+    baseEnv: {},
+    frontendTarget: 'web',
+  });
+
+  assert.equal(environment.expoEnv.EXPO_PUBLIC_BACKEND_URL, '/__peso_api');
+  assert.equal(environment.expoBackendUrlSource, 'web same-origin proxy');
+  assert.equal(environment.backendHealthUrl, 'http://127.0.0.1:8000/health');
+});
+
+test('createDevEnvironment keeps localhost for iOS Simulator runs', () => {
+  withTempDir((rootDir) => {
+    fs.writeFileSync(
+      path.join(rootDir, '.env'),
+      [
+        'EXPO_PUBLIC_BACKEND_URL=http://localhost:8000',
+        'EXPO_PUBLIC_BACKEND_TARGET=ios-simulator',
+        'EXPO_PUBLIC_BACKEND_PORT=8000',
+      ].join('\n')
+    );
+
+    const environment = createDevEnvironment({
+      rootDir,
+      baseEnv: {},
+      frontendTarget: 'native',
+    });
+
+    assert.equal(environment.expoEnv.EXPO_PUBLIC_BACKEND_URL, 'http://localhost:8000');
+    assert.equal(environment.expoEnv.EXPO_PUBLIC_BACKEND_TARGET, 'ios-simulator');
+    assert.equal(environment.backendHealthUrl, 'http://127.0.0.1:8000/health');
   });
 });
 

@@ -75,7 +75,7 @@ export default function ConfirmationDialog({
 
 const styles = StyleSheet.create({
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 100,
     alignItems: 'center',
     justifyContent: 'center',

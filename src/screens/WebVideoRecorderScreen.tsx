@@ -1102,7 +1102,7 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   videoOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 10,
@@ -1223,7 +1223,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#3A3A3C',
   },
   thumbnailRow: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     flexDirection: 'row',
   },
   thumbnailFrame: {

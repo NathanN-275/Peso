@@ -17,12 +17,17 @@ import tokens from '../theme/tokens';
 import {
   NormalizedTrackingPoint,
   TRACKING_PIN_NAMES,
+  TrackingBarbellTarget,
   TrackingPinName,
   TrackingSetup,
 } from '../types/trackingSetup';
 import { calculateVideoRect } from '../utils/videoReview';
 import { getPinnedFrameChangeAction } from '../../lib/trackingPinFramePolicy';
 import { layoutTrackingLabels } from '../../lib/trackingOverlayPolicy';
+import {
+  clampTrackingReferenceTimeMs,
+  resolveVideoDurationMs,
+} from '../../lib/videoDurationPolicy';
 import Button from './Button';
 import ConfirmationDialog from './ConfirmationDialog';
 import TimelineScrubber from './TimelineScrubber';
@@ -35,10 +40,10 @@ type TrackingPinSetupModalProps = {
   videoSize: { width: number; height: number };
   videoDurationMs?: number | null;
   initialSetup?: TrackingSetup | null;
-  barbellTarget?: TrackingSetup['barbell_target'];
+  barbellTarget?: TrackingBarbellTarget;
   pinNames?: readonly TrackingPinName[];
   cameraView?: 'side' | 'front';
-  onSave: (setup: TrackingSetup) => void;
+  onSave: (setup: TrackingSetup, resolvedDurationMs: number | null) => void;
   onCancel: () => void;
 };
 
@@ -50,6 +55,14 @@ const PIN_LABELS: Record<TrackingPinName, string> = {
   elbow: 'Elbow',
   wrist: 'Wrist',
   barbell: 'Barbell collar',
+  left_shoulder: 'Lifter left shoulder',
+  right_shoulder: 'Lifter right shoulder',
+  left_hip: 'Lifter left hip',
+  right_hip: 'Lifter right hip',
+  left_knee: 'Lifter left knee',
+  right_knee: 'Lifter right knee',
+  left_ankle: 'Lifter left ankle',
+  right_ankle: 'Lifter right ankle',
 };
 
 const PIN_COLORS: Record<TrackingPinName, string> = {
@@ -60,7 +73,22 @@ const PIN_COLORS: Record<TrackingPinName, string> = {
   elbow: '#F973B7',
   wrist: '#2DD4BF',
   barbell: '#FF6577',
+  left_shoulder: '#5DA9FF',
+  right_shoulder: '#8CC0FF',
+  left_hip: '#A77BFF',
+  right_hip: '#C3A6FF',
+  left_knee: '#FFB454',
+  right_knee: '#FFD090',
+  left_ankle: '#5DDBA6',
+  right_ankle: '#92E8C6',
 };
+
+function pinLabelWidth(name: TrackingPinName) {
+  if (name.startsWith('left_') || name.startsWith('right_')) {
+    return 124;
+  }
+  return name === 'barbell' || name === 'shoulder' ? 104 : 76;
+}
 
 function orientationCorrectedVideoSize(
   size: { width: number; height: number },
@@ -115,9 +143,7 @@ export default function TrackingPinSetupModal({
 }: TrackingPinSetupModalProps) {
   const [currentTime, setCurrentTime] = useState((initialSetup?.reference_time_ms ?? 0) / 1000);
   const [duration, setDuration] = useState(
-    typeof videoDurationMs === 'number' && Number.isFinite(videoDurationMs)
-      ? videoDurationMs / 1000
-      : 0
+    (resolveVideoDurationMs({ pickerDurationMs: videoDurationMs }) ?? 0) / 1000
   );
   const [videoLayout, setVideoLayout] = useState({ width: 0, height: 0 });
   const [displayVideoSize, setDisplayVideoSize] = useState(videoSize);
@@ -187,12 +213,22 @@ export default function TrackingPinSetupModal({
     setFrameChangeDialogVisible(false);
     setDontShowFrameChangeWarningAgain(false);
     setDisplayVideoSize({ width: videoSize.width, height: videoSize.height });
-    if (typeof videoDurationMs === 'number' && Number.isFinite(videoDurationMs)) {
-      setDuration(videoDurationMs / 1000);
-    }
+    const resolvedDurationMs = resolveVideoDurationMs({
+      playerDurationSeconds: player.duration || sourceLoad.duration,
+      pickerDurationMs: videoDurationMs,
+    });
+    setDuration((resolvedDurationMs ?? 0) / 1000);
     player.pause();
     player.currentTime = referenceTime;
-  }, [allowedPinSet, initialSetup, player, videoDurationMs, videoSize.height, videoSize.width, visible]);
+  }, [
+    allowedPinSet,
+    initialSetup,
+    player,
+    videoDurationMs,
+    videoSize.height,
+    videoSize.width,
+    visible,
+  ]);
 
   useEffect(() => {
     if (!visible) {
@@ -213,14 +249,18 @@ export default function TrackingPinSetupModal({
     if (loadedTrack?.size?.width > 0 && loadedTrack.size.height > 0) {
       setDisplayVideoSize(orientationCorrectedVideoSize(loadedTrack.size, videoSize));
     }
-    const nextDuration = sourceLoad.duration || player.duration || 0;
-    if (nextDuration > 0) {
-      setDuration(nextDuration);
+    const resolvedDurationMs = resolveVideoDurationMs({
+      playerDurationSeconds: sourceLoad.duration || player.duration,
+      pickerDurationMs: videoDurationMs,
+    });
+    if (resolvedDurationMs !== null) {
+      setDuration(resolvedDurationMs / 1000);
     }
   }, [
     player.duration,
     sourceLoad.availableVideoTracks,
     sourceLoad.duration,
+    videoDurationMs,
     videoSize.height,
     videoSize.width,
   ]);
@@ -229,11 +269,14 @@ export default function TrackingPinSetupModal({
     if (statusChange.status !== 'readyToPlay') {
       return;
     }
-    const nextDuration = player.duration || 0;
-    if (nextDuration > 0) {
-      setDuration(nextDuration);
+    const resolvedDurationMs = resolveVideoDurationMs({
+      playerDurationSeconds: player.duration,
+      pickerDurationMs: videoDurationMs,
+    });
+    if (resolvedDurationMs !== null) {
+      setDuration(resolvedDurationMs / 1000);
     }
-  }, [player.duration, statusChange.status]);
+  }, [player.duration, statusChange.status, videoDurationMs]);
 
   useEffect(() => {
     if (visible) {
@@ -255,7 +298,7 @@ export default function TrackingPinSetupModal({
         id: name,
         x: videoRect.x + (point.x * videoRect.width),
         y: videoRect.y + (point.y * videoRect.height),
-        labelWidth: name === 'barbell' ? 104 : name === 'shoulder' ? 104 : 76,
+        labelWidth: pinLabelWidth(name),
         labelHeight: 20,
       }];
     }),
@@ -413,9 +456,12 @@ export default function TrackingPinSetupModal({
     const nativeVideo = videoViewRef.current?.nativeRef?.current as
       | { duration?: number; videoWidth?: number; videoHeight?: number }
       | undefined;
-    const nextDuration = nativeVideo?.duration || player.duration || 0;
-    if (nextDuration > 0 && Number.isFinite(nextDuration)) {
-      setDuration(nextDuration);
+    const resolvedDurationMs = resolveVideoDurationMs({
+      playerDurationSeconds: nativeVideo?.duration || player.duration,
+      pickerDurationMs: videoDurationMs,
+    });
+    if (resolvedDurationMs !== null) {
+      setDuration(resolvedDurationMs / 1000);
     }
     if (
       nativeVideo?.videoWidth
@@ -434,15 +480,32 @@ export default function TrackingPinSetupModal({
     if (!canSavePins) {
       return;
     }
+    const resolvedDurationMs = resolveVideoDurationMs({
+      playerDurationSeconds: player.duration || sourceLoad.duration || duration,
+      pickerDurationMs: videoDurationMs,
+    });
+    const referenceTimeMs = clampTrackingReferenceTimeMs(currentTime, resolvedDurationMs);
     const anchors = Object.fromEntries(
       allowedPinNames.flatMap((name) => pins[name] ? [[name, pins[name]]] : [])
     ) as TrackingSetup['anchors'];
-    onSave({
-      version: 1,
-      reference_time_ms: Math.round(currentTime * 1000),
-      barbell_target: barbellTarget,
-      anchors,
-    });
+    const isFrontBodySetup = allowedPinNames.some(
+      (name) => name.startsWith('left_') || name.startsWith('right_')
+    );
+    onSave(
+      isFrontBodySetup
+        ? {
+          version: 2,
+          reference_time_ms: referenceTimeMs,
+          anchors,
+        }
+        : {
+          version: 1,
+          reference_time_ms: referenceTimeMs,
+          barbell_target: barbellTarget,
+          anchors,
+        },
+      resolvedDurationMs
+    );
   };
 
   if (!visible) {
@@ -620,7 +683,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   webOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     width: '100%',
     height: '100%',
     backgroundColor: '#05070A',
@@ -649,7 +712,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
     overflow: 'hidden',
   },
-  video: { ...StyleSheet.absoluteFillObject },
+  video: { ...StyleSheet.absoluteFill },
   pinMarker: { position: 'absolute' },
   pinLeaderLine: {
     position: 'absolute',

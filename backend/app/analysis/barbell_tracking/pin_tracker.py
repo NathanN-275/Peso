@@ -35,6 +35,8 @@ def _point_from_prior(
   *,
   fps: float,
 ) -> dict[str, Any] | None:
+  if prior.get("stale_track") or prior.get("velocity_cap_reused_previous"):
+    return None
   confidence = float(prior.get("confidence") or 0.0)
   is_reference = prior.get("tracking_state") == "reference"
   if confidence < PIN_PRIOR_MIN_CONFIDENCE and not is_reference:
@@ -57,6 +59,12 @@ def _point_from_prior(
     "trackingState": tracking_state,
     "manual_assisted": True,
   }
+
+
+def _pin_prior_rejection_reason(prior: dict[str, Any] | None) -> str:
+  if prior and (prior.get("stale_track") or prior.get("velocity_cap_reused_previous")):
+    return "stale_pin_track"
+  return "pin_roi_missing"
 
 
 def _expected_source_indices(
@@ -311,7 +319,7 @@ def build_pin_assisted_barbell_result(
       "confidence": 0.0,
       "template_score": None,
       "klt_inlier_count": None,
-      "rejection_reason": "pin_roi_missing",
+      "rejection_reason": _pin_prior_rejection_reason(prior),
     })
 
   estimated_count = 0
@@ -326,7 +334,8 @@ def build_pin_assisted_barbell_result(
       fps=fps,
     )
     if estimated_point is None:
-      frame_diagnostics[sample_index]["rejection_reason"] = estimate_reason
+      if frame_diagnostics[sample_index]["rejection_reason"] == "pin_roi_missing":
+        frame_diagnostics[sample_index]["rejection_reason"] = estimate_reason
       continue
 
     samples[sample_index] = estimated_point

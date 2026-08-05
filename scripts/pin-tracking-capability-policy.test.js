@@ -27,6 +27,17 @@ test('supported version one capability passes', () => {
   );
 });
 
+test('supported version two front-body capability passes', () => {
+  assert.equal(
+    getPinTrackingCapabilityError({
+      pin_assisted_tracking: true,
+      tracking_setup_versions: [1, 2],
+      reason: null,
+    }, 2),
+    null
+  );
+});
+
 test('missing migration returns a deployment-required error', () => {
   assert.match(
     getPinTrackingCapabilityError({

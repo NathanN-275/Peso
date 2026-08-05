@@ -63,6 +63,17 @@ POSE_FALLBACK_DEVICE=auto
 POSE_FALLBACK_DET_FREQUENCY=3
 POSE_FALLBACK_MODE=balanced
 POSE_DEBUG_LANDMARK_EXPORT_DIR=
+POSE_REPAIR_ENABLED=true
+POSE_REPAIR_MAX_GAP_FRAMES=3
+POSE_REPAIR_VELOCITY_GAP_FRAMES=2
+POSE_REPAIR_RECOVERY_HYSTERESIS_FRAMES=2
+YOLO_TRACKING_MODE=off
+YOLO_TRACKING_MODEL_PATH=
+YOLO_TRACKING_CLASS_NAMES=barbell_collar,rack_upright,j_hook,safety_arm,storage_peg,sleeve,plate_face
+YOLO_TRACKING_CONFIDENCE_THRESHOLD=0.45
+YOLO_TRACKING_NMS_IOU_THRESHOLD=0.45
+YOLO_TRACKING_INPUT_SIZE=640
+YOLO_TRACKING_MAX_COAST_SECONDS=0.25
 FFMPEG_BINARY=
 BACKEND_CORS_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhost:8082,http://127.0.0.1:8082,http://localhost:19006,http://127.0.0.1:19006,http://localhost:3000,http://127.0.0.1:3000
 BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true
@@ -197,6 +208,17 @@ From the project root:
 npm start
 ```
 
+Press `i` in the Expo terminal to open the iOS Simulator or `w` to open web.
+Both clients use the same FastAPI process: the simulator connects to
+`localhost:8000`, while web uses a same-origin Metro proxy at `/__peso_api` so
+local browser previews do not need direct access to port 8000.
+
+To open web immediately while still starting FastAPI:
+
+```bash
+npm run web
+```
+
 To run the frontend and backend separately:
 
 ```bash
@@ -204,17 +226,56 @@ npm run start:frontend
 npm run start:backend
 ```
 
+### Local analysis observability dashboard
+
+The desktop dashboard is a development-only tool for diagnosing a local analysis run without exposing diagnostics in the athlete app. It stores the most recent 20 traces under `backend/.peso/analysis-traces/`, which is ignored by Git. Production startup rejects `ANALYSIS_TRACE_ENABLED=true`.
+
+With the backend running locally, start it in a second terminal from the project root:
+
+```bash
+npm --prefix dashboard install
+npm run dashboard
+```
+
+Sign in with the same Supabase account used in Peso. The dashboard reads only traces owned by that account and retrieves playback through the existing owner-checked playback endpoint. It shows raw pose, pin/manual tracks, repaired pose, barbell path, stage timings, frame-level source and rejection decisions, and lift-specific diagnostics.
+
+Use **Feedback annotations** to review a time interval and selected keyframes as good, bad, or uncertain; identify affected systems and landmarks; record expected fallback behavior; and place optional ground-truth pose or barbell corrections on a frame. Annotations are owner-scoped local files under `backend/.peso/analysis-feedback/`, not Supabase data. **Export feedback bundle** produces the redacted trace files plus `feedback.json` and a readable `feedback-summary.md`; it still excludes user/video IDs, storage paths, URLs, bearer credentials, source video, and still-frame media.
+
+Tracing is enabled by default only when `BACKEND_ENV` is `development`, `dev`, or `local`. These optional backend variables make the behavior explicit:
+
+```dotenv
+ANALYSIS_TRACE_ENABLED=true
+ANALYSIS_TRACE_DIR=.peso/analysis-traces
+ANALYSIS_TRACE_MAX_RUNS=20
+```
+
 For Expo Go on a physical phone, the backend must bind to `0.0.0.0` so another device on the same network can reach it.
 
 ### Static web hosting
 
-Expo web can be exported as static assets:
+The public beta website is split into two browser surfaces:
+
+* Astro owns `/`, `/privacy`, and `/terms` under `web/`.
+* `App.web.tsx` owns the fixture-driven Expo prototype under `/app` while
+  `App.tsx` remains the native entry point.
+
+Start the marketing site while editing public pages:
 
 ```bash
-EXPO_PUBLIC_BACKEND_URL=https://api.example.com npm run web:export
+npm run web:marketing
 ```
 
-The static build writes to `dist/`. `netlify.toml` publishes that folder, falls routes back to `index.html`, and marks immutable assets cacheable. Production web builds must set `EXPO_PUBLIC_BACKEND_URL` or `EXPO_PUBLIC_PRODUCTION_BACKEND_URL` to the deployed FastAPI backend.
+Build both surfaces and preview the combined Netlify output locally:
+
+```bash
+npm run web:build
+npm run web:preview
+```
+
+The build writes the static Astro pages to `dist/` and the Expo single-page app
+to `dist/app/`. `netlify.toml` serves existing marketing files first and rewrites
+only unknown `/app/*` paths to `/app/index.html`. The milestone-one prototype
+uses fixtures and makes no backend calls.
 
 ## Backend API overview
 
@@ -299,6 +360,7 @@ The current version demonstrates the core product idea: upload a lifting video, 
 .
 ├── assets/                 # App assets and README demo media
 ├── backend/                # FastAPI video-analysis backend
+├── dashboard/              # Local development-only analysis trace dashboard
 ├── lib/                    # Shared frontend utilities
 ├── scripts/                # Development scripts
 ├── src/                    # Mobile app source code
