@@ -2,7 +2,7 @@
 
 Peso is a web and mobile lifting analysis product that turns a workout video into visual feedback, rep summaries, and technique cues.
 
-The current version focuses on side-view squat analysis. A user uploads or records a squat video, Peso processes the movement, tracks the lifter and barbell, and returns an analyzed playback view with movement overlays and coaching feedback.
+The current version focuses on side-view squat analysis. A front view is in development but still needs improvement to be more accurate. A user uploads or records a squat video, Peso processes the movement, tracks the lifter and barbell, and returns an analyzed playback view with movement overlays and coaching feedback.
 
 ## Demo
 
@@ -53,6 +53,8 @@ Current tracking priorities include:
 * smoothing the barbell path overlay without hiding uncertain observations
 * improving pose landmark consistency throughout each squat
 * returning a clear limited-analysis result when a video cannot be analyzed confidently
+
+Front-view videos are also supported, but that analysis is still in development and needs further accuracy improvements.
 
 ### Continue developing the mobile app
 
