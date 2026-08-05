@@ -2,6 +2,7 @@
 import BaseLayout from '../layouts/base-layout.astro';
 import SiteFooter from '../components/site-footer.astro';
 import SiteHeader from '../components/site-header.astro';
+import demoVideoUrl from '../../../assets/demo/peso-pose-overlay.mp4?url';
 
 const feedback = [
   ['Depth', 'See which reps reached depth and where the pattern changed.'],
@@ -64,13 +65,30 @@ const feedback = [
         </div>
         <div class="demo-stage">
           <div class="demo-outline">
-            <img
-              src="/demo/peso-demo-video.gif"
+            <video
+              id="peso-demo-video"
+              data-src={demoVideoUrl}
+              poster="/demo/peso-pose-overlay.jpg"
               width="360"
-              height="879"
-              alt="Animated Peso squat analysis with upper-back and hip tracking"
+              height="874"
+              controls
+              loop
+              muted
+              playsinline
+              preload="none"
               aria-describedby="demo-description"
-            />
+            >
+              <track
+                kind="descriptions"
+                src="/demo/peso-demo-captions.vtt"
+                srclang="en"
+                label="English descriptions"
+              />
+              Your browser does not support HTML video.
+            </video>
+            <noscript>
+              <a class="demo-fallback-link" href={demoVideoUrl}>Open the analysis video</a>
+            </noscript>
           </div>
           <div class="demo-readout" aria-label="Example analysis results">
             <p class="micro-label">Set summary</p>
@@ -142,4 +160,43 @@ const feedback = [
 
     <SiteFooter />
   </div>
+
+  <script>
+    const demoVideo = document.querySelector<HTMLVideoElement>('#peso-demo-video');
+
+    if (demoVideo) {
+      const attachVideoSource = () => {
+        const source = demoVideo.dataset.src;
+
+        if (source && !demoVideo.getAttribute('src')) {
+          demoVideo.src = source;
+          demoVideo.load();
+        }
+      };
+
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+      if (reducedMotion.matches) {
+        attachVideoSource();
+      } else if ('IntersectionObserver' in window) {
+        const observer = new IntersectionObserver(
+          ([entry]) => {
+            if (entry?.isIntersecting && entry.intersectionRatio >= 0.25) {
+              attachVideoSource();
+              void demoVideo.play().catch(() => {
+                // Browser autoplay policies may require the visitor to use the controls.
+              });
+            } else {
+              demoVideo.pause();
+            }
+          },
+          { threshold: [0, 0.25] },
+        );
+
+        observer.observe(demoVideo);
+      } else {
+        attachVideoSource();
+      }
+    }
+  </script>
 </BaseLayout>

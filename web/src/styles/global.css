@@ -71,7 +71,8 @@ h3 { font-size: 20px; }
 .section-heading--center { margin: 0 auto 60px; text-align: center; }
 .demo-stage { display: grid; grid-template-columns: minmax(230px, 330px) 1fr; gap: 18px; align-items: center; }
 .demo-outline { width: 100%; border: 1px solid #2b374a; border-radius: 24px; overflow: hidden; background: #05070a; box-shadow: 0 35px 80px rgba(0,0,0,.45); }
-.demo-outline img { width: 100%; height: auto; }
+.demo-outline img, .demo-outline video { width: 100%; height: auto; }
+.demo-fallback-link { display: block; padding: 16px; color: #84adff; font-weight: 700; text-align: center; text-underline-offset: 4px; }
 .demo-readout { padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); display: grid; gap: 16px; }
 .demo-readout > div { padding-top: 14px; border-top: 1px solid var(--line); }
 .demo-readout strong, .demo-readout span { display: block; }
