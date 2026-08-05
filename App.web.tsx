@@ -9,9 +9,18 @@ import { useFonts } from 'expo-font';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { BrowserRouter } from 'react-router';
+import { resolveWebRouterBase, resolveWebSurface } from './lib/webSurfacePolicy';
+import { AuthProvider } from './context/AuthContext';
+import NativeRoot from './src/native-root';
 import WebApp from './src/web/web-app';
 
-export default function App() {
+const webEnvironment = {
+  EXPO_PUBLIC_WEB_SURFACE: process.env.EXPO_PUBLIC_WEB_SURFACE,
+  EXPO_PUBLIC_WEB_ROUTER_BASE: process.env.EXPO_PUBLIC_WEB_ROUTER_BASE,
+  NODE_ENV: process.env.NODE_ENV,
+};
+
+function WebAppRoot() {
   const [fontsLoaded] = useFonts({
     ArchivoBlack_400Regular,
     Inter_400Regular,
@@ -31,11 +40,19 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <BrowserRouter basename="/app">
-        <WebApp />
-      </BrowserRouter>
+      <AuthProvider>
+        <BrowserRouter basename={resolveWebRouterBase(webEnvironment)}>
+          <WebApp />
+        </BrowserRouter>
+      </AuthProvider>
     </SafeAreaProvider>
   );
+}
+
+export default function App() {
+  return resolveWebSurface(webEnvironment) === 'web-app'
+    ? <WebAppRoot />
+    : <NativeRoot />;
 }
 
 const styles = StyleSheet.create({

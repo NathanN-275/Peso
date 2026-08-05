@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
+const { resolveByteRange } = require('../lib/httpRangePolicy');
 
 const distRoot = path.resolve(__dirname, '..', 'dist');
 const port = Number.parseInt(process.env.PORT ?? '4173', 10);
@@ -55,10 +56,36 @@ http
       return;
     }
 
-    response.writeHead(200, {
+    const fileSize = fs.statSync(filePath).size;
+    const rangeHeader = request.headers.range;
+    const byteRange = resolveByteRange(rangeHeader, fileSize);
+
+    if (rangeHeader && !byteRange) {
+      response.writeHead(416, {
+        'Accept-Ranges': 'bytes',
+        'Content-Range': `bytes */${fileSize}`,
+      });
+      response.end();
+      return;
+    }
+
+    const headers = {
+      'Accept-Ranges': 'bytes',
       'Cache-Control': 'no-store',
       'Content-Type': contentTypes[path.extname(filePath)] ?? 'application/octet-stream',
-    });
+      'Content-Length': byteRange ? byteRange.end - byteRange.start + 1 : fileSize,
+    };
+
+    if (byteRange) {
+      response.writeHead(206, {
+        ...headers,
+        'Content-Range': `bytes ${byteRange.start}-${byteRange.end}/${fileSize}`,
+      });
+      fs.createReadStream(filePath, byteRange).pipe(response);
+      return;
+    }
+
+    response.writeHead(200, headers);
     fs.createReadStream(filePath).pipe(response);
   })
   .listen(port, '127.0.0.1', () => {

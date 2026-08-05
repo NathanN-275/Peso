@@ -1,4 +1,5 @@
-import { createContext, use, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Asset } from 'expo-asset';
 import {
   Image,
   Pressable,
@@ -23,13 +24,24 @@ import {
   useParams,
 } from 'react-router';
 import tokens from '../theme/tokens';
+import { useAuth } from '../../context/AuthContext';
 import {
-  activityCopy,
-  prototypeScenarios,
-  savedLifts,
-  type PrototypeScenario,
-  type SavedLiftFixture,
-} from './fixtures';
+  createSavedLiftExport,
+  deleteSavedLifts,
+  getSavedLiftExport,
+  getSavedVideoPlaybackUrl,
+  getSavedVideos,
+} from '../../lib/backendApi';
+import { readSidebarCollapsed, writeSidebarCollapsed } from '../../lib/sidebarPreferencePolicy';
+import {
+  normalizeSavedLiftView,
+  pruneSavedLiftSelection,
+  selectVisibleSavedLifts,
+  toggleSavedLiftSelection,
+  type SavedLiftView,
+} from '../../lib/savedLiftSelectionPolicy';
+import type { SavedLiftExportJob, SavedVideo, VideoAnalysisRep } from '../types/videoAnalysis';
+import { WebDemoSessionProvider, useWebDemoSession } from './web-demo-session';
 
 const colors = {
   ...tokens.colors,
@@ -55,23 +67,56 @@ const fonts = {
   bold: 'Inter_700Bold',
 };
 
-const previewImage = require('../../assets/demo/peso-pose-overlay.jpg') as ImageSourcePropType;
+const previewImageAsset = require('../../assets/demo/peso-pose-overlay.jpg') as number;
+const previewImage = previewImageAsset as ImageSourcePropType;
 const barPathImage = require('../../assets/demo/peso-pin-assisted-bar-path.jpg') as ImageSourcePropType;
 const logoImage = require('../../assets/peso-logo.png') as ImageSourcePropType;
+const analyzedVideoAsset = require('../../assets/demo/peso-pose-overlay.mp4') as number;
+const analyzedVideoUri = Asset.fromModule(analyzedVideoAsset).uri;
+const analyzedVideoPosterUri = Asset.fromModule(previewImageAsset).uri;
 
-type ScenarioContextValue = {
-  scenario: PrototypeScenario;
-  setScenario: (scenario: PrototypeScenario) => void;
-};
+function formatFileSize(size: number | null) {
+  if (size === null) return 'Size unavailable';
+  if (size < 1_000_000) return `${Math.max(1, Math.round(size / 1_000))} KB`;
+  return `${(size / 1_000_000).toFixed(1)} MB`;
+}
 
-const ScenarioContext = createContext<ScenarioContextValue | null>(null);
+function formatTime(seconds: number | null) {
+  const safeSeconds = Number.isFinite(seconds) ? Math.max(0, seconds ?? 0) : 0;
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainingSeconds = Math.floor(safeSeconds % 60);
+  return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
+}
 
-function useScenario() {
-  const value = use(ScenarioContext);
-  if (!value) {
-    throw new Error('ScenarioContext is unavailable');
-  }
-  return value;
+function titleCase(value: string) {
+  return value.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatSavedDate(value: string | null) {
+  if (!value) return 'Date unavailable';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Date unavailable';
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+}
+
+function savedLiftRepCount(lift: SavedVideo) {
+  if (lift.performed_reps) return lift.performed_reps;
+  const detected = lift.analysis?.result_json.rep_count;
+  return typeof detected === 'number' ? detected : lift.analysis?.rep_data.length ?? 0;
+}
+
+function savedLiftLoad(lift: SavedVideo) {
+  const value = lift.load_value ?? lift.weight;
+  const unit = lift.load_unit ?? lift.weight_unit;
+  return value !== null && value !== undefined && unit ? `${value} ${unit}` : 'Load not recorded';
+}
+
+function exportFailureMessage(code: string | null) {
+  if (code === 'archive_too_large') return 'This selection is too large for one export bundle.';
+  if (code === 'capacity_unavailable') return 'Export capacity is busy. Try again in a moment.';
+  if (code === 'lift_unavailable') return 'One or more selected Saved Lifts are no longer exportable.';
+  if (code === 'archive_missing') return 'The temporary export archive is no longer available.';
+  return 'Peso could not prepare this export. Try again.';
 }
 
 type ActionButtonProps = {
@@ -231,14 +276,38 @@ function CheckRow({ checked, label, onPress }: { checked: boolean; label: React.
 
 function LoginScreen() {
   const navigate = useNavigate();
+  const { session, signInWithEmail, configError } = useAuth();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (session) navigate('/', { replace: true });
+  }, [navigate, session]);
+
+  const signIn = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await signInWithEmail(email.trim(), password);
+      navigate('/', { replace: true });
+    } catch (signInError) {
+      setError(signInError instanceof Error ? signInError.message : 'Unable to sign in.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <AuthLayout eyebrow="Welcome back" title="Sign in to Peso" description="Use the same account as the mobile app.">
-      <Field label="Email" placeholder="you@example.com" />
-      <Field label="Password" placeholder="Enter your password" secureTextEntry />
+      <Field label="Email" placeholder="you@example.com" value={email} onChangeText={setEmail} />
+      <Field label="Password" placeholder="Enter your password" secureTextEntry value={password} onChangeText={setPassword} />
+      {(error || configError) && <Text selectable style={styles.formError}>{error ?? configError}</Text>}
       <Pressable accessibilityRole="link" onPress={() => navigate('/reset')}>
         <Text style={styles.inlineLink}>Forgot password?</Text>
       </Pressable>
-      <ActionButton label="Sign in" onPress={() => navigate('/')} />
+      <ActionButton label={submitting ? 'Signing in…' : 'Sign in'} disabled={submitting || !email.trim() || !password} onPress={() => void signIn()} />
       <View style={styles.formFooterRow}>
         <Text style={styles.mutedText}>New to Peso?</Text>
         <Pressable accessibilityRole="link" onPress={() => navigate('/signup')}>
@@ -251,19 +320,39 @@ function LoginScreen() {
 
 function SignupScreen() {
   const navigate = useNavigate();
+  const { signUpWithEmail, configError } = useAuth();
   const [usResident, setUsResident] = useState(false);
   const [terms, setTerms] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const signUp = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const result = await signUpWithEmail(email.trim(), password);
+      navigate(result.requiresEmailConfirmation ? '/verify' : '/', { replace: true });
+    } catch (signUpError) {
+      setError(signUpError instanceof Error ? signUpError.message : 'Unable to create account.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <AuthLayout eyebrow="Limited beta" title="Create your account" description="The web beta is free and currently available to US residents.">
-      <Field label="Email" placeholder="you@example.com" />
-      <Field label="Password" placeholder="At least 8 characters" secureTextEntry />
+      <Field label="Email" placeholder="you@example.com" value={email} onChangeText={setEmail} />
+      <Field label="Password" placeholder="At least 8 characters" secureTextEntry value={password} onChangeText={setPassword} />
       <CheckRow checked={usResident} onPress={() => setUsResident(!usResident)} label="I confirm that I reside in the United States." />
       <CheckRow checked={terms} onPress={() => setTerms(!terms)} label="I agree to the beta Terms and acknowledge the Privacy Policy." />
       <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification placeholder">
         <Text style={styles.turnstileTitle}>Security check</Text>
         <Text style={styles.turnstileBody}>Turnstile appears here when staging authentication is connected.</Text>
       </View>
-      <ActionButton label="Create account" disabled={!usResident || !terms} onPress={() => navigate('/verify')} />
+      {(error || configError) && <Text selectable style={styles.formError}>{error ?? configError}</Text>}
+      <ActionButton label={submitting ? 'Creating account…' : 'Create account'} disabled={submitting || !email.trim() || password.length < 8 || !usResident || !terms} onPress={() => void signUp()} />
       <View style={styles.formFooterRow}>
         <Text style={styles.mutedText}>Already have an account?</Text>
         <Pressable accessibilityRole="link" onPress={() => navigate('/login')}>
@@ -277,38 +366,57 @@ function SignupScreen() {
 function VerifyScreen() {
   const navigate = useNavigate();
   return (
-    <AuthLayout eyebrow="Check your inbox" title="Verify your email" description="We sent a verification link to nathan@example.com.">
+    <AuthLayout eyebrow="Check your inbox" title="Verify your email" description="Open the verification link sent to your email address.">
       <View style={styles.messageCard}>
         <Text selectable style={styles.messageCardTitle}>Email verification is required</Text>
-        <Text selectable style={styles.messageCardBody}>Open the link on this device. This prototype does not send an email.</Text>
+        <Text selectable style={styles.messageCardBody}>After verification, return here and sign in with the same Peso Account.</Text>
       </View>
-      <ActionButton label="I verified my email" onPress={() => navigate('/')} />
-      <ActionButton label="Resend verification" variant="secondary" onPress={() => undefined} />
+      <ActionButton label="Continue to sign in" onPress={() => navigate('/login')} />
     </AuthLayout>
   );
 }
 
 function ResetScreen() {
   const navigate = useNavigate();
+  const { resetPasswordForEmail, configError } = useAuth();
+  const [email, setEmail] = useState('');
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const reset = async () => {
+    setError(null);
+    try {
+      await resetPasswordForEmail(email.trim());
+      setMessage('Check your email for a secure reset link.');
+    } catch (resetError) {
+      setError(resetError instanceof Error ? resetError.message : 'Unable to send a reset link.');
+    }
+  };
+
   return (
     <AuthLayout eyebrow="Account recovery" title="Reset your password" description="Enter your email and we’ll send a secure reset link.">
-      <Field label="Email" placeholder="you@example.com" />
+      <Field label="Email" placeholder="you@example.com" value={email} onChangeText={setEmail} />
       <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification placeholder">
         <Text style={styles.turnstileTitle}>Security check</Text>
         <Text style={styles.turnstileBody}>Turnstile appears here when staging authentication is connected.</Text>
       </View>
-      <ActionButton label="Send reset link" onPress={() => navigate('/login')} />
+      {(error || configError) && <Text selectable style={styles.formError}>{error ?? configError}</Text>}
+      {message && <Text selectable style={styles.formSuccess}>{message}</Text>}
+      <ActionButton label="Send reset link" disabled={!email.trim()} onPress={() => void reset()} />
       <ActionButton label="Back to sign in" variant="quiet" onPress={() => navigate('/login')} />
     </AuthLayout>
   );
 }
 
-const navItems = [
+const desktopNavItems = [
   { path: '/', label: 'Home', short: 'H' },
   { path: '/record', label: 'Record', short: 'R' },
+  { path: '/upload', label: 'Upload Video', short: 'U' },
   { path: '/saved-lifts', label: 'Saved Lifts', short: 'S' },
   { path: '/profile', label: 'Profile', short: 'P' },
 ];
+
+const mobileNavItems = desktopNavItems.filter((item) => item.path !== '/upload');
 
 const routeTitles: Record<string, string> = {
   '/': 'Home',
@@ -325,17 +433,36 @@ function navItemActive(pathname: string, path: string) {
   return pathname === path || pathname.startsWith(`${path}/`);
 }
 
-function Navigation({ compact = false, mobile = false }: { compact?: boolean; mobile?: boolean }) {
+function Navigation({
+  compact = false,
+  mobile = false,
+  onToggleCompact,
+}: {
+  compact?: boolean;
+  mobile?: boolean;
+  onToggleCompact?: () => void;
+}) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const items = mobile ? navItems.slice(0, 4) : navItems;
+  const items = mobile ? mobileNavItems : desktopNavItems;
 
   return (
     <View style={mobile ? styles.bottomNav : [styles.sidebar, compact && styles.sidebarCompact]} accessibilityLabel="Primary navigation">
       {!mobile && (
-        <Pressable accessibilityRole="link" onPress={() => navigate('/')} style={styles.sidebarWordmark}>
-          <Wordmark compact={compact} />
-        </Pressable>
+        <View style={styles.sidebarHeader}>
+          <Pressable accessibilityRole="link" onPress={() => navigate('/')} style={styles.sidebarWordmark}>
+            <Wordmark compact={compact} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={compact ? 'Expand sidebar' : 'Collapse sidebar'}
+            accessibilityState={{ expanded: !compact }}
+            onPress={onToggleCompact}
+            style={({ pressed }) => [styles.sidebarToggle, pressed && styles.navItemPressed]}
+          >
+            <Text style={styles.sidebarToggleText}>{compact ? '›' : '‹'}</Text>
+          </Pressable>
+        </View>
       )}
       <View style={mobile ? styles.bottomNavItems : styles.navList}>
         {items.map((item) => {
@@ -367,7 +494,6 @@ function Navigation({ compact = false, mobile = false }: { compact?: boolean; mo
             <View style={styles.navIcon}><Text style={styles.navIconText}>⚙</Text></View>
             {!compact && <Text style={styles.navLabel}>Settings</Text>}
           </Pressable>
-          {!compact && <Text selectable style={styles.prototypeBadge}>Fixture prototype · No backend</Text>}
         </View>
       )}
     </View>
@@ -377,7 +503,11 @@ function Navigation({ compact = false, mobile = false }: { compact?: boolean; mo
 function AppShell() {
   const { width, height } = useWindowDimensions();
   const location = useLocation();
-  const compact = width >= 768 && width < 1200;
+  const { user } = useAuth();
+  const { session, clearSession } = useWebDemoSession();
+  const [compact, setCompact] = useState(() =>
+    readSidebarCollapsed(typeof window === 'undefined' ? null : window.localStorage)
+  );
   const mobile = width < 768;
   const title = location.pathname.startsWith('/saved-lifts/')
     ? 'Saved Lift'
@@ -386,26 +516,47 @@ function AppShell() {
       : location.pathname.startsWith('/review')
         ? 'Review analysis'
         : routeTitles[location.pathname] ?? 'Peso';
+  const accountName = typeof user?.user_metadata?.name === 'string'
+    ? user.user_metadata.name
+    : user?.email?.split('@')[0] ?? 'Peso athlete';
+  const accountInitial = accountName.charAt(0).toUpperCase() || 'P';
+  const accountSurface = location.pathname.startsWith('/saved-lifts')
+    || location.pathname === '/profile'
+    || location.pathname === '/settings';
 
   useEffect(() => {
     document.title = `${title} — Peso`;
   }, [title]);
 
+  useEffect(() => {
+    writeSidebarCollapsed(
+      typeof window === 'undefined' ? null : window.localStorage,
+      compact
+    );
+  }, [compact]);
+
+  useEffect(() => {
+    const selectionRoutes = location.pathname === '/upload' || location.pathname === '/setup';
+    if (session.selectedFile && session.phase === 'idle' && !selectionRoutes) {
+      clearSession();
+    }
+  }, [clearSession, location.pathname, session.phase, session.selectedFile]);
+
   return (
     <View style={[styles.appRoot, { height: Math.max(height, 640) }]}>
       <View style={styles.appRow}>
-        {!mobile && <Navigation compact={compact} />}
+        {!mobile && <Navigation compact={compact} onToggleCompact={() => setCompact((value) => !value)} />}
         <View style={styles.appMain}>
           <View style={styles.topbar}>
             <View>
-              <Text selectable style={styles.topbarKicker}>PESO WEB BETA</Text>
+              <Text selectable style={styles.topbarKicker}>{accountSurface ? 'PESO ACCOUNT' : 'DEMO ANALYSIS'}</Text>
               <Text accessibilityRole="header" selectable style={styles.topbarTitle}>{title}</Text>
             </View>
             <View style={styles.topbarAccount}>
-              <View style={styles.avatar}><Text style={styles.avatarText}>N</Text></View>
+              <View style={styles.avatar}><Text style={styles.avatarText}>{accountInitial}</Text></View>
               {width >= 560 && (
                 <View>
-                  <Text selectable style={styles.accountName}>Nathan</Text>
+                  <Text selectable style={styles.accountName}>{accountName}</Text>
                   <Text selectable style={styles.accountPlan}>Beta tester</Text>
                 </View>
               )}
@@ -421,6 +572,28 @@ function AppShell() {
   );
 }
 
+function AccountRoute() {
+  const { session, initializing, configError } = useAuth();
+
+  if (initializing) {
+    return (
+      <View style={styles.routeLoading} accessibilityLabel="Loading Peso Account">
+        <Text selectable style={styles.mutedText}>Loading your Peso Account…</Text>
+      </View>
+    );
+  }
+
+  if (configError) {
+    return (
+      <View style={styles.routeLoading} role="alert">
+        <Text selectable style={styles.formError}>{configError}</Text>
+      </View>
+    );
+  }
+
+  return session ? <AppShell /> : <Navigate to="/login" replace />;
+}
+
 function PageScroll({ children }: { children: React.ReactNode }) {
   return (
     <ScrollView
@@ -434,34 +607,9 @@ function PageScroll({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ScenarioPicker() {
-  const { scenario, setScenario } = useScenario();
-  return (
-    <View style={styles.scenarioPanel}>
-      <View>
-        <Text selectable style={styles.scenarioTitle}>Prototype state</Text>
-        <Text selectable style={styles.scenarioDescription}>Switch fixtures to inspect empty, active, error, and limit behavior.</Text>
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scenarioList}>
-        {prototypeScenarios.map((item) => (
-          <Pressable
-            key={item.value}
-            accessibilityRole="radio"
-            accessibilityState={{ checked: scenario === item.value }}
-            onPress={() => setScenario(item.value)}
-            style={[styles.scenarioChip, scenario === item.value && styles.scenarioChipActive]}
-          >
-            <Text style={[styles.scenarioChipText, scenario === item.value && styles.scenarioChipTextActive]}>{item.label}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-    </View>
-  );
-}
-
 function CapacityCard() {
-  const { scenario } = useScenario();
-  const used = scenario === 'quota' ? 3 : scenario === 'empty' ? 0 : 1;
+  const { session } = useWebDemoSession();
+  const used = session.phase === 'idle' ? 0 : 1;
   const remaining = 3 - used;
   return (
     <View style={styles.capacityCard}>
@@ -484,26 +632,25 @@ function CapacityCard() {
 
 function ActivityCard() {
   const navigate = useNavigate();
-  const { scenario } = useScenario();
-  const copy = activityCopy[scenario];
-  const toneStyle =
-    copy.tone === 'success'
-      ? styles.activityDotSuccess
-      : copy.tone === 'danger'
-        ? styles.activityDotDanger
-        : copy.tone === 'warning'
-          ? styles.activityDotWarning
-          : copy.tone === 'info'
-            ? styles.activityDotInfo
-            : styles.activityDotNeutral;
+  const { session } = useWebDemoSession();
+  const copy = session.phase === 'queued'
+    ? { title: 'Squat set is queued', detail: 'Your demo analysis will begin in a moment.' }
+    : session.phase === 'analyzing'
+      ? { title: 'Analyzing your squat', detail: `Tracking movement and bar position · ${session.percentage}%` }
+      : session.phase === 'ready'
+        ? { title: 'Analysis ready to review', detail: 'Your simulated result is ready when you are.' }
+        : { title: 'No active analysis', detail: 'Record or upload a side-view squat to start a demo analysis.' };
+  const toneStyle = session.phase === 'ready'
+    ? styles.activityDotSuccess
+    : session.phase === 'idle'
+      ? styles.activityDotNeutral
+      : styles.activityDotInfo;
 
-  const hasAction = scenario !== 'empty' && scenario !== 'quota';
-  const actionLabel = scenario === 'completed' ? 'Review result' : scenario === 'failed' ? 'Try again' : 'View activity';
-  const onAction = () => {
-    if (scenario === 'completed') navigate('/review/job-2042');
-    else if (scenario === 'failed' || scenario === 'expired') navigate('/upload');
-    else navigate('/processing/job-2042');
-  };
+  const hasAction = session.phase !== 'idle';
+  const actionLabel = session.phase === 'ready' ? 'Review result' : 'View activity';
+  const onAction = () => navigate(
+    session.phase === 'ready' ? '/review/demo-analysis' : '/processing/demo-analysis'
+  );
 
   return (
     <View style={styles.activityCard}>
@@ -549,24 +696,71 @@ function QuickAction({
   );
 }
 
-function LiftRow({ lift, onPress }: { lift: SavedLiftFixture; onPress: () => void }) {
+function useSavedLiftLibrary() {
+  const { session } = useAuth();
+  const [lifts, setLifts] = useState<SavedVideo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = async (signal?: AbortSignal) => {
+    if (!session?.access_token) return;
+    setLoading(true);
+    setError(null);
+    try {
+      setLifts(await getSavedVideos(session.access_token, signal));
+    } catch (loadError) {
+      if (!signal?.aborted) {
+        setError(loadError instanceof Error ? loadError.message : 'Unable to load Saved Lifts.');
+      }
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void refresh(controller.signal);
+    return () => controller.abort();
+  }, [session?.access_token]);
+
+  return { lifts, loading, error, refresh: () => refresh() };
+}
+
+function LiftRow({
+  lift,
+  onPress,
+  selectionMode = false,
+  selected = false,
+}: {
+  lift: SavedVideo;
+  onPress: () => void;
+  selectionMode?: boolean;
+  selected?: boolean;
+}) {
+  const exercise = titleCase(lift.exercise_type);
+  const reps = savedLiftRepCount(lift);
   return (
     <Pressable
-      accessibilityRole="link"
-      accessibilityLabel={`${lift.exercise}, ${lift.load}, ${lift.performedReps} reps, ${lift.date}`}
+      accessibilityRole={selectionMode ? 'checkbox' : 'link'}
+      accessibilityState={selectionMode ? { checked: selected } : undefined}
+      accessibilityLabel={`${exercise}, ${savedLiftLoad(lift)}, ${reps} reps, ${formatSavedDate(lift.saved_at ?? lift.created_at)}`}
       onPress={onPress}
-      style={({ pressed }) => [styles.liftRow, pressed && styles.liftRowPressed]}
+      style={({ pressed }) => [styles.liftRow, selected && styles.liftSelected, pressed && styles.liftRowPressed]}
     >
-      <Image source={lift.exercise === 'Squat' ? barPathImage : previewImage} style={styles.liftThumbnail as ImageStyle} accessibilityIgnoresInvertColors />
+      {selectionMode && (
+        <View style={[styles.selectionCheckbox, selected && styles.selectionCheckboxSelected]}>
+          {selected && <Text style={styles.checkboxMark}>✓</Text>}
+        </View>
+      )}
+      <Image source={lift.thumbnail_url ? { uri: lift.thumbnail_url } : previewImage} style={styles.liftThumbnail as ImageStyle} accessibilityIgnoresInvertColors />
       <View style={styles.liftRowCopy}>
         <View style={styles.liftTitleRow}>
-          <Text selectable style={styles.liftExercise}>{lift.exercise}</Text>
-          {!lift.webEligible && <View style={styles.mobileBadge}><Text style={styles.mobileBadgeText}>Mobile history</Text></View>}
+          <Text selectable style={styles.liftExercise}>{exercise}</Text>
         </View>
-        <Text selectable style={styles.liftMeta}>{lift.load} · {lift.performedReps} performed reps</Text>
-        <Text selectable style={styles.liftDate}>{lift.date}</Text>
+        <Text selectable style={styles.liftMeta}>{savedLiftLoad(lift)} · {reps} performed reps</Text>
+        <Text selectable style={styles.liftDate}>{formatSavedDate(lift.saved_at ?? lift.created_at)}</Text>
       </View>
-      <Text style={styles.liftArrow}>›</Text>
+      {!selectionMode && <Text style={styles.liftArrow}>›</Text>}
     </Pressable>
   );
 }
@@ -574,11 +768,11 @@ function LiftRow({ lift, onPress }: { lift: SavedLiftFixture; onPress: () => voi
 function HomeScreen() {
   const navigate = useNavigate();
   const { width } = useWindowDimensions();
-  const { scenario } = useScenario();
-  const blocked = scenario === 'quota';
+  const { session } = useWebDemoSession();
+  const { lifts, loading, error } = useSavedLiftLibrary();
+  const blocked = session.phase === 'queued' || session.phase === 'analyzing';
   return (
     <PageScroll>
-      <ScenarioPicker />
       <View style={styles.welcomeRow}>
         <View style={styles.welcomeCopy}>
           <Text accessibilityRole="header" selectable style={[styles.pageHeading, width < 768 && styles.pageHeadingMobile]}>Ready for your next set?</Text>
@@ -598,13 +792,13 @@ function HomeScreen() {
         </View>
         <ActivityCard />
       </View>
-      {scenario === 'completed' && (
+      {session.phase === 'ready' && (
         <View style={styles.pendingReviewBanner}>
           <View>
             <Text selectable style={styles.pendingTitle}>1 result needs your review</Text>
             <Text selectable style={styles.pendingBody}>Save or discard it before it expires tomorrow at 8:42 AM.</Text>
           </View>
-          <ActionButton label="Review now" compact onPress={() => navigate('/review/job-2042')} />
+          <ActionButton label="Review now" compact onPress={() => navigate('/review/demo-analysis')} />
         </View>
       )}
       <View style={styles.sectionBlock}>
@@ -615,7 +809,10 @@ function HomeScreen() {
           </Pressable>
         </View>
         <View style={styles.liftList}>
-          {savedLifts.slice(0, 3).map((lift) => <LiftRow key={lift.id} lift={lift} onPress={() => navigate(`/saved-lifts/${lift.id}`)} />)}
+          {loading && <Text selectable style={styles.mutedText}>Loading Saved Lifts…</Text>}
+          {error && <Text selectable style={styles.formError}>{error}</Text>}
+          {!loading && !error && lifts.length === 0 && <Text selectable style={styles.mutedText}>Your shared Saved Lift Library is empty.</Text>}
+          {lifts.slice(0, 3).map((lift) => <LiftRow key={lift.id} lift={lift} onPress={() => navigate(`/saved-lifts/${lift.id}`)} />)}
         </View>
       </View>
     </PageScroll>
@@ -656,9 +853,9 @@ function RecordScreen() {
               </View>
               <View style={styles.cameraStatus}>
                 <View style={[styles.recordingDot, recording && styles.recordingDotLive]} />
-                <Text style={styles.cameraStatusText}>{recording ? 'Prototype recording · 00:08' : recorded ? 'Clip ready · 00:18' : 'Camera preview'}</Text>
+              <Text style={styles.cameraStatusText}>{recording ? 'Demo recording · 00:08' : recorded ? 'Clip ready · 00:18' : 'Camera preview'}</Text>
               </View>
-              <Text selectable style={styles.cameraFixtureNote}>Camera permission is not requested by this fixture prototype.</Text>
+              <Text selectable style={styles.cameraFixtureNote}>Camera permission is not requested in this demo.</Text>
             </View>
             <View style={styles.buttonRow}>
               {!recording && !recorded && <ActionButton label="Start recording" onPress={() => setRecording(true)} />}
@@ -674,35 +871,59 @@ function RecordScreen() {
   );
 }
 
-function pickLocalVideo(onSelected: (name: string) => void) {
+function pickLocalVideo(onSelected: (file: File) => void) {
   if (typeof document === 'undefined') return;
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = 'video/mp4,video/quicktime,video/webm';
+  input.hidden = true;
   input.onchange = () => {
     const file = input.files?.[0];
-    if (file) onSelected(file.name);
+    if (file) onSelected(file);
+    input.remove();
   };
+  input.addEventListener('cancel', () => input.remove(), { once: true });
+  document.body.appendChild(input);
   input.click();
 }
 
 function UploadScreen() {
   const navigate = useNavigate();
-  const [fileName, setFileName] = useState<string | null>(null);
+  const { session, selectFile } = useWebDemoSession();
   return (
     <PageScroll>
       <View style={styles.narrowPage}>
         <Text accessibilityRole="header" selectable style={styles.pageHeading}>Upload a squat video</Text>
-        <Text selectable style={styles.pageSubheading}>Choose a 15–30 second clip. MP4, MOV, and WebM are supported in the prototype.</Text>
+        <Text selectable style={styles.pageSubheading}>Choose a 15–30 second clip. MP4, MOV, and WebM are supported in this demo.</Text>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Choose a squat video from this device"
-          onPress={() => pickLocalVideo(setFileName)}
+          onPress={() => pickLocalVideo((file) => void selectFile(file))}
           style={({ pressed }) => [styles.dropZone, pressed && styles.dropZonePressed]}
         >
-          <View style={styles.uploadIcon}><Text style={styles.uploadIconText}>↑</Text></View>
-          <Text selectable style={styles.dropZoneTitle}>{fileName ?? 'Choose a video'}</Text>
-          <Text selectable style={styles.dropZoneBody}>{fileName ? 'The file stays on this device in the fixture prototype.' : 'Select one file up to 50 MB'}</Text>
+          {session.thumbnailStatus === 'ready' && session.thumbnail ? (
+            <Image
+              source={{ uri: session.thumbnail }}
+              style={styles.uploadThumbnail as ImageStyle}
+              accessibilityLabel="Thumbnail from the selected squat video"
+            />
+          ) : (
+            <View style={styles.uploadIcon}>
+              <Text style={styles.uploadIconText}>
+                {session.thumbnailStatus === 'fallback' ? '!' : '↑'}
+              </Text>
+            </View>
+          )}
+          <Text selectable style={styles.dropZoneTitle}>{session.filename ?? 'Choose a video'}</Text>
+          <Text selectable style={styles.dropZoneBody}>
+            {session.thumbnailStatus === 'loading'
+              ? 'Creating a local thumbnail…'
+              : session.thumbnailStatus === 'fallback'
+                ? 'This browser could not decode a thumbnail. You can still continue with the demo.'
+                : session.selectedFile
+                  ? `${formatFileSize(session.size)} · ${session.duration === null ? 'Duration unavailable' : formatTime(session.duration)} · Stays on this device`
+                  : 'Select one file up to 50 MB'}
+          </Text>
         </Pressable>
         <View style={styles.requirementsCard}>
           <Text selectable style={styles.requirementsTitle}>For the clearest result</Text>
@@ -711,8 +932,7 @@ function UploadScreen() {
           ))}
         </View>
         <View style={styles.buttonRow}>
-          <ActionButton label="Continue to setup" disabled={!fileName} onPress={() => navigate('/setup')} />
-          {!fileName && <ActionButton label="Use realistic demo file" variant="secondary" onPress={() => setFileName('squat-set-aug-04.mov')} />}
+          <ActionButton label="Continue to setup" disabled={!session.selectedFile} onPress={() => navigate('/setup')} />
         </View>
       </View>
     </PageScroll>
@@ -733,19 +953,34 @@ function SelectCard({ selected, title, description, onPress }: { selected: boole
 
 function SetupScreen() {
   const navigate = useNavigate();
-  const { setScenario } = useScenario();
+  const { session, startAnalysis, clearSession } = useWebDemoSession();
   const [view, setView] = useState<'side' | 'front'>('side');
   const [visible, setVisible] = useState(true);
   const submit = () => {
-    setScenario('queued');
-    navigate('/processing/job-2042');
+    startAnalysis();
+    navigate('/processing/demo-analysis');
   };
+
+  if (!session.selectedFile) {
+    return <Navigate to="/upload" replace />;
+  }
+
   return (
     <PageScroll>
       <View style={styles.setupGrid}>
         <View>
-          <Image source={previewImage} style={styles.setupPreview as ImageStyle} accessibilityLabel="Selected squat video preview" />
-          <View style={styles.previewMeta}><Text style={styles.previewMetaText}>squat-set-aug-04.mov</Text><Text style={styles.previewMetaText}>00:18</Text></View>
+          {session.thumbnailStatus === 'ready' && session.thumbnail ? (
+            <Image source={{ uri: session.thumbnail }} style={styles.setupPreview as ImageStyle} accessibilityLabel="Selected squat video preview" />
+          ) : (
+            <View style={styles.setupPreviewFallback} accessibilityLabel="Video thumbnail unavailable">
+              <Text style={styles.setupPreviewFallbackIcon}>▶</Text>
+              <Text selectable style={styles.setupPreviewFallbackText}>Preview unavailable</Text>
+            </View>
+          )}
+          <View style={styles.previewMeta}>
+            <Text numberOfLines={1} style={styles.previewMetaText}>{session.filename}</Text>
+            <Text style={styles.previewMetaText}>{session.duration === null ? '—:—' : formatTime(session.duration)}</Text>
+          </View>
         </View>
         <View style={styles.setupPanel}>
           <Text accessibilityRole="header" selectable style={styles.pageHeading}>Confirm the setup</Text>
@@ -756,10 +991,10 @@ function SetupScreen() {
             <SelectCard selected={view === 'front'} title="Front / three-quarter" description="Bilateral tracking; depth feedback may be limited." onPress={() => setView('front')} />
           </View>
           <CheckRow checked={visible} onPress={() => setVisible(!visible)} label="The lifter’s full body and visible end of the bar stay in frame." />
-          <View style={styles.infoCallout}><Text style={styles.infoCalloutText}>This fixture creates no upload or job. Staging will validate the file before accepting a quota slot.</Text></View>
+          <View style={styles.infoCallout}><Text style={styles.infoCalloutText}>This demo keeps the selected file on your device and simulates the analysis locally.</Text></View>
           <View style={styles.buttonRow}>
             <ActionButton label="Submit for analysis" disabled={!visible} onPress={submit} />
-            <ActionButton label="Choose another video" variant="secondary" onPress={() => navigate('/upload')} />
+            <ActionButton label="Choose another video" variant="secondary" onPress={() => { clearSession(); navigate('/upload'); }} />
           </View>
         </View>
       </View>
@@ -769,26 +1004,37 @@ function SetupScreen() {
 
 function ProcessingScreen() {
   const navigate = useNavigate();
-  const { scenario, setScenario } = useScenario();
-  const effectiveScenario: PrototypeScenario = ['queued', 'processing', 'completed', 'failed', 'expired'].includes(scenario) ? scenario : 'processing';
-  const copy = activityCopy[effectiveScenario];
-  const stepIndex = effectiveScenario === 'queued' ? 0 : effectiveScenario === 'processing' ? 1 : 2;
+  const { session, cancelAnalysis, clearSession } = useWebDemoSession();
 
-  const advance = () => {
-    if (effectiveScenario === 'queued') setScenario('processing');
-    else if (effectiveScenario === 'processing') setScenario('completed');
-    else if (effectiveScenario === 'completed') navigate('/review/job-2042');
-  };
+  if (session.phase === 'idle') {
+    return <Navigate to="/upload" replace />;
+  }
+
+  const stepIndex = session.phase === 'queued' ? 0 : session.phase === 'analyzing' ? 1 : 2;
+  const title = session.phase === 'queued'
+    ? 'Squat set is queued'
+    : session.phase === 'analyzing'
+      ? 'Analyzing your squat'
+      : 'Analysis ready to review';
+  const detail = session.phase === 'queued'
+    ? 'Your demo analysis will begin in a moment.'
+    : session.phase === 'analyzing'
+      ? 'Tracking movement and bar position in this client-side simulation.'
+      : 'The simulated result is complete. Review it when you are ready.';
 
   return (
     <PageScroll>
       <View style={styles.processingPage}>
         <View style={styles.processingVisual}>
-          <Image source={barPathImage} style={styles.processingImage as ImageStyle} accessibilityLabel="Squat video awaiting analysis" />
-          <View style={styles.processingOverlay}><Text style={styles.processingPercent}>{effectiveScenario === 'queued' ? '01' : effectiveScenario === 'processing' ? '62' : '100'}%</Text></View>
+          <Image
+            source={session.thumbnail ? { uri: session.thumbnail } : barPathImage}
+            style={styles.processingImage as ImageStyle}
+            accessibilityLabel="Squat video awaiting analysis"
+          />
+          <View style={styles.processingOverlay}><Text style={styles.processingPercent}>{String(session.percentage).padStart(2, '0')}%</Text></View>
         </View>
-        <Text accessibilityRole="header" selectable style={styles.pageHeading}>{copy.title}</Text>
-        <Text selectable style={[styles.pageSubheading, styles.processingDescription]}>{copy.detail}</Text>
+        <Text accessibilityRole="header" selectable style={styles.pageHeading}>{title}</Text>
+        <Text selectable style={[styles.pageSubheading, styles.processingDescription]}>{detail}</Text>
         <View style={styles.stepper} accessibilityLabel={`Analysis step ${stepIndex + 1} of 3`}>
           {['Queued', 'Analyzing', 'Ready'].map((label, index) => (
             <View key={label} style={styles.stepItem}>
@@ -797,10 +1043,10 @@ function ProcessingScreen() {
             </View>
           ))}
         </View>
-        {effectiveScenario === 'queued' && <ActionButton label="Cancel queued analysis" variant="danger" onPress={() => { setScenario('empty'); navigate('/'); }} />}
-        {effectiveScenario === 'processing' && <ActionButton label="Show completed fixture" variant="secondary" onPress={advance} />}
-        {effectiveScenario === 'completed' && <ActionButton label="Review result" onPress={advance} />}
-        {(effectiveScenario === 'failed' || effectiveScenario === 'expired') && <ActionButton label="Upload another video" onPress={() => navigate('/upload')} />}
+        {(session.phase === 'queued' || session.phase === 'analyzing') && (
+          <ActionButton label="Cancel demo analysis" variant="danger" onPress={() => { cancelAnalysis(); clearSession(); navigate('/'); }} />
+        )}
+        {session.phase === 'ready' && <ActionButton label="Review result" onPress={() => navigate('/review/demo-analysis')} />}
         <ActionButton label="Back to Home" variant="quiet" onPress={() => navigate('/')} />
       </View>
     </PageScroll>
@@ -817,52 +1063,139 @@ function MetricCard({ label, value, detail }: { label: string; value: string; de
   );
 }
 
-function FixtureVideoControls({ label }: { label: string }) {
+function AnalyzedVideoPlayer({
+  label,
+  sourceUri = analyzedVideoUri,
+  posterUri = analyzedVideoPosterUri,
+}: {
+  label: string;
+  sourceUri?: string;
+  posterUri?: string;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(18.933);
+
+  const togglePlayback = async () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (video.paused) {
+      await video.play();
+    } else {
+      video.pause();
+    }
+  };
+
+  const seek = (nextTime: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = nextTime;
+    setCurrentTime(nextTime);
+  };
+
+  const seekBy = (offsetSeconds: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    seek(Math.max(0, Math.min(duration, video.currentTime + offsetSeconds)));
+  };
+
   return (
-    <View style={styles.reviewControls} accessibilityLabel={label}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={playing ? 'Pause analyzed video' : 'Play analyzed video'}
-        accessibilityState={{ selected: playing }}
-        onPress={() => setPlaying(!playing)}
-        style={styles.playButton}
-      >
-        <Text style={styles.playButtonText}>{playing ? 'Ⅱ' : '▶'}</Text>
-      </Pressable>
-      <View style={styles.timeline} accessibilityLabel="Video progress, 4 seconds of 18 seconds">
-        <View style={styles.timelineProgress} />
+    <View accessibilityLabel={label}>
+      <video
+        ref={videoRef}
+        className="peso-analyzed-video"
+        src={sourceUri}
+        poster={posterUri}
+        playsInline
+        preload="metadata"
+        aria-label={label}
+        onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)}
+        onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+      />
+      <View style={styles.reviewControls}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={playing ? 'Pause analyzed video' : 'Play analyzed video'}
+          accessibilityState={{ selected: playing }}
+          onPress={() => void togglePlayback()}
+          style={styles.playButton}
+        >
+          <Text style={styles.playButtonText}>{playing ? 'Ⅱ' : '▶'}</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Seek back 5 seconds"
+          onPress={() => seekBy(-5)}
+          style={styles.seekButton}
+        >
+          <Text style={styles.seekButtonText}>−5</Text>
+        </Pressable>
+        <input
+          className="peso-video-range"
+          type="range"
+          min="0"
+          max={duration || 18.933}
+          step="0.01"
+          value={Math.min(currentTime, duration || 18.933)}
+          aria-label={`Seek analyzed video, ${formatTime(currentTime)} of ${formatTime(duration)}`}
+          onClick={(event) => {
+            const bounds = event.currentTarget.getBoundingClientRect();
+            const ratio = bounds.width > 0
+              ? (event.clientX - bounds.left) / bounds.width
+              : 0;
+            seek(Math.max(0, Math.min(duration, ratio * duration)));
+          }}
+          onInput={(event) => seek(Number(event.currentTarget.value))}
+          onChange={(event) => seek(Number(event.currentTarget.value))}
+        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Seek forward 5 seconds"
+          onPress={() => seekBy(5)}
+          style={styles.seekButton}
+        >
+          <Text style={styles.seekButtonText}>+5</Text>
+        </Pressable>
+        <Text style={styles.timecode}>{formatTime(currentTime)} / {formatTime(duration)}</Text>
       </View>
-      <Text style={styles.timecode}>0:04 / 0:18</Text>
     </View>
   );
 }
 
 function ReviewScreen() {
   const navigate = useNavigate();
-  const { setScenario } = useScenario();
+  const { session, clearSession } = useWebDemoSession();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [reps, setReps] = useState('3');
   const [load, setLoad] = useState('225');
-  const save = () => {
-    setScenario('empty');
-    navigate('/saved-lifts/lift-225');
+  const finishDemo = () => {
+    clearSession();
+    navigate('/');
   };
+
+  if (session.phase !== 'ready') {
+    return <Navigate to={session.phase === 'idle' ? '/upload' : '/processing/demo-analysis'} replace />;
+  }
+
   return (
     <PageScroll>
       <View style={styles.reviewGrid}>
         <View>
           <View style={styles.reviewMedia}>
-            <Image source={previewImage} style={styles.reviewImage as ImageStyle} accessibilityLabel="Analyzed squat with joint tracking overlay" />
-            <FixtureVideoControls label="Analyzed video controls" />
+            <AnalyzedVideoPlayer label="Analyzed video controls" />
           </View>
           <Text selectable style={styles.mediaDescription}>The overlay marks the upper back, hip, knee, and ankle. Use the playback controls to inspect each rep.</Text>
         </View>
         <View style={styles.reviewPanel}>
           <View style={styles.reviewTitleRow}>
             <View>
-              <Text style={styles.eyebrow}>ANALYSIS COMPLETE</Text>
-              <Text accessibilityRole="header" selectable style={styles.pageHeading}>Squat · Side view</Text>
+              <Text style={styles.reviewEyebrow}>ANALYSIS COMPLETE</Text>
+              <Text accessibilityRole="header" selectable style={styles.reviewPageHeading}>Squat · Side view</Text>
             </View>
             <View style={styles.readyBadge}><Text style={styles.readyBadgeText}>Ready</Text></View>
           </View>
@@ -887,97 +1220,375 @@ function ReviewScreen() {
             </View>
           )}
           <View style={styles.buttonRow}>
-            <ActionButton label="Save to Saved Lifts" onPress={save} />
-            <ActionButton label="Discard analysis" variant="danger" onPress={() => { setScenario('empty'); navigate('/'); }} />
+            <ActionButton label="Finish demo" compact onPress={finishDemo} />
+            <ActionButton label="Discard analysis" variant="danger" compact onPress={() => { clearSession(); navigate('/'); }} />
           </View>
-          <Text selectable style={styles.expiryText}>Unsaved result expires tomorrow at 8:42 AM.</Text>
+          <Text selectable style={styles.expiryText}>Demo Analysis stays on this device and does not create a Saved Lift.</Text>
         </View>
       </View>
     </PageScroll>
   );
 }
 
+function LiftGridCard({
+  lift,
+  onPress,
+  selectionMode,
+  selected,
+}: {
+  lift: SavedVideo;
+  onPress: () => void;
+  selectionMode: boolean;
+  selected: boolean;
+}) {
+  const exercise = titleCase(lift.exercise_type);
+  return (
+    <Pressable
+      accessibilityRole={selectionMode ? 'checkbox' : 'link'}
+      accessibilityState={selectionMode ? { checked: selected } : undefined}
+      accessibilityLabel={`${exercise}, ${savedLiftLoad(lift)}, ${savedLiftRepCount(lift)} reps`}
+      onPress={onPress}
+      style={({ pressed }) => [styles.liftGridCard, selected && styles.liftSelected, pressed && styles.liftRowPressed]}
+    >
+      <Image source={lift.thumbnail_url ? { uri: lift.thumbnail_url } : previewImage} style={styles.liftGridImage as ImageStyle} accessibilityIgnoresInvertColors />
+      {selectionMode && (
+        <View style={[styles.gridSelectionCheckbox, selected && styles.selectionCheckboxSelected]}>
+          {selected && <Text style={styles.checkboxMark}>✓</Text>}
+        </View>
+      )}
+      <View style={styles.liftGridCopy}>
+        <Text selectable style={styles.liftExercise}>{exercise}</Text>
+        <Text selectable style={styles.liftMeta}>{savedLiftLoad(lift)} · {savedLiftRepCount(lift)} reps</Text>
+        <Text selectable style={styles.liftDate}>{formatSavedDate(lift.saved_at ?? lift.created_at)}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
 function SavedLiftsScreen() {
   const navigate = useNavigate();
-  const [filter, setFilter] = useState<'all' | 'squat' | 'mobile'>('all');
-  const lifts = savedLifts.filter((lift) => filter === 'all' || (filter === 'squat' ? lift.exercise === 'Squat' : !lift.webEligible));
+  const { session, user } = useAuth();
+  const { lifts, loading, error, refresh } = useSavedLiftLibrary();
+  const [filter, setFilter] = useState('all');
+  const [view, setView] = useState<SavedLiftView>(() => normalizeSavedLiftView(
+    typeof window === 'undefined' ? null : window.localStorage.getItem('peso.saved-lifts.view')
+  ));
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [exportJobId, setExportJobId] = useState<string | null>(null);
+  const [exportJob, setExportJob] = useState<SavedLiftExportJob | null>(null);
+
+  const filters = useMemo(() => [
+    { value: 'all', label: 'All lifts' },
+    ...Array.from(new Set(lifts.map((lift) => lift.exercise_type))).map((exercise) => ({
+      value: exercise,
+      label: titleCase(exercise),
+    })),
+  ], [lifts]);
+  const visibleLifts = useMemo(
+    () => lifts.filter((lift) => filter === 'all' || lift.exercise_type === filter),
+    [filter, lifts]
+  );
+  const exportStorageKey = user ? `peso.saved-lift-export-job:${user.id}` : null;
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') window.localStorage.setItem('peso.saved-lifts.view', view);
+  }, [view]);
+
+  useEffect(() => {
+    setSelectedIds((current) => pruneSavedLiftSelection(current, lifts.map((lift) => lift.id)));
+  }, [lifts]);
+
+  useEffect(() => {
+    if (!exportStorageKey || typeof window === 'undefined') return;
+    setExportJobId(window.localStorage.getItem(exportStorageKey));
+  }, [exportStorageKey]);
+
+  useEffect(() => {
+    if (!exportJobId || !session?.access_token) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let active = true;
+
+    const poll = async () => {
+      try {
+        const job = await getSavedLiftExport(exportJobId, session.access_token);
+        if (!active) return;
+        setExportJob(job);
+        if (job.status === 'queued' || job.status === 'processing') {
+          timer = setTimeout(() => void poll(), 2000);
+        }
+      } catch (pollError) {
+        if (active) setActionError(pollError instanceof Error ? pollError.message : 'Unable to check export status.');
+      }
+    };
+
+    void poll();
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [exportJobId, session?.access_token]);
+
+  const startExport = async () => {
+    if (!session?.access_token || selectedIds.length === 0) return;
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      const job = await createSavedLiftExport(selectedIds, session.access_token);
+      setExportJob(job);
+      setExportJobId(job.id);
+      if (exportStorageKey && typeof window !== 'undefined') {
+        window.localStorage.setItem(exportStorageKey, job.id);
+      }
+      setSelectedIds([]);
+      setSelectionMode(false);
+    } catch (exportError) {
+      setActionError(exportError instanceof Error ? exportError.message : 'Unable to start Saved Lift export.');
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const downloadExport = async () => {
+    if (!exportJobId || !session?.access_token) return;
+    setActionError(null);
+    try {
+      const job = await getSavedLiftExport(exportJobId, session.access_token);
+      setExportJob(job);
+      if (job.download_url) window.location.assign(job.download_url);
+    } catch (downloadError) {
+      setActionError(downloadError instanceof Error ? downloadError.message : 'Unable to download the export.');
+    }
+  };
+
+  const deleteSelection = async () => {
+    if (!session?.access_token || selectedIds.length === 0) return;
+    const confirmed = window.confirm(
+      `Permanently delete ${selectedIds.length} selected Saved Lift${selectedIds.length === 1 ? '' : 's'}? This also removes them from the shared mobile library and cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      await deleteSavedLifts(selectedIds, session.access_token);
+      setSelectedIds([]);
+      setSelectionMode(false);
+      await refresh();
+    } catch (deleteError) {
+      setActionError(deleteError instanceof Error ? deleteError.message : 'Unable to delete Saved Lifts.');
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const toggleSelectionMode = () => {
+    setSelectionMode((current) => !current);
+    setSelectedIds([]);
+  };
+
   return (
     <PageScroll>
       <View style={styles.savedHeader}>
         <View>
           <Text accessibilityRole="header" selectable style={styles.pageHeading}>Your Saved Lifts</Text>
-          <Text selectable style={styles.pageSubheading}>Web and mobile history live together. New web submissions are squat-only.</Text>
+          <Text selectable style={styles.pageSubheading}>One source-agnostic library shared by Peso web and mobile.</Text>
         </View>
-        <ActionButton label="Analyze a squat" compact onPress={() => navigate('/upload')} />
+        <View style={styles.buttonRow}>
+          <ActionButton label={selectionMode ? 'Cancel selection' : 'Select lifts'} variant="secondary" compact onPress={toggleSelectionMode} />
+          <ActionButton label="Analyze a squat" compact onPress={() => navigate('/upload')} />
+        </View>
       </View>
-      <View style={styles.filterRow} accessibilityRole="radiogroup">
-        {([
-          ['all', 'All lifts'],
-          ['squat', 'Squats'],
-          ['mobile', 'Mobile history'],
-        ] as const).map(([value, label]) => (
-          <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: filter === value }} onPress={() => setFilter(value)} style={[styles.filterChip, filter === value && styles.filterChipActive]}>
-            <Text style={[styles.filterChipText, filter === value && styles.filterChipTextActive]}>{label}</Text>
-          </Pressable>
-        ))}
+
+      {exportJob && (
+        <View style={styles.exportStatusCard} role="status">
+          <View style={styles.activityCopy}>
+            <Text selectable style={styles.activityTitle}>
+              {exportJob.status === 'completed'
+                ? 'Saved Lift export ready'
+                : exportJob.status === 'failed' || exportJob.status === 'expired'
+                  ? 'Saved Lift export unavailable'
+                  : `Preparing ${exportJob.lift_count} Saved Lift${exportJob.lift_count === 1 ? '' : 's'}…`}
+            </Text>
+            <Text selectable style={styles.activityDetail}>
+              {exportJob.status === 'completed'
+                ? `One ZIP is available until ${formatSavedDate(exportJob.expires_at)}.`
+                : exportJob.status === 'failed'
+                  ? exportFailureMessage(exportJob.failure_code)
+                  : exportJob.status === 'expired'
+                    ? 'The temporary archive expired. Select the lifts again to create a new one.'
+                    : 'You can leave this page; preparation continues on the backend.'}
+            </Text>
+          </View>
+          {exportJob.status === 'completed' && <ActionButton label="Download ZIP" compact onPress={() => void downloadExport()} />}
+        </View>
+      )}
+
+      {actionError && <Text selectable style={styles.formError}>{actionError}</Text>}
+
+      <View style={styles.savedControls}>
+        <View style={styles.filterRow} accessibilityRole="radiogroup">
+          {filters.map(({ value, label }) => (
+            <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: filter === value }} onPress={() => setFilter(value)} style={[styles.filterChip, filter === value && styles.filterChipActive]}>
+              <Text style={[styles.filterChipText, filter === value && styles.filterChipTextActive]}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <View style={styles.viewToggle} accessibilityRole="radiogroup">
+          {(['list', 'grid'] as const).map((option) => (
+            <Pressable key={option} accessibilityRole="radio" accessibilityLabel={`${titleCase(option)} View`} accessibilityState={{ checked: view === option }} onPress={() => setView(option)} style={[styles.viewToggleButton, view === option && styles.viewToggleButtonActive]}>
+              <Text style={[styles.filterChipText, view === option && styles.filterChipTextActive]}>{option === 'list' ? '☰' : '▦'} {titleCase(option)}</Text>
+            </Pressable>
+          ))}
+        </View>
       </View>
-      <View style={styles.savedList}>
-        {lifts.map((lift) => <LiftRow key={lift.id} lift={lift} onPress={() => navigate(`/saved-lifts/${lift.id}`)} />)}
+
+      {selectionMode && (
+        <View style={styles.selectionToolbar}>
+          <Text selectable style={styles.selectionCount}>{selectedIds.length} selected</Text>
+          <View style={styles.buttonRow}>
+            <ActionButton label="Select visible" variant="quiet" compact onPress={() => setSelectedIds((current) => selectVisibleSavedLifts(current, visibleLifts.map((lift) => lift.id)))} />
+            <ActionButton label={actionBusy ? 'Preparing…' : 'Export ZIP'} disabled={actionBusy || selectedIds.length === 0} compact onPress={() => void startExport()} />
+            <ActionButton label={actionBusy ? 'Deleting…' : 'Delete'} variant="danger" disabled={actionBusy || selectedIds.length === 0} compact onPress={() => void deleteSelection()} />
+          </View>
+        </View>
+      )}
+
+      {loading && <Text selectable style={styles.mutedText}>Loading Saved Lifts…</Text>}
+      {error && <Text selectable style={styles.formError}>{error}</Text>}
+      {!loading && !error && visibleLifts.length === 0 && <Text selectable style={styles.mutedText}>No Saved Lifts match this view.</Text>}
+      <View style={view === 'grid' ? styles.savedGrid : styles.savedList}>
+        {visibleLifts.map((lift) => {
+          const selected = selectedIds.includes(lift.id);
+          const onPress = () => selectionMode
+            ? setSelectedIds((current) => toggleSavedLiftSelection(current, lift.id))
+            : navigate(`/saved-lifts/${lift.id}`);
+          return view === 'grid'
+            ? <LiftGridCard key={lift.id} lift={lift} selectionMode={selectionMode} selected={selected} onPress={onPress} />
+            : <LiftRow key={lift.id} lift={lift} selectionMode={selectionMode} selected={selected} onPress={onPress} />;
+        })}
       </View>
     </PageScroll>
+  );
+}
+
+function insightNumber(value: number | undefined, digits = 2) {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(digits) : '—';
+}
+
+function RepInsight({ rep, index }: { rep: VideoAnalysisRep; index: number }) {
+  return (
+    <View style={styles.repInsightCard}>
+      <Text selectable style={styles.repInsightTitle}>Rep {rep.rep_index ?? rep.repIndex ?? index + 1}</Text>
+      <View style={styles.metricGrid}>
+        <MetricCard label="Duration" value={`${insightNumber(rep.duration)} s`} detail="Rep elapsed time" />
+        <MetricCard label="Rep speed" value={insightNumber(rep.repSpeed)} detail="Repetitions per second" />
+        <MetricCard label="Avg hip velocity" value={insightNumber(rep.avgVelocity, 3)} detail="Relative video estimate" />
+        <MetricCard label="Peak hip velocity" value={insightNumber(rep.peakVelocity, 3)} detail="Relative video estimate" />
+      </View>
+    </View>
   );
 }
 
 function SavedLiftDetailScreen() {
   const navigate = useNavigate();
   const { liftId } = useParams();
-  const lift = savedLifts.find((candidate) => candidate.id === liftId) ?? savedLifts[0];
+  const { session } = useAuth();
+  const { lifts, loading, error } = useSavedLiftLibrary();
+  const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const lift = lifts.find((candidate) => candidate.id === liftId);
+
+  useEffect(() => {
+    if (!lift || !session?.access_token || lift.storage_state === 'pruned') return;
+    let active = true;
+    getSavedVideoPlaybackUrl(lift.id, session.access_token)
+      .then((response) => {
+        if (active) setPlaybackUrl(response.video_url);
+      })
+      .catch((loadError) => {
+        if (active) setPlaybackError(loadError instanceof Error ? loadError.message : 'Unable to load Saved Lift video.');
+      });
+    return () => { active = false; };
+  }, [lift?.id, lift?.storage_state, session?.access_token]);
+
+  if (loading) return <PageScroll><Text selectable style={styles.mutedText}>Loading Saved Lift…</Text></PageScroll>;
+  if (error) return <PageScroll><Text selectable style={styles.formError}>{error}</Text></PageScroll>;
+  if (!lift) {
+    return (
+      <PageScroll>
+        <Text accessibilityRole="header" selectable style={styles.pageHeading}>Saved Lift not found</Text>
+        <ActionButton label="Back to Saved Lifts" variant="quiet" compact onPress={() => navigate('/saved-lifts')} />
+      </PageScroll>
+    );
+  }
+
+  const exercise = titleCase(lift.exercise_type);
+  const detectedReps = lift.analysis?.result_json.rep_count ?? lift.analysis?.rep_data.length ?? 0;
+  const performedReps = lift.performed_reps ?? lift.corrected_rep_count ?? detectedReps;
+  const cue = lift.analysis?.coaching_feedback[0] ?? lift.analysis?.summary[0] ?? 'No saved coaching cue is available.';
+  const posterUri = lift.thumbnail_url ?? analyzedVideoPosterUri;
+
   return (
     <PageScroll>
       <View style={styles.detailTopRow}>
         <ActionButton label="Back to Saved Lifts" variant="quiet" compact onPress={() => navigate('/saved-lifts')} />
-        {!lift.webEligible && <View style={styles.mobileBadge}><Text style={styles.mobileBadgeText}>Saved on mobile</Text></View>}
       </View>
       <View style={styles.reviewGrid}>
         <View style={styles.reviewMedia}>
-          <Image source={lift.exercise === 'Squat' ? barPathImage : previewImage} style={styles.reviewImage as ImageStyle} accessibilityLabel={`${lift.exercise} Saved Lift preview`} />
-          <FixtureVideoControls label="Saved Lift video controls" />
+          {playbackUrl ? (
+            <AnalyzedVideoPlayer label="Saved Lift video controls" sourceUri={playbackUrl} posterUri={posterUri} />
+          ) : (
+            <Image source={lift.thumbnail_url ? { uri: lift.thumbnail_url } : previewImage} style={styles.reviewImage as ImageStyle} accessibilityLabel={`${exercise} Saved Lift preview`} />
+          )}
+          {lift.storage_state === 'pruned' && <Text selectable style={styles.mediaNotice}>This Saved Lift video has expired; analysis insights remain available.</Text>}
+          {playbackError && <Text selectable style={styles.formError}>{playbackError}</Text>}
         </View>
         <View style={styles.reviewPanel}>
-          <Text style={styles.eyebrow}>{lift.date.toUpperCase()}</Text>
-          <Text accessibilityRole="header" selectable style={styles.pageHeading}>{lift.exercise}</Text>
-          <Text selectable style={styles.detailLoad}>{lift.load} × {lift.performedReps}</Text>
+          <Text style={styles.eyebrow}>{formatSavedDate(lift.saved_at ?? lift.created_at).toUpperCase()}</Text>
+          <Text accessibilityRole="header" selectable style={styles.pageHeading}>{exercise}</Text>
+          <Text selectable style={styles.detailLoad}>{savedLiftLoad(lift)} × {performedReps}</Text>
           <View style={styles.metricGrid}>
-            <MetricCard label="Performed reps" value={String(lift.performedReps)} detail="Workout fact" />
-            <MetricCard label="Detected reps" value={String(lift.detectedReps)} detail="Model observation" />
-            <MetricCard label="Camera" value={lift.cameraView.replace(' view', '')} detail={lift.cameraView} />
+            <MetricCard label="Performed reps" value={String(performedReps)} detail="Workout fact" />
+            <MetricCard label="Detected reps" value={String(detectedReps)} detail="Model observation" />
+            <MetricCard label="Camera" value={titleCase(lift.view_type)} detail={`${titleCase(lift.view_type)} view`} />
           </View>
           <View style={styles.cueCard}>
             <Text selectable style={styles.cueLabel}>SAVED OBSERVATION</Text>
-            <Text selectable style={styles.cueTitle}>{lift.cue}</Text>
-            {!lift.webEligible && <Text selectable style={styles.cueBody}>Existing non-squat history is visible here, but the web beta only accepts new squat submissions.</Text>}
+            <Text selectable style={styles.cueTitle}>{cue}</Text>
           </View>
         </View>
       </View>
+      {lift.analysis?.rep_data.length ? (
+        <View style={styles.insightsSection}>
+          <View>
+            <Text accessibilityRole="header" selectable style={styles.sectionTitle}>Lift Insights</Text>
+            <Text selectable style={styles.pageSubheading}>Per-repetition timing and framing-dependent hip movement estimates.</Text>
+          </View>
+          {lift.analysis.rep_data.map((rep, index) => <RepInsight key={`${rep.rep_index ?? index}`} rep={rep} index={index} />)}
+        </View>
+      ) : null}
     </PageScroll>
   );
 }
 
 function ProfileScreen() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const displayName = typeof user?.user_metadata?.name === 'string'
+    ? user.user_metadata.name
+    : user?.email?.split('@')[0] ?? 'Peso athlete';
+  const initial = displayName.charAt(0).toUpperCase() || 'P';
   return (
     <PageScroll>
       <View style={styles.settingsPage}>
         <Text accessibilityRole="header" selectable style={styles.pageHeading}>Profile</Text>
         <Text selectable style={styles.pageSubheading}>Basic account information shared with your Peso mobile account.</Text>
         <View style={styles.profileCard}>
-          <View style={styles.profileAvatar}><Text style={styles.profileAvatarText}>N</Text></View>
-          <View><Text selectable style={styles.profileName}>Nathan</Text><Text selectable style={styles.profileEmail}>nathan@example.com · Verified</Text></View>
-        </View>
-        <View style={styles.settingsCard}>
-          <Field label="Display name" placeholder="Nathan" value="Nathan" />
-          <Field label="Email" placeholder="nathan@example.com" value="nathan@example.com" />
-          <ActionButton label="Save profile fixture" onPress={() => undefined} />
+          <View style={styles.profileAvatar}><Text style={styles.profileAvatarText}>{initial}</Text></View>
+          <View><Text selectable style={styles.profileName}>{displayName}</Text><Text selectable style={styles.profileEmail}>{user?.email ?? 'Email unavailable'} · {user?.email_confirmed_at ? 'Verified' : 'Unverified'}</Text></View>
         </View>
         <ActionButton label="Open Settings" variant="secondary" onPress={() => navigate('/settings')} />
       </View>
@@ -996,6 +1607,7 @@ function SettingRow({ title, description, value, onChange }: { title: string; de
 
 function SettingsScreen() {
   const navigate = useNavigate();
+  const { signOut } = useAuth();
   const [analytics, setAnalytics] = useState(false);
   const [updates, setUpdates] = useState(true);
   return (
@@ -1010,26 +1622,22 @@ function SettingsScreen() {
         <View style={styles.settingsCard}>
           <Pressable accessibilityRole="link" onPress={() => window.location.assign('/privacy')} style={styles.settingsLink}><Text style={styles.settingTitle}>Privacy Policy</Text><Text style={styles.liftArrow}>›</Text></Pressable>
           <Pressable accessibilityRole="link" onPress={() => window.location.assign('/terms')} style={styles.settingsLink}><Text style={styles.settingTitle}>Terms of Use</Text><Text style={styles.liftArrow}>›</Text></Pressable>
-          <Pressable accessibilityRole="link" onPress={() => navigate('/login')} style={styles.settingsLink}><Text style={[styles.settingTitle, { color: colors.red }]}>Sign out</Text><Text style={styles.liftArrow}>›</Text></Pressable>
+          <Pressable accessibilityRole="link" onPress={() => { void signOut().then(() => navigate('/login', { replace: true })); }} style={styles.settingsLink}><Text style={[styles.settingTitle, { color: colors.red }]}>Sign out</Text><Text style={styles.liftArrow}>›</Text></Pressable>
         </View>
-        <Text selectable style={styles.prototypeBadge}>Peso Web Beta prototype · Fixture data only</Text>
       </View>
     </PageScroll>
   );
 }
 
 export default function WebApp() {
-  const [scenario, setScenario] = useState<PrototypeScenario>('completed');
-  const value = useMemo(() => ({ scenario, setScenario }), [scenario]);
-
   return (
-    <ScenarioContext value={value}>
+    <WebDemoSessionProvider>
       <Routes>
         <Route path="/login" element={<LoginScreen />} />
         <Route path="/signup" element={<SignupScreen />} />
         <Route path="/verify" element={<VerifyScreen />} />
         <Route path="/reset" element={<ResetScreen />} />
-        <Route element={<AppShell />}>
+        <Route element={<AccountRoute />}>
           <Route index element={<HomeScreen />} />
           <Route path="/record" element={<RecordScreen />} />
           <Route path="/upload" element={<UploadScreen />} />
@@ -1043,7 +1651,7 @@ export default function WebApp() {
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </ScenarioContext>
+    </WebDemoSessionProvider>
   );
 }
 
@@ -1062,11 +1670,15 @@ const styles = StyleSheet.create({
   accountName: { color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 12 },
   accountPlan: { color: colors.textMuted, fontFamily: fonts.regular, fontSize: 10, marginTop: 2 },
   routeArea: { flex: 1, minHeight: 0 },
+  routeLoading: { flex: 1, minHeight: 640, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: colors.page },
   pageScroll: { flex: 1 },
   pageContent: { width: '100%', maxWidth: 1280, alignSelf: 'center', padding: 28, paddingBottom: 80, gap: 30 },
-  sidebar: { width: 252, padding: 22, borderRightWidth: 1, borderRightColor: colors.line, backgroundColor: '#090D13' },
+  sidebar: { width: 252, padding: 18, borderRightWidth: 1, borderRightColor: colors.line, backgroundColor: '#090D13' },
   sidebarCompact: { width: 86, paddingHorizontal: 12 },
-  sidebarWordmark: { minHeight: 64, alignItems: 'flex-start', justifyContent: 'center' },
+  sidebarHeader: { minHeight: 64, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  sidebarWordmark: { flex: 1, minWidth: 0, minHeight: 52, alignItems: 'flex-start', justifyContent: 'center' },
+  sidebarToggle: { width: 32, height: 32, borderWidth: 1, borderColor: colors.line, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface },
+  sidebarToggleText: { color: colors.blueText, fontFamily: fonts.bold, fontSize: 20, lineHeight: 22 },
   wordmark: { width: 118, height: 54, alignItems: 'center', justifyContent: 'center' },
   wordmarkCompact: { width: 60, height: 44 },
   wordmarkImage: { width: 118, height: 54, resizeMode: 'contain' },
@@ -1082,7 +1694,6 @@ const styles = StyleSheet.create({
   navLabel: { color: colors.textMuted, fontFamily: fonts.semibold, fontSize: 13 },
   navLabelActive: { color: colors.textPrimary },
   sidebarFooter: { gap: 12 },
-  prototypeBadge: { color: '#718097', fontFamily: fonts.medium, fontSize: 10, lineHeight: 15 },
   bottomNav: { minHeight: 68, paddingHorizontal: 8, paddingBottom: 4, borderTopWidth: 1, borderTopColor: colors.line, backgroundColor: '#090D13' },
   bottomNavItems: { flex: 1, flexDirection: 'row', justifyContent: 'space-around' },
   bottomNavItem: { minWidth: 72, paddingVertical: 8, alignItems: 'center', justifyContent: 'center', gap: 3, borderTopWidth: 2, borderTopColor: 'transparent' },
@@ -1102,6 +1713,8 @@ const styles = StyleSheet.create({
   authTitle: { marginTop: 10, color: colors.textPrimary, fontFamily: fonts.display, fontSize: 35, lineHeight: 41 },
   authDescription: { marginTop: 13, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 14, lineHeight: 21 },
   form: { gap: 16, paddingTop: 28 },
+  formError: { color: colors.red, fontFamily: fonts.medium, fontSize: 11, lineHeight: 17 },
+  formSuccess: { color: colors.green, fontFamily: fonts.medium, fontSize: 11, lineHeight: 17 },
   field: { gap: 7 },
   fieldLabel: { color: colors.secondaryText, fontFamily: fonts.semibold, fontSize: 11 },
   input: { width: '100%', height: 48, paddingHorizontal: 14, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 11, backgroundColor: colors.inputBg, color: colors.textPrimary, fontFamily: fonts.regular, fontSize: 14 },
@@ -1130,14 +1743,6 @@ const styles = StyleSheet.create({
   messageCard: { padding: 18, borderWidth: 1, borderColor: '#294A7D', borderRadius: 12, backgroundColor: '#0D1B33' },
   messageCardTitle: { color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 13 },
   messageCardBody: { marginTop: 6, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 12, lineHeight: 19 },
-  scenarioPanel: { padding: 16, borderWidth: 1, borderColor: colors.line, borderRadius: 14, backgroundColor: '#0B1018', gap: 13 },
-  scenarioTitle: { color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 12 },
-  scenarioDescription: { marginTop: 3, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 11 },
-  scenarioList: { gap: 8 },
-  scenarioChip: { minHeight: 32, paddingHorizontal: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface },
-  scenarioChipActive: { borderColor: colors.brand, backgroundColor: colors.blueSoft },
-  scenarioChipText: { color: colors.textMuted, fontFamily: fonts.semibold, fontSize: 10 },
-  scenarioChipTextActive: { color: colors.blueText },
   welcomeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', gap: 20 },
   welcomeCopy: { flex: 1, minWidth: 0 },
   pageHeading: { color: colors.textPrimary, fontFamily: fonts.display, fontSize: 32, lineHeight: 38 },
@@ -1175,8 +1780,6 @@ const styles = StyleSheet.create({
   activityDotNeutral: { backgroundColor: '#60708A' },
   activityDotInfo: { backgroundColor: colors.brand },
   activityDotSuccess: { backgroundColor: colors.green },
-  activityDotDanger: { backgroundColor: colors.red },
-  activityDotWarning: { backgroundColor: colors.amber },
   activityCopy: { flex: 1, minWidth: 120 },
   activityTitle: { color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 13 },
   activityDetail: { marginTop: 5, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 11, lineHeight: 17 },
@@ -1186,6 +1789,9 @@ const styles = StyleSheet.create({
   liftList: { gap: 9 },
   liftRow: { minHeight: 88, padding: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 14, backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center', gap: 14 },
   liftRowPressed: { borderColor: colors.brand, backgroundColor: colors.surfaceRaised },
+  liftSelected: { borderColor: colors.brand, backgroundColor: colors.blueSoft },
+  selectionCheckbox: { width: 22, height: 22, borderWidth: 1, borderColor: '#52617A', borderRadius: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.inputBg },
+  selectionCheckboxSelected: { borderColor: colors.brand, backgroundColor: colors.brand },
   liftThumbnail: { width: 62, height: 62, borderRadius: 10, backgroundColor: '#10141C' },
   liftRowCopy: { flex: 1, minWidth: 0 },
   liftTitleRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
@@ -1216,6 +1822,7 @@ const styles = StyleSheet.create({
   uploadIconText: { color: colors.blueText, fontFamily: fonts.bold, fontSize: 28 },
   dropZoneTitle: { marginTop: 17, color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 16, textAlign: 'center' },
   dropZoneBody: { marginTop: 6, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 11, textAlign: 'center' },
+  uploadThumbnail: { width: 154, height: 182, borderRadius: 14, backgroundColor: '#05070A', resizeMode: 'cover' },
   requirementsCard: { padding: 20, borderWidth: 1, borderColor: colors.line, borderRadius: 15, backgroundColor: '#0B1018', gap: 11 },
   requirementsTitle: { marginBottom: 2, color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 13 },
   requirementRow: { flexDirection: 'row', alignItems: 'center', gap: 9 },
@@ -1223,6 +1830,9 @@ const styles = StyleSheet.create({
   requirementText: { color: colors.textMuted, fontFamily: fonts.regular, fontSize: 11 },
   setupGrid: { width: '100%', maxWidth: 1040, alignSelf: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 28, alignItems: 'flex-start' },
   setupPreview: { width: 330, height: 550, borderWidth: 1, borderColor: colors.line, borderRadius: 18, backgroundColor: '#05070A' },
+  setupPreviewFallback: { width: 330, height: 550, borderWidth: 1, borderColor: colors.line, borderRadius: 18, backgroundColor: '#090D13', alignItems: 'center', justifyContent: 'center', gap: 12 },
+  setupPreviewFallbackIcon: { color: colors.blueText, fontSize: 28 },
+  setupPreviewFallbackText: { color: colors.textMuted, fontFamily: fonts.semibold, fontSize: 11 },
   previewMeta: { marginTop: 10, flexDirection: 'row', justifyContent: 'space-between' },
   previewMetaText: { color: colors.textMuted, fontFamily: fonts.regular, fontSize: 10, fontVariant: ['tabular-nums'] },
   setupPanel: { flex: 1, minWidth: 310, gap: 22 },
@@ -1250,43 +1860,61 @@ const styles = StyleSheet.create({
   stepDotText: { color: '#FFFFFF', fontFamily: fonts.bold, fontSize: 9 },
   stepLabel: { color: colors.textMuted, fontFamily: fonts.medium, fontSize: 10 },
   stepLabelActive: { color: colors.textPrimary },
-  reviewGrid: { width: '100%', maxWidth: 1120, alignSelf: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 28, alignItems: 'flex-start' },
-  reviewMedia: { width: 390, maxWidth: '100%', borderWidth: 1, borderColor: colors.line, borderRadius: 18, overflow: 'hidden', backgroundColor: '#05070A' },
-  reviewImage: { width: '100%', height: 620, resizeMode: 'cover' },
-  reviewControls: { minHeight: 58, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: '#090D13' },
-  playButton: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.brand },
-  playButtonText: { color: '#FFFFFF', fontSize: 11 },
-  timeline: { flex: 1, height: 4, borderRadius: 2, overflow: 'hidden', backgroundColor: '#303947' },
-  timelineProgress: { width: '28%', height: '100%', backgroundColor: colors.brand },
-  timecode: { color: colors.textMuted, fontFamily: fonts.medium, fontSize: 9, fontVariant: ['tabular-nums'] },
-  mediaDescription: { maxWidth: 390, marginTop: 10, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 10, lineHeight: 16 },
-  reviewPanel: { flex: 1, minWidth: 330, gap: 18 },
-  reviewTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 14 },
-  readyBadge: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, backgroundColor: colors.greenSoft },
-  readyBadgeText: { color: colors.green, fontFamily: fonts.bold, fontSize: 9 },
-  metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 },
-  metricCard: { flex: 1, minWidth: 120, minHeight: 110, padding: 14, borderWidth: 1, borderColor: colors.line, borderRadius: 13, backgroundColor: colors.surface },
-  metricLabel: { color: colors.textMuted, fontFamily: fonts.semibold, fontSize: 9 },
-  metricValue: { marginTop: 12, color: colors.textPrimary, fontFamily: fonts.display, fontSize: 20 },
-  metricDetail: { marginTop: 6, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 9 },
-  cueCard: { padding: 19, borderWidth: 1, borderColor: '#294A7D', borderRadius: 14, backgroundColor: '#0D1A30' },
-  cueLabel: { color: colors.blueText, fontFamily: fonts.bold, fontSize: 9, letterSpacing: 1 },
-  cueTitle: { marginTop: 12, color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 16, lineHeight: 23 },
-  cueBody: { marginTop: 8, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 11, lineHeight: 18 },
-  disclosureButton: { minHeight: 50, paddingHorizontal: 15, borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  disclosureTitle: { color: colors.secondaryText, fontFamily: fonts.semibold, fontSize: 12 },
-  disclosureIcon: { color: colors.blueText, fontFamily: fonts.regular, fontSize: 22 },
-  workoutFields: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  expiryText: { color: colors.textMuted, fontFamily: fonts.regular, fontSize: 9 },
+  reviewGrid: { width: '100%', maxWidth: 952, alignSelf: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 24, alignItems: 'flex-start' },
+  reviewMedia: { width: 332, maxWidth: '100%', borderWidth: 1, borderColor: '#35435A', borderRadius: 24, overflow: 'hidden', backgroundColor: '#05070A' },
+  reviewImage: { width: '100%', height: 527, resizeMode: 'cover' },
+  reviewControls: { minHeight: 49, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: '#090D13' },
+  playButton: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.brand },
+  playButtonText: { color: '#FFFFFF', fontSize: 9 },
+  seekButton: { minWidth: 26, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#151C28' },
+  seekButtonText: { color: colors.blueText, fontFamily: fonts.bold, fontSize: 8 },
+  timecode: { color: colors.textMuted, fontFamily: fonts.medium, fontSize: 8, fontVariant: ['tabular-nums'] },
+  mediaDescription: { maxWidth: 332, marginTop: 9, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 9, lineHeight: 14 },
+  mediaNotice: { padding: 12, color: colors.amber, backgroundColor: colors.amberSoft, fontFamily: fonts.medium, fontSize: 10, lineHeight: 16 },
+  reviewPanel: { flex: 1, minWidth: 310, gap: 15 },
+  reviewTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
+  reviewEyebrow: { color: colors.blueText, fontFamily: fonts.bold, fontSize: 8, letterSpacing: 1.2 },
+  reviewPageHeading: { marginTop: 5, color: colors.textPrimary, fontFamily: fonts.display, fontSize: 27, lineHeight: 32 },
+  readyBadge: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 10, backgroundColor: colors.greenSoft },
+  readyBadgeText: { color: colors.green, fontFamily: fonts.bold, fontSize: 8 },
+  metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  metricCard: { flex: 1, minWidth: 102, minHeight: 94, padding: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 11, backgroundColor: colors.surface },
+  metricLabel: { color: colors.textMuted, fontFamily: fonts.semibold, fontSize: 8 },
+  metricValue: { marginTop: 10, color: colors.textPrimary, fontFamily: fonts.display, fontSize: 17 },
+  metricDetail: { marginTop: 5, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 8 },
+  cueCard: { padding: 16, borderWidth: 1, borderColor: '#294A7D', borderRadius: 12, backgroundColor: '#0D1A30' },
+  cueLabel: { color: colors.blueText, fontFamily: fonts.bold, fontSize: 8, letterSpacing: 0.85 },
+  cueTitle: { marginTop: 10, color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 14, lineHeight: 20 },
+  cueBody: { marginTop: 7, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 9, lineHeight: 15 },
+  disclosureButton: { minHeight: 43, paddingHorizontal: 13, borderWidth: 1, borderColor: colors.line, borderRadius: 10, backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  disclosureTitle: { color: colors.secondaryText, fontFamily: fonts.semibold, fontSize: 10 },
+  disclosureIcon: { color: colors.blueText, fontFamily: fonts.regular, fontSize: 19 },
+  workoutFields: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  expiryText: { color: colors.textMuted, fontFamily: fonts.regular, fontSize: 8 },
   savedHeader: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-end', gap: 18 },
+  savedControls: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 14 },
   filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   filterChip: { minHeight: 34, paddingHorizontal: 13, borderWidth: 1, borderColor: colors.line, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface },
   filterChipActive: { borderColor: colors.brand, backgroundColor: colors.blueSoft },
   filterChipText: { color: colors.textMuted, fontFamily: fonts.semibold, fontSize: 10 },
   filterChipTextActive: { color: colors.blueText },
   savedList: { width: '100%', maxWidth: 880, gap: 10 },
-  detailTopRow: { width: '100%', maxWidth: 1120, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  detailLoad: { color: colors.blueText, fontFamily: fonts.display, fontSize: 28 },
+  savedGrid: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
+  liftGridCard: { width: 220, minHeight: 280, borderWidth: 1, borderColor: colors.line, borderRadius: 15, overflow: 'hidden', backgroundColor: colors.surface },
+  liftGridImage: { width: '100%', aspectRatio: 1, backgroundColor: '#10141C', resizeMode: 'cover' },
+  liftGridCopy: { padding: 13, gap: 5 },
+  gridSelectionCheckbox: { position: 'absolute', top: 10, right: 10, width: 25, height: 25, borderWidth: 1, borderColor: '#70809A', borderRadius: 7, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7, 9, 13, 0.88)' },
+  viewToggle: { flexDirection: 'row', padding: 3, borderWidth: 1, borderColor: colors.line, borderRadius: 11, backgroundColor: colors.surface },
+  viewToggleButton: { minHeight: 32, paddingHorizontal: 11, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  viewToggleButtonActive: { backgroundColor: colors.blueSoft },
+  selectionToolbar: { padding: 14, borderWidth: 1, borderColor: '#294A7D', borderRadius: 13, backgroundColor: '#0D1A30', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  selectionCount: { color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 12 },
+  exportStatusCard: { padding: 16, borderWidth: 1, borderColor: '#2D579A', borderRadius: 14, backgroundColor: '#0D1B34', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 14 },
+  detailTopRow: { width: '100%', maxWidth: 952, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  detailLoad: { color: colors.blueText, fontFamily: fonts.display, fontSize: 24 },
+  insightsSection: { width: '100%', maxWidth: 952, alignSelf: 'center', gap: 14 },
+  repInsightCard: { padding: 16, borderWidth: 1, borderColor: colors.line, borderRadius: 14, backgroundColor: colors.surface, gap: 12 },
+  repInsightTitle: { color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 13 },
   settingsPage: { width: '100%', maxWidth: 760, alignSelf: 'center', gap: 22 },
   profileCard: { padding: 20, borderWidth: 1, borderColor: colors.line, borderRadius: 15, backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center', gap: 15 },
   profileAvatar: { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.brand },

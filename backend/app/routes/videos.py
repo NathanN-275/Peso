@@ -4,9 +4,7 @@ import base64
 import binascii
 import json
 import logging
-import tempfile
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
@@ -17,9 +15,15 @@ from ..analysis.pipeline import analyze_video
 from ..analysis.coaching_history import technique_trend_cue
 from ..analysis.manual_tracking import validate_tracking_setup
 from ..analysis.versioning import annotate_analysis_freshness, analysis_is_current
-from ..services.analyzed_video_renderer import render_analyzed_video
+from ..services.analyzed_video_exports import (
+  analysis_export_options,
+  ensure_analyzed_video_artifact,
+  export_variant,
+  playback_storage_path,
+)
 from ..services.auth import get_current_user_id
 from ..services.config import get_settings
+from ..services.saved_lift_exports import ARCHIVE_BUCKET, SavedLiftExportService
 from ..services.supabase_client import get_supabase_admin_client
 from ..services.storage_cleanup import StorageCleanupService, cleanup_requires_token
 from ..services.storage_quota import StorageQuotaService
@@ -33,8 +37,6 @@ from ..services.video_storage_paths import (
 from ..services.video_work_limits import (
   VideoWorkSlot,
   acquire_video_work_slot_or_429,
-  enforce_export_cooldown,
-  record_export_attempt,
   release_video_work_slot,
 )
 
@@ -129,6 +131,7 @@ class SavedVideoResponse(BaseModel):
   video_url: str | None = None
   thumbnail_url: str | None = None
   save_state: str
+  storage_state: Literal["available", "pruned"] = "available"
   saved_at: str | None = None
   created_at: str
   weight: float | None = None
@@ -205,6 +208,15 @@ class DiscardVideoResponse(BaseModel):
   discarded: bool
 
 
+class DeleteSavedLiftsRequest(StrictRequestModel):
+  lift_ids: list[UUID] = Field(min_length=1, max_length=50)
+
+
+class DeleteSavedLiftsResponse(BaseModel):
+  deleted_lift_ids: list[UUID]
+  deleted_count: int
+
+
 class UploadFailedResponse(BaseModel):
   video_id: UUID
   status: str
@@ -233,6 +245,7 @@ class CleanupDetailsResponse(BaseModel):
   expired_pending_videos: int
   stale_pending_videos: int
   old_export_objects: int
+  expired_saved_lift_exports: int = 0
   orphan_objects: int
   storage_objects: int
   bytes_reclaimable: int
@@ -478,19 +491,7 @@ def _summary_rep_payload(rep: dict) -> dict:
 
 
 def _analysis_export_options(result_json: dict) -> dict[str, bool]:
-  pose_frames = result_json.get("poseFrames")
-  barbell_path = result_json.get("barbellPath") or {}
-  barbell_points = barbell_path.get("points") if isinstance(barbell_path, dict) else None
-
-  return {
-    "pose": isinstance(pose_frames, list) and len(pose_frames) > 0,
-    "barbell": (
-      isinstance(barbell_path, dict)
-      and barbell_path.get("available") is True
-      and isinstance(barbell_points, list)
-      and len(barbell_points) >= 2
-    ),
-  }
+  return analysis_export_options(result_json)
 
 
 def _analysis_rep_count(analysis: dict | None) -> int:
@@ -575,6 +576,7 @@ def _saved_video_response(
     video_url=None,
     thumbnail_url=thumbnail_url,
     save_state=video.get("save_state") or ("saved" if video.get("is_saved") else "pending"),
+    storage_state=video.get("storage_state") or "available",
     saved_at=video.get("saved_at"),
     created_at=video["created_at"],
     weight=video.get("weight"),
@@ -632,17 +634,11 @@ def _decode_saved_page_cursor(cursor: str | None) -> int:
 
 
 def _export_variant(*, pose: bool, barbell: bool) -> str:
-  if pose and barbell:
-    return "pose-barbell"
-  if pose:
-    return "pose"
-  if barbell:
-    return "barbell"
-  return "clean"
+  return export_variant(pose=pose, barbell=barbell)
 
 
 def _playback_storage_path(video: dict) -> str:
-  return str(video.get("playback_path") or video["storage_path"])
+  return playback_storage_path(video)
 
 
 def _path_belongs_to_user(path: str, user_id: str) -> bool:
@@ -697,6 +693,15 @@ def _delete_account_storage(user_id: str, repository: VideoRepository) -> None:
 
   storage.delete_storage_paths(owned_paths)
   StorageService(bucket="profile-avatars").delete_storage_prefix(f"{user_id}/")
+
+
+def _delete_saved_lift_assets(storage: StorageService, video: dict, user_id: str) -> None:
+  video_id = str(video["id"])
+  for path in [path for path in dict.fromkeys(_video_storage_paths(video)) if path]:
+    _delete_owned_storage_path(storage, path, user_id, "Saved Lift")
+
+  for path in storage.list_storage_prefix(f"{user_id}/exports/{video_id}-"):
+    _delete_owned_storage_path(storage, path, user_id, "Saved Lift export")
 
 
 @router.post("/videos", response_model=RegisterVideoResponse, status_code=status.HTTP_201_CREATED)
@@ -784,6 +789,7 @@ def delete_account(
 
   try:
     _delete_account_storage(user_id, repository)
+    StorageService(bucket=ARCHIVE_BUCKET).delete_storage_prefix(f"{user_id}/")
     client.table("profiles").delete().eq("id", user_id).execute()
     client.auth.admin.delete_user(user_id)
   except Exception as error:
@@ -1082,6 +1088,36 @@ def get_saved_video_overview(
   )
 
 
+@router.post("/saved-lifts/delete", response_model=DeleteSavedLiftsResponse)
+def delete_saved_lifts(
+  request: DeleteSavedLiftsRequest,
+  user_id: str = Depends(get_current_user_id),
+) -> DeleteSavedLiftsResponse:
+  lift_ids = list(dict.fromkeys(str(lift_id) for lift_id in request.lift_ids))
+  repository = VideoRepository()
+  videos = repository.get_owned_videos(lift_ids, user_id)
+  videos_by_id = {str(video["id"]): video for video in videos}
+
+  if set(videos_by_id) != set(lift_ids):
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="One or more Saved Lifts were not found.")
+
+  if any(not repository.video_is_saved(videos_by_id[lift_id]) for lift_id in lift_ids):
+    raise HTTPException(
+      status_code=status.HTTP_409_CONFLICT,
+      detail="Only Saved Lifts can be permanently deleted.",
+    )
+
+  storage = StorageService()
+  for lift_id in lift_ids:
+    _delete_saved_lift_assets(storage, videos_by_id[lift_id], user_id)
+    repository.delete_video_with_analysis(lift_id)
+
+  return DeleteSavedLiftsResponse(
+    deleted_lift_ids=lift_ids,
+    deleted_count=len(lift_ids),
+  )
+
+
 @router.get("/videos/{video_id}/playback-url", response_model=VideoPlaybackUrlResponse)
 def get_video_playback_url(
   video_id: UUID,
@@ -1140,59 +1176,27 @@ def export_analyzed_video(
       detail="Analysis result not available for export.",
     )
 
-  analysis_id = str(analysis["id"])
   requested = export_request or AnalyzedVideoExportRequest()
-  variant = _export_variant(pose=requested.pose, barbell=requested.barbell)
-
-  if variant == "clean":
-    playback_path, export_url, _ = _create_owned_signed_url(storage, _playback_storage_path(video), user_id, "playback_path")
-    return AnalyzedVideoExportResponse(
-      video_id=video_id,
-      analysis_id=analysis["id"],
-      storage_path=playback_path,
-      export_url=export_url,
-      variant=variant,
-    )
-
-  export_path = f"{user_id}/exports/{video_id_str}-{analysis_id}-{variant}-h264-v1.mp4"
-
-  if not storage.storage_path_exists(export_path):
-    enforce_export_cooldown(user_id, video_id_str, variant)
-    record_export_attempt(user_id, video_id_str, variant)
-    video_work_slot = acquire_video_work_slot_or_429("export", user_id=user_id, video_id=video_id_str)
-    source_file: Path | None = None
-    output_file: Path | None = None
-
-    try:
-      source_path = require_user_storage_path(_playback_storage_path(video), user_id, "playback_path")
-      source_file = storage.download_to_tempfile(source_path)
-
-      with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_output:
-        output_file = Path(temp_output.name)
-
-      render_analyzed_video(
-        source_path=source_file,
-        output_path=output_file,
-        result_json=annotate_analysis_freshness(analysis["result_json"], analysis),
-        include_pose=requested.pose,
-        include_barbell=requested.barbell,
-      )
-      storage.upload_file(export_path, output_file, "video/mp4")
-    finally:
-      release_video_work_slot(video_work_slot)
-      if source_file:
-        storage.remove_tempfile(source_file)
-
-      if output_file:
-        storage.remove_tempfile(output_file)
-
-  export_path, export_url, _ = _create_owned_signed_url(storage, export_path, user_id, "export_path")
+  artifact = ensure_analyzed_video_artifact(
+    video=video,
+    analysis=analysis,
+    user_id=user_id,
+    storage=storage,
+    pose=requested.pose,
+    barbell=requested.barbell,
+  )
+  export_path, export_url, _ = _create_owned_signed_url(
+    storage,
+    artifact.storage_path,
+    user_id,
+    "export_path",
+  )
   return AnalyzedVideoExportResponse(
     video_id=video_id,
     analysis_id=analysis["id"],
     storage_path=export_path,
     export_url=export_url,
-    variant=variant,
+    variant=artifact.variant,
   )
 
 
@@ -1257,6 +1261,9 @@ def cleanup_expired_videos(
   _authorize_cleanup(cleanup_token)
   effective_dry_run = not confirm if dry_run is None else dry_run
   report = StorageCleanupService().run(dry_run=effective_dry_run)
+  saved_lift_exports = SavedLiftExportService().cleanup_expired_archives(
+    dry_run=effective_dry_run,
+  )
 
   logger.info(
     "Storage cleanup completed: deleted_videos=%s dry_run=%s storage_objects=%s bytes_reclaimable=%s",
@@ -1265,7 +1272,11 @@ def cleanup_expired_videos(
     report.storage_objects,
     report.bytes_reclaimable,
   )
-  candidate_count = report.expired_pending_videos + report.stale_pending_videos
+  candidate_count = (
+    report.expired_pending_videos
+    + report.stale_pending_videos
+    + saved_lift_exports.candidates
+  )
   return CleanupExpiredVideosResponse(
     deleted_count=report.deleted_count,
     candidate_count=candidate_count,
@@ -1274,10 +1285,11 @@ def cleanup_expired_videos(
       expired_pending_videos=report.expired_pending_videos,
       stale_pending_videos=report.stale_pending_videos,
       old_export_objects=report.old_export_objects,
+      expired_saved_lift_exports=saved_lift_exports.candidates,
       orphan_objects=report.orphan_objects,
-      storage_objects=report.storage_objects,
-      bytes_reclaimable=report.bytes_reclaimable,
-      errors=report.errors,
+      storage_objects=report.storage_objects + saved_lift_exports.candidates,
+      bytes_reclaimable=report.bytes_reclaimable + saved_lift_exports.bytes_reclaimable,
+      errors=[*report.errors, *saved_lift_exports.errors],
     ),
   )
 

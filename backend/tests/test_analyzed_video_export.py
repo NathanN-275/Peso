@@ -153,8 +153,8 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
     with (
       patch("app.routes.videos.VideoRepository", return_value=repository),
       patch("app.routes.videos.StorageService", return_value=storage),
-      patch("app.routes.videos.annotate_analysis_freshness", side_effect=lambda result, analysis: result),
-      patch("app.routes.videos.render_analyzed_video") as renderer,
+      patch("app.services.analyzed_video_exports.annotate_analysis_freshness", side_effect=lambda result, analysis: result),
+      patch("app.services.analyzed_video_exports.render_analyzed_video") as renderer,
     ):
       response = export_analyzed_video(VIDEO_ID, user_id=USER_ID)
 
@@ -176,8 +176,8 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
     with (
       patch("app.routes.videos.VideoRepository", return_value=repository),
       patch("app.routes.videos.StorageService", return_value=storage),
-      patch("app.routes.videos.annotate_analysis_freshness", side_effect=lambda result, analysis: result),
-      patch("app.routes.videos.render_analyzed_video") as renderer,
+      patch("app.services.analyzed_video_exports.annotate_analysis_freshness", side_effect=lambda result, analysis: result),
+      patch("app.services.analyzed_video_exports.render_analyzed_video") as renderer,
     ):
       response = export_analyzed_video(VIDEO_ID, user_id=USER_ID)
 
@@ -198,8 +198,8 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
     with (
       patch("app.routes.videos.VideoRepository", return_value=repository),
       patch("app.routes.videos.StorageService", return_value=storage),
-      patch("app.routes.videos.annotate_analysis_freshness", side_effect=lambda result, analysis: result),
-      patch("app.routes.videos.render_analyzed_video") as renderer,
+      patch("app.services.analyzed_video_exports.annotate_analysis_freshness", side_effect=lambda result, analysis: result),
+      patch("app.services.analyzed_video_exports.render_analyzed_video") as renderer,
     ):
       export_analyzed_video(VIDEO_ID, user_id=USER_ID)
 
@@ -219,7 +219,7 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
       patch.dict("os.environ", {"MAX_GLOBAL_VIDEO_WORKERS": "1"}, clear=False),
       patch("app.routes.videos.VideoRepository", return_value=repository),
       patch("app.routes.videos.StorageService", return_value=storage),
-      patch("app.routes.videos.render_analyzed_video") as renderer,
+      patch("app.services.analyzed_video_exports.render_analyzed_video") as renderer,
     ):
       get_settings.cache_clear()
       held_slot = acquire_video_work_slot_or_429("test", user_id=USER_ID, video_id=str(VIDEO_ID))
@@ -242,7 +242,7 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
     with (
       patch("app.routes.videos.VideoRepository", return_value=repository),
       patch("app.routes.videos.StorageService", return_value=storage),
-      patch("app.routes.videos.render_analyzed_video") as renderer,
+      patch("app.services.analyzed_video_exports.render_analyzed_video") as renderer,
     ):
       response = export_analyzed_video(
         VIDEO_ID,
@@ -287,7 +287,7 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
     with (
       patch("app.routes.videos.VideoRepository", return_value=repository),
       patch("app.routes.videos.StorageService", return_value=storage),
-      patch("app.routes.videos.render_analyzed_video") as renderer,
+      patch("app.services.analyzed_video_exports.render_analyzed_video") as renderer,
       self.assertRaises(HTTPException) as raised,
     ):
       export_analyzed_video(VIDEO_ID, user_id=USER_ID)
@@ -305,7 +305,7 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
     with (
       patch("app.routes.videos.VideoRepository", return_value=repository),
       patch("app.routes.videos.StorageService", return_value=storage),
-      patch("app.routes.videos.render_analyzed_video") as renderer,
+      patch("app.services.analyzed_video_exports.render_analyzed_video") as renderer,
     ):
       response = export_analyzed_video(
         VIDEO_ID,
@@ -328,7 +328,7 @@ class AnalyzedVideoExportRouteTest(unittest.TestCase):
     with (
       patch("app.routes.videos.VideoRepository", return_value=repository),
       patch("app.routes.videos.StorageService", return_value=storage),
-      patch("app.routes.videos.render_analyzed_video") as renderer,
+      patch("app.services.analyzed_video_exports.render_analyzed_video") as renderer,
     ):
       response = export_analyzed_video(
         VIDEO_ID,

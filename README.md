@@ -1,8 +1,8 @@
 # Peso
 
-Peso is a mobile-first lifting analysis app that turns a workout video into visual feedback, rep summaries, and technique cues.
+Peso is a web and mobile lifting analysis product that turns a workout video into visual feedback, rep summaries, and technique cues.
 
-The current version focuses on side-view squat analysis. A front view is in development but still needs improvement to be more accurate. A user uploads or records a squat video, Peso processes the movement, tracks the lifter and barbell, and returns an analyzed playback view with movement overlays and coaching feedback. 
+The current version focuses on side-view squat analysis. A front view is in development but still needs improvement to be more accurate. A user uploads or records a squat video, Peso processes the movement, tracks the lifter and barbell, and returns an analyzed playback view with movement overlays and coaching feedback.
 
 ## Demo
 
@@ -34,12 +34,48 @@ The goal is to make lifting analysis easier to understand without requiring expe
 
 ## Current focus
 
-Peso currently works best with side-view squat videos, but front-view videos are also supported.
+Peso is moving from a working mobile-first prototype toward a product that lifters can use through the web. The immediate goal is to launch a focused web beta while continuing to strengthen the analysis behind every result.
 
-I'm currently working on a web version of the app so users can use and test the tool. My goal is to push out a working prototype and get user feedback. 
+### Launch the web beta
 
+The web beta is the clearest path to getting Peso into users' hands and learning from real lifting videos. Current work is focused on turning the browser experience into a complete product flow: introducing Peso through the public Marketing Site, bringing users into the Web App, accepting side-view squat videos, showing analysis progress, and making results easy to review and save.
+
+The first release is intentionally narrow. It is designed to make one supported workflow dependable before expanding to more exercises, camera angles, and coaching features.
+
+### Improve tracking reliability
+
+Peso currently works best with side-view squat videos. The analysis pipeline is being improved to preserve the identity of the lifter's joints and visible barbell collar across frames, especially when gym equipment, motion blur, or partial occlusion makes tracking difficult.
+
+Current tracking priorities include:
+
+* making pin-assisted tracking more reliable
+* keeping the upper-back marker stable across frames
+* smoothing the barbell path overlay without hiding uncertain observations
+* improving pose landmark consistency throughout each squat
+* returning a clear limited-analysis result when a video cannot be analyzed confidently
+
+Front-view videos are also supported, but that analysis is still in development and needs further accuracy improvements.
+
+### Continue developing the mobile app
+
+Launching the web beta does not replace the mobile app. The Expo app remains in active development and will continue to evolve alongside the web product. The web beta provides a practical way to ship Peso and validate the core experience, while mobile development continues to improve recording, uploading, and reviewing lifts directly from a phone.
 
 ## Tech stack
+
+### Marketing Site
+
+* Astro
+* Static HTML and CSS
+* Netlify hosting
+
+### Web App
+
+* React
+* React Native Web and Expo
+* TypeScript
+* React Router
+* Supabase client
+* Netlify hosting under `/app`
 
 ### Mobile app
 
@@ -68,7 +104,7 @@ I'm currently working on a web version of the app so users can use and test the 
 4. The backend downloads the video and processes it frame by frame.
 5. Pose and barbell tracking are used to estimate movement quality.
 6. Rep summaries, diagnostics, overlays, and coaching feedback are saved.
-7. The mobile app displays the analyzed result to the user.
+7. The Web App or mobile app displays the analyzed result to the user.
 
 ## Local development
 
@@ -103,6 +139,54 @@ SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_JWT_SECRET=
 CLEANUP_JOB_TOKEN=replace-with-random-cleanup-secret
 ```
+
+Additional backend analysis and local-development variables include:
+
+```bash
+BACKEND_ENV=development
+VIDEO_BUCKET=videos
+MAX_VIDEO_DURATION_MS=300000
+SIGNED_URL_TTL_SECONDS=300
+STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS=120
+FFMPEG_TIMEOUT_SECONDS=120
+MAX_GLOBAL_VIDEO_WORKERS=2
+EXPORT_COOLDOWN_SECONDS=30
+EXPORT_CACHE_TTL_HOURS=24
+MAX_SAVED_LIFT_EXPORT_BYTES=52428800
+ORPHAN_STORAGE_MIN_AGE_HOURS=24
+STALE_PROCESSING_HOURS=6
+MODEL_VERSION=mediapipe-rtmpose-v3-pin-assisted
+POSE_TARGET_FPS=18
+POSE_MAX_FRAME_DIMENSION=720
+POSE_MODEL_COMPLEXITY=2
+POSE_MIN_DETECTION_CONFIDENCE=0.6
+POSE_MIN_TRACKING_CONFIDENCE=0.6
+POSE_BACKEND=hybrid
+POSE_FALLBACK_ENABLED=true
+POSE_FALLBACK_DEVICE=auto
+POSE_FALLBACK_DET_FREQUENCY=3
+POSE_FALLBACK_MODE=balanced
+POSE_DEBUG_LANDMARK_EXPORT_DIR=
+POSE_REPAIR_ENABLED=true
+POSE_REPAIR_MAX_GAP_FRAMES=3
+POSE_REPAIR_VELOCITY_GAP_FRAMES=2
+POSE_REPAIR_RECOVERY_HYSTERESIS_FRAMES=2
+YOLO_TRACKING_MODE=off
+YOLO_TRACKING_MODEL_PATH=
+YOLO_TRACKING_CLASS_NAMES=barbell_collar,rack_upright,j_hook,safety_arm,storage_peg,sleeve,plate_face
+YOLO_TRACKING_CONFIDENCE_THRESHOLD=0.45
+YOLO_TRACKING_NMS_IOU_THRESHOLD=0.45
+YOLO_TRACKING_INPUT_SIZE=640
+YOLO_TRACKING_MAX_COAST_SECONDS=0.25
+FFMPEG_BINARY=
+BACKEND_CORS_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhost:8082,http://127.0.0.1:8082,http://localhost:19006,http://127.0.0.1:19006,http://localhost:3000,http://127.0.0.1:3000
+BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true
+```
+
+Apply `supabase/migrations/202606120001_tracking_setup.sql` to enable optional pin-assisted tracking metadata. Side-view squat uploads may store a user-selected reference frame with upper back, hip, knee, ankle, and near-side collar anchors. The upper-back anchor is stored under the existing `shoulder` key for compatibility. Invalid or unavailable anchor tracks fall back to the automatic pose and barbell pipeline.
+
+`BACKEND_CORS_ORIGINS` supports common Expo web, simulator, and local browser ports used by the mobile client. In `BACKEND_ENV=development`, the API also allows local browser origins matching `localhost`, `127.0.0.1`, `0.0.0.0`, or private LAN IPs on any port so Expo web and Expo Go can still work if they choose a different local port. Set `BACKEND_ENV=production` in deployed environments to disable that local-dev regex and rely only on explicit `BACKEND_CORS_ORIGINS`.
+`BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true` supports Chrome's local private-network preflight during development. It is ignored when `BACKEND_ENV=production`.
 
 Production backend deployments must also set `BACKEND_ENV=production`, `CLEANUP_JOB_TOKEN`, and an explicit non-local `BACKEND_CORS_ORIGINS` value.
 
@@ -155,6 +239,12 @@ Both clients use the same FastAPI process: the simulator connects to
 `localhost:8000`, while web uses a same-origin Metro proxy at `/__peso_api` so
 local browser previews do not need direct access to port 8000.
 
+The start scripts set the web surface explicitly. `npm start` uses
+`EXPO_PUBLIC_WEB_SURFACE=native-preview`, so pressing `w` renders the reusable
+mobile root without React Router. `npm run web` uses
+`EXPO_PUBLIC_WEB_SURFACE=web-app` with a local `/` router base. Production Expo
+exports use the same Web App surface at `/app`.
+
 To open web immediately while still starting FastAPI:
 
 ```bash
@@ -198,8 +288,8 @@ For Expo Go on a physical phone, the backend must bind to `0.0.0.0` so another d
 The public beta website is split into two browser surfaces:
 
 * Astro owns `/`, `/privacy`, and `/terms` under `web/`.
-* `App.web.tsx` owns the fixture-driven Expo prototype under `/app` while
-  `App.tsx` remains the native entry point.
+* `App.web.tsx` selects either the Expo Web App or the reusable native root,
+  while `App.tsx` remains the native entry point.
 
 Start the marketing site while editing public pages:
 
@@ -216,8 +306,9 @@ npm run web:preview
 
 The build writes the static Astro pages to `dist/` and the Expo single-page app
 to `dist/app/`. `netlify.toml` serves existing marketing files first and rewrites
-only unknown `/app/*` paths to `/app/index.html`. The milestone-one prototype
-uses fixtures and makes no backend calls.
+only unknown `/app/*` paths to `/app/index.html`. Demo Analysis remains a
+browser-local simulation. Peso Account authentication, the shared Saved Lift
+Library, deletion, and export jobs use the authenticated backend.
 
 ## Backend API overview
 
@@ -236,6 +327,9 @@ Main endpoints:
 * `POST /videos/{video_id}/discard` — discards a video
 * `GET /videos/saved` — lists saved videos
 * `GET /videos/{video_id}/playback-url` — returns a signed playback URL
+* `POST /saved-lift-exports` — queues one owner-checked Saved Lift ZIP
+* `GET /saved-lift-exports/{job_id}` — polls export status and refreshes its temporary download
+* `POST /saved-lifts/delete` — permanently deletes a selected Saved Lift set
 * `POST /videos/cleanup-expired` — cleans up expired or unused storage objects.
 
 ### `GET /videos/saved`
@@ -268,7 +362,7 @@ Returns authenticated video-upload capabilities. Pin-assisted uploads call this 
 
 ### `POST /videos/cleanup-expired`
 
-Dry-runs cleanup by default and reports reclaimable storage without deleting anything. Pass `confirm=true` to delete unnecessary Supabase Storage data and mark eligible rows discarded. Cleanup removes expired pending uploads, stale pending analysis jobs, old analyzed export MP4s, and unreferenced app-owned upload objects. Saved source videos are never deleted.
+Dry-runs cleanup by default and reports reclaimable storage without deleting anything. Pass `confirm=true` to delete unnecessary Supabase Storage data and mark eligible rows discarded. Cleanup removes expired pending uploads, stale pending analysis jobs, old analyzed export MP4s, expired Saved Lift ZIPs, and unreferenced app-owned upload objects. Saved source videos are never deleted by retention cleanup.
 
 Outside local development, requests must include:
 
@@ -294,7 +388,7 @@ backend/.venv/bin/python scripts/cleanup_supabase_storage.py --dry-run
 
 Peso is under active development.
 
-The current version demonstrates the core product idea: upload a lifting video, analyze the movement, and return useful visual feedback. The next major step is improving tracking reliability so the app can handle more real-world gym videos with clutter, occlusion, and imperfect camera angles.
+The current version demonstrates the core product idea: upload a lifting video, analyze the movement, and return useful visual feedback. The next major milestone is launching the web beta while improving tracking reliability across real-world gym videos with clutter, occlusion, and imperfect camera angles. The mobile app remains in active development alongside that work.
 
 ## Repository structure
 
@@ -305,9 +399,11 @@ The current version demonstrates the core product idea: upload a lifting video, 
 ├── dashboard/              # Local development-only analysis trace dashboard
 ├── lib/                    # Shared frontend utilities
 ├── scripts/                # Development scripts
-├── src/                    # Mobile app source code
+├── src/                    # Native app and Web App source code
+├── web/                    # Astro Marketing Site
 ├── supabase/migrations/    # Database migrations
-├── App.tsx                 # App entry point
+├── App.tsx                 # Native app entry point
+├── App.web.tsx             # Web App entry point
 ├── package.json            # Frontend scripts and dependencies
 └── README.md
 ```

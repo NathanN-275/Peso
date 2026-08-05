@@ -7,6 +7,21 @@ on:
       - main
 
 jobs:
+  production-release-source:
+    if: github.event_name == 'pull_request' && github.base_ref == 'production'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require production releases from this repository's main branch
+        env:
+          HEAD_BRANCH: ${{ github.head_ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if [ "$HEAD_BRANCH" != "main" ] || [ "$HEAD_REPOSITORY" != "$REPOSITORY" ]; then
+            echo "Production releases must come from the main branch in $REPOSITORY."
+            exit 1
+          fi
+
   backend-security:
     runs-on: ubuntu-latest
     steps:

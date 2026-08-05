@@ -23,7 +23,8 @@ VIDEO_BASE_COLUMNS = (
 )
 VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING = (
   f"{VIDEO_BASE_COLUMNS},is_saved,discarded_at,thumbnail_path,playback_path,original_storage_path,"
-  "storage_optimized_at,storage_optimization_error"
+  "storage_optimized_at,storage_optimization_error,storage_state,original_size_bytes,"
+  "uploaded_size_bytes,was_compressed"
 )
 VIDEO_STORAGE_COLUMNS = f"{VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING},tracking_setup"
 ANALYSIS_RESULT_COLUMNS = "id,video_id,model_version,result_json,created_at"
@@ -105,6 +106,30 @@ class VideoRepository:
       raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Video does not belong to this user.")
 
     return video
+
+  def get_owned_videos(self, video_ids: list[str], user_id: str) -> list[dict[str, Any]]:
+    if not video_ids:
+      return []
+
+    try:
+      response = (
+        self.client.table("videos")
+        .select(VIDEO_STORAGE_COLUMNS)
+        .eq("user_id", user_id)
+        .in_("id", video_ids)
+        .execute()
+      )
+    except Exception as error:
+      logger.warning("Falling back to legacy owned-video batch query for user %s: %s", user_id, error)
+      response = (
+        self.client.table("videos")
+        .select(VIDEO_LEGACY_BASE_COLUMNS)
+        .eq("user_id", user_id)
+        .in_("id", video_ids)
+        .execute()
+      )
+
+    return response.data or []
 
   def update_video(self, video_id: str, fields: dict[str, Any]) -> dict[str, Any]:
     # Update any video metadata in place.

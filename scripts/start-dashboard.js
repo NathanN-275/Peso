@@ -26,6 +26,7 @@ const child = spawn(
       VITE_SUPABASE_URL: env.EXPO_PUBLIC_SUPABASE_URL,
       VITE_SUPABASE_ANON_KEY: env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
       VITE_BACKEND_URL: devEnvironment.expoBackendUrl,
+      VITE_BACKEND_PROXY_TARGET: new URL(devEnvironment.backendHealthUrl).origin,
     },
     stdio: 'inherit',
   },

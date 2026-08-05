@@ -12,7 +12,9 @@ from app.analysis.versioning import annotate_analysis_freshness, analysis_is_cur
 from app.routes.videos import (
   RegisterVideoRequest,
   SaveVideoRequest,
+  DeleteSavedLiftsRequest,
   delete_account,
+  delete_saved_lifts,
   discard_video,
   get_video_capabilities,
   get_storage_usage,
@@ -81,6 +83,67 @@ class VideoRoutesTest(unittest.TestCase):
     )
     self.assertEqual(response.status, "queued")
     self.assertEqual(len(background_tasks.tasks), 1)
+
+  def test_batch_delete_permanently_removes_each_owned_saved_lift(self) -> None:
+    second_video_id = UUID("22222222-2222-2222-2222-222222222222")
+    repository = MagicMock()
+    repository.get_owned_videos.return_value = [
+      {
+        "id": str(VIDEO_ID),
+        "user_id": USER_ID,
+        "save_state": "saved",
+        "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+      },
+      {
+        "id": str(second_video_id),
+        "user_id": USER_ID,
+        "save_state": "saved",
+        "storage_path": f"{USER_ID}/uploads/{second_video_id}.mov",
+      },
+    ]
+    repository.video_is_saved.return_value = True
+    storage = MagicMock()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+    ):
+      response = delete_saved_lifts(
+        DeleteSavedLiftsRequest(lift_ids=[VIDEO_ID, second_video_id, VIDEO_ID]),
+        USER_ID,
+      )
+
+    self.assertEqual(response.deleted_count, 2)
+    self.assertEqual(
+      [call.args[0] for call in repository.delete_video_with_analysis.call_args_list],
+      [str(VIDEO_ID), str(second_video_id)],
+    )
+
+  def test_batch_delete_rejects_selection_containing_unowned_lift_before_mutation(self) -> None:
+    second_video_id = UUID("22222222-2222-2222-2222-222222222222")
+    repository = MagicMock()
+    repository.get_owned_videos.return_value = [
+      {
+        "id": str(VIDEO_ID),
+        "user_id": USER_ID,
+        "save_state": "saved",
+        "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+      }
+    ]
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService") as storage,
+      self.assertRaises(HTTPException) as raised,
+    ):
+      delete_saved_lifts(
+        DeleteSavedLiftsRequest(lift_ids=[VIDEO_ID, second_video_id]),
+        USER_ID,
+      )
+
+    self.assertEqual(raised.exception.status_code, 404)
+    repository.delete_video_with_analysis.assert_not_called()
+    storage.assert_not_called()
 
   def test_storage_usage_endpoint_returns_quota_report_without_mutation(self) -> None:
     quota_service = MagicMock()
@@ -841,11 +904,12 @@ class VideoRoutesTest(unittest.TestCase):
     video_storage = MagicMock()
     video_storage.list_storage_prefix.return_value = [f"{USER_ID}/exports/{VIDEO_ID}-export.mp4"]
     avatar_storage = MagicMock()
+    archive_storage = MagicMock()
     admin_client = MagicMock()
 
     with (
       patch("app.routes.videos.VideoRepository", return_value=repository),
-      patch("app.routes.videos.StorageService", side_effect=[video_storage, avatar_storage]),
+      patch("app.routes.videos.StorageService", side_effect=[video_storage, avatar_storage, archive_storage]),
       patch("app.routes.videos.get_supabase_admin_client", return_value=admin_client),
     ):
       response = delete_account(USER_ID)
@@ -857,6 +921,7 @@ class VideoRoutesTest(unittest.TestCase):
     self.assertIn(f"{USER_ID}/thumbnails/{VIDEO_ID}.jpg", deleted_paths)
     self.assertIn(f"{USER_ID}/exports/{VIDEO_ID}-export.mp4", deleted_paths)
     avatar_storage.delete_storage_prefix.assert_called_once_with(f"{USER_ID}/")
+    archive_storage.delete_storage_prefix.assert_called_once_with(f"{USER_ID}/")
     admin_client.table.assert_called_once_with("profiles")
     admin_client.table.return_value.delete.return_value.eq.assert_called_once_with("id", USER_ID)
     admin_client.auth.admin.delete_user.assert_called_once_with(USER_ID)
@@ -907,6 +972,42 @@ class VideoRoutesTest(unittest.TestCase):
     storage.create_signed_url.assert_called_once_with(
       f"{USER_ID}/uploads/{VIDEO_ID}.mov",
       expires_in=300,
+    )
+    self.assertEqual(response.video_url, "https://example.test/signed-original")
+
+  def test_playback_url_falls_back_to_original_when_optimized_object_is_missing(self) -> None:
+    repository = MagicMock()
+    repository.require_owned_video.return_value = {
+      "id": str(VIDEO_ID),
+      "user_id": USER_ID,
+      "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+      "playback_path": f"{USER_ID}/playback/{VIDEO_ID}-h264-720p-v1.mp4",
+      "discarded_at": None,
+    }
+    storage = MagicMock()
+    storage.create_signed_url.side_effect = [
+      RuntimeError("Object not found"),
+      "https://example.test/signed-original",
+    ]
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+    ):
+      response = get_video_playback_url(VIDEO_ID, USER_ID)
+
+    self.assertEqual(
+      storage.create_signed_url.call_args_list,
+      [
+        unittest.mock.call(
+          f"{USER_ID}/playback/{VIDEO_ID}-h264-720p-v1.mp4",
+          expires_in=300,
+        ),
+        unittest.mock.call(
+          f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+          expires_in=300,
+        ),
+      ],
     )
     self.assertEqual(response.video_url, "https://example.test/signed-original")
 
