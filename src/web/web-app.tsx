@@ -1,4 +1,5 @@
-import { createContext, use, useEffect, useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Asset } from 'expo-asset';
 import {
   Image,
   Pressable,
@@ -23,13 +24,9 @@ import {
   useParams,
 } from 'react-router';
 import tokens from '../theme/tokens';
-import {
-  activityCopy,
-  prototypeScenarios,
-  savedLifts,
-  type PrototypeScenario,
-  type SavedLiftFixture,
-} from './fixtures';
+import { readSidebarCollapsed, writeSidebarCollapsed } from '../../lib/sidebarPreferencePolicy';
+import { savedLifts, type SavedLiftFixture } from './fixtures';
+import { WebDemoSessionProvider, useWebDemoSession } from './web-demo-session';
 
 const colors = {
   ...tokens.colors,
@@ -55,23 +52,25 @@ const fonts = {
   bold: 'Inter_700Bold',
 };
 
-const previewImage = require('../../assets/demo/peso-pose-overlay.jpg') as ImageSourcePropType;
+const previewImageAsset = require('../../assets/demo/peso-pose-overlay.jpg') as number;
+const previewImage = previewImageAsset as ImageSourcePropType;
 const barPathImage = require('../../assets/demo/peso-pin-assisted-bar-path.jpg') as ImageSourcePropType;
 const logoImage = require('../../assets/peso-logo.png') as ImageSourcePropType;
+const analyzedVideoAsset = require('../../assets/demo/peso-pose-overlay.mp4') as number;
+const analyzedVideoUri = Asset.fromModule(analyzedVideoAsset).uri;
+const analyzedVideoPosterUri = Asset.fromModule(previewImageAsset).uri;
 
-type ScenarioContextValue = {
-  scenario: PrototypeScenario;
-  setScenario: (scenario: PrototypeScenario) => void;
-};
+function formatFileSize(size: number | null) {
+  if (size === null) return 'Size unavailable';
+  if (size < 1_000_000) return `${Math.max(1, Math.round(size / 1_000))} KB`;
+  return `${(size / 1_000_000).toFixed(1)} MB`;
+}
 
-const ScenarioContext = createContext<ScenarioContextValue | null>(null);
-
-function useScenario() {
-  const value = use(ScenarioContext);
-  if (!value) {
-    throw new Error('ScenarioContext is unavailable');
-  }
-  return value;
+function formatTime(seconds: number | null) {
+  const safeSeconds = Number.isFinite(seconds) ? Math.max(0, seconds ?? 0) : 0;
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainingSeconds = Math.floor(safeSeconds % 60);
+  return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
 }
 
 type ActionButtonProps = {
@@ -303,12 +302,15 @@ function ResetScreen() {
   );
 }
 
-const navItems = [
+const desktopNavItems = [
   { path: '/', label: 'Home', short: 'H' },
   { path: '/record', label: 'Record', short: 'R' },
+  { path: '/upload', label: 'Upload Video', short: 'U' },
   { path: '/saved-lifts', label: 'Saved Lifts', short: 'S' },
   { path: '/profile', label: 'Profile', short: 'P' },
 ];
+
+const mobileNavItems = desktopNavItems.filter((item) => item.path !== '/upload');
 
 const routeTitles: Record<string, string> = {
   '/': 'Home',
@@ -325,17 +327,36 @@ function navItemActive(pathname: string, path: string) {
   return pathname === path || pathname.startsWith(`${path}/`);
 }
 
-function Navigation({ compact = false, mobile = false }: { compact?: boolean; mobile?: boolean }) {
+function Navigation({
+  compact = false,
+  mobile = false,
+  onToggleCompact,
+}: {
+  compact?: boolean;
+  mobile?: boolean;
+  onToggleCompact?: () => void;
+}) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const items = mobile ? navItems.slice(0, 4) : navItems;
+  const items = mobile ? mobileNavItems : desktopNavItems;
 
   return (
     <View style={mobile ? styles.bottomNav : [styles.sidebar, compact && styles.sidebarCompact]} accessibilityLabel="Primary navigation">
       {!mobile && (
-        <Pressable accessibilityRole="link" onPress={() => navigate('/')} style={styles.sidebarWordmark}>
-          <Wordmark compact={compact} />
-        </Pressable>
+        <View style={styles.sidebarHeader}>
+          <Pressable accessibilityRole="link" onPress={() => navigate('/')} style={styles.sidebarWordmark}>
+            <Wordmark compact={compact} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={compact ? 'Expand sidebar' : 'Collapse sidebar'}
+            accessibilityState={{ expanded: !compact }}
+            onPress={onToggleCompact}
+            style={({ pressed }) => [styles.sidebarToggle, pressed && styles.navItemPressed]}
+          >
+            <Text style={styles.sidebarToggleText}>{compact ? '›' : '‹'}</Text>
+          </Pressable>
+        </View>
       )}
       <View style={mobile ? styles.bottomNavItems : styles.navList}>
         {items.map((item) => {
@@ -367,7 +388,6 @@ function Navigation({ compact = false, mobile = false }: { compact?: boolean; mo
             <View style={styles.navIcon}><Text style={styles.navIconText}>⚙</Text></View>
             {!compact && <Text style={styles.navLabel}>Settings</Text>}
           </Pressable>
-          {!compact && <Text selectable style={styles.prototypeBadge}>Fixture prototype · No backend</Text>}
         </View>
       )}
     </View>
@@ -377,7 +397,10 @@ function Navigation({ compact = false, mobile = false }: { compact?: boolean; mo
 function AppShell() {
   const { width, height } = useWindowDimensions();
   const location = useLocation();
-  const compact = width >= 768 && width < 1200;
+  const { session, clearSession } = useWebDemoSession();
+  const [compact, setCompact] = useState(() =>
+    readSidebarCollapsed(typeof window === 'undefined' ? null : window.localStorage)
+  );
   const mobile = width < 768;
   const title = location.pathname.startsWith('/saved-lifts/')
     ? 'Saved Lift'
@@ -391,14 +414,28 @@ function AppShell() {
     document.title = `${title} — Peso`;
   }, [title]);
 
+  useEffect(() => {
+    writeSidebarCollapsed(
+      typeof window === 'undefined' ? null : window.localStorage,
+      compact
+    );
+  }, [compact]);
+
+  useEffect(() => {
+    const selectionRoutes = location.pathname === '/upload' || location.pathname === '/setup';
+    if (session.selectedFile && session.phase === 'idle' && !selectionRoutes) {
+      clearSession();
+    }
+  }, [clearSession, location.pathname, session.phase, session.selectedFile]);
+
   return (
     <View style={[styles.appRoot, { height: Math.max(height, 640) }]}>
       <View style={styles.appRow}>
-        {!mobile && <Navigation compact={compact} />}
+        {!mobile && <Navigation compact={compact} onToggleCompact={() => setCompact((value) => !value)} />}
         <View style={styles.appMain}>
           <View style={styles.topbar}>
             <View>
-              <Text selectable style={styles.topbarKicker}>PESO WEB BETA</Text>
+              <Text selectable style={styles.topbarKicker}>DEMO ANALYSIS</Text>
               <Text accessibilityRole="header" selectable style={styles.topbarTitle}>{title}</Text>
             </View>
             <View style={styles.topbarAccount}>
@@ -434,34 +471,9 @@ function PageScroll({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ScenarioPicker() {
-  const { scenario, setScenario } = useScenario();
-  return (
-    <View style={styles.scenarioPanel}>
-      <View>
-        <Text selectable style={styles.scenarioTitle}>Prototype state</Text>
-        <Text selectable style={styles.scenarioDescription}>Switch fixtures to inspect empty, active, error, and limit behavior.</Text>
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scenarioList}>
-        {prototypeScenarios.map((item) => (
-          <Pressable
-            key={item.value}
-            accessibilityRole="radio"
-            accessibilityState={{ checked: scenario === item.value }}
-            onPress={() => setScenario(item.value)}
-            style={[styles.scenarioChip, scenario === item.value && styles.scenarioChipActive]}
-          >
-            <Text style={[styles.scenarioChipText, scenario === item.value && styles.scenarioChipTextActive]}>{item.label}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-    </View>
-  );
-}
-
 function CapacityCard() {
-  const { scenario } = useScenario();
-  const used = scenario === 'quota' ? 3 : scenario === 'empty' ? 0 : 1;
+  const { session } = useWebDemoSession();
+  const used = session.phase === 'idle' ? 0 : 1;
   const remaining = 3 - used;
   return (
     <View style={styles.capacityCard}>
@@ -484,26 +496,25 @@ function CapacityCard() {
 
 function ActivityCard() {
   const navigate = useNavigate();
-  const { scenario } = useScenario();
-  const copy = activityCopy[scenario];
-  const toneStyle =
-    copy.tone === 'success'
-      ? styles.activityDotSuccess
-      : copy.tone === 'danger'
-        ? styles.activityDotDanger
-        : copy.tone === 'warning'
-          ? styles.activityDotWarning
-          : copy.tone === 'info'
-            ? styles.activityDotInfo
-            : styles.activityDotNeutral;
+  const { session } = useWebDemoSession();
+  const copy = session.phase === 'queued'
+    ? { title: 'Squat set is queued', detail: 'Your demo analysis will begin in a moment.' }
+    : session.phase === 'analyzing'
+      ? { title: 'Analyzing your squat', detail: `Tracking movement and bar position · ${session.percentage}%` }
+      : session.phase === 'ready'
+        ? { title: 'Analysis ready to review', detail: 'Your simulated result is ready when you are.' }
+        : { title: 'No active analysis', detail: 'Record or upload a side-view squat to start a demo analysis.' };
+  const toneStyle = session.phase === 'ready'
+    ? styles.activityDotSuccess
+    : session.phase === 'idle'
+      ? styles.activityDotNeutral
+      : styles.activityDotInfo;
 
-  const hasAction = scenario !== 'empty' && scenario !== 'quota';
-  const actionLabel = scenario === 'completed' ? 'Review result' : scenario === 'failed' ? 'Try again' : 'View activity';
-  const onAction = () => {
-    if (scenario === 'completed') navigate('/review/job-2042');
-    else if (scenario === 'failed' || scenario === 'expired') navigate('/upload');
-    else navigate('/processing/job-2042');
-  };
+  const hasAction = session.phase !== 'idle';
+  const actionLabel = session.phase === 'ready' ? 'Review result' : 'View activity';
+  const onAction = () => navigate(
+    session.phase === 'ready' ? '/review/demo-analysis' : '/processing/demo-analysis'
+  );
 
   return (
     <View style={styles.activityCard}>
@@ -574,11 +585,10 @@ function LiftRow({ lift, onPress }: { lift: SavedLiftFixture; onPress: () => voi
 function HomeScreen() {
   const navigate = useNavigate();
   const { width } = useWindowDimensions();
-  const { scenario } = useScenario();
-  const blocked = scenario === 'quota';
+  const { session } = useWebDemoSession();
+  const blocked = session.phase === 'queued' || session.phase === 'analyzing';
   return (
     <PageScroll>
-      <ScenarioPicker />
       <View style={styles.welcomeRow}>
         <View style={styles.welcomeCopy}>
           <Text accessibilityRole="header" selectable style={[styles.pageHeading, width < 768 && styles.pageHeadingMobile]}>Ready for your next set?</Text>
@@ -598,13 +608,13 @@ function HomeScreen() {
         </View>
         <ActivityCard />
       </View>
-      {scenario === 'completed' && (
+      {session.phase === 'ready' && (
         <View style={styles.pendingReviewBanner}>
           <View>
             <Text selectable style={styles.pendingTitle}>1 result needs your review</Text>
             <Text selectable style={styles.pendingBody}>Save or discard it before it expires tomorrow at 8:42 AM.</Text>
           </View>
-          <ActionButton label="Review now" compact onPress={() => navigate('/review/job-2042')} />
+          <ActionButton label="Review now" compact onPress={() => navigate('/review/demo-analysis')} />
         </View>
       )}
       <View style={styles.sectionBlock}>
@@ -656,9 +666,9 @@ function RecordScreen() {
               </View>
               <View style={styles.cameraStatus}>
                 <View style={[styles.recordingDot, recording && styles.recordingDotLive]} />
-                <Text style={styles.cameraStatusText}>{recording ? 'Prototype recording · 00:08' : recorded ? 'Clip ready · 00:18' : 'Camera preview'}</Text>
+              <Text style={styles.cameraStatusText}>{recording ? 'Demo recording · 00:08' : recorded ? 'Clip ready · 00:18' : 'Camera preview'}</Text>
               </View>
-              <Text selectable style={styles.cameraFixtureNote}>Camera permission is not requested by this fixture prototype.</Text>
+              <Text selectable style={styles.cameraFixtureNote}>Camera permission is not requested in this demo.</Text>
             </View>
             <View style={styles.buttonRow}>
               {!recording && !recorded && <ActionButton label="Start recording" onPress={() => setRecording(true)} />}
@@ -674,35 +684,59 @@ function RecordScreen() {
   );
 }
 
-function pickLocalVideo(onSelected: (name: string) => void) {
+function pickLocalVideo(onSelected: (file: File) => void) {
   if (typeof document === 'undefined') return;
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = 'video/mp4,video/quicktime,video/webm';
+  input.hidden = true;
   input.onchange = () => {
     const file = input.files?.[0];
-    if (file) onSelected(file.name);
+    if (file) onSelected(file);
+    input.remove();
   };
+  input.addEventListener('cancel', () => input.remove(), { once: true });
+  document.body.appendChild(input);
   input.click();
 }
 
 function UploadScreen() {
   const navigate = useNavigate();
-  const [fileName, setFileName] = useState<string | null>(null);
+  const { session, selectFile } = useWebDemoSession();
   return (
     <PageScroll>
       <View style={styles.narrowPage}>
         <Text accessibilityRole="header" selectable style={styles.pageHeading}>Upload a squat video</Text>
-        <Text selectable style={styles.pageSubheading}>Choose a 15–30 second clip. MP4, MOV, and WebM are supported in the prototype.</Text>
+        <Text selectable style={styles.pageSubheading}>Choose a 15–30 second clip. MP4, MOV, and WebM are supported in this demo.</Text>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Choose a squat video from this device"
-          onPress={() => pickLocalVideo(setFileName)}
+          onPress={() => pickLocalVideo((file) => void selectFile(file))}
           style={({ pressed }) => [styles.dropZone, pressed && styles.dropZonePressed]}
         >
-          <View style={styles.uploadIcon}><Text style={styles.uploadIconText}>↑</Text></View>
-          <Text selectable style={styles.dropZoneTitle}>{fileName ?? 'Choose a video'}</Text>
-          <Text selectable style={styles.dropZoneBody}>{fileName ? 'The file stays on this device in the fixture prototype.' : 'Select one file up to 50 MB'}</Text>
+          {session.thumbnailStatus === 'ready' && session.thumbnail ? (
+            <Image
+              source={{ uri: session.thumbnail }}
+              style={styles.uploadThumbnail as ImageStyle}
+              accessibilityLabel="Thumbnail from the selected squat video"
+            />
+          ) : (
+            <View style={styles.uploadIcon}>
+              <Text style={styles.uploadIconText}>
+                {session.thumbnailStatus === 'fallback' ? '!' : '↑'}
+              </Text>
+            </View>
+          )}
+          <Text selectable style={styles.dropZoneTitle}>{session.filename ?? 'Choose a video'}</Text>
+          <Text selectable style={styles.dropZoneBody}>
+            {session.thumbnailStatus === 'loading'
+              ? 'Creating a local thumbnail…'
+              : session.thumbnailStatus === 'fallback'
+                ? 'This browser could not decode a thumbnail. You can still continue with the demo.'
+                : session.selectedFile
+                  ? `${formatFileSize(session.size)} · ${session.duration === null ? 'Duration unavailable' : formatTime(session.duration)} · Stays on this device`
+                  : 'Select one file up to 50 MB'}
+          </Text>
         </Pressable>
         <View style={styles.requirementsCard}>
           <Text selectable style={styles.requirementsTitle}>For the clearest result</Text>
@@ -711,8 +745,7 @@ function UploadScreen() {
           ))}
         </View>
         <View style={styles.buttonRow}>
-          <ActionButton label="Continue to setup" disabled={!fileName} onPress={() => navigate('/setup')} />
-          {!fileName && <ActionButton label="Use realistic demo file" variant="secondary" onPress={() => setFileName('squat-set-aug-04.mov')} />}
+          <ActionButton label="Continue to setup" disabled={!session.selectedFile} onPress={() => navigate('/setup')} />
         </View>
       </View>
     </PageScroll>
@@ -733,19 +766,34 @@ function SelectCard({ selected, title, description, onPress }: { selected: boole
 
 function SetupScreen() {
   const navigate = useNavigate();
-  const { setScenario } = useScenario();
+  const { session, startAnalysis, clearSession } = useWebDemoSession();
   const [view, setView] = useState<'side' | 'front'>('side');
   const [visible, setVisible] = useState(true);
   const submit = () => {
-    setScenario('queued');
-    navigate('/processing/job-2042');
+    startAnalysis();
+    navigate('/processing/demo-analysis');
   };
+
+  if (!session.selectedFile) {
+    return <Navigate to="/upload" replace />;
+  }
+
   return (
     <PageScroll>
       <View style={styles.setupGrid}>
         <View>
-          <Image source={previewImage} style={styles.setupPreview as ImageStyle} accessibilityLabel="Selected squat video preview" />
-          <View style={styles.previewMeta}><Text style={styles.previewMetaText}>squat-set-aug-04.mov</Text><Text style={styles.previewMetaText}>00:18</Text></View>
+          {session.thumbnailStatus === 'ready' && session.thumbnail ? (
+            <Image source={{ uri: session.thumbnail }} style={styles.setupPreview as ImageStyle} accessibilityLabel="Selected squat video preview" />
+          ) : (
+            <View style={styles.setupPreviewFallback} accessibilityLabel="Video thumbnail unavailable">
+              <Text style={styles.setupPreviewFallbackIcon}>▶</Text>
+              <Text selectable style={styles.setupPreviewFallbackText}>Preview unavailable</Text>
+            </View>
+          )}
+          <View style={styles.previewMeta}>
+            <Text numberOfLines={1} style={styles.previewMetaText}>{session.filename}</Text>
+            <Text style={styles.previewMetaText}>{session.duration === null ? '—:—' : formatTime(session.duration)}</Text>
+          </View>
         </View>
         <View style={styles.setupPanel}>
           <Text accessibilityRole="header" selectable style={styles.pageHeading}>Confirm the setup</Text>
@@ -756,10 +804,10 @@ function SetupScreen() {
             <SelectCard selected={view === 'front'} title="Front / three-quarter" description="Bilateral tracking; depth feedback may be limited." onPress={() => setView('front')} />
           </View>
           <CheckRow checked={visible} onPress={() => setVisible(!visible)} label="The lifter’s full body and visible end of the bar stay in frame." />
-          <View style={styles.infoCallout}><Text style={styles.infoCalloutText}>This fixture creates no upload or job. Staging will validate the file before accepting a quota slot.</Text></View>
+          <View style={styles.infoCallout}><Text style={styles.infoCalloutText}>This demo keeps the selected file on your device and simulates the analysis locally.</Text></View>
           <View style={styles.buttonRow}>
             <ActionButton label="Submit for analysis" disabled={!visible} onPress={submit} />
-            <ActionButton label="Choose another video" variant="secondary" onPress={() => navigate('/upload')} />
+            <ActionButton label="Choose another video" variant="secondary" onPress={() => { clearSession(); navigate('/upload'); }} />
           </View>
         </View>
       </View>
@@ -769,26 +817,37 @@ function SetupScreen() {
 
 function ProcessingScreen() {
   const navigate = useNavigate();
-  const { scenario, setScenario } = useScenario();
-  const effectiveScenario: PrototypeScenario = ['queued', 'processing', 'completed', 'failed', 'expired'].includes(scenario) ? scenario : 'processing';
-  const copy = activityCopy[effectiveScenario];
-  const stepIndex = effectiveScenario === 'queued' ? 0 : effectiveScenario === 'processing' ? 1 : 2;
+  const { session, cancelAnalysis, clearSession } = useWebDemoSession();
 
-  const advance = () => {
-    if (effectiveScenario === 'queued') setScenario('processing');
-    else if (effectiveScenario === 'processing') setScenario('completed');
-    else if (effectiveScenario === 'completed') navigate('/review/job-2042');
-  };
+  if (session.phase === 'idle') {
+    return <Navigate to="/upload" replace />;
+  }
+
+  const stepIndex = session.phase === 'queued' ? 0 : session.phase === 'analyzing' ? 1 : 2;
+  const title = session.phase === 'queued'
+    ? 'Squat set is queued'
+    : session.phase === 'analyzing'
+      ? 'Analyzing your squat'
+      : 'Analysis ready to review';
+  const detail = session.phase === 'queued'
+    ? 'Your demo analysis will begin in a moment.'
+    : session.phase === 'analyzing'
+      ? 'Tracking movement and bar position in this client-side simulation.'
+      : 'The simulated result is complete. Review it when you are ready.';
 
   return (
     <PageScroll>
       <View style={styles.processingPage}>
         <View style={styles.processingVisual}>
-          <Image source={barPathImage} style={styles.processingImage as ImageStyle} accessibilityLabel="Squat video awaiting analysis" />
-          <View style={styles.processingOverlay}><Text style={styles.processingPercent}>{effectiveScenario === 'queued' ? '01' : effectiveScenario === 'processing' ? '62' : '100'}%</Text></View>
+          <Image
+            source={session.thumbnail ? { uri: session.thumbnail } : barPathImage}
+            style={styles.processingImage as ImageStyle}
+            accessibilityLabel="Squat video awaiting analysis"
+          />
+          <View style={styles.processingOverlay}><Text style={styles.processingPercent}>{String(session.percentage).padStart(2, '0')}%</Text></View>
         </View>
-        <Text accessibilityRole="header" selectable style={styles.pageHeading}>{copy.title}</Text>
-        <Text selectable style={[styles.pageSubheading, styles.processingDescription]}>{copy.detail}</Text>
+        <Text accessibilityRole="header" selectable style={styles.pageHeading}>{title}</Text>
+        <Text selectable style={[styles.pageSubheading, styles.processingDescription]}>{detail}</Text>
         <View style={styles.stepper} accessibilityLabel={`Analysis step ${stepIndex + 1} of 3`}>
           {['Queued', 'Analyzing', 'Ready'].map((label, index) => (
             <View key={label} style={styles.stepItem}>
@@ -797,10 +856,10 @@ function ProcessingScreen() {
             </View>
           ))}
         </View>
-        {effectiveScenario === 'queued' && <ActionButton label="Cancel queued analysis" variant="danger" onPress={() => { setScenario('empty'); navigate('/'); }} />}
-        {effectiveScenario === 'processing' && <ActionButton label="Show completed fixture" variant="secondary" onPress={advance} />}
-        {effectiveScenario === 'completed' && <ActionButton label="Review result" onPress={advance} />}
-        {(effectiveScenario === 'failed' || effectiveScenario === 'expired') && <ActionButton label="Upload another video" onPress={() => navigate('/upload')} />}
+        {(session.phase === 'queued' || session.phase === 'analyzing') && (
+          <ActionButton label="Cancel demo analysis" variant="danger" onPress={() => { cancelAnalysis(); clearSession(); navigate('/'); }} />
+        )}
+        {session.phase === 'ready' && <ActionButton label="Review result" onPress={() => navigate('/review/demo-analysis')} />}
         <ActionButton label="Back to Home" variant="quiet" onPress={() => navigate('/')} />
       </View>
     </PageScroll>
@@ -817,52 +876,131 @@ function MetricCard({ label, value, detail }: { label: string; value: string; de
   );
 }
 
-function FixtureVideoControls({ label }: { label: string }) {
+function AnalyzedVideoPlayer({ label }: { label: string }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(18.933);
+
+  const togglePlayback = async () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (video.paused) {
+      await video.play();
+    } else {
+      video.pause();
+    }
+  };
+
+  const seek = (nextTime: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = nextTime;
+    setCurrentTime(nextTime);
+  };
+
+  const seekBy = (offsetSeconds: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    seek(Math.max(0, Math.min(duration, video.currentTime + offsetSeconds)));
+  };
+
   return (
-    <View style={styles.reviewControls} accessibilityLabel={label}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={playing ? 'Pause analyzed video' : 'Play analyzed video'}
-        accessibilityState={{ selected: playing }}
-        onPress={() => setPlaying(!playing)}
-        style={styles.playButton}
-      >
-        <Text style={styles.playButtonText}>{playing ? 'Ⅱ' : '▶'}</Text>
-      </Pressable>
-      <View style={styles.timeline} accessibilityLabel="Video progress, 4 seconds of 18 seconds">
-        <View style={styles.timelineProgress} />
+    <View accessibilityLabel={label}>
+      <video
+        ref={videoRef}
+        className="peso-analyzed-video"
+        src={analyzedVideoUri}
+        poster={analyzedVideoPosterUri}
+        playsInline
+        preload="metadata"
+        aria-label="Analyzed Peso squat demo"
+        onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)}
+        onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+      />
+      <View style={styles.reviewControls}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={playing ? 'Pause analyzed video' : 'Play analyzed video'}
+          accessibilityState={{ selected: playing }}
+          onPress={() => void togglePlayback()}
+          style={styles.playButton}
+        >
+          <Text style={styles.playButtonText}>{playing ? 'Ⅱ' : '▶'}</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Seek back 5 seconds"
+          onPress={() => seekBy(-5)}
+          style={styles.seekButton}
+        >
+          <Text style={styles.seekButtonText}>−5</Text>
+        </Pressable>
+        <input
+          className="peso-video-range"
+          type="range"
+          min="0"
+          max={duration || 18.933}
+          step="0.01"
+          value={Math.min(currentTime, duration || 18.933)}
+          aria-label={`Seek analyzed video, ${formatTime(currentTime)} of ${formatTime(duration)}`}
+          onClick={(event) => {
+            const bounds = event.currentTarget.getBoundingClientRect();
+            const ratio = bounds.width > 0
+              ? (event.clientX - bounds.left) / bounds.width
+              : 0;
+            seek(Math.max(0, Math.min(duration, ratio * duration)));
+          }}
+          onInput={(event) => seek(Number(event.currentTarget.value))}
+          onChange={(event) => seek(Number(event.currentTarget.value))}
+        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Seek forward 5 seconds"
+          onPress={() => seekBy(5)}
+          style={styles.seekButton}
+        >
+          <Text style={styles.seekButtonText}>+5</Text>
+        </Pressable>
+        <Text style={styles.timecode}>{formatTime(currentTime)} / {formatTime(duration)}</Text>
       </View>
-      <Text style={styles.timecode}>0:04 / 0:18</Text>
     </View>
   );
 }
 
 function ReviewScreen() {
   const navigate = useNavigate();
-  const { setScenario } = useScenario();
+  const { session, clearSession } = useWebDemoSession();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [reps, setReps] = useState('3');
   const [load, setLoad] = useState('225');
   const save = () => {
-    setScenario('empty');
+    clearSession();
     navigate('/saved-lifts/lift-225');
   };
+
+  if (session.phase !== 'ready') {
+    return <Navigate to={session.phase === 'idle' ? '/upload' : '/processing/demo-analysis'} replace />;
+  }
+
   return (
     <PageScroll>
       <View style={styles.reviewGrid}>
         <View>
           <View style={styles.reviewMedia}>
-            <Image source={previewImage} style={styles.reviewImage as ImageStyle} accessibilityLabel="Analyzed squat with joint tracking overlay" />
-            <FixtureVideoControls label="Analyzed video controls" />
+            <AnalyzedVideoPlayer label="Analyzed video controls" />
           </View>
           <Text selectable style={styles.mediaDescription}>The overlay marks the upper back, hip, knee, and ankle. Use the playback controls to inspect each rep.</Text>
         </View>
         <View style={styles.reviewPanel}>
           <View style={styles.reviewTitleRow}>
             <View>
-              <Text style={styles.eyebrow}>ANALYSIS COMPLETE</Text>
-              <Text accessibilityRole="header" selectable style={styles.pageHeading}>Squat · Side view</Text>
+              <Text style={styles.reviewEyebrow}>ANALYSIS COMPLETE</Text>
+              <Text accessibilityRole="header" selectable style={styles.reviewPageHeading}>Squat · Side view</Text>
             </View>
             <View style={styles.readyBadge}><Text style={styles.readyBadgeText}>Ready</Text></View>
           </View>
@@ -887,8 +1025,8 @@ function ReviewScreen() {
             </View>
           )}
           <View style={styles.buttonRow}>
-            <ActionButton label="Save to Saved Lifts" onPress={save} />
-            <ActionButton label="Discard analysis" variant="danger" onPress={() => { setScenario('empty'); navigate('/'); }} />
+            <ActionButton label="Save to Saved Lifts" compact onPress={save} />
+            <ActionButton label="Discard analysis" variant="danger" compact onPress={() => { clearSession(); navigate('/'); }} />
           </View>
           <Text selectable style={styles.expiryText}>Unsaved result expires tomorrow at 8:42 AM.</Text>
         </View>
@@ -940,8 +1078,11 @@ function SavedLiftDetailScreen() {
       </View>
       <View style={styles.reviewGrid}>
         <View style={styles.reviewMedia}>
-          <Image source={lift.exercise === 'Squat' ? barPathImage : previewImage} style={styles.reviewImage as ImageStyle} accessibilityLabel={`${lift.exercise} Saved Lift preview`} />
-          <FixtureVideoControls label="Saved Lift video controls" />
+          {lift.exercise === 'Squat' ? (
+            <AnalyzedVideoPlayer label="Saved Lift video controls" />
+          ) : (
+            <Image source={previewImage} style={styles.reviewImage as ImageStyle} accessibilityLabel={`${lift.exercise} Saved Lift preview`} />
+          )}
         </View>
         <View style={styles.reviewPanel}>
           <Text style={styles.eyebrow}>{lift.date.toUpperCase()}</Text>
@@ -1012,18 +1153,14 @@ function SettingsScreen() {
           <Pressable accessibilityRole="link" onPress={() => window.location.assign('/terms')} style={styles.settingsLink}><Text style={styles.settingTitle}>Terms of Use</Text><Text style={styles.liftArrow}>›</Text></Pressable>
           <Pressable accessibilityRole="link" onPress={() => navigate('/login')} style={styles.settingsLink}><Text style={[styles.settingTitle, { color: colors.red }]}>Sign out</Text><Text style={styles.liftArrow}>›</Text></Pressable>
         </View>
-        <Text selectable style={styles.prototypeBadge}>Peso Web Beta prototype · Fixture data only</Text>
       </View>
     </PageScroll>
   );
 }
 
 export default function WebApp() {
-  const [scenario, setScenario] = useState<PrototypeScenario>('completed');
-  const value = useMemo(() => ({ scenario, setScenario }), [scenario]);
-
   return (
-    <ScenarioContext value={value}>
+    <WebDemoSessionProvider>
       <Routes>
         <Route path="/login" element={<LoginScreen />} />
         <Route path="/signup" element={<SignupScreen />} />
@@ -1043,7 +1180,7 @@ export default function WebApp() {
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </ScenarioContext>
+    </WebDemoSessionProvider>
   );
 }
 
@@ -1064,9 +1201,12 @@ const styles = StyleSheet.create({
   routeArea: { flex: 1, minHeight: 0 },
   pageScroll: { flex: 1 },
   pageContent: { width: '100%', maxWidth: 1280, alignSelf: 'center', padding: 28, paddingBottom: 80, gap: 30 },
-  sidebar: { width: 252, padding: 22, borderRightWidth: 1, borderRightColor: colors.line, backgroundColor: '#090D13' },
+  sidebar: { width: 252, padding: 18, borderRightWidth: 1, borderRightColor: colors.line, backgroundColor: '#090D13' },
   sidebarCompact: { width: 86, paddingHorizontal: 12 },
-  sidebarWordmark: { minHeight: 64, alignItems: 'flex-start', justifyContent: 'center' },
+  sidebarHeader: { minHeight: 64, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  sidebarWordmark: { flex: 1, minWidth: 0, minHeight: 52, alignItems: 'flex-start', justifyContent: 'center' },
+  sidebarToggle: { width: 32, height: 32, borderWidth: 1, borderColor: colors.line, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface },
+  sidebarToggleText: { color: colors.blueText, fontFamily: fonts.bold, fontSize: 20, lineHeight: 22 },
   wordmark: { width: 118, height: 54, alignItems: 'center', justifyContent: 'center' },
   wordmarkCompact: { width: 60, height: 44 },
   wordmarkImage: { width: 118, height: 54, resizeMode: 'contain' },
@@ -1082,7 +1222,6 @@ const styles = StyleSheet.create({
   navLabel: { color: colors.textMuted, fontFamily: fonts.semibold, fontSize: 13 },
   navLabelActive: { color: colors.textPrimary },
   sidebarFooter: { gap: 12 },
-  prototypeBadge: { color: '#718097', fontFamily: fonts.medium, fontSize: 10, lineHeight: 15 },
   bottomNav: { minHeight: 68, paddingHorizontal: 8, paddingBottom: 4, borderTopWidth: 1, borderTopColor: colors.line, backgroundColor: '#090D13' },
   bottomNavItems: { flex: 1, flexDirection: 'row', justifyContent: 'space-around' },
   bottomNavItem: { minWidth: 72, paddingVertical: 8, alignItems: 'center', justifyContent: 'center', gap: 3, borderTopWidth: 2, borderTopColor: 'transparent' },
@@ -1130,14 +1269,6 @@ const styles = StyleSheet.create({
   messageCard: { padding: 18, borderWidth: 1, borderColor: '#294A7D', borderRadius: 12, backgroundColor: '#0D1B33' },
   messageCardTitle: { color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 13 },
   messageCardBody: { marginTop: 6, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 12, lineHeight: 19 },
-  scenarioPanel: { padding: 16, borderWidth: 1, borderColor: colors.line, borderRadius: 14, backgroundColor: '#0B1018', gap: 13 },
-  scenarioTitle: { color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 12 },
-  scenarioDescription: { marginTop: 3, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 11 },
-  scenarioList: { gap: 8 },
-  scenarioChip: { minHeight: 32, paddingHorizontal: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface },
-  scenarioChipActive: { borderColor: colors.brand, backgroundColor: colors.blueSoft },
-  scenarioChipText: { color: colors.textMuted, fontFamily: fonts.semibold, fontSize: 10 },
-  scenarioChipTextActive: { color: colors.blueText },
   welcomeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', gap: 20 },
   welcomeCopy: { flex: 1, minWidth: 0 },
   pageHeading: { color: colors.textPrimary, fontFamily: fonts.display, fontSize: 32, lineHeight: 38 },
@@ -1175,8 +1306,6 @@ const styles = StyleSheet.create({
   activityDotNeutral: { backgroundColor: '#60708A' },
   activityDotInfo: { backgroundColor: colors.brand },
   activityDotSuccess: { backgroundColor: colors.green },
-  activityDotDanger: { backgroundColor: colors.red },
-  activityDotWarning: { backgroundColor: colors.amber },
   activityCopy: { flex: 1, minWidth: 120 },
   activityTitle: { color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 13 },
   activityDetail: { marginTop: 5, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 11, lineHeight: 17 },
@@ -1216,6 +1345,7 @@ const styles = StyleSheet.create({
   uploadIconText: { color: colors.blueText, fontFamily: fonts.bold, fontSize: 28 },
   dropZoneTitle: { marginTop: 17, color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 16, textAlign: 'center' },
   dropZoneBody: { marginTop: 6, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 11, textAlign: 'center' },
+  uploadThumbnail: { width: 154, height: 182, borderRadius: 14, backgroundColor: '#05070A', resizeMode: 'cover' },
   requirementsCard: { padding: 20, borderWidth: 1, borderColor: colors.line, borderRadius: 15, backgroundColor: '#0B1018', gap: 11 },
   requirementsTitle: { marginBottom: 2, color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 13 },
   requirementRow: { flexDirection: 'row', alignItems: 'center', gap: 9 },
@@ -1223,6 +1353,9 @@ const styles = StyleSheet.create({
   requirementText: { color: colors.textMuted, fontFamily: fonts.regular, fontSize: 11 },
   setupGrid: { width: '100%', maxWidth: 1040, alignSelf: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 28, alignItems: 'flex-start' },
   setupPreview: { width: 330, height: 550, borderWidth: 1, borderColor: colors.line, borderRadius: 18, backgroundColor: '#05070A' },
+  setupPreviewFallback: { width: 330, height: 550, borderWidth: 1, borderColor: colors.line, borderRadius: 18, backgroundColor: '#090D13', alignItems: 'center', justifyContent: 'center', gap: 12 },
+  setupPreviewFallbackIcon: { color: colors.blueText, fontSize: 28 },
+  setupPreviewFallbackText: { color: colors.textMuted, fontFamily: fonts.semibold, fontSize: 11 },
   previewMeta: { marginTop: 10, flexDirection: 'row', justifyContent: 'space-between' },
   previewMetaText: { color: colors.textMuted, fontFamily: fonts.regular, fontSize: 10, fontVariant: ['tabular-nums'] },
   setupPanel: { flex: 1, minWidth: 310, gap: 22 },
@@ -1250,34 +1383,36 @@ const styles = StyleSheet.create({
   stepDotText: { color: '#FFFFFF', fontFamily: fonts.bold, fontSize: 9 },
   stepLabel: { color: colors.textMuted, fontFamily: fonts.medium, fontSize: 10 },
   stepLabelActive: { color: colors.textPrimary },
-  reviewGrid: { width: '100%', maxWidth: 1120, alignSelf: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 28, alignItems: 'flex-start' },
-  reviewMedia: { width: 390, maxWidth: '100%', borderWidth: 1, borderColor: colors.line, borderRadius: 18, overflow: 'hidden', backgroundColor: '#05070A' },
-  reviewImage: { width: '100%', height: 620, resizeMode: 'cover' },
-  reviewControls: { minHeight: 58, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: '#090D13' },
-  playButton: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.brand },
-  playButtonText: { color: '#FFFFFF', fontSize: 11 },
-  timeline: { flex: 1, height: 4, borderRadius: 2, overflow: 'hidden', backgroundColor: '#303947' },
-  timelineProgress: { width: '28%', height: '100%', backgroundColor: colors.brand },
-  timecode: { color: colors.textMuted, fontFamily: fonts.medium, fontSize: 9, fontVariant: ['tabular-nums'] },
-  mediaDescription: { maxWidth: 390, marginTop: 10, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 10, lineHeight: 16 },
-  reviewPanel: { flex: 1, minWidth: 330, gap: 18 },
-  reviewTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 14 },
-  readyBadge: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, backgroundColor: colors.greenSoft },
-  readyBadgeText: { color: colors.green, fontFamily: fonts.bold, fontSize: 9 },
-  metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 },
-  metricCard: { flex: 1, minWidth: 120, minHeight: 110, padding: 14, borderWidth: 1, borderColor: colors.line, borderRadius: 13, backgroundColor: colors.surface },
-  metricLabel: { color: colors.textMuted, fontFamily: fonts.semibold, fontSize: 9 },
-  metricValue: { marginTop: 12, color: colors.textPrimary, fontFamily: fonts.display, fontSize: 20 },
-  metricDetail: { marginTop: 6, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 9 },
-  cueCard: { padding: 19, borderWidth: 1, borderColor: '#294A7D', borderRadius: 14, backgroundColor: '#0D1A30' },
-  cueLabel: { color: colors.blueText, fontFamily: fonts.bold, fontSize: 9, letterSpacing: 1 },
-  cueTitle: { marginTop: 12, color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 16, lineHeight: 23 },
-  cueBody: { marginTop: 8, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 11, lineHeight: 18 },
-  disclosureButton: { minHeight: 50, paddingHorizontal: 15, borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  disclosureTitle: { color: colors.secondaryText, fontFamily: fonts.semibold, fontSize: 12 },
-  disclosureIcon: { color: colors.blueText, fontFamily: fonts.regular, fontSize: 22 },
-  workoutFields: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  expiryText: { color: colors.textMuted, fontFamily: fonts.regular, fontSize: 9 },
+  reviewGrid: { width: '100%', maxWidth: 952, alignSelf: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 24, alignItems: 'flex-start' },
+  reviewMedia: { width: 332, maxWidth: '100%', borderWidth: 1, borderColor: colors.line, borderRadius: 15, overflow: 'hidden', backgroundColor: '#05070A' },
+  reviewImage: { width: '100%', height: 527, resizeMode: 'cover' },
+  reviewControls: { minHeight: 49, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: '#090D13' },
+  playButton: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.brand },
+  playButtonText: { color: '#FFFFFF', fontSize: 9 },
+  seekButton: { minWidth: 26, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#151C28' },
+  seekButtonText: { color: colors.blueText, fontFamily: fonts.bold, fontSize: 8 },
+  timecode: { color: colors.textMuted, fontFamily: fonts.medium, fontSize: 8, fontVariant: ['tabular-nums'] },
+  mediaDescription: { maxWidth: 332, marginTop: 9, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 9, lineHeight: 14 },
+  reviewPanel: { flex: 1, minWidth: 310, gap: 15 },
+  reviewTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
+  reviewEyebrow: { color: colors.blueText, fontFamily: fonts.bold, fontSize: 8, letterSpacing: 1.2 },
+  reviewPageHeading: { marginTop: 5, color: colors.textPrimary, fontFamily: fonts.display, fontSize: 27, lineHeight: 32 },
+  readyBadge: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 10, backgroundColor: colors.greenSoft },
+  readyBadgeText: { color: colors.green, fontFamily: fonts.bold, fontSize: 8 },
+  metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  metricCard: { flex: 1, minWidth: 102, minHeight: 94, padding: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 11, backgroundColor: colors.surface },
+  metricLabel: { color: colors.textMuted, fontFamily: fonts.semibold, fontSize: 8 },
+  metricValue: { marginTop: 10, color: colors.textPrimary, fontFamily: fonts.display, fontSize: 17 },
+  metricDetail: { marginTop: 5, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 8 },
+  cueCard: { padding: 16, borderWidth: 1, borderColor: '#294A7D', borderRadius: 12, backgroundColor: '#0D1A30' },
+  cueLabel: { color: colors.blueText, fontFamily: fonts.bold, fontSize: 8, letterSpacing: 0.85 },
+  cueTitle: { marginTop: 10, color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 14, lineHeight: 20 },
+  cueBody: { marginTop: 7, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 9, lineHeight: 15 },
+  disclosureButton: { minHeight: 43, paddingHorizontal: 13, borderWidth: 1, borderColor: colors.line, borderRadius: 10, backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  disclosureTitle: { color: colors.secondaryText, fontFamily: fonts.semibold, fontSize: 10 },
+  disclosureIcon: { color: colors.blueText, fontFamily: fonts.regular, fontSize: 19 },
+  workoutFields: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  expiryText: { color: colors.textMuted, fontFamily: fonts.regular, fontSize: 8 },
   savedHeader: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-end', gap: 18 },
   filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   filterChip: { minHeight: 34, paddingHorizontal: 13, borderWidth: 1, borderColor: colors.line, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface },
@@ -1285,8 +1420,8 @@ const styles = StyleSheet.create({
   filterChipText: { color: colors.textMuted, fontFamily: fonts.semibold, fontSize: 10 },
   filterChipTextActive: { color: colors.blueText },
   savedList: { width: '100%', maxWidth: 880, gap: 10 },
-  detailTopRow: { width: '100%', maxWidth: 1120, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  detailLoad: { color: colors.blueText, fontFamily: fonts.display, fontSize: 28 },
+  detailTopRow: { width: '100%', maxWidth: 952, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  detailLoad: { color: colors.blueText, fontFamily: fonts.display, fontSize: 24 },
   settingsPage: { width: '100%', maxWidth: 760, alignSelf: 'center', gap: 22 },
   profileCard: { padding: 20, borderWidth: 1, borderColor: colors.line, borderRadius: 15, backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center', gap: 15 },
   profileAvatar: { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.brand },

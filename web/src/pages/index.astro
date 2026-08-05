@@ -15,7 +15,7 @@ const feedback = [
   title="Peso — A weightlifting analysis tool"
   description="Peso is a weightlifting analysis tool for clear visual feedback, rep context, and coaching cues. Join the free US web beta."
 >
-  <div class="page-shell">
+  <div class="page-shell marketing-home">
     <SiteHeader />
 
     <main id="main-content">
@@ -35,24 +35,24 @@ const feedback = [
         </div>
         <div class="hero-visual" aria-label="Peso squat analysis preview">
           <div class="ambient-glow"></div>
-          <div class="phone-card phone-card--back">
-            <img
-              src="/demo/peso-pin-assisted-bar-path.jpg"
-              width="360"
-              height="874"
-              alt="Peso analysis showing a tracked bar path during a squat"
-            />
+          <div class="product-mockup">
+            <video
+              autoplay
+              muted
+              loop
+              playsinline
+              preload="metadata"
+              poster="/demo/peso-pose-overlay.jpg"
+              aria-label="Peso analysis tracking a lifter during a squat"
+            >
+              <source src="/demo/peso-pose-overlay.mp4" type="video/mp4" />
+            </video>
           </div>
-          <div class="phone-card phone-card--front">
-            <img
-              src="/demo/peso-pose-overlay.jpg"
-              width="360"
-              height="874"
-              alt="Peso analysis showing upper-back, hip, knee, and ankle tracking"
-            />
+          <div class="result-stack" aria-label="Example analysis results">
+            <div class="result-card"><span>Depth</span><strong>3 / 3</strong><small>reps reached depth</small></div>
+            <div class="result-card"><span>Bar path</span><strong>Stable</strong><small>over mid-foot</small></div>
+            <div class="result-card"><span>Camera</span><strong>Side</strong><small>full set visible</small></div>
           </div>
-          <div class="result-chip result-chip--depth"><strong>3 / 3</strong><span>reps to depth</span></div>
-          <div class="result-chip result-chip--path"><strong>Stable</strong><span>bar path</span></div>
         </div>
       </section>
 

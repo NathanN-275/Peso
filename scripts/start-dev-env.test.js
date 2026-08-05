@@ -75,6 +75,8 @@ test('createDevEnvironment uses the same-origin proxy for web even when root .en
 
     assert.equal(environment.expoEnv.EXPO_PUBLIC_BACKEND_URL, '/__peso_api');
     assert.equal(environment.expoBackendUrlSource, 'web same-origin proxy');
+    assert.equal(environment.expoEnv.EXPO_PUBLIC_WEB_SURFACE, 'web-app');
+    assert.equal(environment.expoEnv.EXPO_PUBLIC_WEB_ROUTER_BASE, '/');
   });
 });
 
@@ -86,6 +88,8 @@ test('createDevEnvironment routes local web requests through the Expo origin', (
   });
 
   assert.equal(environment.expoEnv.EXPO_PUBLIC_BACKEND_URL, '/__peso_api');
+  assert.equal(environment.expoEnv.EXPO_PUBLIC_WEB_SURFACE, 'web-app');
+  assert.equal(environment.expoEnv.EXPO_PUBLIC_WEB_ROUTER_BASE, '/');
   assert.equal(environment.expoBackendUrlSource, 'web same-origin proxy');
   assert.equal(environment.backendHealthUrl, 'http://127.0.0.1:8000/health');
 });
@@ -109,6 +113,7 @@ test('createDevEnvironment keeps localhost for iOS Simulator runs', () => {
 
     assert.equal(environment.expoEnv.EXPO_PUBLIC_BACKEND_URL, 'http://localhost:8000');
     assert.equal(environment.expoEnv.EXPO_PUBLIC_BACKEND_TARGET, 'ios-simulator');
+    assert.equal(environment.expoEnv.EXPO_PUBLIC_WEB_SURFACE, 'native-preview');
     assert.equal(environment.backendHealthUrl, 'http://127.0.0.1:8000/health');
   });
 });

@@ -27,6 +27,14 @@ App. A job records its owner, video, status, timestamps, attempts, expiry,
 failure class, and whether it currently consumes a rolling quota slot. Job state
 is not inferred from queue visibility.
 
+## Demo Analysis
+
+A client-side Web App simulation used to preview the upload-to-review flow. The
+selected video stays on the browser device, its thumbnail is generated locally,
+and clock-based queued and analyzing phases produce a bundled fixture result.
+A Demo Analysis creates no upload, quota charge, backend request, or durable
+record and must not be treated as a server-owned Web Analysis Job.
+
 ## Saved Lift
 
 A user-owned analysis that was explicitly saved after review. Web accepts only

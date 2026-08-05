@@ -97,11 +97,14 @@ function resolveExpoBackendUrl(env, backendPort, options = {}) {
 
 function buildExpoEnv(env, backendPort, options = {}) {
   const backendUrl = resolveExpoBackendUrl(env, backendPort, options);
+  const frontendTarget = options.frontendTarget || 'native';
 
   return {
     ...env,
     EXPO_PUBLIC_BACKEND_PORT: env.EXPO_PUBLIC_BACKEND_PORT || backendPort,
     EXPO_PUBLIC_BACKEND_URL: backendUrl.url,
+    EXPO_PUBLIC_WEB_SURFACE: frontendTarget === 'web' ? 'web-app' : 'native-preview',
+    EXPO_PUBLIC_WEB_ROUTER_BASE: frontendTarget === 'web' ? '/' : env.EXPO_PUBLIC_WEB_ROUTER_BASE,
   };
 }
 

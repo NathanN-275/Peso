@@ -213,6 +213,12 @@ Both clients use the same FastAPI process: the simulator connects to
 `localhost:8000`, while web uses a same-origin Metro proxy at `/__peso_api` so
 local browser previews do not need direct access to port 8000.
 
+The start scripts set the web surface explicitly. `npm start` uses
+`EXPO_PUBLIC_WEB_SURFACE=native-preview`, so pressing `w` renders the reusable
+mobile root without React Router. `npm run web` uses
+`EXPO_PUBLIC_WEB_SURFACE=web-app` with a local `/` router base. Production Expo
+exports use the same Web App surface at `/app`.
+
 To open web immediately while still starting FastAPI:
 
 ```bash
@@ -256,8 +262,8 @@ For Expo Go on a physical phone, the backend must bind to `0.0.0.0` so another d
 The public beta website is split into two browser surfaces:
 
 * Astro owns `/`, `/privacy`, and `/terms` under `web/`.
-* `App.web.tsx` owns the fixture-driven Expo prototype under `/app` while
-  `App.tsx` remains the native entry point.
+* `App.web.tsx` selects either the fixture-driven Expo prototype or the reusable
+  native root, while `App.tsx` remains the native entry point.
 
 Start the marketing site while editing public pages:
 
