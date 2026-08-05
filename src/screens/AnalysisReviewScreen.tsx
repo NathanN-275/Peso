@@ -647,6 +647,9 @@ export default function AnalysisReviewScreen({
                 </Text>
               ) : null}
               <Text style={styles.sheetMutedText}>Detected reps: {repCount}</Text>
+              {workoutDetails.user_notes ? (
+                <Text style={styles.sheetMutedText}>Notes: {workoutDetails.user_notes}</Text>
+              ) : null}
             </SheetSection>
           ) : null}
           <SheetSection title="Summary flags">

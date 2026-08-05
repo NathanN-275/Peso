@@ -14,6 +14,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..analysis.pipeline import analyze_video
+from ..analysis.coaching_history import technique_trend_cue
 from ..analysis.manual_tracking import validate_tracking_setup
 from ..analysis.versioning import annotate_analysis_freshness, analysis_is_current
 from ..services.analyzed_video_renderer import render_analyzed_video
@@ -130,6 +131,10 @@ class SavedVideoResponse(BaseModel):
   save_state: str
   saved_at: str | None = None
   created_at: str
+  weight: float | None = None
+  weight_unit: str | None = None
+  corrected_rep_count: int | None = None
+  user_notes: str | None = None
   analysis: SavedVideoAnalysisResponse | None = None
   export_options: SavedVideoExportOptionsResponse | None = None
 
@@ -166,19 +171,34 @@ class SaveVideoResponse(BaseModel):
   performed_reps: int | None = None
   load_value: float | None = None
   load_unit: Literal["lb", "kg"] | None = None
+  user_notes: str | None = None
 
 
 class SaveVideoRequest(StrictRequestModel):
   performed_reps: int | None = Field(default=None, ge=1)
   load_value: float | None = Field(default=None, ge=0)
   load_unit: Literal["lb", "kg"] | None = None
+  # Legacy coaching clients used these names before tracking-rework became
+  # the canonical save contract. Accept them while keeping one persistence
+  # path and one official workout-fact representation.
+  weight: float | None = Field(default=None, ge=0)
+  weight_unit: Literal["lb", "kg"] | None = None
+  corrected_rep_count: int | None = Field(default=None, ge=1)
+  user_notes: str | None = None
 
   @model_validator(mode="after")
   def weight_requires_unit(self) -> "SaveVideoRequest":
     if (self.load_value is None) != (self.load_unit is None):
       raise ValueError("Weight and its unit must be provided together.")
+    if (self.weight is None) != (self.weight_unit is None):
+      raise ValueError("Weight and its unit must be provided together.")
+    if self.load_value is not None and self.weight is not None:
+      if self.load_value != self.weight or self.load_unit != self.weight_unit:
+        raise ValueError("Use one consistent weight value and unit.")
+    if self.performed_reps is not None and self.corrected_rep_count is not None:
+      if self.performed_reps != self.corrected_rep_count:
+        raise ValueError("Use one consistent rep count.")
     return self
-
 
 class DiscardVideoResponse(BaseModel):
   video_id: UUID
@@ -557,6 +577,10 @@ def _saved_video_response(
     save_state=video.get("save_state") or ("saved" if video.get("is_saved") else "pending"),
     saved_at=video.get("saved_at"),
     created_at=video["created_at"],
+    weight=video.get("weight"),
+    weight_unit=video.get("weight_unit"),
+    corrected_rep_count=video.get("corrected_rep_count"),
+    user_notes=video.get("user_notes"),
     analysis=normalized_analysis,
     export_options=(
       SavedVideoExportOptionsResponse(**export_options)
@@ -872,7 +896,7 @@ def queue_analysis(
 @router.post("/videos/{video_id}/save", response_model=SaveVideoResponse)
 def save_video(
   video_id: UUID,
-  request: SaveVideoRequest,
+  request: SaveVideoRequest | None = None,
   user_id: str = Depends(get_current_user_id),
 ) -> SaveVideoResponse:
   # Mark a finished analysis as saved in the user's library.
@@ -883,18 +907,40 @@ def save_video(
       status_code=status.HTTP_409_CONFLICT,
       detail="Discarded videos cannot be saved.",
     )
-  saved_video = repository.mark_saved(
-    str(video_id),
-    performed_reps=request.performed_reps,
-    load_value=request.load_value,
-    load_unit=request.load_unit,
-  )
+  performed_reps = request.performed_reps if request else None
+  corrected_rep_count = request.corrected_rep_count if request else None
+  if performed_reps is None:
+    performed_reps = corrected_rep_count
+  load_value = request.load_value if request else None
+  load_unit = request.load_unit if request else None
+  if load_value is None and request:
+    load_value = request.weight
+    load_unit = request.weight_unit
+
+  extra_metadata = {}
+  if request and request.user_notes is not None:
+    extra_metadata["user_notes"] = request.user_notes
+  if request and request.weight is not None:
+    extra_metadata["weight"] = request.weight
+    extra_metadata["weight_unit"] = request.weight_unit
+  if corrected_rep_count is not None:
+    extra_metadata["corrected_rep_count"] = corrected_rep_count
+
+  save_kwargs = {
+    "performed_reps": performed_reps,
+    "load_value": load_value,
+    "load_unit": load_unit,
+  }
+  if extra_metadata:
+    save_kwargs["metadata"] = extra_metadata
+  saved_video = repository.mark_saved(str(video_id), **save_kwargs)
   return SaveVideoResponse(
     video_id=video_id,
     save_state=saved_video["save_state"],
-    performed_reps=saved_video["performed_reps"],
-    load_value=saved_video["load_value"],
-    load_unit=saved_video["load_unit"],
+    performed_reps=saved_video.get("performed_reps"),
+    load_value=saved_video.get("load_value"),
+    load_unit=saved_video.get("load_unit"),
+    user_notes=saved_video.get("user_notes"),
   )
 
 
@@ -907,12 +953,27 @@ def list_saved_videos(
   videos = repository.list_saved_videos(user_id)
   analyses_by_video_id = _load_latest_analyses(repository, videos)
 
-  return _saved_video_responses(
+  responses = _saved_video_responses(
     videos=videos,
     analyses_by_video_id=analyses_by_video_id,
     storage=storage,
     user_id=user_id,
   )
+  for response in responses:
+    analysis = response.analysis
+    if not analysis:
+      continue
+    cue = technique_trend_cue(
+      video=next(video for video in videos if str(video["id"]) == str(response.id)),
+      analysis=analyses_by_video_id.get(str(response.id)),
+      saved_videos=videos,
+      analyses_by_video_id=analyses_by_video_id,
+    )
+    if cue:
+      response.coaching_feedback.append(cue)
+      response.result_json["coach_feedback"] = response.coaching_feedback
+      response.result_json["coachingFeedback"] = response.coaching_feedback
+  return responses
 
 
 @router.get("/videos/saved-page", response_model=SavedVideosPageResponse)
