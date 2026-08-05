@@ -9,9 +9,15 @@ client bundle, routing runtime, or authenticated state with the Web App.
 ## Web App
 
 The browser-only Peso product mounted beneath `/app`. It uses the shared Peso
-visual language and will eventually use the same production accounts and Saved
-Lifts as mobile, while retaining browser-specific submission and quota rules.
-The first milestone is fixture-driven and makes no backend calls.
+visual language, Peso Accounts, and Saved Lift Library as mobile while retaining
+browser-specific submission and quota rules. Demo Analysis remains a local
+simulation and is distinct from authenticated library activity.
+
+## Peso Account
+
+The user identity shared across Peso web and mobile. An authenticated Peso
+Account owns one Saved Lift Library and authorizes access to its lifts and
+library actions on either surface.
 
 ## Dashboard Home
 
@@ -46,7 +52,8 @@ model observation.
 
 The user-owned collection of Saved Lifts shared across Peso web and mobile.
 Changes made to this library on either surface affect the same collection; it is
-not a separate web-only demo or copy.
+not a separate web-only demo or copy. The library is source-agnostic: lifts are
+not separated or labeled by whether they were created on web or mobile.
 
 ## Saved Lift View
 
@@ -54,11 +61,30 @@ A presentation of the same Saved Lift Library. List View uses full-width lift
 rows, while Grid View uses square thumbnail cards. Changing the view does not
 change library membership, filtering, or selection.
 
+## Saved Lift Selection
+
+A temporary set of Saved Lifts chosen in batch-selection mode for export or
+deletion. Selection is an action state, not a persistent property of a lift.
+
 ## Saved Lift Export
 
 A single ZIP archive containing exactly the Saved Lifts selected from the
 library, with each selected lift included once. A multi-lift export is delivered
-as one bundle rather than as a series of separate browser downloads.
+as one bundle rather than as a series of separate browser downloads. Each entry
+is the standard analyzed video for that lift with its available tracking
+overlays included.
+
+## Saved Lift Export Job
+
+A background request that prepares a Saved Lift Export without requiring the
+user to remain on the Saved Lifts page. Leaving the page does not cancel the job,
+and the completed ZIP remains available until its temporary download expires.
+
+## Saved Lift Deletion
+
+A confirmed, permanent removal of selected Saved Lifts and their videos from the
+shared Saved Lift Library. A deletion made on web removes the same lifts from
+mobile; it is not a web-only hide or archive.
 
 ## Analysis run
 
@@ -141,6 +167,12 @@ It is distinct from the complete trace export.
 The independently loaded signed-video resource used to review an Analysis Run.
 It may be refreshed without reloading trace or annotation data.
 
+## Playback Skip
+
+A five-second backward or forward movement within the current Playback Session.
+Circular arrow icons represent this time-based skip; they do not navigate
+between detected repetitions.
+
 ## Annotation Draft
 
 An unsaved annotation held locally for one Analysis Run. It survives browser
@@ -150,6 +182,19 @@ reloads until saved to feedback or explicitly discarded.
 
 The measured interpretation of one exercise video, including detected reps,
 technique metrics, and confidence signals.
+
+## Lift Insights
+
+The per-repetition measurements presented with an Analysis Run. For each rep,
+Lift Insights include duration, rep speed, and average and peak estimated hip
+velocity rather than only a set-wide average. The same insights are available
+during initial review and when the Saved Lift is reopened later.
+
+## Estimated Hip Velocity
+
+A framing-dependent estimate of hip movement used to compare repetitions within
+the same video. It is not a calibrated physical speed and must not be labeled in
+meters per second or another real-world distance unit.
 
 ## Cue
 

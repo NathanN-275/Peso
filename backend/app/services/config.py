@@ -49,6 +49,7 @@ DEFAULT_SUPABASE_STORAGE_TIMEOUT_SECONDS = 60
 DEFAULT_FFMPEG_TIMEOUT_SECONDS = 120
 DEFAULT_MAX_GLOBAL_VIDEO_WORKERS = 2
 DEFAULT_EXPORT_COOLDOWN_SECONDS = 30
+DEFAULT_MAX_SAVED_LIFT_EXPORT_BYTES = 50 * 1024 * 1024
 DEFAULT_ANALYSIS_TRACE_DIR = ".peso/analysis-traces"
 DEFAULT_ANALYSIS_TRACE_MAX_RUNS = 20
 
@@ -94,6 +95,7 @@ class Settings:
   ffmpeg_timeout_seconds: int = DEFAULT_FFMPEG_TIMEOUT_SECONDS
   max_global_video_workers: int = DEFAULT_MAX_GLOBAL_VIDEO_WORKERS
   export_cooldown_seconds: int = DEFAULT_EXPORT_COOLDOWN_SECONDS
+  max_saved_lift_export_bytes: int = DEFAULT_MAX_SAVED_LIFT_EXPORT_BYTES
   analysis_trace_enabled: bool = False
   analysis_trace_dir: Path = Path(DEFAULT_ANALYSIS_TRACE_DIR)
   analysis_trace_max_runs: int = DEFAULT_ANALYSIS_TRACE_MAX_RUNS
@@ -303,6 +305,10 @@ def get_settings() -> Settings:
     "EXPORT_COOLDOWN_SECONDS",
     DEFAULT_EXPORT_COOLDOWN_SECONDS,
   )
+  max_saved_lift_export_bytes = _parse_positive_int_env(
+    "MAX_SAVED_LIFT_EXPORT_BYTES",
+    DEFAULT_MAX_SAVED_LIFT_EXPORT_BYTES,
+  )
   analysis_trace_enabled = _parse_bool_env(
     "ANALYSIS_TRACE_ENABLED",
     backend_env in {"development", "dev", "local"},
@@ -430,6 +436,7 @@ def get_settings() -> Settings:
     ffmpeg_timeout_seconds=ffmpeg_timeout_seconds,
     max_global_video_workers=max_global_video_workers,
     export_cooldown_seconds=export_cooldown_seconds,
+    max_saved_lift_export_bytes=max_saved_lift_export_bytes,
     analysis_trace_enabled=analysis_trace_enabled,
     analysis_trace_dir=analysis_trace_dir,
     analysis_trace_max_runs=analysis_trace_max_runs,

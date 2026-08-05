@@ -150,6 +150,7 @@ FFMPEG_TIMEOUT_SECONDS=120
 MAX_GLOBAL_VIDEO_WORKERS=2
 EXPORT_COOLDOWN_SECONDS=30
 EXPORT_CACHE_TTL_HOURS=24
+MAX_SAVED_LIFT_EXPORT_BYTES=52428800
 ORPHAN_STORAGE_MIN_AGE_HOURS=24
 STALE_PROCESSING_HOURS=6
 MODEL_VERSION=mediapipe-rtmpose-v3-pin-assisted
@@ -285,8 +286,8 @@ For Expo Go on a physical phone, the backend must bind to `0.0.0.0` so another d
 The public beta website is split into two browser surfaces:
 
 * Astro owns `/`, `/privacy`, and `/terms` under `web/`.
-* `App.web.tsx` selects either the fixture-driven Expo prototype or the reusable
-  native root, while `App.tsx` remains the native entry point.
+* `App.web.tsx` selects either the Expo Web App or the reusable native root,
+  while `App.tsx` remains the native entry point.
 
 Start the marketing site while editing public pages:
 
@@ -303,8 +304,9 @@ npm run web:preview
 
 The build writes the static Astro pages to `dist/` and the Expo single-page app
 to `dist/app/`. `netlify.toml` serves existing marketing files first and rewrites
-only unknown `/app/*` paths to `/app/index.html`. The milestone-one prototype
-uses fixtures and makes no backend calls.
+only unknown `/app/*` paths to `/app/index.html`. Demo Analysis remains a
+browser-local simulation. Peso Account authentication, the shared Saved Lift
+Library, deletion, and export jobs use the authenticated backend.
 
 ## Backend API overview
 
@@ -323,6 +325,9 @@ Main endpoints:
 * `POST /videos/{video_id}/discard` — discards a video
 * `GET /videos/saved` — lists saved videos
 * `GET /videos/{video_id}/playback-url` — returns a signed playback URL
+* `POST /saved-lift-exports` — queues one owner-checked Saved Lift ZIP
+* `GET /saved-lift-exports/{job_id}` — polls export status and refreshes its temporary download
+* `POST /saved-lifts/delete` — permanently deletes a selected Saved Lift set
 * `POST /videos/cleanup-expired` — cleans up expired or unused storage objects.
 
 ### `GET /videos/saved`
@@ -355,7 +360,7 @@ Returns authenticated video-upload capabilities. Pin-assisted uploads call this 
 
 ### `POST /videos/cleanup-expired`
 
-Dry-runs cleanup by default and reports reclaimable storage without deleting anything. Pass `confirm=true` to delete unnecessary Supabase Storage data and mark eligible rows discarded. Cleanup removes expired pending uploads, stale pending analysis jobs, old analyzed export MP4s, and unreferenced app-owned upload objects. Saved source videos are never deleted.
+Dry-runs cleanup by default and reports reclaimable storage without deleting anything. Pass `confirm=true` to delete unnecessary Supabase Storage data and mark eligible rows discarded. Cleanup removes expired pending uploads, stale pending analysis jobs, old analyzed export MP4s, expired Saved Lift ZIPs, and unreferenced app-owned upload objects. Saved source videos are never deleted by retention cleanup.
 
 Outside local development, requests must include:
 

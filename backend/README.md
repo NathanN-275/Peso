@@ -84,6 +84,7 @@ FFMPEG_TIMEOUT_SECONDS=120
 MAX_GLOBAL_VIDEO_WORKERS=2
 EXPORT_COOLDOWN_SECONDS=30
 EXPORT_CACHE_TTL_HOURS=24
+MAX_SAVED_LIFT_EXPORT_BYTES=52428800
 ORPHAN_STORAGE_MIN_AGE_HOURS=24
 STALE_PROCESSING_HOURS=6
 MODEL_VERSION=mediapipe-rtmpose-v2-hip-crease-depth
@@ -374,6 +375,26 @@ The backend signs `playback_path` when available and falls back to `storage_path
 
 The mobile client requests this only after the user opens the playback screen.
 
+### `POST /saved-lift-exports`
+
+Creates an owner-scoped background job for one ZIP containing each selected
+Saved Lift once. The backend revalidates saved state, ownership, source
+availability, and analysis availability before accepting the job and again
+before generation.
+
+### `GET /saved-lift-exports/{job_id}`
+
+Returns the owner-scoped export status. Completed jobs include a short-lived
+signed archive URL until `EXPORT_CACHE_TTL_HOURS` elapses. Generated archives
+are stored in the private `saved-lift-exports` bucket and are capped by
+`MAX_SAVED_LIFT_EXPORT_BYTES` (50 MB by default).
+
+### `POST /saved-lifts/delete`
+
+Prevalidates an owned Saved Lift selection, removes its storage objects and
+analysis rows, and deletes the shared video records so the lifts disappear from
+both web and mobile.
+
 ### `POST /videos/cleanup-expired`
 
 Dry-runs cleanup by default and reports reclaimable storage without deleting anything.
@@ -385,6 +406,7 @@ Cleanup removes:
 * expired pending uploads
 * stale pending analysis jobs
 * old analyzed export MP4s
+* expired Saved Lift export ZIPs
 * unreferenced app-owned upload objects
 
 Saved source videos are never deleted.

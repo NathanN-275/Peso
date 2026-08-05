@@ -10,6 +10,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { BrowserRouter } from 'react-router';
 import { resolveWebRouterBase, resolveWebSurface } from './lib/webSurfacePolicy';
+import { AuthProvider } from './context/AuthContext';
 import NativeRoot from './src/native-root';
 import WebApp from './src/web/web-app';
 
@@ -39,9 +40,11 @@ function WebAppRoot() {
 
   return (
     <SafeAreaProvider>
-      <BrowserRouter basename={resolveWebRouterBase(webEnvironment)}>
-        <WebApp />
-      </BrowserRouter>
+      <AuthProvider>
+        <BrowserRouter basename={resolveWebRouterBase(webEnvironment)}>
+          <WebApp />
+        </BrowserRouter>
+      </AuthProvider>
     </SafeAreaProvider>
   );
 }

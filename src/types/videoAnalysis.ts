@@ -474,6 +474,19 @@ export type SavedVideosPage = {
   next_cursor: string | null;
 };
 
+export type SavedLiftExportJob = {
+  id: string;
+  status: 'queued' | 'processing' | 'completed' | 'failed' | 'expired';
+  lift_ids: string[];
+  lift_count: number;
+  created_at: string;
+  completed_at: string | null;
+  expires_at: string | null;
+  download_url: string | null;
+  download_expires_in: number | null;
+  failure_code: string | null;
+};
+
 export type SavedVideoOverviewGroup = {
   exercise_type: string;
   count: number;

@@ -19,6 +19,9 @@ All FastAPI calls flow through `lib/backendApi.ts`, which adds bearer auth when 
 - `GET /videos/saved-overview`: authenticated lightweight Home/Profile overview. Only preview thumbnails are signed.
 - `GET /videos/{video_id}/playback-url`: authenticated, short-lived signed playback URL. Backend validates ownership immediately before signing.
 - `POST /videos/{video_id}/analyzed-export`: authenticated export render/sign. Client payload is built by `buildAnalyzedVideoExportPayload`.
+- `POST /saved-lift-exports`: authenticated, owner-checked background creation of one deduplicated Saved Lift ZIP.
+- `GET /saved-lift-exports/{job_id}`: authenticated owner-scoped job polling; a short-lived signed archive URL is returned only while a completed job remains unexpired.
+- `POST /saved-lifts/delete`: authenticated permanent deletion of a prevalidated set of owned Saved Lifts and their video/analysis data.
 - `POST /videos/{video_id}/discard`: authenticated cleanup/delete for owned saved or pending videos.
 - `POST /videos/{video_id}/upload-failed`: authenticated upload failure cleanup for owned rows.
 - `DELETE /account`: authenticated account/profile/video cleanup.

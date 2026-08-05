@@ -1,6 +1,7 @@
 import type {
   AnalysisResponse,
   SaveState,
+  SavedLiftExportJob,
   SavedVideo,
   VideoAnalysisStatus,
   VideoStatusResponse,
@@ -535,6 +536,27 @@ export async function exportAnalyzedVideo(
   );
 }
 
+export async function createSavedLiftExport(liftIds: string[], accessToken: string) {
+  return requestJson<SavedLiftExportJob>('/saved-lift-exports', accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ lift_ids: liftIds }),
+  });
+}
+
+export async function getSavedLiftExport(jobId: string, accessToken: string, signal?: AbortSignal) {
+  return requestJson<SavedLiftExportJob>(`/saved-lift-exports/${jobId}`, accessToken, { signal });
+}
+
+export async function deleteSavedLifts(liftIds: string[], accessToken: string) {
+  return requestJson<{
+    deleted_lift_ids: string[];
+    deleted_count: number;
+  }>('/saved-lifts/delete', accessToken, {
+    method: 'POST',
+    body: JSON.stringify({ lift_ids: liftIds }),
+  });
+}
+
 export async function deleteAccount(accessToken: string) {
   return requestJson<{ deleted: boolean }>('/account', accessToken, {
     method: 'DELETE',
@@ -560,6 +582,6 @@ export async function discardAnalyzedVideo(videoId: string, accessToken: string)
 }
 
 export async function deleteSavedVideo(videoId: string, accessToken: string) {
-  // Saved-video deletion uses the same backend cleanup path as discarding.
-  return discardAnalyzedVideo(videoId, accessToken);
+  const response = await deleteSavedLifts([videoId], accessToken);
+  return { video_id: response.deleted_lift_ids[0], deleted: response.deleted_count === 1 };
 }

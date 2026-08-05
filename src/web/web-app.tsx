@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Asset } from 'expo-asset';
 import {
   Image,
@@ -24,8 +24,23 @@ import {
   useParams,
 } from 'react-router';
 import tokens from '../theme/tokens';
+import { useAuth } from '../../context/AuthContext';
+import {
+  createSavedLiftExport,
+  deleteSavedLifts,
+  getSavedLiftExport,
+  getSavedVideoPlaybackUrl,
+  getSavedVideos,
+} from '../../lib/backendApi';
 import { readSidebarCollapsed, writeSidebarCollapsed } from '../../lib/sidebarPreferencePolicy';
-import { savedLifts, type SavedLiftFixture } from './fixtures';
+import {
+  normalizeSavedLiftView,
+  pruneSavedLiftSelection,
+  selectVisibleSavedLifts,
+  toggleSavedLiftSelection,
+  type SavedLiftView,
+} from '../../lib/savedLiftSelectionPolicy';
+import type { SavedLiftExportJob, SavedVideo, VideoAnalysisRep } from '../types/videoAnalysis';
 import { WebDemoSessionProvider, useWebDemoSession } from './web-demo-session';
 
 const colors = {
@@ -71,6 +86,37 @@ function formatTime(seconds: number | null) {
   const minutes = Math.floor(safeSeconds / 60);
   const remainingSeconds = Math.floor(safeSeconds % 60);
   return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
+}
+
+function titleCase(value: string) {
+  return value.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatSavedDate(value: string | null) {
+  if (!value) return 'Date unavailable';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Date unavailable';
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+}
+
+function savedLiftRepCount(lift: SavedVideo) {
+  if (lift.performed_reps) return lift.performed_reps;
+  const detected = lift.analysis?.result_json.rep_count;
+  return typeof detected === 'number' ? detected : lift.analysis?.rep_data.length ?? 0;
+}
+
+function savedLiftLoad(lift: SavedVideo) {
+  const value = lift.load_value ?? lift.weight;
+  const unit = lift.load_unit ?? lift.weight_unit;
+  return value !== null && value !== undefined && unit ? `${value} ${unit}` : 'Load not recorded';
+}
+
+function exportFailureMessage(code: string | null) {
+  if (code === 'archive_too_large') return 'This selection is too large for one export bundle.';
+  if (code === 'capacity_unavailable') return 'Export capacity is busy. Try again in a moment.';
+  if (code === 'lift_unavailable') return 'One or more selected Saved Lifts are no longer exportable.';
+  if (code === 'archive_missing') return 'The temporary export archive is no longer available.';
+  return 'Peso could not prepare this export. Try again.';
 }
 
 type ActionButtonProps = {
@@ -230,14 +276,38 @@ function CheckRow({ checked, label, onPress }: { checked: boolean; label: React.
 
 function LoginScreen() {
   const navigate = useNavigate();
+  const { session, signInWithEmail, configError } = useAuth();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (session) navigate('/', { replace: true });
+  }, [navigate, session]);
+
+  const signIn = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await signInWithEmail(email.trim(), password);
+      navigate('/', { replace: true });
+    } catch (signInError) {
+      setError(signInError instanceof Error ? signInError.message : 'Unable to sign in.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <AuthLayout eyebrow="Welcome back" title="Sign in to Peso" description="Use the same account as the mobile app.">
-      <Field label="Email" placeholder="you@example.com" />
-      <Field label="Password" placeholder="Enter your password" secureTextEntry />
+      <Field label="Email" placeholder="you@example.com" value={email} onChangeText={setEmail} />
+      <Field label="Password" placeholder="Enter your password" secureTextEntry value={password} onChangeText={setPassword} />
+      {(error || configError) && <Text selectable style={styles.formError}>{error ?? configError}</Text>}
       <Pressable accessibilityRole="link" onPress={() => navigate('/reset')}>
         <Text style={styles.inlineLink}>Forgot password?</Text>
       </Pressable>
-      <ActionButton label="Sign in" onPress={() => navigate('/')} />
+      <ActionButton label={submitting ? 'Signing in…' : 'Sign in'} disabled={submitting || !email.trim() || !password} onPress={() => void signIn()} />
       <View style={styles.formFooterRow}>
         <Text style={styles.mutedText}>New to Peso?</Text>
         <Pressable accessibilityRole="link" onPress={() => navigate('/signup')}>
@@ -250,19 +320,39 @@ function LoginScreen() {
 
 function SignupScreen() {
   const navigate = useNavigate();
+  const { signUpWithEmail, configError } = useAuth();
   const [usResident, setUsResident] = useState(false);
   const [terms, setTerms] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const signUp = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const result = await signUpWithEmail(email.trim(), password);
+      navigate(result.requiresEmailConfirmation ? '/verify' : '/', { replace: true });
+    } catch (signUpError) {
+      setError(signUpError instanceof Error ? signUpError.message : 'Unable to create account.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <AuthLayout eyebrow="Limited beta" title="Create your account" description="The web beta is free and currently available to US residents.">
-      <Field label="Email" placeholder="you@example.com" />
-      <Field label="Password" placeholder="At least 8 characters" secureTextEntry />
+      <Field label="Email" placeholder="you@example.com" value={email} onChangeText={setEmail} />
+      <Field label="Password" placeholder="At least 8 characters" secureTextEntry value={password} onChangeText={setPassword} />
       <CheckRow checked={usResident} onPress={() => setUsResident(!usResident)} label="I confirm that I reside in the United States." />
       <CheckRow checked={terms} onPress={() => setTerms(!terms)} label="I agree to the beta Terms and acknowledge the Privacy Policy." />
       <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification placeholder">
         <Text style={styles.turnstileTitle}>Security check</Text>
         <Text style={styles.turnstileBody}>Turnstile appears here when staging authentication is connected.</Text>
       </View>
-      <ActionButton label="Create account" disabled={!usResident || !terms} onPress={() => navigate('/verify')} />
+      {(error || configError) && <Text selectable style={styles.formError}>{error ?? configError}</Text>}
+      <ActionButton label={submitting ? 'Creating account…' : 'Create account'} disabled={submitting || !email.trim() || password.length < 8 || !usResident || !terms} onPress={() => void signUp()} />
       <View style={styles.formFooterRow}>
         <Text style={styles.mutedText}>Already have an account?</Text>
         <Pressable accessibilityRole="link" onPress={() => navigate('/login')}>
@@ -276,27 +366,43 @@ function SignupScreen() {
 function VerifyScreen() {
   const navigate = useNavigate();
   return (
-    <AuthLayout eyebrow="Check your inbox" title="Verify your email" description="We sent a verification link to nathan@example.com.">
+    <AuthLayout eyebrow="Check your inbox" title="Verify your email" description="Open the verification link sent to your email address.">
       <View style={styles.messageCard}>
         <Text selectable style={styles.messageCardTitle}>Email verification is required</Text>
-        <Text selectable style={styles.messageCardBody}>Open the link on this device. This prototype does not send an email.</Text>
+        <Text selectable style={styles.messageCardBody}>After verification, return here and sign in with the same Peso Account.</Text>
       </View>
-      <ActionButton label="I verified my email" onPress={() => navigate('/')} />
-      <ActionButton label="Resend verification" variant="secondary" onPress={() => undefined} />
+      <ActionButton label="Continue to sign in" onPress={() => navigate('/login')} />
     </AuthLayout>
   );
 }
 
 function ResetScreen() {
   const navigate = useNavigate();
+  const { resetPasswordForEmail, configError } = useAuth();
+  const [email, setEmail] = useState('');
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const reset = async () => {
+    setError(null);
+    try {
+      await resetPasswordForEmail(email.trim());
+      setMessage('Check your email for a secure reset link.');
+    } catch (resetError) {
+      setError(resetError instanceof Error ? resetError.message : 'Unable to send a reset link.');
+    }
+  };
+
   return (
     <AuthLayout eyebrow="Account recovery" title="Reset your password" description="Enter your email and we’ll send a secure reset link.">
-      <Field label="Email" placeholder="you@example.com" />
+      <Field label="Email" placeholder="you@example.com" value={email} onChangeText={setEmail} />
       <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification placeholder">
         <Text style={styles.turnstileTitle}>Security check</Text>
         <Text style={styles.turnstileBody}>Turnstile appears here when staging authentication is connected.</Text>
       </View>
-      <ActionButton label="Send reset link" onPress={() => navigate('/login')} />
+      {(error || configError) && <Text selectable style={styles.formError}>{error ?? configError}</Text>}
+      {message && <Text selectable style={styles.formSuccess}>{message}</Text>}
+      <ActionButton label="Send reset link" disabled={!email.trim()} onPress={() => void reset()} />
       <ActionButton label="Back to sign in" variant="quiet" onPress={() => navigate('/login')} />
     </AuthLayout>
   );
@@ -397,6 +503,7 @@ function Navigation({
 function AppShell() {
   const { width, height } = useWindowDimensions();
   const location = useLocation();
+  const { user } = useAuth();
   const { session, clearSession } = useWebDemoSession();
   const [compact, setCompact] = useState(() =>
     readSidebarCollapsed(typeof window === 'undefined' ? null : window.localStorage)
@@ -409,6 +516,13 @@ function AppShell() {
       : location.pathname.startsWith('/review')
         ? 'Review analysis'
         : routeTitles[location.pathname] ?? 'Peso';
+  const accountName = typeof user?.user_metadata?.name === 'string'
+    ? user.user_metadata.name
+    : user?.email?.split('@')[0] ?? 'Peso athlete';
+  const accountInitial = accountName.charAt(0).toUpperCase() || 'P';
+  const accountSurface = location.pathname.startsWith('/saved-lifts')
+    || location.pathname === '/profile'
+    || location.pathname === '/settings';
 
   useEffect(() => {
     document.title = `${title} — Peso`;
@@ -435,14 +549,14 @@ function AppShell() {
         <View style={styles.appMain}>
           <View style={styles.topbar}>
             <View>
-              <Text selectable style={styles.topbarKicker}>DEMO ANALYSIS</Text>
+              <Text selectable style={styles.topbarKicker}>{accountSurface ? 'PESO ACCOUNT' : 'DEMO ANALYSIS'}</Text>
               <Text accessibilityRole="header" selectable style={styles.topbarTitle}>{title}</Text>
             </View>
             <View style={styles.topbarAccount}>
-              <View style={styles.avatar}><Text style={styles.avatarText}>N</Text></View>
+              <View style={styles.avatar}><Text style={styles.avatarText}>{accountInitial}</Text></View>
               {width >= 560 && (
                 <View>
-                  <Text selectable style={styles.accountName}>Nathan</Text>
+                  <Text selectable style={styles.accountName}>{accountName}</Text>
                   <Text selectable style={styles.accountPlan}>Beta tester</Text>
                 </View>
               )}
@@ -456,6 +570,28 @@ function AppShell() {
       </View>
     </View>
   );
+}
+
+function AccountRoute() {
+  const { session, initializing, configError } = useAuth();
+
+  if (initializing) {
+    return (
+      <View style={styles.routeLoading} accessibilityLabel="Loading Peso Account">
+        <Text selectable style={styles.mutedText}>Loading your Peso Account…</Text>
+      </View>
+    );
+  }
+
+  if (configError) {
+    return (
+      <View style={styles.routeLoading} role="alert">
+        <Text selectable style={styles.formError}>{configError}</Text>
+      </View>
+    );
+  }
+
+  return session ? <AppShell /> : <Navigate to="/login" replace />;
 }
 
 function PageScroll({ children }: { children: React.ReactNode }) {
@@ -560,24 +696,71 @@ function QuickAction({
   );
 }
 
-function LiftRow({ lift, onPress }: { lift: SavedLiftFixture; onPress: () => void }) {
+function useSavedLiftLibrary() {
+  const { session } = useAuth();
+  const [lifts, setLifts] = useState<SavedVideo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = async (signal?: AbortSignal) => {
+    if (!session?.access_token) return;
+    setLoading(true);
+    setError(null);
+    try {
+      setLifts(await getSavedVideos(session.access_token, signal));
+    } catch (loadError) {
+      if (!signal?.aborted) {
+        setError(loadError instanceof Error ? loadError.message : 'Unable to load Saved Lifts.');
+      }
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void refresh(controller.signal);
+    return () => controller.abort();
+  }, [session?.access_token]);
+
+  return { lifts, loading, error, refresh: () => refresh() };
+}
+
+function LiftRow({
+  lift,
+  onPress,
+  selectionMode = false,
+  selected = false,
+}: {
+  lift: SavedVideo;
+  onPress: () => void;
+  selectionMode?: boolean;
+  selected?: boolean;
+}) {
+  const exercise = titleCase(lift.exercise_type);
+  const reps = savedLiftRepCount(lift);
   return (
     <Pressable
-      accessibilityRole="link"
-      accessibilityLabel={`${lift.exercise}, ${lift.load}, ${lift.performedReps} reps, ${lift.date}`}
+      accessibilityRole={selectionMode ? 'checkbox' : 'link'}
+      accessibilityState={selectionMode ? { checked: selected } : undefined}
+      accessibilityLabel={`${exercise}, ${savedLiftLoad(lift)}, ${reps} reps, ${formatSavedDate(lift.saved_at ?? lift.created_at)}`}
       onPress={onPress}
-      style={({ pressed }) => [styles.liftRow, pressed && styles.liftRowPressed]}
+      style={({ pressed }) => [styles.liftRow, selected && styles.liftSelected, pressed && styles.liftRowPressed]}
     >
-      <Image source={lift.exercise === 'Squat' ? barPathImage : previewImage} style={styles.liftThumbnail as ImageStyle} accessibilityIgnoresInvertColors />
+      {selectionMode && (
+        <View style={[styles.selectionCheckbox, selected && styles.selectionCheckboxSelected]}>
+          {selected && <Text style={styles.checkboxMark}>✓</Text>}
+        </View>
+      )}
+      <Image source={lift.thumbnail_url ? { uri: lift.thumbnail_url } : previewImage} style={styles.liftThumbnail as ImageStyle} accessibilityIgnoresInvertColors />
       <View style={styles.liftRowCopy}>
         <View style={styles.liftTitleRow}>
-          <Text selectable style={styles.liftExercise}>{lift.exercise}</Text>
-          {!lift.webEligible && <View style={styles.mobileBadge}><Text style={styles.mobileBadgeText}>Mobile history</Text></View>}
+          <Text selectable style={styles.liftExercise}>{exercise}</Text>
         </View>
-        <Text selectable style={styles.liftMeta}>{lift.load} · {lift.performedReps} performed reps</Text>
-        <Text selectable style={styles.liftDate}>{lift.date}</Text>
+        <Text selectable style={styles.liftMeta}>{savedLiftLoad(lift)} · {reps} performed reps</Text>
+        <Text selectable style={styles.liftDate}>{formatSavedDate(lift.saved_at ?? lift.created_at)}</Text>
       </View>
-      <Text style={styles.liftArrow}>›</Text>
+      {!selectionMode && <Text style={styles.liftArrow}>›</Text>}
     </Pressable>
   );
 }
@@ -586,6 +769,7 @@ function HomeScreen() {
   const navigate = useNavigate();
   const { width } = useWindowDimensions();
   const { session } = useWebDemoSession();
+  const { lifts, loading, error } = useSavedLiftLibrary();
   const blocked = session.phase === 'queued' || session.phase === 'analyzing';
   return (
     <PageScroll>
@@ -625,7 +809,10 @@ function HomeScreen() {
           </Pressable>
         </View>
         <View style={styles.liftList}>
-          {savedLifts.slice(0, 3).map((lift) => <LiftRow key={lift.id} lift={lift} onPress={() => navigate(`/saved-lifts/${lift.id}`)} />)}
+          {loading && <Text selectable style={styles.mutedText}>Loading Saved Lifts…</Text>}
+          {error && <Text selectable style={styles.formError}>{error}</Text>}
+          {!loading && !error && lifts.length === 0 && <Text selectable style={styles.mutedText}>Your shared Saved Lift Library is empty.</Text>}
+          {lifts.slice(0, 3).map((lift) => <LiftRow key={lift.id} lift={lift} onPress={() => navigate(`/saved-lifts/${lift.id}`)} />)}
         </View>
       </View>
     </PageScroll>
@@ -876,7 +1063,15 @@ function MetricCard({ label, value, detail }: { label: string; value: string; de
   );
 }
 
-function AnalyzedVideoPlayer({ label }: { label: string }) {
+function AnalyzedVideoPlayer({
+  label,
+  sourceUri = analyzedVideoUri,
+  posterUri = analyzedVideoPosterUri,
+}: {
+  label: string;
+  sourceUri?: string;
+  posterUri?: string;
+}) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -911,11 +1106,11 @@ function AnalyzedVideoPlayer({ label }: { label: string }) {
       <video
         ref={videoRef}
         className="peso-analyzed-video"
-        src={analyzedVideoUri}
-        poster={analyzedVideoPosterUri}
+        src={sourceUri}
+        poster={posterUri}
         playsInline
         preload="metadata"
-        aria-label="Analyzed Peso squat demo"
+        aria-label={label}
         onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)}
         onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
         onPlay={() => setPlaying(true)}
@@ -978,9 +1173,9 @@ function ReviewScreen() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [reps, setReps] = useState('3');
   const [load, setLoad] = useState('225');
-  const save = () => {
+  const finishDemo = () => {
     clearSession();
-    navigate('/saved-lifts/lift-225');
+    navigate('/');
   };
 
   if (session.phase !== 'ready') {
@@ -1025,100 +1220,375 @@ function ReviewScreen() {
             </View>
           )}
           <View style={styles.buttonRow}>
-            <ActionButton label="Save to Saved Lifts" compact onPress={save} />
+            <ActionButton label="Finish demo" compact onPress={finishDemo} />
             <ActionButton label="Discard analysis" variant="danger" compact onPress={() => { clearSession(); navigate('/'); }} />
           </View>
-          <Text selectable style={styles.expiryText}>Unsaved result expires tomorrow at 8:42 AM.</Text>
+          <Text selectable style={styles.expiryText}>Demo Analysis stays on this device and does not create a Saved Lift.</Text>
         </View>
       </View>
     </PageScroll>
   );
 }
 
+function LiftGridCard({
+  lift,
+  onPress,
+  selectionMode,
+  selected,
+}: {
+  lift: SavedVideo;
+  onPress: () => void;
+  selectionMode: boolean;
+  selected: boolean;
+}) {
+  const exercise = titleCase(lift.exercise_type);
+  return (
+    <Pressable
+      accessibilityRole={selectionMode ? 'checkbox' : 'link'}
+      accessibilityState={selectionMode ? { checked: selected } : undefined}
+      accessibilityLabel={`${exercise}, ${savedLiftLoad(lift)}, ${savedLiftRepCount(lift)} reps`}
+      onPress={onPress}
+      style={({ pressed }) => [styles.liftGridCard, selected && styles.liftSelected, pressed && styles.liftRowPressed]}
+    >
+      <Image source={lift.thumbnail_url ? { uri: lift.thumbnail_url } : previewImage} style={styles.liftGridImage as ImageStyle} accessibilityIgnoresInvertColors />
+      {selectionMode && (
+        <View style={[styles.gridSelectionCheckbox, selected && styles.selectionCheckboxSelected]}>
+          {selected && <Text style={styles.checkboxMark}>✓</Text>}
+        </View>
+      )}
+      <View style={styles.liftGridCopy}>
+        <Text selectable style={styles.liftExercise}>{exercise}</Text>
+        <Text selectable style={styles.liftMeta}>{savedLiftLoad(lift)} · {savedLiftRepCount(lift)} reps</Text>
+        <Text selectable style={styles.liftDate}>{formatSavedDate(lift.saved_at ?? lift.created_at)}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
 function SavedLiftsScreen() {
   const navigate = useNavigate();
-  const [filter, setFilter] = useState<'all' | 'squat' | 'mobile'>('all');
-  const lifts = savedLifts.filter((lift) => filter === 'all' || (filter === 'squat' ? lift.exercise === 'Squat' : !lift.webEligible));
+  const { session, user } = useAuth();
+  const { lifts, loading, error, refresh } = useSavedLiftLibrary();
+  const [filter, setFilter] = useState('all');
+  const [view, setView] = useState<SavedLiftView>(() => normalizeSavedLiftView(
+    typeof window === 'undefined' ? null : window.localStorage.getItem('peso.saved-lifts.view')
+  ));
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [exportJobId, setExportJobId] = useState<string | null>(null);
+  const [exportJob, setExportJob] = useState<SavedLiftExportJob | null>(null);
+
+  const filters = useMemo(() => [
+    { value: 'all', label: 'All lifts' },
+    ...Array.from(new Set(lifts.map((lift) => lift.exercise_type))).map((exercise) => ({
+      value: exercise,
+      label: titleCase(exercise),
+    })),
+  ], [lifts]);
+  const visibleLifts = useMemo(
+    () => lifts.filter((lift) => filter === 'all' || lift.exercise_type === filter),
+    [filter, lifts]
+  );
+  const exportStorageKey = user ? `peso.saved-lift-export-job:${user.id}` : null;
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') window.localStorage.setItem('peso.saved-lifts.view', view);
+  }, [view]);
+
+  useEffect(() => {
+    setSelectedIds((current) => pruneSavedLiftSelection(current, lifts.map((lift) => lift.id)));
+  }, [lifts]);
+
+  useEffect(() => {
+    if (!exportStorageKey || typeof window === 'undefined') return;
+    setExportJobId(window.localStorage.getItem(exportStorageKey));
+  }, [exportStorageKey]);
+
+  useEffect(() => {
+    if (!exportJobId || !session?.access_token) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let active = true;
+
+    const poll = async () => {
+      try {
+        const job = await getSavedLiftExport(exportJobId, session.access_token);
+        if (!active) return;
+        setExportJob(job);
+        if (job.status === 'queued' || job.status === 'processing') {
+          timer = setTimeout(() => void poll(), 2000);
+        }
+      } catch (pollError) {
+        if (active) setActionError(pollError instanceof Error ? pollError.message : 'Unable to check export status.');
+      }
+    };
+
+    void poll();
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [exportJobId, session?.access_token]);
+
+  const startExport = async () => {
+    if (!session?.access_token || selectedIds.length === 0) return;
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      const job = await createSavedLiftExport(selectedIds, session.access_token);
+      setExportJob(job);
+      setExportJobId(job.id);
+      if (exportStorageKey && typeof window !== 'undefined') {
+        window.localStorage.setItem(exportStorageKey, job.id);
+      }
+      setSelectedIds([]);
+      setSelectionMode(false);
+    } catch (exportError) {
+      setActionError(exportError instanceof Error ? exportError.message : 'Unable to start Saved Lift export.');
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const downloadExport = async () => {
+    if (!exportJobId || !session?.access_token) return;
+    setActionError(null);
+    try {
+      const job = await getSavedLiftExport(exportJobId, session.access_token);
+      setExportJob(job);
+      if (job.download_url) window.location.assign(job.download_url);
+    } catch (downloadError) {
+      setActionError(downloadError instanceof Error ? downloadError.message : 'Unable to download the export.');
+    }
+  };
+
+  const deleteSelection = async () => {
+    if (!session?.access_token || selectedIds.length === 0) return;
+    const confirmed = window.confirm(
+      `Permanently delete ${selectedIds.length} selected Saved Lift${selectedIds.length === 1 ? '' : 's'}? This also removes them from the shared mobile library and cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      await deleteSavedLifts(selectedIds, session.access_token);
+      setSelectedIds([]);
+      setSelectionMode(false);
+      await refresh();
+    } catch (deleteError) {
+      setActionError(deleteError instanceof Error ? deleteError.message : 'Unable to delete Saved Lifts.');
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const toggleSelectionMode = () => {
+    setSelectionMode((current) => !current);
+    setSelectedIds([]);
+  };
+
   return (
     <PageScroll>
       <View style={styles.savedHeader}>
         <View>
           <Text accessibilityRole="header" selectable style={styles.pageHeading}>Your Saved Lifts</Text>
-          <Text selectable style={styles.pageSubheading}>Web and mobile history live together. New web submissions are squat-only.</Text>
+          <Text selectable style={styles.pageSubheading}>One source-agnostic library shared by Peso web and mobile.</Text>
         </View>
-        <ActionButton label="Analyze a squat" compact onPress={() => navigate('/upload')} />
+        <View style={styles.buttonRow}>
+          <ActionButton label={selectionMode ? 'Cancel selection' : 'Select lifts'} variant="secondary" compact onPress={toggleSelectionMode} />
+          <ActionButton label="Analyze a squat" compact onPress={() => navigate('/upload')} />
+        </View>
       </View>
-      <View style={styles.filterRow} accessibilityRole="radiogroup">
-        {([
-          ['all', 'All lifts'],
-          ['squat', 'Squats'],
-          ['mobile', 'Mobile history'],
-        ] as const).map(([value, label]) => (
-          <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: filter === value }} onPress={() => setFilter(value)} style={[styles.filterChip, filter === value && styles.filterChipActive]}>
-            <Text style={[styles.filterChipText, filter === value && styles.filterChipTextActive]}>{label}</Text>
-          </Pressable>
-        ))}
+
+      {exportJob && (
+        <View style={styles.exportStatusCard} role="status">
+          <View style={styles.activityCopy}>
+            <Text selectable style={styles.activityTitle}>
+              {exportJob.status === 'completed'
+                ? 'Saved Lift export ready'
+                : exportJob.status === 'failed' || exportJob.status === 'expired'
+                  ? 'Saved Lift export unavailable'
+                  : `Preparing ${exportJob.lift_count} Saved Lift${exportJob.lift_count === 1 ? '' : 's'}…`}
+            </Text>
+            <Text selectable style={styles.activityDetail}>
+              {exportJob.status === 'completed'
+                ? `One ZIP is available until ${formatSavedDate(exportJob.expires_at)}.`
+                : exportJob.status === 'failed'
+                  ? exportFailureMessage(exportJob.failure_code)
+                  : exportJob.status === 'expired'
+                    ? 'The temporary archive expired. Select the lifts again to create a new one.'
+                    : 'You can leave this page; preparation continues on the backend.'}
+            </Text>
+          </View>
+          {exportJob.status === 'completed' && <ActionButton label="Download ZIP" compact onPress={() => void downloadExport()} />}
+        </View>
+      )}
+
+      {actionError && <Text selectable style={styles.formError}>{actionError}</Text>}
+
+      <View style={styles.savedControls}>
+        <View style={styles.filterRow} accessibilityRole="radiogroup">
+          {filters.map(({ value, label }) => (
+            <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: filter === value }} onPress={() => setFilter(value)} style={[styles.filterChip, filter === value && styles.filterChipActive]}>
+              <Text style={[styles.filterChipText, filter === value && styles.filterChipTextActive]}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <View style={styles.viewToggle} accessibilityRole="radiogroup">
+          {(['list', 'grid'] as const).map((option) => (
+            <Pressable key={option} accessibilityRole="radio" accessibilityLabel={`${titleCase(option)} View`} accessibilityState={{ checked: view === option }} onPress={() => setView(option)} style={[styles.viewToggleButton, view === option && styles.viewToggleButtonActive]}>
+              <Text style={[styles.filterChipText, view === option && styles.filterChipTextActive]}>{option === 'list' ? '☰' : '▦'} {titleCase(option)}</Text>
+            </Pressable>
+          ))}
+        </View>
       </View>
-      <View style={styles.savedList}>
-        {lifts.map((lift) => <LiftRow key={lift.id} lift={lift} onPress={() => navigate(`/saved-lifts/${lift.id}`)} />)}
+
+      {selectionMode && (
+        <View style={styles.selectionToolbar}>
+          <Text selectable style={styles.selectionCount}>{selectedIds.length} selected</Text>
+          <View style={styles.buttonRow}>
+            <ActionButton label="Select visible" variant="quiet" compact onPress={() => setSelectedIds((current) => selectVisibleSavedLifts(current, visibleLifts.map((lift) => lift.id)))} />
+            <ActionButton label={actionBusy ? 'Preparing…' : 'Export ZIP'} disabled={actionBusy || selectedIds.length === 0} compact onPress={() => void startExport()} />
+            <ActionButton label={actionBusy ? 'Deleting…' : 'Delete'} variant="danger" disabled={actionBusy || selectedIds.length === 0} compact onPress={() => void deleteSelection()} />
+          </View>
+        </View>
+      )}
+
+      {loading && <Text selectable style={styles.mutedText}>Loading Saved Lifts…</Text>}
+      {error && <Text selectable style={styles.formError}>{error}</Text>}
+      {!loading && !error && visibleLifts.length === 0 && <Text selectable style={styles.mutedText}>No Saved Lifts match this view.</Text>}
+      <View style={view === 'grid' ? styles.savedGrid : styles.savedList}>
+        {visibleLifts.map((lift) => {
+          const selected = selectedIds.includes(lift.id);
+          const onPress = () => selectionMode
+            ? setSelectedIds((current) => toggleSavedLiftSelection(current, lift.id))
+            : navigate(`/saved-lifts/${lift.id}`);
+          return view === 'grid'
+            ? <LiftGridCard key={lift.id} lift={lift} selectionMode={selectionMode} selected={selected} onPress={onPress} />
+            : <LiftRow key={lift.id} lift={lift} selectionMode={selectionMode} selected={selected} onPress={onPress} />;
+        })}
       </View>
     </PageScroll>
+  );
+}
+
+function insightNumber(value: number | undefined, digits = 2) {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(digits) : '—';
+}
+
+function RepInsight({ rep, index }: { rep: VideoAnalysisRep; index: number }) {
+  return (
+    <View style={styles.repInsightCard}>
+      <Text selectable style={styles.repInsightTitle}>Rep {rep.rep_index ?? rep.repIndex ?? index + 1}</Text>
+      <View style={styles.metricGrid}>
+        <MetricCard label="Duration" value={`${insightNumber(rep.duration)} s`} detail="Rep elapsed time" />
+        <MetricCard label="Rep speed" value={insightNumber(rep.repSpeed)} detail="Repetitions per second" />
+        <MetricCard label="Avg hip velocity" value={insightNumber(rep.avgVelocity, 3)} detail="Relative video estimate" />
+        <MetricCard label="Peak hip velocity" value={insightNumber(rep.peakVelocity, 3)} detail="Relative video estimate" />
+      </View>
+    </View>
   );
 }
 
 function SavedLiftDetailScreen() {
   const navigate = useNavigate();
   const { liftId } = useParams();
-  const lift = savedLifts.find((candidate) => candidate.id === liftId) ?? savedLifts[0];
+  const { session } = useAuth();
+  const { lifts, loading, error } = useSavedLiftLibrary();
+  const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const lift = lifts.find((candidate) => candidate.id === liftId);
+
+  useEffect(() => {
+    if (!lift || !session?.access_token || lift.storage_state === 'pruned') return;
+    let active = true;
+    getSavedVideoPlaybackUrl(lift.id, session.access_token)
+      .then((response) => {
+        if (active) setPlaybackUrl(response.video_url);
+      })
+      .catch((loadError) => {
+        if (active) setPlaybackError(loadError instanceof Error ? loadError.message : 'Unable to load Saved Lift video.');
+      });
+    return () => { active = false; };
+  }, [lift?.id, lift?.storage_state, session?.access_token]);
+
+  if (loading) return <PageScroll><Text selectable style={styles.mutedText}>Loading Saved Lift…</Text></PageScroll>;
+  if (error) return <PageScroll><Text selectable style={styles.formError}>{error}</Text></PageScroll>;
+  if (!lift) {
+    return (
+      <PageScroll>
+        <Text accessibilityRole="header" selectable style={styles.pageHeading}>Saved Lift not found</Text>
+        <ActionButton label="Back to Saved Lifts" variant="quiet" compact onPress={() => navigate('/saved-lifts')} />
+      </PageScroll>
+    );
+  }
+
+  const exercise = titleCase(lift.exercise_type);
+  const detectedReps = lift.analysis?.result_json.rep_count ?? lift.analysis?.rep_data.length ?? 0;
+  const performedReps = lift.performed_reps ?? lift.corrected_rep_count ?? detectedReps;
+  const cue = lift.analysis?.coaching_feedback[0] ?? lift.analysis?.summary[0] ?? 'No saved coaching cue is available.';
+  const posterUri = lift.thumbnail_url ?? analyzedVideoPosterUri;
+
   return (
     <PageScroll>
       <View style={styles.detailTopRow}>
         <ActionButton label="Back to Saved Lifts" variant="quiet" compact onPress={() => navigate('/saved-lifts')} />
-        {!lift.webEligible && <View style={styles.mobileBadge}><Text style={styles.mobileBadgeText}>Saved on mobile</Text></View>}
       </View>
       <View style={styles.reviewGrid}>
         <View style={styles.reviewMedia}>
-          {lift.exercise === 'Squat' ? (
-            <AnalyzedVideoPlayer label="Saved Lift video controls" />
+          {playbackUrl ? (
+            <AnalyzedVideoPlayer label="Saved Lift video controls" sourceUri={playbackUrl} posterUri={posterUri} />
           ) : (
-            <Image source={previewImage} style={styles.reviewImage as ImageStyle} accessibilityLabel={`${lift.exercise} Saved Lift preview`} />
+            <Image source={lift.thumbnail_url ? { uri: lift.thumbnail_url } : previewImage} style={styles.reviewImage as ImageStyle} accessibilityLabel={`${exercise} Saved Lift preview`} />
           )}
+          {lift.storage_state === 'pruned' && <Text selectable style={styles.mediaNotice}>This Saved Lift video has expired; analysis insights remain available.</Text>}
+          {playbackError && <Text selectable style={styles.formError}>{playbackError}</Text>}
         </View>
         <View style={styles.reviewPanel}>
-          <Text style={styles.eyebrow}>{lift.date.toUpperCase()}</Text>
-          <Text accessibilityRole="header" selectable style={styles.pageHeading}>{lift.exercise}</Text>
-          <Text selectable style={styles.detailLoad}>{lift.load} × {lift.performedReps}</Text>
+          <Text style={styles.eyebrow}>{formatSavedDate(lift.saved_at ?? lift.created_at).toUpperCase()}</Text>
+          <Text accessibilityRole="header" selectable style={styles.pageHeading}>{exercise}</Text>
+          <Text selectable style={styles.detailLoad}>{savedLiftLoad(lift)} × {performedReps}</Text>
           <View style={styles.metricGrid}>
-            <MetricCard label="Performed reps" value={String(lift.performedReps)} detail="Workout fact" />
-            <MetricCard label="Detected reps" value={String(lift.detectedReps)} detail="Model observation" />
-            <MetricCard label="Camera" value={lift.cameraView.replace(' view', '')} detail={lift.cameraView} />
+            <MetricCard label="Performed reps" value={String(performedReps)} detail="Workout fact" />
+            <MetricCard label="Detected reps" value={String(detectedReps)} detail="Model observation" />
+            <MetricCard label="Camera" value={titleCase(lift.view_type)} detail={`${titleCase(lift.view_type)} view`} />
           </View>
           <View style={styles.cueCard}>
             <Text selectable style={styles.cueLabel}>SAVED OBSERVATION</Text>
-            <Text selectable style={styles.cueTitle}>{lift.cue}</Text>
-            {!lift.webEligible && <Text selectable style={styles.cueBody}>Existing non-squat history is visible here, but the web beta only accepts new squat submissions.</Text>}
+            <Text selectable style={styles.cueTitle}>{cue}</Text>
           </View>
         </View>
       </View>
+      {lift.analysis?.rep_data.length ? (
+        <View style={styles.insightsSection}>
+          <View>
+            <Text accessibilityRole="header" selectable style={styles.sectionTitle}>Lift Insights</Text>
+            <Text selectable style={styles.pageSubheading}>Per-repetition timing and framing-dependent hip movement estimates.</Text>
+          </View>
+          {lift.analysis.rep_data.map((rep, index) => <RepInsight key={`${rep.rep_index ?? index}`} rep={rep} index={index} />)}
+        </View>
+      ) : null}
     </PageScroll>
   );
 }
 
 function ProfileScreen() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const displayName = typeof user?.user_metadata?.name === 'string'
+    ? user.user_metadata.name
+    : user?.email?.split('@')[0] ?? 'Peso athlete';
+  const initial = displayName.charAt(0).toUpperCase() || 'P';
   return (
     <PageScroll>
       <View style={styles.settingsPage}>
         <Text accessibilityRole="header" selectable style={styles.pageHeading}>Profile</Text>
         <Text selectable style={styles.pageSubheading}>Basic account information shared with your Peso mobile account.</Text>
         <View style={styles.profileCard}>
-          <View style={styles.profileAvatar}><Text style={styles.profileAvatarText}>N</Text></View>
-          <View><Text selectable style={styles.profileName}>Nathan</Text><Text selectable style={styles.profileEmail}>nathan@example.com · Verified</Text></View>
-        </View>
-        <View style={styles.settingsCard}>
-          <Field label="Display name" placeholder="Nathan" value="Nathan" />
-          <Field label="Email" placeholder="nathan@example.com" value="nathan@example.com" />
-          <ActionButton label="Save profile fixture" onPress={() => undefined} />
+          <View style={styles.profileAvatar}><Text style={styles.profileAvatarText}>{initial}</Text></View>
+          <View><Text selectable style={styles.profileName}>{displayName}</Text><Text selectable style={styles.profileEmail}>{user?.email ?? 'Email unavailable'} · {user?.email_confirmed_at ? 'Verified' : 'Unverified'}</Text></View>
         </View>
         <ActionButton label="Open Settings" variant="secondary" onPress={() => navigate('/settings')} />
       </View>
@@ -1137,6 +1607,7 @@ function SettingRow({ title, description, value, onChange }: { title: string; de
 
 function SettingsScreen() {
   const navigate = useNavigate();
+  const { signOut } = useAuth();
   const [analytics, setAnalytics] = useState(false);
   const [updates, setUpdates] = useState(true);
   return (
@@ -1151,7 +1622,7 @@ function SettingsScreen() {
         <View style={styles.settingsCard}>
           <Pressable accessibilityRole="link" onPress={() => window.location.assign('/privacy')} style={styles.settingsLink}><Text style={styles.settingTitle}>Privacy Policy</Text><Text style={styles.liftArrow}>›</Text></Pressable>
           <Pressable accessibilityRole="link" onPress={() => window.location.assign('/terms')} style={styles.settingsLink}><Text style={styles.settingTitle}>Terms of Use</Text><Text style={styles.liftArrow}>›</Text></Pressable>
-          <Pressable accessibilityRole="link" onPress={() => navigate('/login')} style={styles.settingsLink}><Text style={[styles.settingTitle, { color: colors.red }]}>Sign out</Text><Text style={styles.liftArrow}>›</Text></Pressable>
+          <Pressable accessibilityRole="link" onPress={() => { void signOut().then(() => navigate('/login', { replace: true })); }} style={styles.settingsLink}><Text style={[styles.settingTitle, { color: colors.red }]}>Sign out</Text><Text style={styles.liftArrow}>›</Text></Pressable>
         </View>
       </View>
     </PageScroll>
@@ -1166,7 +1637,7 @@ export default function WebApp() {
         <Route path="/signup" element={<SignupScreen />} />
         <Route path="/verify" element={<VerifyScreen />} />
         <Route path="/reset" element={<ResetScreen />} />
-        <Route element={<AppShell />}>
+        <Route element={<AccountRoute />}>
           <Route index element={<HomeScreen />} />
           <Route path="/record" element={<RecordScreen />} />
           <Route path="/upload" element={<UploadScreen />} />
@@ -1199,6 +1670,7 @@ const styles = StyleSheet.create({
   accountName: { color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 12 },
   accountPlan: { color: colors.textMuted, fontFamily: fonts.regular, fontSize: 10, marginTop: 2 },
   routeArea: { flex: 1, minHeight: 0 },
+  routeLoading: { flex: 1, minHeight: 640, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: colors.page },
   pageScroll: { flex: 1 },
   pageContent: { width: '100%', maxWidth: 1280, alignSelf: 'center', padding: 28, paddingBottom: 80, gap: 30 },
   sidebar: { width: 252, padding: 18, borderRightWidth: 1, borderRightColor: colors.line, backgroundColor: '#090D13' },
@@ -1241,6 +1713,8 @@ const styles = StyleSheet.create({
   authTitle: { marginTop: 10, color: colors.textPrimary, fontFamily: fonts.display, fontSize: 35, lineHeight: 41 },
   authDescription: { marginTop: 13, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 14, lineHeight: 21 },
   form: { gap: 16, paddingTop: 28 },
+  formError: { color: colors.red, fontFamily: fonts.medium, fontSize: 11, lineHeight: 17 },
+  formSuccess: { color: colors.green, fontFamily: fonts.medium, fontSize: 11, lineHeight: 17 },
   field: { gap: 7 },
   fieldLabel: { color: colors.secondaryText, fontFamily: fonts.semibold, fontSize: 11 },
   input: { width: '100%', height: 48, paddingHorizontal: 14, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 11, backgroundColor: colors.inputBg, color: colors.textPrimary, fontFamily: fonts.regular, fontSize: 14 },
@@ -1315,6 +1789,9 @@ const styles = StyleSheet.create({
   liftList: { gap: 9 },
   liftRow: { minHeight: 88, padding: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 14, backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center', gap: 14 },
   liftRowPressed: { borderColor: colors.brand, backgroundColor: colors.surfaceRaised },
+  liftSelected: { borderColor: colors.brand, backgroundColor: colors.blueSoft },
+  selectionCheckbox: { width: 22, height: 22, borderWidth: 1, borderColor: '#52617A', borderRadius: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.inputBg },
+  selectionCheckboxSelected: { borderColor: colors.brand, backgroundColor: colors.brand },
   liftThumbnail: { width: 62, height: 62, borderRadius: 10, backgroundColor: '#10141C' },
   liftRowCopy: { flex: 1, minWidth: 0 },
   liftTitleRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
@@ -1393,6 +1870,7 @@ const styles = StyleSheet.create({
   seekButtonText: { color: colors.blueText, fontFamily: fonts.bold, fontSize: 8 },
   timecode: { color: colors.textMuted, fontFamily: fonts.medium, fontSize: 8, fontVariant: ['tabular-nums'] },
   mediaDescription: { maxWidth: 332, marginTop: 9, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 9, lineHeight: 14 },
+  mediaNotice: { padding: 12, color: colors.amber, backgroundColor: colors.amberSoft, fontFamily: fonts.medium, fontSize: 10, lineHeight: 16 },
   reviewPanel: { flex: 1, minWidth: 310, gap: 15 },
   reviewTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
   reviewEyebrow: { color: colors.blueText, fontFamily: fonts.bold, fontSize: 8, letterSpacing: 1.2 },
@@ -1414,14 +1892,29 @@ const styles = StyleSheet.create({
   workoutFields: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   expiryText: { color: colors.textMuted, fontFamily: fonts.regular, fontSize: 8 },
   savedHeader: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-end', gap: 18 },
+  savedControls: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 14 },
   filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   filterChip: { minHeight: 34, paddingHorizontal: 13, borderWidth: 1, borderColor: colors.line, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface },
   filterChipActive: { borderColor: colors.brand, backgroundColor: colors.blueSoft },
   filterChipText: { color: colors.textMuted, fontFamily: fonts.semibold, fontSize: 10 },
   filterChipTextActive: { color: colors.blueText },
   savedList: { width: '100%', maxWidth: 880, gap: 10 },
+  savedGrid: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
+  liftGridCard: { width: 220, minHeight: 280, borderWidth: 1, borderColor: colors.line, borderRadius: 15, overflow: 'hidden', backgroundColor: colors.surface },
+  liftGridImage: { width: '100%', aspectRatio: 1, backgroundColor: '#10141C', resizeMode: 'cover' },
+  liftGridCopy: { padding: 13, gap: 5 },
+  gridSelectionCheckbox: { position: 'absolute', top: 10, right: 10, width: 25, height: 25, borderWidth: 1, borderColor: '#70809A', borderRadius: 7, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7, 9, 13, 0.88)' },
+  viewToggle: { flexDirection: 'row', padding: 3, borderWidth: 1, borderColor: colors.line, borderRadius: 11, backgroundColor: colors.surface },
+  viewToggleButton: { minHeight: 32, paddingHorizontal: 11, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  viewToggleButtonActive: { backgroundColor: colors.blueSoft },
+  selectionToolbar: { padding: 14, borderWidth: 1, borderColor: '#294A7D', borderRadius: 13, backgroundColor: '#0D1A30', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  selectionCount: { color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 12 },
+  exportStatusCard: { padding: 16, borderWidth: 1, borderColor: '#2D579A', borderRadius: 14, backgroundColor: '#0D1B34', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 14 },
   detailTopRow: { width: '100%', maxWidth: 952, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   detailLoad: { color: colors.blueText, fontFamily: fonts.display, fontSize: 24 },
+  insightsSection: { width: '100%', maxWidth: 952, alignSelf: 'center', gap: 14 },
+  repInsightCard: { padding: 16, borderWidth: 1, borderColor: colors.line, borderRadius: 14, backgroundColor: colors.surface, gap: 12 },
+  repInsightTitle: { color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 13 },
   settingsPage: { width: '100%', maxWidth: 760, alignSelf: 'center', gap: 22 },
   profileCard: { padding: 20, borderWidth: 1, borderColor: colors.line, borderRadius: 15, backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center', gap: 15 },
   profileAvatar: { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.brand },
