@@ -35,18 +35,13 @@ const feedback = [
         </div>
         <div class="hero-visual" aria-label="Peso squat analysis preview">
           <div class="ambient-glow"></div>
-          <div class="product-mockup">
-            <video
-              autoplay
-              muted
-              loop
-              playsinline
-              preload="metadata"
-              poster="/demo/peso-pose-overlay.jpg"
-              aria-label="Peso analysis tracking a lifter during a squat"
-            >
-              <source src="/demo/peso-pose-overlay.mp4" type="video/mp4" />
-            </video>
+          <div class="product-outline">
+            <img
+              src="/demo/peso-demo-thumbnail.jpg"
+              width="400"
+              height="977"
+              alt="Peso analysis tracking a lifter during a squat"
+            />
           </div>
           <div class="result-stack" aria-label="Example analysis results">
             <div class="result-card"><span>Depth</span><strong>3 / 3</strong><small>reps reached depth</small></div>
@@ -58,8 +53,8 @@ const feedback = [
 
       <section class="demo-section section-grid" id="demo" aria-labelledby="demo-title">
         <div class="section-heading">
-          <p class="eyebrow">Real analysis</p>
-          <h2 id="demo-title">Your lift, made easier to read.</h2>
+          <h2 id="demo-title" class="section-title">Real analysis</h2>
+          <p class="section-subtitle">Your lift, made easier to read.</p>
           <p id="demo-description">
             The demo follows a side-view squat. Peso tracks the lifter’s major
             joints and visible bar position, then keeps those overlays aligned
@@ -68,19 +63,15 @@ const feedback = [
           </p>
         </div>
         <div class="demo-stage">
-          <video
-            controls
-            muted
-            loop
-            playsinline
-            preload="metadata"
-            poster="/demo/peso-pose-overlay.jpg"
-            aria-describedby="demo-description"
-          >
-            <source src="/demo/peso-pose-overlay.mp4" type="video/mp4" />
-            <track kind="captions" src="/demo/peso-demo-captions.vtt" srclang="en" label="English" default />
-            Your browser cannot play this demo. The description beside it explains the analysis.
-          </video>
+          <div class="demo-outline">
+            <img
+              src="/demo/peso-demo-video.gif"
+              width="360"
+              height="879"
+              alt="Animated Peso squat analysis with upper-back and hip tracking"
+              aria-describedby="demo-description"
+            />
+          </div>
           <div class="demo-readout" aria-label="Example analysis results">
             <p class="micro-label">Set summary</p>
             <div><strong>3</strong><span>performed reps</span></div>
@@ -92,8 +83,8 @@ const feedback = [
 
       <section class="workflow-section" id="how-it-works" aria-labelledby="workflow-title">
         <div class="section-heading section-heading--center">
-          <p class="eyebrow">How it works</p>
-          <h2 id="workflow-title">From set to signal in three steps.</h2>
+          <h2 id="workflow-title" class="section-title">How it works</h2>
+          <p class="section-subtitle">From set to signal in three steps.</p>
         </div>
         <ol class="workflow-grid">
           <li><span class="step-number">01</span><h3>Record or upload</h3><p>Use a recent browser and frame one full squat set from the side.</p></li>
@@ -104,8 +95,8 @@ const feedback = [
 
       <section class="feedback-section section-grid" id="feedback" aria-labelledby="feedback-title">
         <div class="section-heading">
-          <p class="eyebrow">Available feedback</p>
-          <h2 id="feedback-title">Useful signals, not a wall of scores.</h2>
+          <h2 id="feedback-title" class="section-title">Available feedback</h2>
+          <p class="section-subtitle">Useful signals, not a wall of scores.</p>
           <p>Peso keeps the result connected to the video so you can see the evidence behind each observation.</p>
         </div>
         <div class="feedback-grid">
@@ -129,8 +120,8 @@ const feedback = [
           <article class="lift-card"><span class="lift-icon lift-icon--muted">B</span><div><span>Jul 28 · Bench press</span><strong>165 lb × 6</strong><small>Saved on mobile</small></div></article>
         </div>
         <div class="section-heading">
-          <p class="eyebrow">Saved Lifts</p>
-          <h2 id="history-title">Build a history you can actually revisit.</h2>
+          <h2 id="history-title" class="section-title">Saved Lifts</h2>
+          <p class="section-subtitle">Build a history you can actually revisit.</p>
           <p>
             Keep analyzed sets with optional load and rep details. Your existing
             mobile Saved Lifts stay in view—even though new web submissions are
@@ -142,8 +133,8 @@ const feedback = [
 
       <section class="final-cta" aria-labelledby="cta-title">
         <div class="cta-glow"></div>
-        <p class="eyebrow">Your next set starts here</p>
-        <h2 id="cta-title">Bring one squat video. Leave with a clearer view.</h2>
+        <h2 id="cta-title" class="section-title">Your next set starts here</h2>
+        <p class="section-subtitle">Bring one squat video. Leave with a clearer view.</p>
         <p>Join the limited free beta for US residents and help shape what Peso becomes next.</p>
         <a class="button" href="/app/signup">Create your beta account</a>
       </section>

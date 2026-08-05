@@ -42,6 +42,18 @@ new squat submissions, but all existing Saved Lifts remain readable regardless
 of exercise. Performed Reps and Load are workout facts; detected reps remain a
 model observation.
 
+## Saved Lift Library
+
+The user-owned collection of Saved Lifts shared across Peso web and mobile.
+Changes made to this library on either surface affect the same collection; it is
+not a separate web-only demo or copy.
+
+## Lift Folder
+
+An automatically created view of the Saved Lift Library containing every Saved
+Lift for one exercise type. Lift Folders are derived from saved exercises rather
+than created, named, or organized manually by the user.
+
 ## Analysis run
 
 A completed processing pass for one source video, producing pose landmarks,
