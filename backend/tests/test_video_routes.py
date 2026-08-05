@@ -1011,6 +1011,44 @@ class VideoRoutesTest(unittest.TestCase):
     )
     self.assertEqual(response.video_url, "https://example.test/signed-original")
 
+  def test_playback_url_reraises_optimized_error_when_original_signing_also_fails(self) -> None:
+    repository = MagicMock()
+    repository.require_owned_video.return_value = {
+      "id": str(VIDEO_ID),
+      "user_id": USER_ID,
+      "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+      "playback_path": f"{USER_ID}/playback/{VIDEO_ID}-h264-720p-v1.mp4",
+      "discarded_at": None,
+    }
+    optimized_error = RuntimeError("Optimized object not found")
+    storage = MagicMock()
+    storage.create_signed_url.side_effect = [
+      optimized_error,
+      RuntimeError("Original object not found"),
+    ]
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      self.assertRaises(RuntimeError) as raised,
+    ):
+      get_video_playback_url(VIDEO_ID, USER_ID)
+
+    self.assertIs(raised.exception, optimized_error)
+    self.assertEqual(
+      storage.create_signed_url.call_args_list,
+      [
+        unittest.mock.call(
+          f"{USER_ID}/playback/{VIDEO_ID}-h264-720p-v1.mp4",
+          expires_in=300,
+        ),
+        unittest.mock.call(
+          f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+          expires_in=300,
+        ),
+      ],
+    )
+
   def test_playback_url_rejects_cross_user_playback_path(self) -> None:
     repository = MagicMock()
     repository.require_owned_video.return_value = {
