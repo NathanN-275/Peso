@@ -1861,7 +1861,7 @@ const styles = StyleSheet.create({
   stepLabel: { color: colors.textMuted, fontFamily: fonts.medium, fontSize: 10 },
   stepLabelActive: { color: colors.textPrimary },
   reviewGrid: { width: '100%', maxWidth: 952, alignSelf: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 24, alignItems: 'flex-start' },
-  reviewMedia: { width: 332, maxWidth: '100%', borderWidth: 1, borderColor: colors.line, borderRadius: 15, overflow: 'hidden', backgroundColor: '#05070A' },
+  reviewMedia: { width: 332, maxWidth: '100%', borderWidth: 1, borderColor: '#35435A', borderRadius: 24, overflow: 'hidden', backgroundColor: '#05070A' },
   reviewImage: { width: '100%', height: 527, resizeMode: 'cover' },
   reviewControls: { minHeight: 49, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: '#090D13' },
   playButton: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.brand },
