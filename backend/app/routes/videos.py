@@ -1130,13 +1130,32 @@ def get_video_playback_url(
   if video.get("discarded_at"):
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found.")
 
-  expires_in = 300
-  playback_path, playback_url, expires_in = _create_owned_signed_url(
-    storage,
-    _playback_storage_path(video),
-    user_id,
-    "playback_path",
-  )
+  expires_in = _signed_url_ttl_seconds()
+  playback_candidate = video.get("playback_path")
+  original_candidate = video.get("storage_path") or video.get("original_storage_path")
+  original_label = "storage_path" if video.get("storage_path") else "original_storage_path"
+
+  if playback_candidate:
+    playback_path = require_user_storage_path(playback_candidate, user_id, "playback_path")
+
+    try:
+      playback_url = storage.create_signed_url(playback_path, expires_in=expires_in)
+    except Exception as optimized_error:
+      logger.warning(
+        "Unable to sign optimized playback URL for video_id=%s path=%s; falling back to original.",
+        video_id,
+        playback_path,
+      )
+      playback_path = require_user_storage_path(original_candidate, user_id, original_label)
+
+      try:
+        playback_url = storage.create_signed_url(playback_path, expires_in=expires_in)
+      except Exception as fallback_error:
+        raise optimized_error from fallback_error
+  else:
+    playback_path = require_user_storage_path(original_candidate, user_id, original_label)
+    playback_url = storage.create_signed_url(playback_path, expires_in=expires_in)
+
   logger.info("Signing playback URL for video_id=%s path=%s expires_in=%s", video_id, playback_path, expires_in)
   return VideoPlaybackUrlResponse(
     video_id=video_id,
