@@ -13,6 +13,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -66,6 +67,7 @@ import {
   getQualityPreflightQueueDecision,
   requiresQualityPreflight,
 } from '../../lib/qualityPreflightPolicy';
+import { usesMobileUploadFlow } from '../../lib/uploadSurfacePolicy';
 
 type UploadVideoScreenProps = {
   sourceMode?: 'camera' | 'library';
@@ -137,6 +139,8 @@ export default function UploadVideoScreen({
   // This screen handles selection, upload, queueing, and polling.
   const { user } = useAuth();
   const isWeb = Platform.select<boolean>({ web: true, default: false }) ?? false;
+  const { width: viewportWidth } = useWindowDimensions();
+  const mobileUploadFlow = usesMobileUploadFlow({ isWeb, viewportWidth });
   const [permissionStatus, setPermissionStatus] = useState<ImagePicker.PermissionStatus | null>(null);
   const [cameraPermissionStatus, setCameraPermissionStatus] = useState<ImagePicker.PermissionStatus | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -412,7 +416,7 @@ export default function UploadVideoScreen({
 
         setQualityPreflight(preflight);
         const preflightDecision = getQualityPreflightQueueDecision(preflight, {
-          advisoryOnly: !isWeb,
+          advisoryOnly: mobileUploadFlow,
         });
         if (preflightDecision.mustReplaceVideo) {
           setStatusMessage('Cleaning up blocked upload...');
@@ -504,7 +508,7 @@ export default function UploadVideoScreen({
         }
         setAnalysisVideoId(null);
         setAnalysisStatus(null);
-        if (!isWeb) {
+        if (mobileUploadFlow) {
           setQualityPreflight(null);
         }
       }
@@ -1123,8 +1127,8 @@ export default function UploadVideoScreen({
     !analysisRunning &&
     !isAnalysisInProgress(analysisStatus) &&
     analysisStatus !== 'completed' &&
-    (!isWeb || qualityPreflight?.status !== 'blocked') &&
-    !pendingQualityUpload;
+    (mobileUploadFlow || qualityPreflight?.status !== 'blocked') &&
+    (!pendingQualityUpload || mobileUploadFlow);
 
   const handleScreenLayout = ({ nativeEvent }: LayoutChangeEvent) => {
     // Track the viewport so the setup modal can fit correctly.
@@ -1238,7 +1242,7 @@ export default function UploadVideoScreen({
         style={styles.container}
         contentContainerStyle={[
           styles.scrollContent,
-          selectedVideo && !isWeb ? styles.scrollContentWithStickyFooter : null,
+          selectedVideo && mobileUploadFlow ? styles.scrollContentWithStickyFooter : null,
         ]}
         keyboardShouldPersistTaps="handled"
       >
@@ -1275,7 +1279,7 @@ export default function UploadVideoScreen({
           ) : null}
 
           <SideSquatRecordingGuide
-            variant={isWeb ? 'full' : 'essential'}
+            variant={mobileUploadFlow ? 'essential' : 'full'}
             setup={videoSetup}
           />
 
@@ -1302,7 +1306,7 @@ export default function UploadVideoScreen({
             </View>
           ) : null}
 
-          {isWeb && selectedVideo && qualityPreflight ? (
+          {isWeb && !mobileUploadFlow && selectedVideo && qualityPreflight ? (
             <View
               accessibilityRole="summary"
               accessibilityLabel={qualityPreflightLabel}
@@ -1414,7 +1418,7 @@ export default function UploadVideoScreen({
             </View>
           ) : null}
 
-          {isWeb && selectedVideo ? (
+          {isWeb && !mobileUploadFlow && selectedVideo ? (
             <View style={styles.actions}>
               <Button
                 label={changeVideoLabel}
@@ -1542,7 +1546,7 @@ export default function UploadVideoScreen({
           ) : null}
         </View>
       </ScrollView>
-      {!isWeb && selectedVideo ? (
+      {mobileUploadFlow && selectedVideo ? (
         <View style={styles.stickyActions}>
           <View style={styles.stickySecondaryRow}>
             <Button
@@ -1565,6 +1569,10 @@ export default function UploadVideoScreen({
           <Button
             label="Start Analysis"
             onPress={() => {
+              if (pendingQualityUpload) {
+                void handleContinueAfterQualityWarning();
+                return;
+              }
               void handleStartAnalysis();
             }}
             disabled={!canStartAnalysis}

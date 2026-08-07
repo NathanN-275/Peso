@@ -85,7 +85,7 @@ test('upload review exposes warning continuation and blocked replacement copy', 
   assert.match(screenSource, /runVideoQualityPreflight[\s\S]*triggerVideoAnalysis/);
 });
 
-test('native upload uses advisory mode while web keeps the existing gate', () => {
+test('native and mobile web use advisory mode while desktop web keeps the gate', () => {
   const screenSource = fs.readFileSync(
     path.join(__dirname, '../src/screens/UploadVideoScreen.tsx'),
     'utf8'
@@ -95,8 +95,9 @@ test('native upload uses advisory mode while web keeps the existing gate', () =>
     'utf8'
   );
 
-  assert.match(screenSource, /advisoryOnly:\s*!isWeb/);
-  assert.match(screenSource, /variant=\{isWeb \? 'full' : 'essential'\}/);
+  assert.match(screenSource, /advisoryOnly:\s*mobileUploadFlow/);
+  assert.match(screenSource, /variant=\{mobileUploadFlow \? 'essential' : 'full'\}/);
+  assert.match(screenSource, /isWeb && !mobileUploadFlow && selectedVideo && qualityPreflight/);
   assert.match(screenSource, /label="Change Video"/);
   assert.match(screenSource, /scrollContentWithStickyFooter/);
   assert.match(reviewSource, /Video quality warning/);

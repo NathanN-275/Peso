@@ -185,7 +185,7 @@ BACKEND_CORS_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhos
 BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true
 ```
 
-The backend runs a versioned sampled-frame quality preflight for new side-view squat submissions before full analysis. Native mobile treats low-quality verdicts as advisories and warns once when review opens; web may keep its pre-analysis gate. Apply `supabase/migrations/202608060001_side_squat_quality_preflight.sql`; the complete threshold list and behavior are documented in `backend/README.md` and `backend/.env.example`.
+The backend runs a versioned sampled-frame quality preflight for new side-view squat submissions before full analysis. Native mobile and mobile web viewports below 768px treat low-quality verdicts as advisories and warn once when review opens; desktop web keeps its pre-analysis gate. Apply `supabase/migrations/202608060001_side_squat_quality_preflight.sql`; the complete threshold list and behavior are documented in `backend/README.md` and `backend/.env.example`.
 
 Apply `supabase/migrations/202606120001_tracking_setup.sql` to enable optional pin-assisted tracking metadata. Side-view squat uploads may store a user-selected reference frame with upper back, hip, knee, ankle, and near-side collar anchors. The upper-back anchor is stored under the existing `shoulder` key for compatibility. Invalid or unavailable anchor tracks fall back to the automatic pose and barbell pipeline.
 
