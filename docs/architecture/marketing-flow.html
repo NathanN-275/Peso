@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Peso Marketing Site visitor flow and boundary with the Web App.">
+  <title>Marketing Site Flow · Peso</title>
+  <link rel="icon" href="assets/favicon.png">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="site-header__inner">
+      <a class="brand" href="index.html" aria-label="Peso project log home">
+        <img class="brand__logo" src="assets/peso-logo.png" width="396" height="120" alt="Peso">
+        <span class="brand__sub">Project log</span>
+      </a>
+      <nav class="site-nav" aria-label="Project documentation">
+        <a href="index.html">Overview</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="mobile-flow.html">Mobile</a>
+        <a href="marketing-flow.html" aria-current="page">Marketing</a>
+        <a href="web-app-flow.html">Web Beta</a>
+        <a href="backend-flow.html">Backend</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero hero--compact">
+      <div class="shell">
+        <p class="eyebrow">Visitor flow · Public website</p>
+        <h1>Learn first. Enter the product second.</h1>
+        <p class="hero__lead">The Astro Marketing Site is fast, public, and account-free. It explains the outcome, shows real analysis, sets beta expectations, and sends a ready visitor into the separate Web App.</p>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="visitor-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="kicker">Primary visitor journey</p>
+          <h2 id="visitor-title">From curiosity to account entry</h2>
+        </div>
+
+        <div class="diagram" aria-label="Marketing Site visitor flow">
+          <div class="flow">
+            <article class="flow-node">
+              <span class="flow-node__tag">01 · Arrive</span>
+              <h3>Landing page</h3>
+              <p>Understand the promise: visual lifting feedback from a regular workout video.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node flow-node--blue">
+              <span class="flow-node__tag">02 · See</span>
+              <h3>Real analysis demo</h3>
+              <p>Watch pose and tracking overlays and see the kind of feedback Peso returns.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node">
+              <span class="flow-node__tag">03 · Understand</span>
+              <h3>How it works</h3>
+              <p>Record or upload, analyze, review the result, and save useful lifts.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node flow-node--planned">
+              <span class="flow-node__tag">04 · Convert</span>
+              <h3>Join the Web Beta</h3>
+              <p>The call to action opens <code>/app/signup</code>, owned by the Web App.</p>
+            </article>
+          </div>
+        </div>
+
+        <div class="callout"><strong>Beta promise:</strong> free US beta, squat-focused, with a rolling analysis allowance. The public site sets that expectation before signup.</div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="choices-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="kicker">Visitor choices</p>
+          <h2 id="choices-title">Not every visit becomes signup</h2>
+        </div>
+
+        <div class="branch-grid">
+          <article class="flow-node flow-node--planned">
+            <span class="flow-node__tag">Ready</span>
+            <h3>Create a Peso Account</h3>
+            <p>Move into the Web App signup flow and confirm beta eligibility, terms, and email ownership.</p>
+          </article>
+          <article class="flow-node">
+            <span class="flow-node__tag">Returning athlete</span>
+            <h3>Sign in</h3>
+            <p>Open <code>/app/login</code> and use the same Peso Account as mobile.</p>
+          </article>
+          <article class="flow-node">
+            <span class="flow-node__tag">Evaluating</span>
+            <h3>Watch or revisit the demo</h3>
+            <p>The public media explains the product without asking for account access.</p>
+          </article>
+          <article class="flow-node">
+            <span class="flow-node__tag">Trust</span>
+            <h3>Read Privacy or Terms</h3>
+            <p>Stable static routes answer legal and data-handling questions before signup.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="boundary-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="kicker">Runtime boundary</p>
+          <h2 id="boundary-title">The handoff is a link, not shared state</h2>
+          <p>The Marketing Site and Web App share a brand and a deployment, but not an application runtime.</p>
+        </div>
+
+        <div class="diagram" aria-label="Marketing Site to Web App route boundary">
+          <div class="flow">
+            <article class="flow-node flow-node--blue">
+              <span class="flow-node__tag">Astro</span>
+              <h3><code>/</code>, <code>/privacy</code>, <code>/terms</code></h3>
+              <p>Static, indexable HTML. No authenticated client state.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node">
+              <span class="flow-node__tag">Netlify routing</span>
+              <h3>Real files first</h3>
+              <p>Only unknown <code>/app/*</code> requests rewrite to the Web App entry document.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node flow-node--planned">
+              <span class="flow-node__tag">Expo Web + React Router</span>
+              <h3><code>/app/*</code></h3>
+              <p>Authentication, dashboard, product workflows, and account-owned data.</p>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="demo-title">
+      <div class="shell media-flow-grid">
+        <div>
+          <div class="section-heading">
+            <p class="kicker">Proof before signup</p>
+            <h2 id="demo-title">The demo makes the promise concrete</h2>
+            <p>The visitor sees tracked movement instead of reading an abstract AI claim.</p>
+          </div>
+          <ol class="step-list">
+            <li><div><strong>Show the source movement</strong><p>A real side-view squat makes the example legible.</p></div></li>
+            <li><div><strong>Reveal the overlay</strong><p>Tracked joints and bar movement show what the analysis is using.</p></div></li>
+            <li><div><strong>Connect to feedback</strong><p>Rep context and coaching turn the visual into a product outcome.</p></div></li>
+          </ol>
+        </div>
+        <article class="demo-card demo-card--wide">
+          <div class="demo-card__media">
+            <video autoplay muted loop playsinline preload="metadata" poster="assets/peso-pose-overlay.jpg" aria-label="Peso pose analysis demo">
+              <source src="assets/peso-pose-overlay.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="demo-card__copy">
+            <h3>Tracked squat demo</h3>
+            <p>The public site can show the product without creating an analysis record.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell site-footer__inner">
+      <p>Peso Marketing Site flow · Astro static pages</p>
+      <p><a href="web-app-flow.html">Next: Web App flow →</a></p>
+    </div>
+  </footer>
+</body>
+</html>

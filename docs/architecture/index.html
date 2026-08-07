@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Peso project overview, active development log, architecture, and product flows.">
+  <title>Peso Project Log</title>
+  <link rel="icon" href="assets/favicon.png">
+  <link rel="stylesheet" href="assets/site.css">
+  <script src="assets/activity-data.js" defer></script>
+  <script src="assets/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="site-header__inner">
+      <a class="brand" href="index.html" aria-label="Peso project log home">
+        <img class="brand__logo" src="assets/peso-logo.png" width="396" height="120" alt="Peso">
+        <span class="brand__sub">Project log</span>
+      </a>
+      <nav class="site-nav" aria-label="Project documentation">
+        <a href="index.html" aria-current="page">Overview</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="mobile-flow.html">Mobile</a>
+        <a href="marketing-flow.html">Marketing</a>
+        <a href="web-app-flow.html">Web Beta</a>
+        <a href="backend-flow.html">Backend</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div class="shell">
+        <div class="hero__grid">
+          <div>
+            <p class="eyebrow">Build in public</p>
+            <h1>Understand Peso in one place.</h1>
+            <p class="hero__lead">Peso turns a lifting video into tracked movement, rep insights, and practical coaching. This site shows what the product is, how the pieces connect, and where development is focused now.</p>
+            <div class="button-row">
+              <a class="button" href="architecture.html">Explore the architecture <span aria-hidden="true">→</span></a>
+              <a class="button button--secondary" data-repository-link href="https://github.com/NathanN-275/Peso">View on GitHub</a>
+              <span class="button button--disabled" aria-label="Web Beta link coming soon">Web Beta · Coming soon</span>
+            </div>
+          </div>
+          <aside class="hero__aside" aria-label="Current project status">
+            <p class="hero__aside-label">Current direction</p>
+            <p class="hero__aside-value">Planned Web Beta</p>
+            <div class="status-line"><span class="status-dot" aria-hidden="true"></span>Mobile remains active alongside web</div>
+            <p class="hero__aside-label">Primary analysis</p>
+            <p class="hero__aside-value">Side-view squat</p>
+            <p class="hero__aside-label">Activity source</p>
+            <p class="status-line">Rolling <span data-activity="window-days">90</span> days from <span data-activity="branch">main</span></p>
+          </aside>
+        </div>
+
+        <figure class="product-shot">
+          <img src="assets/peso-web-beta.png" width="2876" height="1510" alt="Peso Web App review screen showing a side-view squat analysis, detected reps, depth, bar path, and coaching focus.">
+          <figcaption class="product-shot__caption">Web review experience</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="activity-title">
+      <div class="shell">
+        <div class="section-heading section-heading--row">
+          <div>
+            <p class="kicker">Active project log</p>
+            <h2 id="activity-title">What is changing</h2>
+            <p>Automatically summarized from repository activity without publishing raw commit messages.</p>
+          </div>
+          <p class="status-line"><span class="status-dot" aria-hidden="true"></span>Updated <span data-activity="generated-at">after deployment</span></p>
+        </div>
+
+        <div class="metric-grid" aria-label="Rolling project activity summary">
+          <article class="metric">
+            <p class="metric__label">Commits</p>
+            <p class="metric__value" data-activity="commits">—</p>
+            <p class="metric__detail">Excludes merge commits</p>
+          </article>
+          <article class="metric">
+            <p class="metric__label">Active days</p>
+            <p class="metric__value" data-activity="active-days">—</p>
+            <p class="metric__detail">Days with code activity</p>
+          </article>
+          <article class="metric">
+            <p class="metric__label">File changes</p>
+            <p class="metric__value" data-activity="file-changes">—</p>
+            <p class="metric__detail">Touches across all systems</p>
+          </article>
+          <article class="metric">
+            <p class="metric__label">Open issues</p>
+            <p class="metric__value" data-activity="open-issues">—</p>
+            <p class="metric__detail"><span data-activity="closed-issues">—</span> completed in this window</p>
+          </article>
+        </div>
+
+        <div class="activity-grid">
+          <article class="panel">
+            <div class="panel__head">
+              <div>
+                <h3>Commit activity</h3>
+                <p>Weekly commits across the rolling window</p>
+              </div>
+            </div>
+            <div class="timeline" id="activity-timeline" aria-label="Weekly commit activity chart"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel__head">
+              <div>
+                <h3>Focus by system</h3>
+                <p>File changes grouped by project area</p>
+              </div>
+            </div>
+            <div class="focus-bars" id="focus-bars"></div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="issues-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="kicker">Public work queue</p>
+          <h2 id="issues-title">Issues tell the story</h2>
+          <p>Issue titles show active priorities and recently completed work. Commit contents stay private to the repository view.</p>
+        </div>
+
+        <div class="issue-grid">
+          <article class="panel">
+            <div class="panel__head">
+              <div>
+                <h3>In focus</h3>
+                <p>Recently updated open issues</p>
+              </div>
+              <strong data-activity="open-issues">—</strong>
+            </div>
+            <ul class="issue-list" id="open-issue-list"></ul>
+          </article>
+          <article class="panel">
+            <div class="panel__head">
+              <div>
+                <h3>Completed</h3>
+                <p>Recently closed issues</p>
+              </div>
+              <strong data-activity="closed-issues">—</strong>
+            </div>
+            <ul class="issue-list" id="closed-issue-list"></ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="motion-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="kicker">The product in motion</p>
+          <h2 id="motion-title">Analysis should be visible.</h2>
+          <p>Real Peso demos show the same overlays and review concepts described in the flow diagrams.</p>
+        </div>
+
+        <div class="demo-grid">
+          <article class="demo-card">
+            <div class="demo-card__media">
+              <video autoplay muted loop playsinline preload="metadata" aria-label="Peso mobile squat review demo">
+                <source src="assets/peso-mobile-demo.mp4" type="video/mp4">
+              </video>
+            </div>
+            <div class="demo-card__copy">
+              <h3>Mobile review</h3>
+              <p>Joint tracking, playback, summary, coaching, and save actions.</p>
+            </div>
+          </article>
+
+          <article class="demo-card demo-card--wide">
+            <div class="demo-card__media">
+              <video autoplay muted loop playsinline preload="metadata" poster="assets/peso-pin-assisted-bar-path.jpg" aria-label="Peso pin-assisted bar path demo">
+                <source src="assets/peso-pin-assisted-bar-path.mp4" type="video/mp4">
+              </video>
+            </div>
+            <div class="demo-card__copy">
+              <h3>Pin-assisted tracking</h3>
+              <p>User anchors help preserve the physical point being tracked.</p>
+            </div>
+          </article>
+
+          <article class="demo-card demo-card--wide">
+            <div class="demo-card__media">
+              <video autoplay muted loop playsinline preload="metadata" poster="assets/peso-pose-overlay.jpg" aria-label="Peso pose overlay demo">
+                <source src="assets/peso-pose-overlay.mp4" type="video/mp4">
+              </video>
+            </div>
+            <div class="demo-card__copy">
+              <h3>Pose overlay</h3>
+              <p>Tracked joints make movement and analysis quality inspectable.</p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="map-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="kicker">Project map</p>
+          <h2 id="map-title">Follow each flow</h2>
+          <p>Each page answers one question without mixing product experience, infrastructure, and internal tooling.</p>
+        </div>
+
+        <div class="card-grid">
+          <a class="link-card" href="architecture.html">
+            <span class="link-card__index">01 · SYSTEM</span>
+            <h3>Project architecture</h3>
+            <p>Surfaces, services, data stores, deployment, and the internal analysis dashboard.</p>
+          </a>
+          <a class="link-card" href="mobile-flow.html">
+            <span class="link-card__index">02 · ATHLETE</span>
+            <h3>Mobile app flow</h3>
+            <p>From account entry through capture, analysis, review, and Saved Lifts.</p>
+          </a>
+          <a class="link-card" href="marketing-flow.html">
+            <span class="link-card__index">03 · VISITOR</span>
+            <h3>Marketing Site flow</h3>
+            <p>How a visitor learns about Peso and crosses into the product.</p>
+          </a>
+          <a class="link-card" href="web-app-flow.html">
+            <span class="link-card__index">04 · WEB BETA</span>
+            <h3>Web App flow</h3>
+            <p>The planned authenticated beta plus the device-local Demo Analysis path.</p>
+          </a>
+          <a class="link-card" href="backend-flow.html">
+            <span class="link-card__index">05 · PROCESSING</span>
+            <h3>Backend flow</h3>
+            <p>Authentication, upload ownership, durable jobs, the analysis pipeline, and saved results.</p>
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell site-footer__inner">
+      <p>Peso project log · generated from public repository activity</p>
+      <p><a data-repository-link href="https://github.com/NathanN-275/Peso">GitHub repository</a></p>
+    </div>
+  </footer>
+</body>
+</html>

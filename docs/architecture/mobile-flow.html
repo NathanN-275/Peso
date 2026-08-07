@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Peso mobile app user flow from authentication through Saved Lifts.">
+  <title>Mobile App Flow · Peso</title>
+  <link rel="icon" href="assets/favicon.png">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="site-header__inner">
+      <a class="brand" href="index.html" aria-label="Peso project log home">
+        <img class="brand__logo" src="assets/peso-logo.png" width="396" height="120" alt="Peso">
+        <span class="brand__sub">Project log</span>
+      </a>
+      <nav class="site-nav" aria-label="Project documentation">
+        <a href="index.html">Overview</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="mobile-flow.html" aria-current="page">Mobile</a>
+        <a href="marketing-flow.html">Marketing</a>
+        <a href="web-app-flow.html">Web Beta</a>
+        <a href="backend-flow.html">Backend</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero hero--compact">
+      <div class="shell">
+        <p class="eyebrow">Athlete flow · Mobile</p>
+        <h1>Capture. Analyze. Review. Save.</h1>
+        <p class="hero__lead">The Expo mobile app is the direct phone workflow. It uses the same Peso Account, backend, and Saved Lift Library as the planned Web Beta.</p>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="primary-title">
+      <div class="shell media-flow-grid">
+        <figure>
+          <div class="phone-frame">
+            <video autoplay muted loop playsinline preload="metadata" aria-label="Peso mobile squat review showing joint tracking and review tabs">
+              <source src="assets/peso-mobile-demo.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="media-caption">Actual mobile review experience</figcaption>
+        </figure>
+
+        <div>
+          <div class="section-heading">
+            <p class="kicker">Primary journey</p>
+            <h2 id="primary-title">A lift becomes a Saved Lift</h2>
+          </div>
+
+          <div class="diagram" aria-label="Mobile app primary user flow">
+            <div class="flow flow--stack">
+              <article class="flow-node">
+                <span class="flow-node__tag">01 · Account</span>
+                <h3>Welcome → sign in or create account</h3>
+                <p>Supabase Auth creates or restores the Peso Account session.</p>
+              </article>
+              <span class="flow-arrow flow-arrow--down" aria-hidden="true">↓</span>
+              <article class="flow-node flow-node--blue">
+                <span class="flow-node__tag">02 · Home</span>
+                <h3>Review progress or add a video</h3>
+                <p>Home shows Saved Lift summaries. The add action opens record and upload choices.</p>
+              </article>
+              <span class="flow-arrow flow-arrow--down" aria-hidden="true">↓</span>
+              <div class="branch-grid">
+                <article class="flow-node">
+                  <span class="flow-node__tag">03A · Capture</span>
+                  <h3>Record a set</h3>
+                  <p>Use the phone camera, review the clip, and continue with the recording.</p>
+                </article>
+                <article class="flow-node">
+                  <span class="flow-node__tag">03B · Select</span>
+                  <h3>Upload an existing video</h3>
+                  <p>Choose a compatible workout video already saved on the device.</p>
+                </article>
+              </div>
+              <span class="flow-arrow flow-arrow--down" aria-hidden="true">↓</span>
+              <article class="flow-node">
+                <span class="flow-node__tag">04 · Setup</span>
+                <h3>Confirm exercise, view, and tracking help</h3>
+                <p>For supported clips, the athlete can place body and barbell anchors on a reference frame.</p>
+              </article>
+              <span class="flow-arrow flow-arrow--down" aria-hidden="true">↓</span>
+              <article class="flow-node flow-node--planned">
+                <span class="flow-node__tag">05 · In progress</span>
+                <h3>Side-squat recording guide + quality preflight</h3>
+                <p>Framing guidance and server quality checks catch unusable side-view squat clips before full analysis.</p>
+              </article>
+              <span class="flow-arrow flow-arrow--down" aria-hidden="true">↓</span>
+              <article class="flow-node flow-node--blue">
+                <span class="flow-node__tag">06 · Process</span>
+                <h3>Upload → register → analyze → poll</h3>
+                <p>The client uploads to private Supabase Storage, registers the owned video, starts backend analysis, and polls status.</p>
+              </article>
+              <span class="flow-arrow flow-arrow--down" aria-hidden="true">↓</span>
+              <article class="flow-node flow-node--success">
+                <span class="flow-node__tag">07 · Review</span>
+                <h3>Inspect playback, tracking, insights, and coaching</h3>
+                <p>The result separates model observations from user-owned workout details.</p>
+              </article>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="decision-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="kicker">Review decision</p>
+          <h2 id="decision-title">Keep it or remove it</h2>
+        </div>
+
+        <div class="diagram" aria-label="Mobile analysis review decision flow">
+          <div class="decision"><p>Does the athlete want this result in their history?</p></div>
+          <div class="flow-arrow flow-arrow--down" aria-hidden="true">↓</div>
+          <div class="branch-grid">
+            <article class="flow-node flow-node--success">
+              <span class="flow-node__tag">Save</span>
+              <h3>Add workout details</h3>
+              <p>Performed Reps, Load, and notes are optional user-owned facts. Saving moves the result into the shared Saved Lift Library.</p>
+            </article>
+            <article class="flow-node flow-node--danger">
+              <span class="flow-node__tag">Discard</span>
+              <h3>Remove the unsaved analysis</h3>
+              <p>The backend deletes eligible video and analysis data instead of keeping a hidden result.</p>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="library-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="kicker">Return journey</p>
+          <h2 id="library-title">Saved Lifts are shared</h2>
+          <p>A saved analysis is not a mobile-only copy. The same library is available through the Web App.</p>
+        </div>
+
+        <div class="diagram" aria-label="Saved Lift Library flow">
+          <div class="flow">
+            <article class="flow-node flow-node--blue">
+              <span class="flow-node__tag">Browse</span>
+              <h3>Home or lift folder</h3>
+              <p>Open recent lifts or browse by exercise.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node">
+              <span class="flow-node__tag">Open</span>
+              <h3>Refresh playback URL</h3>
+              <p>The backend checks ownership before signing private media.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node">
+              <span class="flow-node__tag">Review</span>
+              <h3>Replay the saved analysis</h3>
+              <p>Tracking overlays, rep insights, coaching, and workout facts return together.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node flow-node--danger">
+              <span class="flow-node__tag">Optional</span>
+              <h3>Delete permanently</h3>
+              <p>Deletion removes the same Saved Lift from mobile and web.</p>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell site-footer__inner">
+      <p>Peso mobile flow · Expo + React Native</p>
+      <p><a href="web-app-flow.html">Compare the Web App flow →</a></p>
+    </div>
+  </footer>
+</body>
+</html>
