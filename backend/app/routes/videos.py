@@ -348,7 +348,7 @@ def _quality_preflight_is_current(preflight: object) -> bool:
   )
 
 
-def _require_quality_preflight(video: dict) -> None:
+def _require_current_quality_preflight(video: dict) -> None:
   if video.get("quality_preflight_required") is not True:
     return
 
@@ -359,16 +359,10 @@ def _require_quality_preflight(video: dict) -> None:
       detail="Run the current side-view squat quality preflight before starting analysis.",
     )
 
-  if preflight.get("status") == "blocked":
-    raise HTTPException(
-      status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-      detail="This video did not pass the side-view squat quality preflight.",
-    )
-
 
 def _record_quality_preflight_trace(video: dict, preflight: dict) -> None:
-  # A blocked upload never reaches the full pipeline, so record the gate as a
-  # small development trace of its own when local diagnostics are enabled.
+  # Record the advisory immediately so evidence survives even when a client
+  # chooses not to queue the full pipeline.
   try:
     trace = get_analysis_trace_service().start(
       video_id=str(video.get("id") or ""),
@@ -994,7 +988,7 @@ def queue_analysis(
     analysis = repository.get_analysis_result(video_id_str)
 
     if not analysis_is_current(analysis):
-      _require_quality_preflight(video)
+      _require_current_quality_preflight(video)
       playback_path = require_user_storage_path(_playback_storage_path(video), user_id, "playback_path")
       StorageService().validate_video_object(playback_path)
       _enforce_analysis_queue_limit(repository, user_id)
@@ -1016,7 +1010,7 @@ def queue_analysis(
       detail=f"Video cannot be queued for analysis from status '{current_status}'.",
     )
 
-  _require_quality_preflight(video)
+  _require_current_quality_preflight(video)
 
   playback_path = require_user_storage_path(_playback_storage_path(video), user_id, "playback_path")
   StorageService().validate_video_object(playback_path)

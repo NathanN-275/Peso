@@ -113,6 +113,12 @@ missing observation. Recovery may produce a gap when identity cannot be proven.
 A frame whose tracking evidence is insufficient for reliable geometry, depth,
 or rep decisions. It must not be treated as a confident observation.
 
+## Recording Quality Advisory
+
+A recording-level assessment that identifies conditions likely to reduce
+tracking reliability before an Analysis run. It warns the athlete about risk
+without turning uncertain frames into confident observations.
+
 ## Frontal squat view
 
 A direct-front through three-quarter camera view used primarily to observe both

@@ -142,7 +142,7 @@ The backend reuses a singleton Supabase admin client and a bounded pooled HTTP c
 
 Pose analysis samples squat videos at `POSE_TARGET_FPS` and resizes frames so the longest side is at most `POSE_MAX_FRAME_DIMENSION` before inference.
 
-New side-view squat submissions call `POST /videos/{video_id}/quality-preflight` before `POST /analyze/{video_id}`. The preflight samples frames across the clip, persists only numeric/frame metadata (never sampled images), and uses separate thresholds for side orientation, body-chain coverage, lifter scale, blur, and multi-person ambiguity. Pass and acknowledged-warning results may queue; blocked or missing current-version results cannot. Existing video rows remain compatible because `quality_preflight_required` defaults to `false`. Apply `supabase/migrations/202608060001_side_squat_quality_preflight.sql` before deploying this backend.
+New side-view squat submissions call `POST /videos/{video_id}/quality-preflight` before `POST /analyze/{video_id}`. The preflight samples frames across the clip, persists only numeric/frame metadata (never sampled images), and uses separate thresholds for side orientation, body-chain coverage, lifter scale, blur, and multi-person ambiguity. Any current-version verdict may queue; missing or outdated evidence cannot. Native mobile treats warning and blocked verdicts as advisories shown once in review, while web keeps its client-side pre-analysis gate. Existing video rows remain compatible because `quality_preflight_required` defaults to `false`. Apply `supabase/migrations/202608060001_side_squat_quality_preflight.sql` before deploying this backend.
 
 ## Side-squat pose backend evaluation
 

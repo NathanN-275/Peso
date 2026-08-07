@@ -411,7 +411,9 @@ export default function UploadVideoScreen({
         }
 
         setQualityPreflight(preflight);
-        const preflightDecision = getQualityPreflightQueueDecision(preflight);
+        const preflightDecision = getQualityPreflightQueueDecision(preflight, {
+          advisoryOnly: !isWeb,
+        });
         if (preflightDecision.mustReplaceVideo) {
           setStatusMessage('Cleaning up blocked upload...');
           await cleanupUploadedVideoForAnalysis({
@@ -502,6 +504,9 @@ export default function UploadVideoScreen({
         }
         setAnalysisVideoId(null);
         setAnalysisStatus(null);
+        if (!isWeb) {
+          setQualityPreflight(null);
+        }
       }
 
       setStatusMessage(null);
@@ -1118,7 +1123,7 @@ export default function UploadVideoScreen({
     !analysisRunning &&
     !isAnalysisInProgress(analysisStatus) &&
     analysisStatus !== 'completed' &&
-    qualityPreflight?.status !== 'blocked' &&
+    (!isWeb || qualityPreflight?.status !== 'blocked') &&
     !pendingQualityUpload;
 
   const handleScreenLayout = ({ nativeEvent }: LayoutChangeEvent) => {
@@ -1231,7 +1236,10 @@ export default function UploadVideoScreen({
 
       <ScrollView
         style={styles.container}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          selectedVideo && !isWeb ? styles.scrollContentWithStickyFooter : null,
+        ]}
         keyboardShouldPersistTaps="handled"
       >
         <Button
@@ -1266,7 +1274,10 @@ export default function UploadVideoScreen({
             </View>
           ) : null}
 
-          <SideSquatRecordingGuide setup={videoSetup} />
+          <SideSquatRecordingGuide
+            variant={isWeb ? 'full' : 'essential'}
+            setup={videoSetup}
+          />
 
           {selectedVideo ? (
             <View style={styles.videoCard}>
@@ -1291,7 +1302,7 @@ export default function UploadVideoScreen({
             </View>
           ) : null}
 
-          {selectedVideo && qualityPreflight ? (
+          {isWeb && selectedVideo && qualityPreflight ? (
             <View
               accessibilityRole="summary"
               accessibilityLabel={qualityPreflightLabel}
@@ -1403,7 +1414,7 @@ export default function UploadVideoScreen({
             </View>
           ) : null}
 
-          {selectedVideo ? (
+          {isWeb && selectedVideo ? (
             <View style={styles.actions}>
               <Button
                 label={changeVideoLabel}
@@ -1531,6 +1542,36 @@ export default function UploadVideoScreen({
           ) : null}
         </View>
       </ScrollView>
+      {!isWeb && selectedVideo ? (
+        <View style={styles.stickyActions}>
+          <View style={styles.stickySecondaryRow}>
+            <Button
+              label={changeVideoLabel}
+              onPress={sourceMode === 'camera' ? handleRecordVideoPress : handlePickVideoPress}
+              disabled={uploading || analysisRunning}
+              variant="secondary"
+              style={styles.stickySecondaryAction}
+            />
+            <Button
+              label="Edit Setup"
+              onPress={() => {
+                void handleEditSetupPress();
+              }}
+              disabled={uploading || analysisRunning}
+              variant="secondary"
+              style={styles.stickySecondaryAction}
+            />
+          </View>
+          <Button
+            label="Start Analysis"
+            onPress={() => {
+              void handleStartAnalysis();
+            }}
+            disabled={!canStartAnalysis}
+            style={styles.stickyPrimaryAction}
+          />
+        </View>
+      ) : null}
       <Modal
         visible={analysisRunning}
         transparent
@@ -1580,6 +1621,9 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingHorizontal: 16,
     paddingBottom: 56,
+  },
+  scrollContentWithStickyFooter: {
+    paddingBottom: 164,
   },
   backButton: {
     width: 80,
@@ -1930,5 +1974,35 @@ const styles = StyleSheet.create({
   },
   primaryAction: {
     width: '100%',
+  },
+  stickyActions: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    gap: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: tokens.colors.secondaryBorder,
+    backgroundColor: '#080B10',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 10,
+  },
+  stickySecondaryRow: {
+    width: '100%',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  stickySecondaryAction: {
+    flex: 1,
+    width: 'auto',
+    minHeight: 38,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  stickyPrimaryAction: {
+    width: '100%',
+    minHeight: 42,
+    paddingVertical: 8,
   },
 });

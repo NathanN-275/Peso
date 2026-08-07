@@ -5,12 +5,12 @@ import type { VideoSetupSelection } from '../constants/videoSetup';
 import tokens from '../theme/tokens';
 
 type SideSquatRecordingGuideProps = {
-  compact?: boolean;
+  variant?: 'full' | 'compact' | 'essential';
   setup: VideoSetupSelection | null;
 };
 
 export default function SideSquatRecordingGuide({
-  compact = false,
+  variant = 'full',
   setup,
 }: SideSquatRecordingGuideProps) {
   const guidance = getSideSquatRecordingGuidance(setup);
@@ -19,7 +19,7 @@ export default function SideSquatRecordingGuide({
     return null;
   }
 
-  if (compact) {
+  if (variant === 'compact') {
     return (
       <View
         accessibilityLabel={`Side-view recording guidance. ${guidance.compactSummary}`}
@@ -27,6 +27,28 @@ export default function SideSquatRecordingGuide({
       >
         <Ionicons name="scan-outline" size={18} color={tokens.colors.brand} />
         <Text style={styles.compactText}>{guidance.compactSummary}</Text>
+      </View>
+    );
+  }
+
+  if (variant === 'essential') {
+    return (
+      <View
+        accessibilityLabel="Three essential side-view recording tips"
+        style={styles.essentialCard}
+      >
+        <View style={styles.essentialHeading}>
+          <Ionicons name="scan-outline" size={18} color={tokens.colors.brand} />
+          <Text style={styles.essentialTitle}>3 setup tips</Text>
+        </View>
+        <View style={styles.essentialList}>
+          {guidance.essentialItems.map((item) => (
+            <View key={item.id} style={styles.essentialRow}>
+              <Ionicons name="checkmark-circle-outline" size={16} color="#77D8A2" />
+              <Text style={styles.essentialText}>{item.text}</Text>
+            </View>
+          ))}
+        </View>
       </View>
     );
   }
@@ -197,5 +219,43 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
     fontWeight: '700',
+  },
+  essentialCard: {
+    width: '100%',
+    marginTop: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: tokens.colors.secondaryBorder,
+    backgroundColor: '#0F151D',
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    gap: 8,
+  },
+  essentialHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  essentialTitle: {
+    color: tokens.colors.textPrimary,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.45,
+  },
+  essentialList: {
+    gap: 6,
+  },
+  essentialRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 7,
+  },
+  essentialText: {
+    flex: 1,
+    color: '#D8DEE8',
+    fontSize: 12,
+    lineHeight: 17,
   },
 });

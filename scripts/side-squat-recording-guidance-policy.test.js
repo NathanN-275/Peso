@@ -22,6 +22,7 @@ test('recording guidance is limited to side-view squat variations', () => {
 test('barbell side squats receive every required recording rule', () => {
   const guidance = getSideSquatRecordingGuidance({ exercise: 'Squat', angle: 'Side' });
   const ids = guidance.items.map((item) => item.id);
+  const essentialIds = guidance.essentialItems.map((item) => item.id);
 
   assert.equal(isBarbellSideSquatSetup({ exercise: 'Squat', angle: 'Side' }), true);
   assert.deepEqual(ids, [
@@ -34,6 +35,12 @@ test('barbell side squats receive every required recording rule', () => {
     'lighting',
     'digital_zoom',
   ]);
+  assert.deepEqual(essentialIds, [
+    'essential_camera_position',
+    'essential_subject_visibility',
+    'essential_scene_quality',
+  ]);
+  assert.match(guidance.essentialItems[1].text, /sleeve–plate interface/i);
   assert.match(guidance.compactSummary, /sleeve–plate interface/i);
 });
 
@@ -44,5 +51,7 @@ test('Goblet Squat keeps body guidance and omits inapplicable collar instruction
   assert.equal(isBarbellSideSquatSetup({ exercise: 'Goblet Squat', angle: 'Side' }), false);
   assert.equal(ids.includes('barbell_collar'), false);
   assert.equal(ids.includes('full_body'), true);
+  assert.equal(guidance.essentialItems.length, 3);
+  assert.doesNotMatch(guidance.essentialItems[1].text, /sleeve|plate|collar/i);
   assert.doesNotMatch(guidance.compactSummary, /sleeve|plate|collar/i);
 });

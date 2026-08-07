@@ -974,7 +974,7 @@ export default function WebVideoRecorderScreen({
 
           {phase === 'initializing' || phase === 'ready' ? (
             <View style={styles.recordingGuideOverlay}>
-              <SideSquatRecordingGuide compact setup={setup ?? null} />
+              <SideSquatRecordingGuide variant="compact" setup={setup ?? null} />
             </View>
           ) : null}
         </View>

@@ -8,6 +8,7 @@ type ConfirmationDialogProps = {
   message: string;
   confirmLabel: string;
   cancelLabel?: string;
+  showCancel?: boolean;
   destructive?: boolean;
   checkboxLabel?: string;
   checkboxValue?: boolean;
@@ -22,6 +23,7 @@ export default function ConfirmationDialog({
   message,
   confirmLabel,
   cancelLabel = 'Cancel',
+  showCancel = true,
   destructive = false,
   checkboxLabel,
   checkboxValue = false,
@@ -38,6 +40,7 @@ export default function ConfirmationDialog({
       <Pressable
         accessibilityLabel="Close confirmation"
         onPress={onCancel}
+        disabled={!showCancel}
         style={StyleSheet.absoluteFill}
       />
       <View style={styles.dialog}>
@@ -57,9 +60,11 @@ export default function ConfirmationDialog({
           </Pressable>
         ) : null}
         <View style={styles.actions}>
-          <Pressable accessibilityRole="button" onPress={onCancel} style={styles.cancelButton}>
-            <Text style={styles.cancelText}>{cancelLabel}</Text>
-          </Pressable>
+          {showCancel ? (
+            <Pressable accessibilityRole="button" onPress={onCancel} style={styles.cancelButton}>
+              <Text style={styles.cancelText}>{cancelLabel}</Text>
+            </Pressable>
+          ) : null}
           <Pressable
             accessibilityRole="button"
             onPress={onConfirm}

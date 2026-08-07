@@ -584,7 +584,7 @@ class VideoRoutesTest(unittest.TestCase):
     storage.assert_not_called()
     repository.queue_owned_video_if_status.assert_not_called()
 
-  def test_queue_analysis_rejects_blocked_preflight_without_video_work(self) -> None:
+  def test_queue_analysis_allows_blocked_preflight_as_advisory(self) -> None:
     repository = MagicMock()
     repository.require_owned_video.return_value = {
       "id": str(VIDEO_ID),
@@ -599,16 +599,19 @@ class VideoRoutesTest(unittest.TestCase):
       },
     }
 
+    repository.count_user_in_progress_videos.return_value = 0
+    repository.queue_owned_video_if_status.return_value = {"status": "queued"}
+    storage = MagicMock()
+    background_tasks = BackgroundTasks()
+
     with (
       patch("app.routes.videos.VideoRepository", return_value=repository),
-      patch("app.routes.videos.StorageService") as storage,
-      self.assertRaises(HTTPException) as raised,
+      patch("app.routes.videos.StorageService", return_value=storage),
     ):
-      queue_analysis(VIDEO_ID, BackgroundTasks(), USER_ID)
+      response = queue_analysis(VIDEO_ID, background_tasks, USER_ID)
 
-    self.assertEqual(raised.exception.status_code, 422)
-    storage.assert_not_called()
-    repository.queue_owned_video_if_status.assert_not_called()
+    self.assertEqual(response.status, "queued")
+    self.assertEqual(len(background_tasks.tasks), 1)
 
   def test_queue_analysis_allows_warning_preflight(self) -> None:
     repository = MagicMock()
