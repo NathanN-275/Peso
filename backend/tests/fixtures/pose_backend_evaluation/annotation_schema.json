@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Peso side-squat pose evaluation labels",
+  "type": "object",
+  "required": ["schema_version", "coordinate_space", "annotation_density", "source", "frames"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "coordinate_space": {"const": "normalized_source_frame"},
+    "annotation_density": {"enum": ["dense", "sparse", "synthetic"]},
+    "source": {"type": "object"},
+    "frames": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_frame_index", "landmarks"],
+        "properties": {
+          "source_frame_index": {"type": "integer", "minimum": 0},
+          "visible_anatomical_side": {"enum": ["left", "right"]},
+          "phase": {"enum": ["pre_rep", "descent", "bottom_transition", "ascent", "lockout", "between_reps", "post_rep", "uncertain"]},
+          "landmarks": {
+            "type": "object",
+            "properties": {
+              "visible_shoulder": {"$ref": "#/$defs/point"},
+              "visible_hip": {"$ref": "#/$defs/point"},
+              "visible_knee": {"$ref": "#/$defs/point"},
+              "visible_ankle": {"$ref": "#/$defs/point"}
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "point": {
+      "type": "object",
+      "required": ["x", "y"],
+      "properties": {
+        "x": {"type": "number", "minimum": 0, "maximum": 1},
+        "y": {"type": "number", "minimum": 0, "maximum": 1},
+        "visibility": {"enum": ["visible", "occluded", "uncertain"]}
+      }
+    }
+  }
+}

@@ -19,7 +19,14 @@ from .config import get_settings
 
 TRACE_FORMAT_VERSION = 1
 FEEDBACK_FORMAT_VERSION = 1
-REVIEW_SNAPSHOT_NAMES = {"raw_pose", "pin_fusion", "pose_repair", "barbell_tracking", "exercise_metrics"}
+REVIEW_SNAPSHOT_NAMES = {
+  "quality_preflight",
+  "raw_pose",
+  "pin_fusion",
+  "pose_repair",
+  "barbell_tracking",
+  "exercise_metrics",
+}
 REVIEW_LANDMARK_SUFFIXES = {
   "shoulder", "upper_back", "hip", "knee", "ankle", "elbow", "wrist",
 }
@@ -423,6 +430,8 @@ class AnalysisTraceService:
           projected_payload["tracking_assistance"] = cls._review_value(payload.get("tracking_assistance"))
         elif snapshot_name == "exercise_metrics":
           projected_payload["result"] = cls._review_value(payload.get("result"))
+        elif snapshot_name == "quality_preflight":
+          projected_payload["quality_preflight"] = cls._review_value(payload.get("quality_preflight"))
       else:
         projected_payload = cls._review_value(payload)
       events.append({

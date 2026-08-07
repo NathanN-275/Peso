@@ -20,6 +20,7 @@ import { useAuth } from '../../context/AuthContext';
 import {
   fetchAnalysisResult,
   fetchVideoStatus,
+  runVideoQualityPreflight,
   testBackendConnection,
   triggerVideoAnalysis,
 } from '../../lib/backendApi';
@@ -42,6 +43,7 @@ import type { AnalysisRun } from '../../lib/analysisRunPolicy';
 import Button from '../components/Button';
 import ConfirmationDialog from '../components/ConfirmationDialog';
 import SelectedVideoPreview from '../components/SelectedVideoPreview';
+import SideSquatRecordingGuide from '../components/SideSquatRecordingGuide';
 import TrackingPinSetupModal from '../components/TrackingPinSetupModal';
 import VideoSetupModal from '../components/VideoSetupModal';
 import {
@@ -51,11 +53,19 @@ import {
   VideoSetupSelection,
 } from '../constants/videoSetup';
 import AnalysisReviewScreen from './AnalysisReviewScreen';
-import { VideoAnalysisResult, VideoAnalysisStatus } from '../types/videoAnalysis';
+import {
+  QualityPreflightResult,
+  VideoAnalysisResult,
+  VideoAnalysisStatus,
+} from '../types/videoAnalysis';
 import tokens from '../theme/tokens';
 import type { TrackingSetup } from '../types/trackingSetup';
 import { createLocalVideoThumbnail, getUriScheme } from '../utils/localVideoThumbnail';
 import { resolveVideoDurationMs } from '../../lib/videoDurationPolicy';
+import {
+  getQualityPreflightQueueDecision,
+  requiresQualityPreflight,
+} from '../../lib/qualityPreflightPolicy';
 
 type UploadVideoScreenProps = {
   sourceMode?: 'camera' | 'library';
@@ -147,6 +157,8 @@ export default function UploadVideoScreen({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [quotaWarningMessage, setQuotaWarningMessage] = useState<string | null>(null);
+  const [qualityPreflight, setQualityPreflight] = useState<QualityPreflightResult | null>(null);
+  const [pendingQualityUpload, setPendingQualityUpload] = useState<UploadVideoForAnalysisResult | null>(null);
   const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
   const [displayedVideoSizeBytes, setDisplayedVideoSizeBytes] = useState<number | null>(null);
   const analysisStartInFlightRef = useRef(false);
@@ -156,6 +168,28 @@ export default function UploadVideoScreen({
   const analysisPollInFlightRef = useRef(false);
   const initializedVideoUriRef = useRef<string | null>(null);
   const initializedSetupKeyRef = useRef<string | null>(getSetupKey(initialVideoSetup));
+  const pendingQualityUploadRef = useRef<UploadVideoForAnalysisResult | null>(null);
+  const activeUploadedVideoRef = useRef<UploadVideoForAnalysisResult | null>(null);
+
+  const rememberPendingQualityUpload = (upload: UploadVideoForAnalysisResult | null) => {
+    pendingQualityUploadRef.current = upload;
+    setPendingQualityUpload(upload);
+  };
+
+  const discardPendingQualityUpload = async () => {
+    const pendingUpload = pendingQualityUploadRef.current;
+    if (!pendingUpload) {
+      return;
+    }
+
+    rememberPendingQualityUpload(null);
+    await cleanupUploadedVideoForAnalysis({
+      videoId: pendingUpload.videoId,
+      storagePath: pendingUpload.storagePath,
+    });
+    setAnalysisVideoId(null);
+    setAnalysisStatus(null);
+  };
 
   const analysisRunIsCurrent = (run: AnalysisRun) => (
     isAnalysisRunCurrent(analysisRunGenerationRef.current, run)
@@ -163,6 +197,19 @@ export default function UploadVideoScreen({
 
   const cancelActiveAnalysis = () => {
     const run = activeAnalysisRunRef.current;
+    const activeUpload = activeUploadedVideoRef.current;
+    const queuedVideoId = analysisQueuedForVideoRef.current;
+    activeUploadedVideoRef.current = null;
+    if (activeUpload && queuedVideoId !== activeUpload.videoId) {
+      if (pendingQualityUploadRef.current?.videoId === activeUpload.videoId) {
+        pendingQualityUploadRef.current = null;
+        setPendingQualityUpload(null);
+      }
+      void cleanupUploadedVideoForAnalysis({
+        videoId: activeUpload.videoId,
+        storagePath: activeUpload.storagePath,
+      });
+    }
     if (run) {
       analysisRunGenerationRef.current = cancelAnalysisRun(analysisRunGenerationRef.current, run);
     } else {
@@ -183,6 +230,7 @@ export default function UploadVideoScreen({
 
   const handleSelectedVideo = (asset: ImagePicker.ImagePickerAsset) => {
     // Selecting a new asset clears any old analysis state.
+    void discardPendingQualityUpload();
     cancelActiveAnalysis();
     analysisStartInFlightRef.current = false;
     analysisQueuedForVideoRef.current = null;
@@ -199,6 +247,8 @@ export default function UploadVideoScreen({
     setErrorMessage(null);
     setStatusMessage(null);
     setQuotaWarningMessage(null);
+    setQualityPreflight(null);
+    rememberPendingQualityUpload(null);
     setDisplayedVideoSizeBytes(
       typeof asset.fileSize === 'number' && !Number.isNaN(asset.fileSize) ? asset.fileSize : null
     );
@@ -313,41 +363,119 @@ export default function UploadVideoScreen({
         },
       });
       uploadedVideo = uploadResult;
+      activeUploadedVideoRef.current = uploadResult;
 
       if (!analysisRunIsCurrent(run)) {
-        void cleanupUploadedVideoForAnalysis({
-          videoId: uploadResult.videoId,
-          storagePath: uploadResult.storagePath,
-        });
+        if (activeUploadedVideoRef.current?.videoId === uploadResult.videoId) {
+          activeUploadedVideoRef.current = null;
+          void cleanupUploadedVideoForAnalysis({
+            videoId: uploadResult.videoId,
+            storagePath: uploadResult.storagePath,
+          });
+        }
         return;
       }
 
       setDisplayedVideoSizeBytes(uploadResult.uploadedFileSizeBytes);
 
-      setStatusMessage('Starting analysis...');
-      console.log('[analysis] starting backend analysis', uploadResult.videoId);
+      setAnalysisVideoId(uploadResult.videoId);
+      setAnalysisStatus(uploadResult.status);
       const accessToken = await getFreshBackendAccessToken();
       if (!analysisRunIsCurrent(run)) {
-        void cleanupUploadedVideoForAnalysis({
-          videoId: uploadResult.videoId,
-          storagePath: uploadResult.storagePath,
-        });
+        if (activeUploadedVideoRef.current?.videoId === uploadResult.videoId) {
+          activeUploadedVideoRef.current = null;
+          void cleanupUploadedVideoForAnalysis({
+            videoId: uploadResult.videoId,
+            storagePath: uploadResult.storagePath,
+          });
+        }
         return;
       }
+
+      if (requiresQualityPreflight(videoSetup)) {
+        setStatusMessage('Checking recording quality...');
+        const preflight = await runVideoQualityPreflight(
+          uploadResult.videoId,
+          accessToken,
+          run.controller.signal
+        );
+        if (!analysisRunIsCurrent(run)) {
+          if (activeUploadedVideoRef.current?.videoId === uploadResult.videoId) {
+            activeUploadedVideoRef.current = null;
+            void cleanupUploadedVideoForAnalysis({
+              videoId: uploadResult.videoId,
+              storagePath: uploadResult.storagePath,
+            });
+          }
+          return;
+        }
+
+        setQualityPreflight(preflight);
+        const preflightDecision = getQualityPreflightQueueDecision(preflight);
+        if (preflightDecision.mustReplaceVideo) {
+          setStatusMessage('Cleaning up blocked upload...');
+          await cleanupUploadedVideoForAnalysis({
+            videoId: uploadResult.videoId,
+            storagePath: uploadResult.storagePath,
+          });
+          uploadedVideo = null;
+          activeUploadedVideoRef.current = null;
+          if (!analysisRunIsCurrent(run)) {
+            return;
+          }
+          setAnalysisVideoId(null);
+          setAnalysisStatus(null);
+          setStatusMessage(null);
+          analysisStartInFlightRef.current = false;
+          activeAnalysisRunRef.current = null;
+          setAnalysisRunning(false);
+          return;
+        }
+
+        if (preflightDecision.needsConfirmation) {
+          uploadedVideo = null;
+          activeUploadedVideoRef.current = null;
+          rememberPendingQualityUpload(uploadResult);
+          setStatusMessage(null);
+          analysisStartInFlightRef.current = false;
+          activeAnalysisRunRef.current = null;
+          setAnalysisRunning(false);
+          return;
+        }
+      }
+
+      setStatusMessage('Starting analysis...');
+      console.log('[analysis] starting backend analysis', uploadResult.videoId);
       const queuedResponse = await triggerVideoAnalysis(
         uploadResult.videoId,
         accessToken,
         run.controller.signal
       );
       if (!analysisRunIsCurrent(run)) {
+        if (activeUploadedVideoRef.current?.videoId === uploadResult.videoId) {
+          activeUploadedVideoRef.current = null;
+          void cleanupUploadedVideoForAnalysis({
+            videoId: uploadResult.videoId,
+            storagePath: uploadResult.storagePath,
+          });
+        }
         return;
       }
       analysisQueuedForVideoRef.current = uploadResult.videoId;
+      activeUploadedVideoRef.current = null;
+      rememberPendingQualityUpload(null);
       setAnalysisVideoId(uploadResult.videoId);
       setAnalysisStatus(queuedResponse.status);
       setStatusMessage(null);
     } catch (error) {
       if (!analysisRunIsCurrent(run)) {
+        if (uploadedVideo && activeUploadedVideoRef.current?.videoId === uploadedVideo.videoId) {
+          activeUploadedVideoRef.current = null;
+          void cleanupUploadedVideoForAnalysis({
+            videoId: uploadedVideo.videoId,
+            storagePath: uploadedVideo.storagePath,
+          });
+        }
         return;
       }
       const message = error instanceof Error ? error.message : 'Unable to upload and analyze this video.';
@@ -368,6 +496,7 @@ export default function UploadVideoScreen({
           videoId: uploadedVideo.videoId,
           storagePath: uploadedVideo.storagePath,
         });
+        activeUploadedVideoRef.current = null;
         if (!analysisRunIsCurrent(run)) {
           return;
         }
@@ -392,6 +521,89 @@ export default function UploadVideoScreen({
       if (analysisRunIsCurrent(run)) {
         setUploading(false);
       }
+    }
+  };
+
+  const handleContinueAfterQualityWarning = async () => {
+    const pendingUpload = pendingQualityUploadRef.current;
+    if (!pendingUpload || analysisStartInFlightRef.current || analysisRunning || !user) {
+      return;
+    }
+
+    setErrorMessage(null);
+    setStatusMessage('Starting analysis with quality warnings...');
+    setAnalysisRunning(true);
+    analysisStartInFlightRef.current = true;
+    const run = createAnalysisRun(analysisRunGenerationRef.current);
+    analysisRunGenerationRef.current = run.generation;
+    activeAnalysisRunRef.current = run;
+    activeUploadedVideoRef.current = pendingUpload;
+
+    try {
+      const accessToken = await getFreshBackendAccessToken();
+      if (!analysisRunIsCurrent(run)) {
+        if (activeUploadedVideoRef.current?.videoId === pendingUpload.videoId) {
+          activeUploadedVideoRef.current = null;
+          void cleanupUploadedVideoForAnalysis({
+            videoId: pendingUpload.videoId,
+            storagePath: pendingUpload.storagePath,
+          });
+          rememberPendingQualityUpload(null);
+        }
+        return;
+      }
+      const queuedResponse = await triggerVideoAnalysis(
+        pendingUpload.videoId,
+        accessToken,
+        run.controller.signal
+      );
+      if (!analysisRunIsCurrent(run)) {
+        if (activeUploadedVideoRef.current?.videoId === pendingUpload.videoId) {
+          activeUploadedVideoRef.current = null;
+          void cleanupUploadedVideoForAnalysis({
+            videoId: pendingUpload.videoId,
+            storagePath: pendingUpload.storagePath,
+          });
+          rememberPendingQualityUpload(null);
+        }
+        return;
+      }
+      analysisQueuedForVideoRef.current = pendingUpload.videoId;
+      activeUploadedVideoRef.current = null;
+      rememberPendingQualityUpload(null);
+      setAnalysisVideoId(pendingUpload.videoId);
+      setAnalysisStatus(queuedResponse.status);
+      setStatusMessage(null);
+    } catch (error) {
+      if (!analysisRunIsCurrent(run)) {
+        if (activeUploadedVideoRef.current?.videoId === pendingUpload.videoId) {
+          activeUploadedVideoRef.current = null;
+          void cleanupUploadedVideoForAnalysis({
+            videoId: pendingUpload.videoId,
+            storagePath: pendingUpload.storagePath,
+          });
+          rememberPendingQualityUpload(null);
+        }
+        return;
+      }
+      setStatusMessage('Cleaning up upload...');
+      await cleanupUploadedVideoForAnalysis({
+        videoId: pendingUpload.videoId,
+        storagePath: pendingUpload.storagePath,
+      });
+      activeUploadedVideoRef.current = null;
+      rememberPendingQualityUpload(null);
+      setAnalysisVideoId(null);
+      setAnalysisStatus(null);
+      setStatusMessage(null);
+      setErrorMessage(
+        isBackendAuthError(error)
+          ? backendAuthRecoveryMessage()
+          : 'Analysis could not start. The upload was cleaned up; please try again.'
+      );
+      analysisStartInFlightRef.current = false;
+      activeAnalysisRunRef.current = null;
+      setAnalysisRunning(false);
     }
   };
 
@@ -606,6 +818,17 @@ export default function UploadVideoScreen({
       analysisRunGenerationRef.current = cancelAnalysisRun(analysisRunGenerationRef.current, run);
       activeAnalysisRunRef.current = null;
     }
+    const activeUpload = activeUploadedVideoRef.current;
+    const pendingUpload = pendingQualityUploadRef.current;
+    activeUploadedVideoRef.current = null;
+    pendingQualityUploadRef.current = null;
+    const uploadToClean = activeUpload ?? pendingUpload;
+    if (uploadToClean) {
+      void cleanupUploadedVideoForAnalysis({
+        videoId: uploadToClean.videoId,
+        storagePath: uploadToClean.storagePath,
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -777,6 +1000,10 @@ export default function UploadVideoScreen({
   const handleModalContinue = async (selection: VideoSetupSelection) => {
     // Persist the exercise and view selection before upload starts.
     const setupChanged = videoSetup?.exercise !== selection.exercise || videoSetup?.angle !== selection.angle;
+    if (setupChanged) {
+      await discardPendingQualityUpload();
+      setQualityPreflight(null);
+    }
     setVideoSetup(selection);
     if (setupChanged) {
       setTrackingSetup(null);
@@ -805,24 +1032,28 @@ export default function UploadVideoScreen({
     setSetupModalVisible(false);
   };
 
-  const handlePickVideoPress = () => {
+  const handlePickVideoPress = async () => {
     // Permissions are requested only when the user explicitly taps upload.
     if (uploading) {
       return;
     }
 
+    await discardPendingQualityUpload();
+
     if (permissionStatus === 'granted') {
-      void launchPicker();
+      await launchPicker();
       return;
     }
 
-    void requestPermission(true);
+    await requestPermission(true);
   };
 
-  const handleRecordVideoPress = () => {
+  const handleRecordVideoPress = async () => {
     if (uploading) {
       return;
     }
+
+    await discardPendingQualityUpload();
 
     if (isWeb) {
       onRecordVideoPress?.();
@@ -830,11 +1061,21 @@ export default function UploadVideoScreen({
     }
 
     if (cameraPermissionStatus === 'granted') {
-      void launchCamera();
+      await launchCamera();
       return;
     }
 
-    void requestCameraPermission(true);
+    await requestCameraPermission(true);
+  };
+
+  const handleEditSetupPress = async () => {
+    await discardPendingQualityUpload();
+    setSetupModalVisible(true);
+  };
+
+  const handleBackPress = async () => {
+    await discardPendingQualityUpload();
+    onBack?.();
   };
 
   const resolvedVideoName =
@@ -850,6 +1091,11 @@ export default function UploadVideoScreen({
     : 'Confirm the exercise and camera angle, then select a video from your camera roll.';
   const chooseVideoLabel = isCameraMode ? 'Record Video' : 'Choose Video';
   const changeVideoLabel = isCameraMode ? 'Record Again' : 'Choose Another Video';
+  const qualityPreflightLabel = qualityPreflight?.status === 'blocked'
+    ? 'Recording needs changes'
+    : qualityPreflight?.status === 'warning'
+    ? 'Recording has warnings'
+    : 'Recording quality passed';
   const diagnostics = analysisResult?.diagnostics;
   const videoQualityRows = diagnostics
     ? [
@@ -871,7 +1117,9 @@ export default function UploadVideoScreen({
     !uploading &&
     !analysisRunning &&
     !isAnalysisInProgress(analysisStatus) &&
-    analysisStatus !== 'completed';
+    analysisStatus !== 'completed' &&
+    qualityPreflight?.status !== 'blocked' &&
+    !pendingQualityUpload;
 
   const handleScreenLayout = ({ nativeEvent }: LayoutChangeEvent) => {
     // Track the viewport so the setup modal can fit correctly.
@@ -902,6 +1150,8 @@ export default function UploadVideoScreen({
     setErrorMessage(null);
     setStatusMessage(null);
     setQuotaWarningMessage(null);
+    setQualityPreflight(null);
+    rememberPendingQualityUpload(null);
     setThumbnailUri(null);
     setDisplayedVideoSizeBytes(null);
   };
@@ -984,7 +1234,14 @@ export default function UploadVideoScreen({
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        <Button label="Back" onPress={onBack} variant="secondary" style={styles.backButton} />
+        <Button
+          label="Back"
+          onPress={() => {
+            void handleBackPress();
+          }}
+          variant="secondary"
+          style={styles.backButton}
+        />
 
         <View style={styles.content}>
           <Ionicons
@@ -1009,6 +1266,8 @@ export default function UploadVideoScreen({
             </View>
           ) : null}
 
+          <SideSquatRecordingGuide setup={videoSetup} />
+
           {selectedVideo ? (
             <View style={styles.videoCard}>
               <View style={styles.videoCardHeader}>
@@ -1029,6 +1288,58 @@ export default function UploadVideoScreen({
                   />
                 </View>
               </View>
+            </View>
+          ) : null}
+
+          {selectedVideo && qualityPreflight ? (
+            <View
+              accessibilityRole="summary"
+              accessibilityLabel={qualityPreflightLabel}
+              style={[
+                styles.qualityCard,
+                qualityPreflight.status === 'blocked'
+                  ? styles.qualityCardBlocked
+                  : qualityPreflight.status === 'warning'
+                  ? styles.qualityCardWarning
+                  : styles.qualityCardPassed,
+              ]}
+            >
+              <View style={styles.qualityCardHeading}>
+                <Ionicons
+                  name={
+                    qualityPreflight.status === 'blocked'
+                      ? 'close-circle'
+                      : qualityPreflight.status === 'warning'
+                      ? 'warning'
+                      : 'checkmark-circle'
+                  }
+                  size={22}
+                  color={
+                    qualityPreflight.status === 'blocked'
+                      ? '#FF8A8A'
+                      : qualityPreflight.status === 'warning'
+                      ? '#FFD166'
+                      : '#79D69E'
+                  }
+                />
+                <Text style={styles.qualityCardTitle}>{qualityPreflightLabel}</Text>
+              </View>
+              <Text style={styles.qualityConfidenceText}>
+                Tracking confidence: {Math.round(qualityPreflight.overallConfidence * 100)}%
+              </Text>
+              {qualityPreflight.userMessages.map((message) => (
+                <Text key={message} style={styles.qualityMessageText}>• {message}</Text>
+              ))}
+              {qualityPreflight.status === 'warning' && pendingQualityUpload ? (
+                <Text style={styles.qualityHelperText}>
+                  You can continue with clearly marked confidence warnings, or choose another recording.
+                </Text>
+              ) : null}
+              {qualityPreflight.status === 'blocked' ? (
+                <Text style={styles.qualityHelperText}>
+                  This upload was removed and will not enter full analysis. Choose a better recording to continue.
+                </Text>
+              ) : null}
             </View>
           ) : null}
 
@@ -1103,11 +1414,22 @@ export default function UploadVideoScreen({
               />
               <Button
                 label="Edit Video Setup"
-                onPress={() => setSetupModalVisible(true)}
+                onPress={() => {
+                  void handleEditSetupPress();
+                }}
                 disabled={uploading}
                 variant="secondary"
                 style={styles.primaryAction}
               />
+              {pendingQualityUpload ? (
+                <Button
+                  label="Continue With Warnings"
+                  onPress={() => {
+                    void handleContinueAfterQualityWarning();
+                  }}
+                  style={styles.primaryAction}
+                />
+              ) : null}
               {canStartAnalysis ? (
                 <Button
                   label="Start Analysis"
@@ -1223,9 +1545,13 @@ export default function UploadVideoScreen({
         >
           <View style={styles.analysisPanel}>
             <ActivityIndicator size="large" color={tokens.colors.brand} />
-            <Text style={styles.analysisOverlayTitle}>Analyzing video…</Text>
+            <Text style={styles.analysisOverlayTitle}>
+              {uploading ? statusMessage ?? 'Preparing video…' : 'Analyzing video…'}
+            </Text>
             <Text style={styles.analysisOverlayHelper}>
-              We’re processing your lift. This may take a minute.
+              {uploading
+                ? 'Peso checks a small set of frames before full analysis.'
+                : 'We’re processing your lift. This may take a minute.'}
             </Text>
             <Button
               label="Cancel"
@@ -1368,6 +1694,56 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontWeight: '600',
     marginTop: 4,
+  },
+  qualityCard: {
+    width: '100%',
+    marginTop: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    gap: 8,
+  },
+  qualityCardBlocked: {
+    borderColor: '#8C3D47',
+    backgroundColor: '#211217',
+  },
+  qualityCardWarning: {
+    borderColor: '#7D692F',
+    backgroundColor: '#211D11',
+  },
+  qualityCardPassed: {
+    borderColor: '#356B4D',
+    backgroundColor: '#102018',
+  },
+  qualityCardHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  qualityCardTitle: {
+    flex: 1,
+    color: tokens.colors.textPrimary,
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: '700',
+  },
+  qualityConfidenceText: {
+    color: tokens.colors.textPrimary,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600',
+  },
+  qualityMessageText: {
+    color: tokens.colors.textMuted,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  qualityHelperText: {
+    color: tokens.colors.textMuted,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 2,
   },
   thumbnailFrame: {
     width: 88,

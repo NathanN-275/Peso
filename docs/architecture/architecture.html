@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="High-level Peso project and system architecture.">
+  <title>Project Architecture · Peso</title>
+  <link rel="icon" href="assets/favicon.png">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="site-header__inner">
+      <a class="brand" href="index.html" aria-label="Peso project log home">
+        <img class="brand__logo" src="assets/peso-logo.png" width="396" height="120" alt="Peso">
+        <span class="brand__sub">Project log</span>
+      </a>
+      <nav class="site-nav" aria-label="Project documentation">
+        <a href="index.html">Overview</a>
+        <a href="architecture.html" aria-current="page">Architecture</a>
+        <a href="mobile-flow.html">Mobile</a>
+        <a href="marketing-flow.html">Marketing</a>
+        <a href="web-app-flow.html">Web Beta</a>
+        <a href="backend-flow.html">Backend</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero hero--compact">
+      <div class="shell">
+        <p class="eyebrow">System view</p>
+        <h1>One product, three user surfaces.</h1>
+        <p class="hero__lead">The Marketing Site explains Peso. The Web App and mobile app deliver the product. Both authenticated clients share one Peso Account, one Saved Lift Library, one backend, and one Supabase project.</p>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="system-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="kicker">High-level architecture</p>
+          <h2 id="system-title">From athlete to analysis</h2>
+        </div>
+
+        <ul class="legend" aria-label="Diagram status legend">
+          <li class="legend__item"><span class="legend__swatch" aria-hidden="true"></span>Current or shared</li>
+          <li class="legend__item"><span class="legend__swatch legend__swatch--planned" aria-hidden="true"></span>Planned Web Beta</li>
+          <li class="legend__item"><span class="legend__swatch legend__swatch--internal" aria-hidden="true"></span>Internal development only</li>
+        </ul>
+
+        <div class="diagram" aria-label="Peso system architecture diagram">
+          <h3 class="diagram__title">Experience layer</h3>
+          <p class="diagram__description">Public discovery stays separate from authenticated product state.</p>
+          <div class="arch-grid">
+            <div class="arch-column">
+              <p class="arch-column__title">Public browser</p>
+              <article class="flow-node flow-node--blue">
+                <span class="flow-node__tag">Current · Astro</span>
+                <h3>Marketing Site</h3>
+                <p>Landing page, product demo, privacy, and terms. Links into the Web App.</p>
+              </article>
+            </div>
+            <div class="arch-column">
+              <p class="arch-column__title">Authenticated browser</p>
+              <article class="flow-node flow-node--planned">
+                <span class="flow-node__tag">Planned beta · Expo Web</span>
+                <h3>Web App</h3>
+                <p>Dashboard, recording, upload, durable analysis progress, review, and Saved Lifts.</p>
+              </article>
+              <article class="flow-node">
+                <span class="flow-node__tag">Current prototype</span>
+                <h3>Demo Analysis</h3>
+                <p>Browser-local simulation. It creates no backend job and does not consume quota.</p>
+              </article>
+            </div>
+            <div class="arch-column">
+              <p class="arch-column__title">Phone</p>
+              <article class="flow-node flow-node--blue">
+                <span class="flow-node__tag">Current · Expo native</span>
+                <h3>Mobile App</h3>
+                <p>Record or upload, tracking setup, analysis review, profile, and Saved Lifts.</p>
+              </article>
+            </div>
+          </div>
+
+          <div class="flow-arrow flow-arrow--down" aria-hidden="true">↓</div>
+
+          <h3 class="diagram__title">Shared platform layer</h3>
+          <p class="diagram__description">The product clients use the same identity, data, storage, and processing boundary.</p>
+          <div class="arch-grid">
+            <div class="arch-column">
+              <p class="arch-column__title">Identity & data</p>
+              <article class="flow-node">
+                <span class="flow-node__tag">Supabase</span>
+                <h3>Auth + Postgres</h3>
+                <p>Peso Accounts, owned video rows, analysis results, Saved Lifts, and job state.</p>
+              </article>
+              <article class="flow-node">
+                <span class="flow-node__tag">Private storage</span>
+                <h3>Video assets</h3>
+                <p>Source uploads, optimized playback, thumbnails, and temporary export ZIPs.</p>
+              </article>
+            </div>
+            <div class="arch-column">
+              <p class="arch-column__title">Application services</p>
+              <article class="flow-node flow-node--blue">
+                <span class="flow-node__tag">Current · FastAPI</span>
+                <h3>Backend API</h3>
+                <p>Verifies JWTs and ownership, registers uploads, starts work, polls state, saves, exports, and deletes.</p>
+              </article>
+              <article class="flow-node flow-node--planned">
+                <span class="flow-node__tag">Planned web beta</span>
+                <h3>Durable job worker</h3>
+                <p>Consumes Supabase Queue messages while the database job remains the source of truth.</p>
+              </article>
+            </div>
+            <div class="arch-column">
+              <p class="arch-column__title">Analysis</p>
+              <article class="flow-node flow-node--blue">
+                <span class="flow-node__tag">Current · Python</span>
+                <h3>Video analysis pipeline</h3>
+                <p>Quality gates, pose estimation, tracking, rep segmentation, metrics, coaching, and media generation.</p>
+              </article>
+              <article class="flow-node flow-node--internal">
+                <span class="flow-node__tag">Internal only</span>
+                <h3>Analysis dashboard</h3>
+                <p>Owner-checked local traces, playback, diagnostics, annotations, and feedback exports.</p>
+              </article>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="boundary-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="kicker">Important boundaries</p>
+          <h2 id="boundary-title">What stays separate</h2>
+          <p>The boundaries are part of the design, not duplicate implementations.</p>
+        </div>
+
+        <div class="branch-grid">
+          <article class="flow-node">
+            <span class="flow-node__tag">Marketing vs product</span>
+            <h3>Static pages do not load account state</h3>
+            <p>Astro owns public routes. The signed-in React Router app lives under <code>/app</code>.</p>
+          </article>
+          <article class="flow-node">
+            <span class="flow-node__tag">Facts vs observations</span>
+            <h3>Performed Reps stay user-owned</h3>
+            <p>Detected Reps are a model observation. Performed Reps and Load are workout facts.</p>
+          </article>
+          <article class="flow-node">
+            <span class="flow-node__tag">Demo vs server work</span>
+            <h3>Demo Analysis stays on-device</h3>
+            <p>It creates no upload, backend request, quota charge, or durable record.</p>
+          </article>
+          <article class="flow-node">
+            <span class="flow-node__tag">Public vs internal</span>
+            <h3>The dashboard is not an athlete surface</h3>
+            <p>Development diagnostics remain local and are unavailable when production tracing is disabled.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="delivery-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="kicker">Project workflow</p>
+          <h2 id="delivery-title">How changes move</h2>
+        </div>
+
+        <div class="diagram" aria-label="Peso change and deployment workflow">
+          <div class="flow">
+            <article class="flow-node">
+              <span class="flow-node__tag">Build</span>
+              <h3>Code + decisions</h3>
+              <p>Product code, tests, domain glossary, and architecture decisions live in one repository.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node flow-node--blue">
+              <span class="flow-node__tag">Review</span>
+              <h3>GitHub</h3>
+              <p>Branches and pull requests carry changes into <code>main</code>.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node">
+              <span class="flow-node__tag">Verify</span>
+              <h3>Automated checks</h3>
+              <p>Frontend, backend, policy, security, and deployment checks guard the change.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node flow-node--success">
+              <span class="flow-node__tag">Publish</span>
+              <h3>Product + docs</h3>
+              <p>Netlify serves the product site; GitHub Pages refreshes this project log.</p>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell site-footer__inner">
+      <p>Peso architecture · current implementation and planned Web Beta</p>
+      <p><a href="backend-flow.html">Next: backend flow →</a></p>
+    </div>
+  </footer>
+</body>
+</html>

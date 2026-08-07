@@ -7,6 +7,7 @@ import type {
   VideoStatusResponse,
   SavedVideoOverview,
   SavedVideosPage,
+  QualityPreflightResult,
 } from '../src/types/videoAnalysis';
 import { Platform } from 'react-native';
 import {
@@ -25,6 +26,7 @@ const PLAYBACK_URL_CACHE_TTL_MS = 2 * 60 * 1000;
 const DEFAULT_BACKEND_REQUEST_TIMEOUT_MS = __DEV__ ? 10_000 : 30_000;
 const HEALTH_CHECK_TIMEOUT_MS = __DEV__ ? 3_000 : 8_000;
 const EXPORT_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+const QUALITY_PREFLIGHT_TIMEOUT_MS = 90 * 1000;
 const playbackUrlCache = new Map<string, { url: string; expiresAt: number }>();
 
 type BackendRequestInit = RequestInit & {
@@ -316,6 +318,8 @@ export type StorageUsageResponse = {
 export type VideoCapabilitiesResponse = {
   pin_assisted_tracking: boolean;
   tracking_setup_versions: number[];
+  side_squat_quality_preflight?: boolean;
+  quality_preflight_versions?: string[];
   reason: string | null;
 };
 
@@ -407,6 +411,22 @@ export async function triggerVideoAnalysis(videoId: string, accessToken: string,
     {
       method: 'POST',
       signal,
+    }
+  );
+}
+
+export async function runVideoQualityPreflight(
+  videoId: string,
+  accessToken: string,
+  signal?: AbortSignal
+) {
+  return requestJson<QualityPreflightResult>(
+    `/videos/${videoId}/quality-preflight`,
+    accessToken,
+    {
+      method: 'POST',
+      signal,
+      timeoutMs: QUALITY_PREFLIGHT_TIMEOUT_MS,
     }
   );
 }

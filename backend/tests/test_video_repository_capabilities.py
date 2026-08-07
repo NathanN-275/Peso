@@ -52,6 +52,13 @@ class VideoRepositoryCapabilitiesTest(unittest.TestCase):
     error = DatabaseError("column videos.tracking_setup does not exist", code="42703")
     self.assertFalse(self.repository(error).supports_tracking_setup())
 
+  def test_supports_quality_preflight_when_both_columns_can_be_selected(self) -> None:
+    self.assertTrue(self.repository().supports_quality_preflight())
+
+  def test_reports_missing_quality_preflight_columns(self) -> None:
+    error = DatabaseError("column videos.quality_preflight_required does not exist", code="42703")
+    self.assertFalse(self.repository(error).supports_quality_preflight())
+
   def test_propagates_transient_database_errors(self) -> None:
     with self.assertRaises(DatabaseError):
       self.repository(DatabaseError("connection timeout", code="57014")).supports_tracking_setup()

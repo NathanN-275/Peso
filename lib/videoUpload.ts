@@ -17,6 +17,10 @@ import {
 } from './pinTrackingCapabilityPolicy';
 import { supabase, supabaseConfigError } from './supabase';
 import { normalizePositiveDurationMs } from './videoDurationPolicy';
+import {
+  QUALITY_PREFLIGHT_THRESHOLD_VERSION,
+  requiresQualityPreflight,
+} from './qualityPreflightPolicy';
 
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = resolveFrontendMaxUploadBytes();
@@ -651,6 +655,7 @@ export async function uploadVideoForAnalysis({
   }
 
   let accessToken: string | null = null;
+  const sideSquatPreflightRequired = requiresQualityPreflight({ exercise, angle });
 
   if (shouldCheckPinTrackingCapability(trackingSetup)) {
     onStatusChange?.('Checking pin tracking support...');
@@ -669,6 +674,28 @@ export async function uploadVideoForAnalysis({
       }
       throw new Error(
         'Unable to verify pin-assisted tracking support. Deploy the latest backend and tracking database migration, then try again.'
+      );
+    }
+  }
+
+  if (sideSquatPreflightRequired) {
+    onStatusChange?.('Checking recording quality support...');
+    try {
+      accessToken ??= await getFreshBackendAccessToken();
+      const capabilities = await fetchVideoCapabilities(accessToken);
+      const supportedVersions = capabilities.quality_preflight_versions ?? [];
+      if (
+        capabilities.side_squat_quality_preflight !== true
+        || !supportedVersions.includes(QUALITY_PREFLIGHT_THRESHOLD_VERSION)
+      ) {
+        throw new Error('Side-view squat quality preflight is unavailable.');
+      }
+    } catch (error) {
+      logVideoUploadWarning('Unable to verify quality preflight support before upload.', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw new Error(
+        'Side-view squat quality checks are not ready on this backend. Deploy the latest backend and quality-preflight database migration, then try again.'
       );
     }
   }

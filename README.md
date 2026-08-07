@@ -171,6 +171,8 @@ POSE_REPAIR_ENABLED=true
 POSE_REPAIR_MAX_GAP_FRAMES=3
 POSE_REPAIR_VELOCITY_GAP_FRAMES=2
 POSE_REPAIR_RECOVERY_HYSTERESIS_FRAMES=2
+SIDE_SQUAT_PREFLIGHT_SAMPLE_COUNT=12
+SIDE_SQUAT_PREFLIGHT_MAX_FRAME_DIMENSION=512
 YOLO_TRACKING_MODE=off
 YOLO_TRACKING_MODEL_PATH=
 YOLO_TRACKING_CLASS_NAMES=barbell_collar,rack_upright,j_hook,safety_arm,storage_peg,sleeve,plate_face
@@ -182,6 +184,8 @@ FFMPEG_BINARY=
 BACKEND_CORS_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhost:8082,http://127.0.0.1:8082,http://localhost:19006,http://127.0.0.1:19006,http://localhost:3000,http://127.0.0.1:3000
 BACKEND_CORS_ALLOW_PRIVATE_NETWORK=true
 ```
+
+The backend runs a versioned sampled-frame quality preflight for new side-view squat submissions before full analysis. Apply `supabase/migrations/202608060001_side_squat_quality_preflight.sql`; the complete threshold list and behavior are documented in `backend/README.md` and `backend/.env.example`.
 
 Apply `supabase/migrations/202606120001_tracking_setup.sql` to enable optional pin-assisted tracking metadata. Side-view squat uploads may store a user-selected reference frame with upper back, hip, knee, ankle, and near-side collar anchors. The upper-back anchor is stored under the existing `shoulder` key for compatibility. Invalid or unavailable anchor tracks fall back to the automatic pose and barbell pipeline.
 

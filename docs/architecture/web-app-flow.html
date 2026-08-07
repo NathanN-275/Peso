@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Planned Peso Web Beta user flow and local Demo Analysis boundary.">
+  <title>Web App Flow · Peso</title>
+  <link rel="icon" href="assets/favicon.png">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="site-header__inner">
+      <a class="brand" href="index.html" aria-label="Peso project log home">
+        <img class="brand__logo" src="assets/peso-logo.png" width="396" height="120" alt="Peso">
+        <span class="brand__sub">Project log</span>
+      </a>
+      <nav class="site-nav" aria-label="Project documentation">
+        <a href="index.html">Overview</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="mobile-flow.html">Mobile</a>
+        <a href="marketing-flow.html">Marketing</a>
+        <a href="web-app-flow.html" aria-current="page">Web Beta</a>
+        <a href="backend-flow.html">Backend</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero hero--compact">
+      <div class="shell">
+        <p class="eyebrow">Athlete flow · Planned Web Beta</p>
+        <h1>The browser becomes a full Peso client.</h1>
+        <p class="hero__lead">The planned beta replaces the current simulated submission path with owner-checked uploads, durable jobs, recoverable progress, real results, and the shared Saved Lift Library.</p>
+
+        <figure class="product-shot">
+          <img src="assets/peso-web-beta.png" width="2876" height="1510" alt="Peso Web App review screen with sidebar navigation, analyzed squat playback, metrics, coaching focus, save, and discard actions.">
+          <figcaption class="product-shot__caption">Planned review flow</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="entry-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="kicker">Account entry</p>
+          <h2 id="entry-title">One account across web and mobile</h2>
+        </div>
+
+        <div class="diagram" aria-label="Web App authentication flow">
+          <div class="flow">
+            <article class="flow-node">
+              <span class="flow-node__tag">From Marketing Site</span>
+              <h3>Join beta or sign in</h3>
+              <p>Public calls to action open the matching <code>/app</code> route.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node flow-node--blue">
+              <span class="flow-node__tag">Supabase Auth</span>
+              <h3>Create or restore session</h3>
+              <p>Signup includes beta eligibility and terms. Email verification may be required.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node flow-node--planned">
+              <span class="flow-node__tag">Dashboard Home</span>
+              <h3>See capacity and work</h3>
+              <p>Show submission choices, rolling web capacity, active jobs, pending reviews, and recent Saved Lifts.</p>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="submission-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="kicker">Real analysis path</p>
+          <h2 id="submission-title">A durable browser submission</h2>
+        </div>
+
+        <ul class="legend" aria-label="Diagram status legend">
+          <li class="legend__item"><span class="legend__swatch" aria-hidden="true"></span>Shared/current capability</li>
+          <li class="legend__item"><span class="legend__swatch legend__swatch--planned" aria-hidden="true"></span>Planned Web Beta behavior</li>
+        </ul>
+
+        <div class="diagram" aria-label="Planned Web Beta submission and review flow">
+          <div class="flow">
+            <article class="flow-node flow-node--planned">
+              <span class="flow-node__tag">01 · Choose</span>
+              <h3>Record or upload</h3>
+              <p>Select one squat set from the browser device.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node">
+              <span class="flow-node__tag">02 · Validate</span>
+              <h3>Confirm setup</h3>
+              <p>Check type, size, duration, view, full-body visibility, and supported capabilities.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node flow-node--planned">
+              <span class="flow-node__tag">03 · Capacity</span>
+              <h3>Check rolling slots</h3>
+              <p>An accepted Web Analysis Job consumes one of three rolling 24-hour slots.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node flow-node--planned">
+              <span class="flow-node__tag">04 · Submit</span>
+              <h3>Upload + create job</h3>
+              <p>The API records an owner-scoped job and enqueues durable work transactionally.</p>
+            </article>
+          </div>
+
+          <div class="flow-arrow flow-arrow--down" aria-hidden="true">↓</div>
+
+          <div class="flow">
+            <article class="flow-node flow-node--planned">
+              <span class="flow-node__tag">05 · Recoverable state</span>
+              <h3>Queued → processing</h3>
+              <p>The browser polls the database-backed job. Leaving the page does not erase progress.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node flow-node--success">
+              <span class="flow-node__tag">06 · Complete</span>
+              <h3>Review result</h3>
+              <p>Playback, Detected Reps, depth, bar path, Lift Insights, and coaching appear together.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node">
+              <span class="flow-node__tag">07 · Decide</span>
+              <h3>Save or discard</h3>
+              <p>Save with optional workout facts, or remove the unsaved result before expiry.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node flow-node--blue">
+              <span class="flow-node__tag">08 · Return</span>
+              <h3>Saved Lift Library</h3>
+              <p>Browse the same saved history available in the mobile app.</p>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="outcomes-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="kicker">Job outcomes</p>
+          <h2 id="outcomes-title">Quota follows the failure class</h2>
+          <p>The planned beta distinguishes a user submission from a system failure.</p>
+        </div>
+
+        <div class="branch-grid">
+          <article class="flow-node flow-node--success">
+            <span class="flow-node__tag">Completed</span>
+            <h3>Review within 24 hours</h3>
+            <p>Save the result or allow the completed unsaved result to expire.</p>
+          </article>
+          <article class="flow-node flow-node--danger">
+            <span class="flow-node__tag">Invalid submission</span>
+            <h3>Slot remains charged</h3>
+            <p>The submitted clip consumed analysis capacity even when it cannot produce a useful result.</p>
+          </article>
+          <article class="flow-node flow-node--planned">
+            <span class="flow-node__tag">System failure</span>
+            <h3>Retry, then restore slot</h3>
+            <p>System failures retry up to three times and restore quota after the final failure.</p>
+          </article>
+          <article class="flow-node">
+            <span class="flow-node__tag">Queued cancellation</span>
+            <h3>Remove upload + restore slot</h3>
+            <p>If processing has already claimed the job, the cancellation loses the race and returns a conflict.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="demo-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="kicker">Separate path</p>
+          <h2 id="demo-title">Demo Analysis is intentionally local</h2>
+          <p>The prototype demonstrates the experience without pretending that simulated progress is a server job.</p>
+        </div>
+
+        <div class="diagram" aria-label="Browser-local Demo Analysis flow">
+          <div class="flow">
+            <article class="flow-node">
+              <span class="flow-node__tag">Device only</span>
+              <h3>Select a local video</h3>
+              <p>The browser creates a temporary object URL and local thumbnail.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node">
+              <span class="flow-node__tag">Simulation</span>
+              <h3>Clock-based progress</h3>
+              <p>Queued and analyzing states advance locally.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node flow-node--blue">
+              <span class="flow-node__tag">Fixture</span>
+              <h3>Bundled review result</h3>
+              <p>The review screen uses packaged demo media and metrics.</p>
+            </article>
+          </div>
+          <div class="callout"><strong>No server side effects:</strong> no upload, backend request, durable record, quota charge, save, or export.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="library-title">
+      <div class="shell">
+        <div class="section-heading">
+          <p class="kicker">Shared library</p>
+          <h2 id="library-title">Browse, export, and delete</h2>
+        </div>
+
+        <div class="diagram" aria-label="Web Saved Lift Library actions">
+          <div class="flow">
+            <article class="flow-node flow-node--blue">
+              <span class="flow-node__tag">View</span>
+              <h3>List or grid</h3>
+              <p>Presentation changes without changing library membership.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node">
+              <span class="flow-node__tag">Select</span>
+              <h3>Temporary batch selection</h3>
+              <p>Choose Saved Lifts for one action.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node flow-node--planned">
+              <span class="flow-node__tag">Export</span>
+              <h3>One background ZIP</h3>
+              <p>Poll the owner-scoped export job and download it before expiry.</p>
+            </article>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <article class="flow-node flow-node--danger">
+              <span class="flow-node__tag">Delete</span>
+              <h3>Confirm permanent removal</h3>
+              <p>The same lifts disappear from mobile and web.</p>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell site-footer__inner">
+      <p>Peso Web App flow · planned durable beta</p>
+      <p><a href="backend-flow.html">See how the backend handles it →</a></p>
+    </div>
+  </footer>
+</body>
+</html>

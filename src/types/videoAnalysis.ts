@@ -2,6 +2,41 @@ import type { TrackingAssistance } from './trackingSetup';
 
 export type VideoAnalysisStatus = 'uploaded' | 'queued' | 'processing' | 'completed' | 'failed';
 
+export type QualityPreflightCheckStatus =
+  | 'pass'
+  | 'warning'
+  | 'blocked'
+  | 'unmeasured'
+  | 'not_applicable';
+
+export type QualityPreflightCheck = {
+  status: QualityPreflightCheckStatus;
+  score: number | null;
+  reasonCode: string | null;
+  details: Record<string, unknown>;
+};
+
+export type QualityPreflightResult = {
+  video_id: string;
+  status: 'pass' | 'warning' | 'blocked';
+  overallConfidence: number;
+  checks: Record<string, QualityPreflightCheck>;
+  userMessages: string[];
+  recordingTips: string[];
+  modelVersion: string;
+  thresholdVersion: string;
+  thresholds: Record<string, number>;
+  sampledFrameMetadata: {
+    requestedSampleCount?: number;
+    sampledFrameCount?: number;
+    sourceFrameCount?: number;
+    sourceFrameRate?: number;
+    videoDurationMs?: number;
+    frames?: Array<Record<string, unknown>>;
+  };
+  processingDurationMs: number;
+};
+
 export type SaveState = 'pending' | 'saved';
 export type SavedWorkoutMetadata = {
   weight?: number | null;
@@ -356,6 +391,7 @@ export type VideoAnalysisDiagnostics = {
     automatic_point_count?: number;
   };
   tracking_assistance?: TrackingAssistance;
+  quality_preflight?: Omit<QualityPreflightResult, 'video_id'>;
 };
 
 export type VideoAnalysisResult = {
@@ -381,6 +417,7 @@ export type VideoAnalysisResult = {
   poseFrames?: VideoPoseFrame[];
   barbellPath?: BarbellPath;
   trackingAssistance?: TrackingAssistance;
+  qualityPreflight?: Omit<QualityPreflightResult, 'video_id'>;
   analysis_limited?: boolean;
   rep_count: number;
   reps: VideoAnalysisRep[];

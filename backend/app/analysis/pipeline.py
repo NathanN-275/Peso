@@ -1437,6 +1437,12 @@ def analyze_video(video_id: str) -> None:
       model_version=settings.model_version,
     )
     trace_call("event", "video_loaded", {"status": video.get("status")})
+    if isinstance(video.get("quality_preflight"), dict):
+      trace_call(
+        "snapshot",
+        "quality_preflight",
+        quality_preflight=video["quality_preflight"],
+      )
   except Exception as trace_error:
     logger.warning("Unable to initialize analysis trace for video %s: %s", video_id, trace_error)
 
@@ -1764,6 +1770,11 @@ def analyze_video(video_id: str) -> None:
     diagnostics["analysis_model_version"] = settings.model_version
     diagnostics["analysis_stage_timings_ms"] = dict(stage_timings_ms)
     diagnostics["analysis_payload_ready_duration_ms"] = analysis_payload_ready_duration_ms
+    quality_preflight = video.get("quality_preflight")
+    if isinstance(quality_preflight, dict):
+      # Preserve the exact gate evidence with the result that consumed it.
+      result["qualityPreflight"] = quality_preflight
+      diagnostics["quality_preflight"] = quality_preflight
     stage_started = time.perf_counter()
     repository.save_analysis_result(video_id, settings.model_version, result)
     logger.info(
