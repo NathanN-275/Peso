@@ -1,4 +1,31 @@
 (function () {
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function enableRevealMotion() {
+    const targets = document.querySelectorAll(
+      '[data-reveal], .hero--compact .shell, .section > .shell, .diagram'
+    );
+    if (!targets.length || reduceMotion || !('IntersectionObserver' in window)) return;
+
+    document.documentElement.classList.add('reveal-ready');
+    targets.forEach((target) => target.classList.add('reveal'));
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add('is-visible');
+          observer.unobserve(entry.target);
+        });
+      },
+      { rootMargin: '0px 0px -8% 0px', threshold: 0.08 }
+    );
+
+    targets.forEach((target) => observer.observe(target));
+  }
+
+  enableRevealMotion();
+
   const data = window.PESO_PROJECT_ACTIVITY;
   if (!data) return;
 
@@ -25,16 +52,53 @@
   setText('commits', number.format(data.activity.summary.commits));
   setText('active-days', number.format(data.activity.summary.activeDays));
   setText('file-changes', number.format(data.activity.summary.fileChanges));
+  setText('system-count', number.format(data.activity.systems.length));
   setText('open-issues', data.issues.available ? number.format(data.issues.open.length) : '—');
   setText('closed-issues', data.issues.available ? number.format(data.issues.recentlyClosed.length) : '—');
   setText('window-days', number.format(data.window.days));
   setText('branch', data.repository.branch);
   setText('generated-at', longDate.format(new Date(data.generatedAt)));
 
-  const repositoryLinks = document.querySelectorAll('[data-repository-link]');
-  repositoryLinks.forEach((link) => {
+  document.querySelectorAll('[data-repository-link]').forEach((link) => {
     link.href = data.repository.url;
   });
+
+  const weeklyProgress = document.getElementById('weekly-progress');
+  if (weeklyProgress) {
+    const weeks = data.activity.weeks.slice(-6);
+    const maximum = Math.max(1, ...weeks.map((week) => week.fileChanges));
+
+    weeks.forEach((week, index) => {
+      const item = document.createElement('article');
+      item.className = 'weekly-card';
+      if (index === weeks.length - 1) item.classList.add('weekly-card--current');
+
+      const heading = document.createElement('div');
+      heading.className = 'weekly-card__head';
+      const label = document.createElement('span');
+      label.textContent = index === weeks.length - 1 ? 'Current week' : 'Week of';
+      const date = document.createElement('strong');
+      date.textContent = shortDate.format(new Date(`${week.start}T00:00:00Z`));
+      heading.append(label, date);
+
+      const value = document.createElement('p');
+      value.className = 'weekly-card__value';
+      value.textContent = number.format(week.fileChanges);
+
+      const detail = document.createElement('p');
+      detail.className = 'weekly-card__detail';
+      detail.textContent = `${week.fileChanges === 1 ? 'file touch' : 'file touches'} · ${number.format(week.commits)} ${week.commits === 1 ? 'update' : 'updates'}`;
+
+      const track = document.createElement('div');
+      track.className = 'weekly-card__track';
+      const fill = document.createElement('span');
+      fill.style.width = `${Math.max(4, Math.round((week.fileChanges / maximum) * 100))}%`;
+      track.appendChild(fill);
+
+      item.append(heading, value, detail, track);
+      weeklyProgress.appendChild(item);
+    });
+  }
 
   const timeline = document.getElementById('activity-timeline');
   if (timeline) {
@@ -44,7 +108,11 @@
     for (const week of weeks) {
       const item = document.createElement('div');
       item.className = 'timeline__week';
-      item.title = `${week.commits} commits and ${week.fileChanges} file changes in the week of ${week.start}`;
+      item.setAttribute('role', 'img');
+      item.setAttribute(
+        'aria-label',
+        `${week.commits} project updates and ${week.fileChanges} file touches in the week of ${week.start}`
+      );
 
       const track = document.createElement('div');
       track.className = 'timeline__track';
@@ -77,7 +145,7 @@
       const label = document.createElement('span');
       label.textContent = system.name;
       const value = document.createElement('span');
-      value.textContent = `${number.format(system.fileChanges)} file changes`;
+      value.textContent = `${number.format(system.fileChanges)} touches`;
       top.append(label, value);
 
       const track = document.createElement('div');
@@ -99,23 +167,29 @@
     if (!data.issues.available || issues.length === 0) {
       const item = document.createElement('li');
       item.className = 'issue-item--empty';
-      item.textContent = data.issues.available ? emptyText : 'Issue data will appear after the first Pages build.';
+      item.textContent = data.issues.available ? emptyText : 'Issue data will appear after the next Pages build.';
       list.appendChild(item);
       return;
     }
 
-    for (const issue of issues.slice(0, 7)) {
+    for (const issue of issues.slice(0, 6)) {
       const item = document.createElement('li');
       item.className = 'issue-item';
       const link = document.createElement('a');
       link.href = issue.url;
+      link.target = '_blank';
+      link.rel = 'noreferrer';
 
       const issueNumber = document.createElement('span');
       issueNumber.className = 'issue-number';
       issueNumber.textContent = `#${issue.number}`;
       const title = document.createElement('span');
       title.textContent = issue.title;
-      link.append(issueNumber, title);
+      const arrow = document.createElement('span');
+      arrow.className = 'issue-arrow';
+      arrow.setAttribute('aria-hidden', 'true');
+      arrow.textContent = '↗';
+      link.append(issueNumber, title, arrow);
       item.appendChild(link);
       list.appendChild(item);
     }

@@ -3,8 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Peso project overview, active development log, architecture, and product flows.">
-  <title>Peso Project Log</title>
+  <meta name="description" content="Peso turns lifting footage into movement tracking, rep insights, and practical coaching. Explore the product, architecture, and active development log.">
+  <meta name="theme-color" content="#071321">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Peso · Understand Every Rep">
+  <meta property="og:description" content="Explore the Peso product, architecture, and active development log.">
+  <meta property="og:url" content="https://nathann-275.github.io/Peso/">
+  <meta property="og:image" content="https://nathann-275.github.io/Peso/assets/peso-social-preview.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Peso · Understand Every Rep">
+  <meta name="twitter:description" content="Explore the Peso product, architecture, and active development log.">
+  <meta name="twitter:image" content="https://nathann-275.github.io/Peso/assets/peso-social-preview.png">
+  <link rel="canonical" href="https://nathann-275.github.io/Peso/">
+  <title>Peso · Understand Every Rep</title>
   <link rel="icon" href="assets/favicon.png">
   <link rel="stylesheet" href="assets/site.css">
   <script src="assets/activity-data.js" defer></script>
@@ -16,7 +29,7 @@
     <div class="site-header__inner">
       <a class="brand" href="index.html" aria-label="Peso project log home">
         <img class="brand__logo" src="assets/peso-logo.png" width="396" height="120" alt="Peso">
-        <span class="brand__sub">Project log</span>
+        <span class="brand__sub">Product + build log</span>
       </a>
       <nav class="site-nav" aria-label="Project documentation">
         <a href="index.html" aria-current="page">Overview</a>
@@ -30,121 +43,160 @@
   </header>
 
   <main id="main">
-    <section class="hero">
+    <section class="hero hero--home">
       <div class="shell">
-        <div class="hero__grid">
-          <div>
-            <p class="eyebrow">Build in public</p>
-            <h1>Understand Peso in one place.</h1>
-            <p class="hero__lead">Peso turns a lifting video into tracked movement, rep insights, and practical coaching. This site shows what the product is, how the pieces connect, and where development is focused now.</p>
+        <div class="hero-stage" data-reveal>
+          <div class="hero-stage__copy">
+            <p class="eyebrow">Movement intelligence for lifters</p>
+            <h1>Understand every <span class="hero-word">rep.</span></h1>
+            <p class="hero__lead">Peso turns a lifting video into visible movement tracking, rep-level insights, and a clear coaching focus for the next set.</p>
             <div class="button-row">
-              <a class="button" href="architecture.html">Explore the architecture <span aria-hidden="true">→</span></a>
-              <a class="button button--secondary" data-repository-link href="https://github.com/NathanN-275/Peso">View on GitHub</a>
-              <span class="button button--disabled" aria-label="Web Beta link coming soon">Web Beta · Coming soon</span>
+              <a class="button button--light" href="#product-in-motion">See Peso in action <span aria-hidden="true">↓</span></a>
+              <a class="button button--ghost" href="architecture.html">Explore architecture</a>
             </div>
+            <div class="hero-links" aria-label="Project links">
+              <a data-repository-link href="https://github.com/NathanN-275/Peso" target="_blank" rel="noreferrer">GitHub repository <span aria-hidden="true">↗</span></a>
+              <a href="https://www.linkedin.com/in/nathanngau27/" target="_blank" rel="noreferrer">Nathan on LinkedIn <span aria-hidden="true">↗</span></a>
+              <span class="hero-links__disabled" aria-label="Private beta is not publicly available yet">Private beta · Not yet open</span>
+            </div>
+            <p class="creator-line"><span class="status-dot" aria-hidden="true"></span>Developed and created by <a href="https://www.linkedin.com/in/nathanngau27/" target="_blank" rel="noreferrer">Nathan Ngau</a></p>
           </div>
-          <aside class="hero__aside" aria-label="Current project status">
-            <p class="hero__aside-label">Current direction</p>
-            <p class="hero__aside-value">Planned Web Beta</p>
-            <div class="status-line"><span class="status-dot" aria-hidden="true"></span>Mobile remains active alongside web</div>
-            <p class="hero__aside-label">Primary analysis</p>
-            <p class="hero__aside-value">Side-view squat</p>
-            <p class="hero__aside-label">Activity source</p>
-            <p class="status-line">Rolling <span data-activity="window-days">90</span> days from <span data-activity="branch">main</span></p>
-          </aside>
-        </div>
 
-        <figure class="product-shot">
-          <img src="assets/peso-web-beta.png" width="2876" height="1510" alt="Peso Web App review screen showing a side-view squat analysis, detected reps, depth, bar path, and coaching focus.">
-          <figcaption class="product-shot__caption">Web review experience</figcaption>
-        </figure>
+          <div class="hero-demo" aria-label="Peso mobile analysis demo">
+            <div class="hero-device">
+              <div class="hero-device__bar" aria-hidden="true"><span></span></div>
+              <video autoplay muted loop playsinline preload="metadata" aria-label="Peso tracking a side-view squat and displaying coaching feedback">
+                <source src="assets/peso-mobile-demo.mp4" type="video/mp4">
+              </video>
+            </div>
+            <div class="signal-card signal-card--top">
+              <span class="signal-card__dot" aria-hidden="true"></span>
+              <span><strong>Live movement overlay</strong>Joint tracking stays inspectable</span>
+            </div>
+            <div class="signal-card signal-card--bottom">
+              <span class="signal-card__index">01</span>
+              <span><strong>One useful focus</strong>Coaching for the next set</span>
+            </div>
+            <p class="scribble-note" aria-hidden="true">the product, not a mockup ↗</p>
+          </div>
+
+          <div class="hero-stage__rail" aria-label="Peso product pillars">
+            <span>Capture</span><i aria-hidden="true"></i>
+            <span>Track</span><i aria-hidden="true"></i>
+            <span>Interpret</span><i aria-hidden="true"></i>
+            <span>Coach</span>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section class="section" aria-labelledby="activity-title">
+    <section class="section product-story" id="product-in-motion" aria-labelledby="product-title">
+      <div class="shell">
+        <div class="story-grid">
+          <div class="story-copy">
+            <p class="kicker">The product in action</p>
+            <h2 id="product-title">A clear answer after every lift.</h2>
+            <p>Peso keeps the analysis visible: the athlete can inspect the movement overlay, review what the model detected, and leave with one practical focus instead of a wall of metrics.</p>
+            <ol class="story-steps">
+              <li><span>01</span><div><strong>See the movement</strong><p>Playback and tracked joints make the analysis understandable.</p></div></li>
+              <li><span>02</span><div><strong>Review the rep</strong><p>Depth, bar path, and rep observations stay connected to the video.</p></div></li>
+              <li><span>03</span><div><strong>Apply one cue</strong><p>A focused coaching takeaway supports the athlete’s next set.</p></div></li>
+            </ol>
+          </div>
+
+          <figure class="product-shot product-shot--feature">
+            <div class="product-shot__chrome" aria-hidden="true"><span></span><span></span><span></span><b>PESO / REVIEW ANALYSIS</b></div>
+            <img src="assets/peso-web-beta.png" width="2876" height="1510" alt="Peso Web App review screen showing a side-view squat analysis, detected reps, depth, bar path, and coaching focus.">
+            <figcaption class="product-shot__caption">Authenticated web experience · Private beta</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section--soft" aria-labelledby="activity-title">
       <div class="shell">
         <div class="section-heading section-heading--row">
           <div>
             <p class="kicker">Active project log</p>
-            <h2 id="activity-title">What is changing</h2>
-            <p>Automatically summarized from repository activity without publishing raw commit messages.</p>
+            <h2 id="activity-title">Momentum, without the noise.</h2>
+            <p>A rolling view of where the project is moving. Public issue titles explain the work; raw commit messages stay in the repository.</p>
           </div>
-          <p class="status-line"><span class="status-dot" aria-hidden="true"></span>Updated <span data-activity="generated-at">after deployment</span></p>
+          <p class="status-line"><span class="status-dot" aria-hidden="true"></span>Refreshed <span data-activity="generated-at">after deployment</span></p>
         </div>
 
         <div class="metric-grid" aria-label="Rolling project activity summary">
           <article class="metric">
-            <p class="metric__label">Commits</p>
+            <p class="metric__label">Project updates</p>
             <p class="metric__value" data-activity="commits">—</p>
-            <p class="metric__detail">Excludes merge commits</p>
+            <p class="metric__detail">Non-merge commits in the window</p>
           </article>
           <article class="metric">
-            <p class="metric__label">Active days</p>
+            <p class="metric__label">Active build days</p>
             <p class="metric__value" data-activity="active-days">—</p>
-            <p class="metric__detail">Days with code activity</p>
+            <p class="metric__detail">Days with repository activity</p>
           </article>
           <article class="metric">
-            <p class="metric__label">File changes</p>
-            <p class="metric__value" data-activity="file-changes">—</p>
-            <p class="metric__detail">Touches across all systems</p>
+            <p class="metric__label">Areas touched</p>
+            <p class="metric__value" data-activity="system-count">—</p>
+            <p class="metric__detail">Product systems evolving</p>
           </article>
-          <article class="metric">
-            <p class="metric__label">Open issues</p>
+          <article class="metric metric--accent">
+            <p class="metric__label">Open priorities</p>
             <p class="metric__value" data-activity="open-issues">—</p>
-            <p class="metric__detail"><span data-activity="closed-issues">—</span> completed in this window</p>
+            <p class="metric__detail"><span data-activity="closed-issues">—</span> completed this window</p>
           </article>
         </div>
 
+        <div class="subsection-heading">
+          <div>
+            <p class="kicker">Weekly progress</p>
+            <h3>Six weeks at a glance</h3>
+          </div>
+          <p>Automatically built from activity on <span data-activity="branch">main</span>.</p>
+        </div>
+        <div class="weekly-grid" id="weekly-progress" aria-label="Recent weekly project progress"></div>
+
         <div class="activity-grid">
-          <article class="panel">
+          <article class="panel panel--chart">
             <div class="panel__head">
               <div>
-                <h3>Commit activity</h3>
-                <p>Weekly commits across the rolling window</p>
+                <p class="panel__eyebrow">90-day pulse</p>
+                <h3>Change timeline</h3>
               </div>
+              <span class="panel__annotation">rolling, not cherry-picked ↓</span>
             </div>
-            <div class="timeline" id="activity-timeline" aria-label="Weekly commit activity chart"></div>
+            <div class="timeline" id="activity-timeline" aria-label="Weekly project update chart"></div>
           </article>
 
           <article class="panel">
             <div class="panel__head">
               <div>
+                <p class="panel__eyebrow">Current footprint</p>
                 <h3>Focus by system</h3>
-                <p>File changes grouped by project area</p>
               </div>
             </div>
             <div class="focus-bars" id="focus-bars"></div>
           </article>
         </div>
-      </div>
-    </section>
 
-    <section class="section" aria-labelledby="issues-title">
-      <div class="shell">
-        <div class="section-heading">
-          <p class="kicker">Public work queue</p>
-          <h2 id="issues-title">Issues tell the story</h2>
-          <p>Issue titles show active priorities and recently completed work. Commit contents stay private to the repository view.</p>
-        </div>
-
-        <div class="issue-grid">
+        <div class="issue-grid issue-grid--spaced">
           <article class="panel">
             <div class="panel__head">
               <div>
-                <h3>In focus</h3>
-                <p>Recently updated open issues</p>
+                <p class="panel__eyebrow">In focus</p>
+                <h3>Active priorities</h3>
               </div>
-              <strong data-activity="open-issues">—</strong>
+              <strong class="panel__count" data-activity="open-issues">—</strong>
             </div>
             <ul class="issue-list" id="open-issue-list"></ul>
           </article>
           <article class="panel">
             <div class="panel__head">
               <div>
-                <h3>Completed</h3>
-                <p>Recently closed issues</p>
+                <p class="panel__eyebrow">Recently shipped</p>
+                <h3>Completed work</h3>
               </div>
-              <strong data-activity="closed-issues">—</strong>
+              <strong class="panel__count" data-activity="closed-issues">—</strong>
             </div>
             <ul class="issue-list" id="closed-issue-list"></ul>
           </article>
@@ -152,36 +204,61 @@
       </div>
     </section>
 
+    <section class="section section--dark" aria-labelledby="evolution-title">
+      <div class="shell">
+        <div class="section-heading section-heading--light">
+          <p class="kicker">Architecture evolution</p>
+          <h2 id="evolution-title">One system, growing deliberately.</h2>
+          <p>Each phase expands how athletes reach Peso without splitting identity, analysis, or saved results into separate products.</p>
+        </div>
+
+        <div class="evolution-track" aria-label="Peso architecture evolution timeline">
+          <article class="evolution-card evolution-card--complete">
+            <p class="evolution-card__phase">Foundation</p>
+            <span class="evolution-card__status">Current</span>
+            <h3>Mobile analysis loop</h3>
+            <p>Capture, process, review, coach, and save through the native app and shared Python backend.</p>
+            <a href="mobile-flow.html">See mobile flow <span aria-hidden="true">→</span></a>
+          </article>
+          <article class="evolution-card evolution-card--active">
+            <p class="evolution-card__phase">Expansion</p>
+            <span class="evolution-card__status">In development</span>
+            <h3>Authenticated Web Beta</h3>
+            <p>Bring upload, analysis progress, review, and Saved Lifts into an authenticated browser experience.</p>
+            <a href="web-app-flow.html">See web flow <span aria-hidden="true">→</span></a>
+          </article>
+          <article class="evolution-card evolution-card--next">
+            <p class="evolution-card__phase">Durability</p>
+            <span class="evolution-card__status">Planned</span>
+            <h3>Persistent analysis jobs</h3>
+            <p>Move long-running work to durable database-backed jobs that survive browser, API, and worker restarts.</p>
+            <a href="backend-flow.html">See backend flow <span aria-hidden="true">→</span></a>
+          </article>
+        </div>
+        <p class="evolution-note">The athlete sees one Peso account throughout. The architecture changes underneath, not the mental model.</p>
+      </div>
+    </section>
+
     <section class="section" aria-labelledby="motion-title">
       <div class="shell">
         <div class="section-heading">
-          <p class="kicker">The product in motion</p>
-          <h2 id="motion-title">Analysis should be visible.</h2>
-          <p>Real Peso demos show the same overlays and review concepts described in the flow diagrams.</p>
+          <p class="kicker">Inspectable by design</p>
+          <h2 id="motion-title">The analysis stays visible.</h2>
+          <p>Tracking assistance and pose overlays make it possible to understand what Peso followed—not just accept a result.</p>
         </div>
 
-        <div class="demo-grid">
-          <article class="demo-card">
-            <div class="demo-card__media">
-              <video autoplay muted loop playsinline preload="metadata" aria-label="Peso mobile squat review demo">
-                <source src="assets/peso-mobile-demo.mp4" type="video/mp4">
-              </video>
-            </div>
-            <div class="demo-card__copy">
-              <h3>Mobile review</h3>
-              <p>Joint tracking, playback, summary, coaching, and save actions.</p>
-            </div>
-          </article>
-
+        <div class="demo-grid demo-grid--editorial">
           <article class="demo-card demo-card--wide">
             <div class="demo-card__media">
               <video autoplay muted loop playsinline preload="metadata" poster="assets/peso-pin-assisted-bar-path.jpg" aria-label="Peso pin-assisted bar path demo">
                 <source src="assets/peso-pin-assisted-bar-path.mp4" type="video/mp4">
               </video>
+              <span class="demo-card__number">01</span>
             </div>
             <div class="demo-card__copy">
-              <h3>Pin-assisted tracking</h3>
-              <p>User anchors help preserve the physical point being tracked.</p>
+              <p class="demo-card__eyebrow">Tracking assistance</p>
+              <h3>Anchor the physical point.</h3>
+              <p>User pins help Peso preserve the point being followed when footage is difficult.</p>
             </div>
           </article>
 
@@ -190,59 +267,77 @@
               <video autoplay muted loop playsinline preload="metadata" poster="assets/peso-pose-overlay.jpg" aria-label="Peso pose overlay demo">
                 <source src="assets/peso-pose-overlay.mp4" type="video/mp4">
               </video>
+              <span class="demo-card__number">02</span>
             </div>
             <div class="demo-card__copy">
-              <h3>Pose overlay</h3>
-              <p>Tracked joints make movement and analysis quality inspectable.</p>
+              <p class="demo-card__eyebrow">Movement inspection</p>
+              <h3>Make tracking legible.</h3>
+              <p>Joint overlays keep movement quality and analysis confidence connected to the video.</p>
             </div>
           </article>
         </div>
       </div>
     </section>
 
-    <section class="section" aria-labelledby="map-title">
+    <section class="section section--soft" aria-labelledby="map-title">
       <div class="shell">
         <div class="section-heading">
-          <p class="kicker">Project map</p>
-          <h2 id="map-title">Follow each flow</h2>
-          <p>Each page answers one question without mixing product experience, infrastructure, and internal tooling.</p>
+          <p class="kicker">Explore the system</p>
+          <h2 id="map-title">Choose a path through Peso.</h2>
+          <p>Each page isolates one perspective so product experience, infrastructure, and internal tooling stay easy to understand.</p>
         </div>
 
         <div class="card-grid">
-          <a class="link-card" href="architecture.html">
+          <a class="link-card link-card--featured" href="architecture.html">
             <span class="link-card__index">01 · SYSTEM</span>
             <h3>Project architecture</h3>
             <p>Surfaces, services, data stores, deployment, and the internal analysis dashboard.</p>
+            <span class="link-card__arrow" aria-hidden="true">↗</span>
           </a>
           <a class="link-card" href="mobile-flow.html">
             <span class="link-card__index">02 · ATHLETE</span>
             <h3>Mobile app flow</h3>
             <p>From account entry through capture, analysis, review, and Saved Lifts.</p>
+            <span class="link-card__arrow" aria-hidden="true">↗</span>
           </a>
           <a class="link-card" href="marketing-flow.html">
             <span class="link-card__index">03 · VISITOR</span>
-            <h3>Marketing Site flow</h3>
+            <h3>Marketing flow</h3>
             <p>How a visitor learns about Peso and crosses into the product.</p>
+            <span class="link-card__arrow" aria-hidden="true">↗</span>
           </a>
           <a class="link-card" href="web-app-flow.html">
             <span class="link-card__index">04 · WEB BETA</span>
             <h3>Web App flow</h3>
-            <p>The planned authenticated beta plus the device-local Demo Analysis path.</p>
+            <p>The planned authenticated beta and the browser-local Demo Analysis path.</p>
+            <span class="link-card__arrow" aria-hidden="true">↗</span>
           </a>
           <a class="link-card" href="backend-flow.html">
             <span class="link-card__index">05 · PROCESSING</span>
             <h3>Backend flow</h3>
-            <p>Authentication, upload ownership, durable jobs, the analysis pipeline, and saved results.</p>
+            <p>Identity, upload ownership, durable jobs, analysis, and saved results.</p>
+            <span class="link-card__arrow" aria-hidden="true">↗</span>
           </a>
         </div>
       </div>
     </section>
   </main>
 
-  <footer class="site-footer">
+  <footer class="site-footer site-footer--home">
+    <div class="shell footer-cta">
+      <div>
+        <p class="kicker">Follow the build</p>
+        <h2>Understand the product.<br>Then inspect the work.</h2>
+      </div>
+      <div class="footer-actions">
+        <a class="button button--light" data-repository-link href="https://github.com/NathanN-275/Peso" target="_blank" rel="noreferrer">Visit GitHub <span aria-hidden="true">↗</span></a>
+        <a class="button button--ghost" href="https://www.linkedin.com/in/nathanngau27/" target="_blank" rel="noreferrer">Connect on LinkedIn <span aria-hidden="true">↗</span></a>
+        <span class="button button--disabled-dark" aria-label="Private beta is not publicly available yet">Private beta · Soon</span>
+      </div>
+    </div>
     <div class="shell site-footer__inner">
-      <p>Peso project log · generated from public repository activity</p>
-      <p><a data-repository-link href="https://github.com/NathanN-275/Peso">GitHub repository</a></p>
+      <p>Developed and created by Nathan Ngau · Peso project log</p>
+      <p>Rolling <span data-activity="window-days">90</span>-day activity view</p>
     </div>
   </footer>
 </body>
