@@ -96,6 +96,9 @@ test('native upload uses advisory mode while web keeps the existing gate', () =>
   );
 
   assert.match(screenSource, /advisoryOnly:\s*!isWeb/);
+  assert.match(screenSource, /variant=\{isWeb \? 'full' : 'essential'\}/);
+  assert.match(screenSource, /label="Change Video"/);
+  assert.match(screenSource, /scrollContentWithStickyFooter/);
   assert.match(reviewSource, /Video quality warning/);
   assert.match(reviewSource, /Tracking might not be accurate because of the video quality/);
   assert.match(reviewSource, /showCancel=\{false\}/);

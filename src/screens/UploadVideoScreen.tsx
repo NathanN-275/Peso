@@ -1546,7 +1546,7 @@ export default function UploadVideoScreen({
         <View style={styles.stickyActions}>
           <View style={styles.stickySecondaryRow}>
             <Button
-              label={changeVideoLabel}
+              label="Change Video"
               onPress={sourceMode === 'camera' ? handleRecordVideoPress : handlePickVideoPress}
               disabled={uploading || analysisRunning}
               variant="secondary"
