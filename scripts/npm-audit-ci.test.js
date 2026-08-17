@@ -5,6 +5,11 @@ const { findBlockingVulnerabilities } = require('./npm-audit-ci');
 
 const allowedNode =
   'node_modules/glob/node_modules/brace-expansion';
+const allowedImageSizeNode = 'node_modules/image-size';
+const imageSizeAdvisories = [
+  'https://github.com/advisories/GHSA-w3rx-r6r6-pgpr',
+  'https://github.com/advisories/GHSA-5p2g-fcmc-qvqq',
+];
 
 function createLockfile(version = '1.1.16', node = allowedNode) {
   return {
@@ -44,6 +49,50 @@ function createReport({
         severity,
         nodes: ['node_modules/react-native'],
         via: ['minimatch'],
+      },
+    },
+  };
+}
+
+function createImageSizeReport({
+  advisoryUrls = imageSizeAdvisories,
+  node = allowedImageSizeNode,
+} = {}) {
+  return {
+    vulnerabilities: {
+      'image-size': {
+        name: 'image-size',
+        severity: 'high',
+        nodes: [node],
+        via: advisoryUrls.map((url) => ({
+          name: 'image-size',
+          severity: 'high',
+          url,
+        })),
+      },
+      metro: {
+        name: 'metro',
+        severity: 'high',
+        nodes: ['node_modules/metro'],
+        via: ['image-size', 'metro-config', 'metro-transform-worker'],
+      },
+      'metro-config': {
+        name: 'metro-config',
+        severity: 'high',
+        nodes: ['node_modules/metro-config'],
+        via: ['metro'],
+      },
+      'metro-transform-worker': {
+        name: 'metro-transform-worker',
+        severity: 'high',
+        nodes: ['node_modules/metro-transform-worker'],
+        via: ['metro'],
+      },
+      expo: {
+        name: 'expo',
+        severity: 'high',
+        nodes: ['node_modules/expo'],
+        via: ['metro'],
       },
     },
   };
@@ -133,4 +182,73 @@ test('fails closed when npm returns an unknown advisory severity', () => {
   const blockers = findBlockingVulnerabilities(report, createLockfile());
 
   assert.equal(blockers.length, 3);
+});
+
+test('allows both unpatched image-size advisories only through Metro build tooling', () => {
+  const lockfile = {
+    packages: {
+      [allowedImageSizeNode]: { version: '1.2.1' },
+    },
+  };
+
+  assert.deepEqual(
+    findBlockingVulnerabilities(createImageSizeReport(), lockfile),
+    [],
+  );
+});
+
+test('blocks image-size when an advisory is not explicitly allowed', () => {
+  const lockfile = {
+    packages: {
+      [allowedImageSizeNode]: { version: '1.2.1' },
+    },
+  };
+  const blockers = findBlockingVulnerabilities(
+    createImageSizeReport({
+      advisoryUrls: [...imageSizeAdvisories, 'https://github.com/advisories/GHSA-unknown'],
+    }),
+    lockfile,
+  );
+
+  assert.deepEqual(
+    blockers.map(({ name }) => name),
+    ['image-size', 'metro', 'metro-config', 'metro-transform-worker', 'expo'],
+  );
+});
+
+test('blocks image-size when the installed version changes', () => {
+  const lockfile = {
+    packages: {
+      [allowedImageSizeNode]: { version: '1.2.0' },
+    },
+  };
+
+  assert.equal(
+    findBlockingVulnerabilities(createImageSizeReport(), lockfile).length,
+    5,
+  );
+});
+
+test('blocks high-severity dependency cycles with no concrete advisory', () => {
+  const report = {
+    vulnerabilities: {
+      metro: {
+        name: 'metro',
+        severity: 'high',
+        nodes: ['node_modules/metro'],
+        via: ['metro-config'],
+      },
+      'metro-config': {
+        name: 'metro-config',
+        severity: 'high',
+        nodes: ['node_modules/metro-config'],
+        via: ['metro'],
+      },
+    },
+  };
+
+  assert.deepEqual(
+    findBlockingVulnerabilities(report, { packages: {} }).map(({ name }) => name),
+    ['metro', 'metro-config'],
+  );
 });

@@ -10,6 +10,14 @@ const SEVERITY_RANK = {
   critical: 4,
 };
 
+const IMAGE_SIZE_ALLOWANCE = {
+  dependency: 'image-size',
+  version: '1.2.1',
+  nodes: new Set(['node_modules/image-size']),
+  reason:
+    'Expo 57 Metro 0.84 pins image-size 1.x, both advisories have no patched release, and Metro uses it only for repository-owned build assets rather than user-uploaded runtime media.',
+};
+
 const ALLOWED_ADVISORIES = {
   'https://github.com/advisories/GHSA-mh99-v99m-4gvg': {
     dependency: 'brace-expansion',
@@ -22,6 +30,8 @@ const ALLOWED_ADVISORIES = {
     reason:
       'Expo 55 and React Native 0.83 build tooling pin minimatch 3, which cannot consume the patched brace-expansion 5 release.',
   },
+  'https://github.com/advisories/GHSA-w3rx-r6r6-pgpr': IMAGE_SIZE_ALLOWANCE,
+  'https://github.com/advisories/GHSA-5p2g-fcmc-qvqq': IMAGE_SIZE_ALLOWANCE,
 };
 
 function isAllowedAdvisory(advisory, vulnerability, lockfile) {
@@ -43,15 +53,16 @@ function isAllowedAdvisory(advisory, vulnerability, lockfile) {
   );
 }
 
-function isAllowedVulnerability(
+function evaluateAllowedVulnerability(
   name,
   vulnerabilities,
   lockfile,
-  auditLevel = AUDIT_LEVEL,
-  visiting = new Set(),
+  auditLevel,
+  visiting,
+  evidence,
 ) {
   if (visiting.has(name)) {
-    return false;
+    return true;
   }
 
   const vulnerability = vulnerabilities[name];
@@ -73,14 +84,41 @@ function isAllowedVulnerability(
 
   return relevantCauses.length > 0 && relevantCauses.every((cause) =>
     typeof cause === 'string'
-      ? isAllowedVulnerability(
+      ? evaluateAllowedVulnerability(
           cause,
           vulnerabilities,
           lockfile,
           auditLevel,
           nextVisiting,
+          evidence,
         )
-      : isAllowedAdvisory(cause, vulnerability, lockfile),
+      : (() => {
+          const allowed = isAllowedAdvisory(cause, vulnerability, lockfile);
+          if (allowed) {
+            evidence.allowedAdvisories += 1;
+          }
+          return allowed;
+        })(),
+  );
+}
+
+function isAllowedVulnerability(
+  name,
+  vulnerabilities,
+  lockfile,
+  auditLevel = AUDIT_LEVEL,
+  visiting = new Set(),
+) {
+  const evidence = { allowedAdvisories: 0 };
+  return (
+    evaluateAllowedVulnerability(
+      name,
+      vulnerabilities,
+      lockfile,
+      auditLevel,
+      visiting,
+      evidence,
+    ) && evidence.allowedAdvisories > 0
   );
 }
 
