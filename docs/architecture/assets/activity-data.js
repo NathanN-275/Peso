@@ -1,14 +1,14 @@
 window.PESO_PROJECT_ACTIVITY = {
-  "generatedAt": "2026-08-07T00:00:53.793Z",
+  "generatedAt": "2026-08-07T00:12:27.354Z",
   "window": {
     "days": 90,
-    "startsAt": "2026-05-09T00:00:53.793Z",
-    "endsAt": "2026-08-07T00:00:53.793Z"
+    "startsAt": "2026-05-09T00:12:27.354Z",
+    "endsAt": "2026-08-07T00:12:27.354Z"
   },
   "repository": {
     "name": "NathanN-275/Peso",
     "url": "https://github.com/NathanN-275/Peso",
-    "branch": "tracking-rework-v2"
+    "branch": "main"
   },
   "activity": {
     "summary": {
