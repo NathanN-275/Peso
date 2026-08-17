@@ -57,12 +57,25 @@ function run(overrides: Record<string, unknown> = {}) {
         type: 'snapshot',
         at: createdAt,
         payload: {
+          name: 'quality_preflight',
+          quality_preflight: {
+            status: 'warning',
+            overallConfidence: 0.78,
+            checks: { lighting: { status: 'warning', reasonCode: 'lighting_quality_low' } },
+          },
+        },
+      },
+      {
+        index: 2,
+        type: 'snapshot',
+        at: createdAt,
+        payload: {
           name: 'raw_pose',
           frames: [{ source_frame_index: 1, timestamp_ms: 0, landmarks: { left_shoulder: { x: 0.2, y: 0.3, visibility: 0.8 } } }],
         },
       },
       {
-        index: 2,
+        index: 3,
         type: 'snapshot',
         at: createdAt,
         payload: {
@@ -73,7 +86,7 @@ function run(overrides: Record<string, unknown> = {}) {
         },
       },
       {
-        index: 3,
+        index: 4,
         type: 'snapshot',
         at: createdAt,
         payload: {
@@ -82,7 +95,7 @@ function run(overrides: Record<string, unknown> = {}) {
           pose_repair: { detector_occlusion_count: 1 },
         },
       },
-      { index: 4, type: 'stage_completed', at: createdAt, payload: { name: 'pose_repair', duration_ms: 18 } },
+      { index: 5, type: 'stage_completed', at: createdAt, payload: { name: 'pose_repair', duration_ms: 18 } },
     ],
     ...overrides,
   };
@@ -130,6 +143,8 @@ describe('analysis dashboard', () => {
     expect(screen.queryByRole('heading', { name: 'Frame inspector' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Diagnostics' }));
     expect(await screen.findByRole('heading', { name: 'Frame inspector' })).toBeInTheDocument();
+    expect(await screen.findByText('Quality preflight and sampled-frame evidence')).toBeInTheDocument();
+    expect(await screen.findByText(/lighting_quality_low/)).toBeInTheDocument();
   });
 
   it('shows only the side-squat annotation targets', async () => {

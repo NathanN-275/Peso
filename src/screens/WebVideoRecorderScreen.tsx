@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import SideSquatRecordingGuide from '../components/SideSquatRecordingGuide';
 import type { VideoSetupSelection } from '../constants/videoSetup';
 import tokens from '../theme/tokens';
 
@@ -970,6 +971,12 @@ export default function WebVideoRecorderScreen({
               <Text numberOfLines={1} style={styles.setupPillText}>{setupLabel}</Text>
             </View>
           )}
+
+          {phase === 'initializing' || phase === 'ready' ? (
+            <View style={styles.recordingGuideOverlay}>
+              <SideSquatRecordingGuide variant="compact" setup={setup ?? null} />
+            </View>
+          ) : null}
         </View>
 
         {errorMessage ? (
@@ -1131,6 +1138,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 17,
     fontWeight: '800',
+  },
+  recordingGuideOverlay: {
+    position: 'absolute',
+    top: 14,
+    left: 14,
+    right: 14,
   },
   messageBlock: {
     marginHorizontal: 16,

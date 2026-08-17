@@ -153,6 +153,11 @@ class AnalysisTraceServiceTest(unittest.TestCase):
     trace.snapshot("pin_fusion", manual_tracking={"tracks": {"upper_back": {
       "4": {"x": 0.3, "y": 0.4, "confidence": 0.9, "unneeded": "omit"},
     }}})
+    trace.snapshot("quality_preflight", quality_preflight={
+      "status": "warning",
+      "checks": {"lighting": {"status": "warning", "reasonCode": "lighting_quality_low"}},
+      "sampledFrameMetadata": {"frames": [{"frameIndex": 4, "blurVariance": 44.0}]},
+    })
     trace.snapshot("barbell_tracking", barbell_path={"available": True, "points": [{"time": 0.22, "x": 0.5, "y": 0.4, "descriptor": "not-for-review"}]}, diagnostics={"frames": list(range(30))})
     trace.complete({}, {})
 
@@ -164,6 +169,12 @@ class AnalysisTraceServiceTest(unittest.TestCase):
     self.assertEqual(set(raw["payload"]["frames"][0]["landmarks"]), {"right_knee"})
     pins = next(event for event in review["events"] if event["payload"].get("name") == "pin_fusion")
     self.assertEqual(pins["payload"]["manual_tracking"]["tracks"]["upper_back"]["4"], {"x": 0.3, "y": 0.4, "confidence": 0.9})
+    preflight = next(event for event in review["events"] if event["payload"].get("name") == "quality_preflight")
+    self.assertEqual(preflight["payload"]["quality_preflight"]["status"], "warning")
+    self.assertEqual(
+      preflight["payload"]["quality_preflight"]["checks"]["lighting"]["reasonCode"],
+      "lighting_quality_low",
+    )
     barbell = next(event for event in review["events"] if event["payload"].get("name") == "barbell_tracking")
     self.assertEqual(barbell["payload"]["barbell_path"]["points"][0]["x"], 0.5)
     self.assertNotIn("descriptor", barbell["payload"]["barbell_path"]["points"][0])

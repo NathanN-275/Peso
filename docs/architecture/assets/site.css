@@ -181,7 +181,7 @@ video {
 }
 
 main {
-  overflow: clip;
+  overflow: visible;
 }
 
 h1,
@@ -197,6 +197,8 @@ h2,
 h3,
 h4 {
   text-wrap: balance;
+  overflow: visible;
+  padding-right: 0.12em;
 }
 
 h1 {
@@ -577,7 +579,7 @@ h3 {
 
 .scribble-note {
   position: absolute;
-  right: 5px;
+  left: 8px;
   bottom: 42px;
   z-index: 2;
   margin: 0;
@@ -1497,21 +1499,21 @@ h3 {
 }
 
 .demo-card__media {
-  aspect-ratio: 9 / 16;
+  aspect-ratio: auto;
   position: relative;
   overflow: hidden;
   background: var(--navy);
 }
 
 .demo-card--wide .demo-card__media {
-  aspect-ratio: 16 / 10;
+  aspect-ratio: 360 / 874;
 }
 
 .demo-card video {
   width: 100%;
-  height: 100%;
+  height: auto;
   display: block;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .demo-card__number {
@@ -2365,7 +2367,7 @@ h3 {
   }
 
   .scribble-note {
-    right: 0;
+    left: 0;
     font-size: 16px;
   }
 
@@ -2428,7 +2430,7 @@ h3 {
   }
 
   .demo-card--wide .demo-card__media {
-    aspect-ratio: 4 / 3;
+    aspect-ratio: 360 / 874;
   }
 
   .footer-actions .button {

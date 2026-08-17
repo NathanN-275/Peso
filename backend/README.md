@@ -103,6 +103,24 @@ POSE_REPAIR_ENABLED=true
 POSE_REPAIR_MAX_GAP_FRAMES=3
 POSE_REPAIR_VELOCITY_GAP_FRAMES=2
 POSE_REPAIR_RECOVERY_HYSTERESIS_FRAMES=2
+SIDE_SQUAT_PREFLIGHT_SAMPLE_COUNT=12
+SIDE_SQUAT_PREFLIGHT_MAX_FRAME_DIMENSION=512
+SIDE_SQUAT_PREFLIGHT_POSE_VISIBILITY=0.35
+SIDE_SQUAT_PREFLIGHT_SIDE_BLOCK=0.42
+SIDE_SQUAT_PREFLIGHT_SIDE_WARNING=0.58
+SIDE_SQUAT_PREFLIGHT_CHAIN_BLOCK=0.55
+SIDE_SQUAT_PREFLIGHT_CHAIN_WARNING=0.75
+SIDE_SQUAT_PREFLIGHT_SUBJECT_BLOCK=0.28
+SIDE_SQUAT_PREFLIGHT_SUBJECT_WARNING=0.38
+SIDE_SQUAT_PREFLIGHT_BLUR_BLOCK=30
+SIDE_SQUAT_PREFLIGHT_BLUR_WARNING=55
+SIDE_SQUAT_PREFLIGHT_SECOND_PERSON_RATIO=0.55
+SIDE_SQUAT_PREFLIGHT_PEOPLE_BLOCK=0.30
+SIDE_SQUAT_PREFLIGHT_PEOPLE_WARNING=0.15
+SIDE_SQUAT_PREFLIGHT_CAMERA_SHIFT_WARNING=0.035
+SIDE_SQUAT_PREFLIGHT_LIGHTING_MEAN_LOW=45
+SIDE_SQUAT_PREFLIGHT_LIGHTING_MEAN_HIGH=210
+SIDE_SQUAT_PREFLIGHT_LIGHTING_CONTRAST_LOW=30
 ANALYSIS_TRACE_ENABLED=true
 ANALYSIS_TRACE_DIR=.peso/analysis-traces
 ANALYSIS_TRACE_MAX_RUNS=20
@@ -123,6 +141,14 @@ The backend reuses a singleton Supabase admin client and a bounded pooled HTTP c
 ## Pose analysis settings
 
 Pose analysis samples squat videos at `POSE_TARGET_FPS` and resizes frames so the longest side is at most `POSE_MAX_FRAME_DIMENSION` before inference.
+
+New side-view squat submissions call `POST /videos/{video_id}/quality-preflight` before `POST /analyze/{video_id}`. The preflight samples frames across the clip, persists only numeric/frame metadata (never sampled images), and uses separate thresholds for side orientation, body-chain coverage, lifter scale, blur, and multi-person ambiguity. Any current-version verdict may queue; missing or outdated evidence cannot. Native mobile and mobile web viewports below 768px treat warning and blocked verdicts as advisories shown once in review, while desktop web keeps its client-side pre-analysis gate. Existing video rows remain compatible because `quality_preflight_required` defaults to `false`. Apply `supabase/migrations/202608060001_side_squat_quality_preflight.sql` before deploying this backend.
+
+## Side-squat pose backend evaluation
+
+`scripts/evaluate_pose_backends.py` runs MediaPipe and RTMPose in isolated CPU workers on the same private manifest. It reports landmark/confidence coverage, physical-side stability proxies, temporal jitter residuals, bone-length consistency, sudden displacement frequency, labeled-bottom stability, processing time, peak resident memory, package/model versions, device, fallback events, and only the compatibility of the platform actually executed. Proxy metrics and ground-truth metrics are separate; sparse, missing, or synthetic labels set `accuracyClaimEligible` to false. The harness records evidence but never silently selects a production backend.
+
+Use `scripts/prepare_pose_evaluation_annotations.py` to inspect or convert CVAT labels. The annotation schema, private manifest template, and exact commands are in `tests/fixtures/pose_backend_evaluation/README.md`. Source videos, real labels, model weights, and generated benchmark reports must remain outside Git.
 
 `POSE_BACKEND=hybrid` runs MediaPipe first and can retry hard clips with RTMPose when:
 

@@ -25,7 +25,12 @@ from app.routes.videos import (
   mark_upload_failed,
   queue_analysis,
   register_video,
+  run_quality_preflight,
   save_video,
+)
+from app.analysis.side_squat.quality_preflight import (
+  QUALITY_PREFLIGHT_MODEL_VERSION,
+  QUALITY_PREFLIGHT_THRESHOLD_VERSION,
 )
 from app.services.config import DEFAULT_MODEL_VERSION, get_settings
 from app.services.video_work_limits import reset_video_work_limits_for_tests
@@ -221,8 +226,46 @@ class VideoRoutesTest(unittest.TestCase):
     self.assertEqual(fields["save_state"], "pending")
     self.assertEqual(fields["uploaded_size_bytes"], 2048)
     self.assertEqual(fields["original_size_bytes"], 2048)
+    self.assertFalse(fields["quality_preflight_required"])
     self.assertEqual(response.video_id, VIDEO_ID)
     self.assertEqual(response.uploaded_size_bytes, 2048)
+
+  def test_register_video_requires_preflight_only_for_new_side_view_squats(self) -> None:
+    repository = MagicMock()
+    repository.count_user_in_progress_videos.return_value = 0
+    repository.count_recent_user_uploads.return_value = 0
+    repository.create_uploaded_video.return_value = {
+      "id": str(VIDEO_ID),
+      "status": "uploaded",
+      "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mp4",
+    }
+    storage = MagicMock()
+    storage.validate_video_object.return_value = {"metadata": {"size": "2048", "mimetype": "video/mp4"}}
+    storage.storage_object_size_bytes.return_value = 2048
+    settings = MagicMock(
+      saved_video_storage_ttl_hours=24,
+      max_user_in_progress_videos=3,
+      max_user_uploads_per_hour=20,
+      max_video_duration_ms=300000,
+    )
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.get_settings", return_value=settings),
+      patch("app.routes.videos.uuid4", return_value=VIDEO_ID),
+    ):
+      register_video(
+        RegisterVideoRequest(
+          storage_path=f"{USER_ID}/uploads/{VIDEO_ID}.mp4",
+          exercise_type="Goblet Squat",
+          view_type="Side",
+        ),
+        USER_ID,
+      )
+
+    fields = repository.create_uploaded_video.call_args.args[0]
+    self.assertTrue(fields["quality_preflight_required"])
 
   def test_register_video_rejects_server_owned_client_fields(self) -> None:
     for field, value in {
@@ -441,6 +484,7 @@ class VideoRoutesTest(unittest.TestCase):
   def test_video_capabilities_reports_pin_tracking_support(self) -> None:
     repository = MagicMock()
     repository.supports_tracking_setup.return_value = True
+    repository.supports_quality_preflight.return_value = True
 
     with patch("app.routes.videos.VideoRepository", return_value=repository):
       response = get_video_capabilities(USER_ID)
@@ -448,11 +492,14 @@ class VideoRoutesTest(unittest.TestCase):
     repository.supports_tracking_setup.assert_called_once_with()
     self.assertTrue(response.pin_assisted_tracking)
     self.assertEqual(response.tracking_setup_versions, [1, 2])
+    self.assertTrue(response.side_squat_quality_preflight)
+    self.assertEqual(response.quality_preflight_versions, [QUALITY_PREFLIGHT_THRESHOLD_VERSION])
     self.assertIsNone(response.reason)
 
   def test_video_capabilities_reports_missing_tracking_migration(self) -> None:
     repository = MagicMock()
     repository.supports_tracking_setup.return_value = False
+    repository.supports_quality_preflight.return_value = True
 
     with patch("app.routes.videos.VideoRepository", return_value=repository):
       response = get_video_capabilities(USER_ID)
@@ -460,6 +507,139 @@ class VideoRoutesTest(unittest.TestCase):
     self.assertFalse(response.pin_assisted_tracking)
     self.assertEqual(response.tracking_setup_versions, [])
     self.assertEqual(response.reason, "tracking_setup_migration_missing")
+
+  def test_video_capabilities_reports_missing_preflight_migration(self) -> None:
+    repository = MagicMock()
+    repository.supports_tracking_setup.return_value = True
+    repository.supports_quality_preflight.return_value = False
+
+    with patch("app.routes.videos.VideoRepository", return_value=repository):
+      response = get_video_capabilities(USER_ID)
+
+    self.assertTrue(response.pin_assisted_tracking)
+    self.assertFalse(response.side_squat_quality_preflight)
+    self.assertEqual(response.quality_preflight_versions, [])
+    self.assertEqual(response.reason, "quality_preflight_migration_missing")
+
+  def test_quality_preflight_persists_evidence_and_removes_tempfile(self) -> None:
+    repository = MagicMock()
+    repository.require_owned_video.return_value = {
+      "id": str(VIDEO_ID),
+      "user_id": USER_ID,
+      "status": "uploaded",
+      "exercise_type": "squat",
+      "view_type": "side",
+      "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+      "quality_preflight": None,
+    }
+    storage = MagicMock()
+    storage.download_to_tempfile.return_value = "/tmp/preflight.mov"
+    preflight = {
+      "status": "warning",
+      "overallConfidence": 0.78,
+      "checks": {},
+      "userMessages": ["Use more light."],
+      "recordingTips": ["Use more light."],
+      "modelVersion": QUALITY_PREFLIGHT_MODEL_VERSION,
+      "thresholdVersion": QUALITY_PREFLIGHT_THRESHOLD_VERSION,
+      "thresholds": {},
+      "sampledFrameMetadata": {"frames": []},
+      "processingDurationMs": 12,
+    }
+    evaluator = MagicMock()
+    evaluator.evaluate_file.return_value = preflight
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      patch("app.routes.videos.SideSquatQualityPreflight", return_value=evaluator),
+    ):
+      response = run_quality_preflight(VIDEO_ID, USER_ID)
+
+    storage.download_to_tempfile.assert_called_once_with(f"{USER_ID}/uploads/{VIDEO_ID}.mov")
+    evaluator.evaluate_file.assert_called_once_with("/tmp/preflight.mov", exercise_type="squat")
+    repository.update_video.assert_called_once_with(str(VIDEO_ID), {"quality_preflight": preflight})
+    storage.remove_tempfile.assert_called_once_with("/tmp/preflight.mov")
+    self.assertEqual(response.status, "warning")
+
+  def test_queue_analysis_requires_current_preflight_for_flagged_submission(self) -> None:
+    repository = MagicMock()
+    repository.require_owned_video.return_value = {
+      "id": str(VIDEO_ID),
+      "user_id": USER_ID,
+      "status": "uploaded",
+      "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+      "quality_preflight_required": True,
+      "quality_preflight": None,
+    }
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService") as storage,
+      self.assertRaises(HTTPException) as raised,
+    ):
+      queue_analysis(VIDEO_ID, BackgroundTasks(), USER_ID)
+
+    self.assertEqual(raised.exception.status_code, 409)
+    storage.assert_not_called()
+    repository.queue_owned_video_if_status.assert_not_called()
+
+  def test_queue_analysis_allows_blocked_preflight_as_advisory(self) -> None:
+    repository = MagicMock()
+    repository.require_owned_video.return_value = {
+      "id": str(VIDEO_ID),
+      "user_id": USER_ID,
+      "status": "uploaded",
+      "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+      "quality_preflight_required": True,
+      "quality_preflight": {
+        "status": "blocked",
+        "modelVersion": QUALITY_PREFLIGHT_MODEL_VERSION,
+        "thresholdVersion": QUALITY_PREFLIGHT_THRESHOLD_VERSION,
+      },
+    }
+
+    repository.count_user_in_progress_videos.return_value = 0
+    repository.queue_owned_video_if_status.return_value = {"status": "queued"}
+    storage = MagicMock()
+    background_tasks = BackgroundTasks()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+    ):
+      response = queue_analysis(VIDEO_ID, background_tasks, USER_ID)
+
+    self.assertEqual(response.status, "queued")
+    self.assertEqual(len(background_tasks.tasks), 1)
+
+  def test_queue_analysis_allows_warning_preflight(self) -> None:
+    repository = MagicMock()
+    repository.require_owned_video.return_value = {
+      "id": str(VIDEO_ID),
+      "user_id": USER_ID,
+      "status": "uploaded",
+      "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+      "quality_preflight_required": True,
+      "quality_preflight": {
+        "status": "warning",
+        "modelVersion": QUALITY_PREFLIGHT_MODEL_VERSION,
+        "thresholdVersion": QUALITY_PREFLIGHT_THRESHOLD_VERSION,
+      },
+    }
+    repository.count_user_in_progress_videos.return_value = 0
+    repository.queue_owned_video_if_status.return_value = {"status": "queued"}
+    storage = MagicMock()
+    background_tasks = BackgroundTasks()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.StorageService", return_value=storage),
+    ):
+      response = queue_analysis(VIDEO_ID, background_tasks, USER_ID)
+
+    self.assertEqual(response.status, "queued")
+    self.assertEqual(len(background_tasks.tasks), 1)
 
   def test_video_capabilities_returns_service_unavailable_for_database_errors(self) -> None:
     repository = MagicMock()

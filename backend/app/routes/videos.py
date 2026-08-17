@@ -12,6 +12,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..analysis.pipeline import analyze_video
+from ..analysis.side_squat.quality_preflight import (
+  QUALITY_PREFLIGHT_MODEL_VERSION,
+  QUALITY_PREFLIGHT_THRESHOLD_VERSION,
+  SideSquatQualityPreflight,
+)
 from ..analysis.coaching_history import technique_trend_cue
 from ..analysis.manual_tracking import validate_tracking_setup
 from ..analysis.versioning import annotate_analysis_freshness, analysis_is_current
@@ -21,6 +26,7 @@ from ..services.analyzed_video_exports import (
   export_variant,
   playback_storage_path,
 )
+from ..services.analysis_trace import get_analysis_trace_service
 from ..services.auth import get_current_user_id
 from ..services.config import get_settings
 from ..services.saved_lift_exports import ARCHIVE_BUCKET, SavedLiftExportService
@@ -278,7 +284,23 @@ class StorageUsageResponse(BaseModel):
 class VideoCapabilitiesResponse(BaseModel):
   pin_assisted_tracking: bool
   tracking_setup_versions: list[int]
+  side_squat_quality_preflight: bool = False
+  quality_preflight_versions: list[str] = Field(default_factory=list)
   reason: str | None = None
+
+
+class QualityPreflightResponse(BaseModel):
+  video_id: UUID
+  status: Literal["pass", "warning", "blocked"]
+  overallConfidence: float
+  checks: dict[str, dict]
+  userMessages: list[str]
+  recordingTips: list[str]
+  modelVersion: str
+  thresholdVersion: str
+  thresholds: dict
+  sampledFrameMetadata: dict
+  processingDurationMs: int
 
 
 class AccountDeleteResponse(BaseModel):
@@ -313,6 +335,53 @@ def _video_is_saved(video: dict) -> bool:
 def _normalize_label(value: str) -> str:
   return " ".join(value.strip().lower().replace("_", " ").split())
 
+
+def _is_side_view_squat(exercise_type: str, view_type: str) -> bool:
+  return view_type == "side" and exercise_type.endswith("squat")
+
+
+def _quality_preflight_is_current(preflight: object) -> bool:
+  return (
+    isinstance(preflight, dict)
+    and preflight.get("modelVersion") == QUALITY_PREFLIGHT_MODEL_VERSION
+    and preflight.get("thresholdVersion") == QUALITY_PREFLIGHT_THRESHOLD_VERSION
+  )
+
+
+def _require_current_quality_preflight(video: dict) -> None:
+  if video.get("quality_preflight_required") is not True:
+    return
+
+  preflight = video.get("quality_preflight")
+  if not _quality_preflight_is_current(preflight):
+    raise HTTPException(
+      status_code=status.HTTP_409_CONFLICT,
+      detail="Run the current side-view squat quality preflight before starting analysis.",
+    )
+
+
+def _record_quality_preflight_trace(video: dict, preflight: dict) -> None:
+  # Record the advisory immediately so evidence survives even when a client
+  # chooses not to queue the full pipeline.
+  try:
+    trace = get_analysis_trace_service().start(
+      video_id=str(video.get("id") or ""),
+      user_id=str(video.get("user_id") or ""),
+      exercise_type=str(video.get("exercise_type") or "unknown"),
+      view_type=str(video.get("view_type") or "unknown"),
+      model_version=str(preflight.get("modelVersion") or QUALITY_PREFLIGHT_MODEL_VERSION),
+    )
+    trace.snapshot("quality_preflight", quality_preflight=preflight)
+    trace.complete(
+      {"quality_preflight": preflight},
+      {"quality_preflight": int(preflight.get("processingDurationMs") or 0)},
+    )
+  except Exception as trace_error:
+    logger.warning(
+      "Unable to record quality preflight trace for video %s: %s",
+      video.get("id"),
+      trace_error,
+    )
 
 def _public_storage_usage_payload(report) -> dict:
   payload = report.to_dict()
@@ -766,6 +835,7 @@ def register_video(
     "uploaded_size_bytes": actual_uploaded_size,
     "was_compressed": False,
     "storage_state": "available",
+    "quality_preflight_required": _is_side_view_squat(exercise_type, view_type),
   }
 
   if normalized_tracking_setup is not None:
@@ -816,7 +886,9 @@ def get_video_capabilities(
   _user_id: str = Depends(get_current_user_id),
 ) -> VideoCapabilitiesResponse:
   try:
-    pin_assisted_tracking = VideoRepository().supports_tracking_setup()
+    repository = VideoRepository()
+    pin_assisted_tracking = repository.supports_tracking_setup()
+    side_squat_quality_preflight = repository.supports_quality_preflight()
   except Exception as error:
     logger.exception("Unable to verify video tracking capabilities: %s", error)
     raise HTTPException(
@@ -827,8 +899,77 @@ def get_video_capabilities(
   return VideoCapabilitiesResponse(
     pin_assisted_tracking=pin_assisted_tracking,
     tracking_setup_versions=[1, 2] if pin_assisted_tracking else [],
-    reason=None if pin_assisted_tracking else "tracking_setup_migration_missing",
+    side_squat_quality_preflight=side_squat_quality_preflight,
+    quality_preflight_versions=(
+      [QUALITY_PREFLIGHT_THRESHOLD_VERSION]
+      if side_squat_quality_preflight
+      else []
+    ),
+    reason=(
+      "tracking_setup_migration_missing"
+      if not pin_assisted_tracking
+      else "quality_preflight_migration_missing"
+      if not side_squat_quality_preflight
+      else None
+    ),
   )
+
+
+@router.post("/videos/{video_id}/quality-preflight", response_model=QualityPreflightResponse)
+def run_quality_preflight(
+  video_id: UUID,
+  user_id: str = Depends(get_current_user_id),
+) -> QualityPreflightResponse:
+  repository = VideoRepository()
+  video_id_str = str(video_id)
+  video = repository.require_owned_video(video_id_str, user_id)
+  exercise_type = str(video.get("exercise_type") or "")
+  view_type = str(video.get("view_type") or "")
+
+  if not _is_side_view_squat(exercise_type, view_type):
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail="Quality preflight is available only for side-view squat submissions.",
+    )
+
+  if video.get("status") != "uploaded":
+    raise HTTPException(
+      status_code=status.HTTP_409_CONFLICT,
+      detail=f"Quality preflight cannot run from status '{video.get('status')}'.",
+    )
+
+  cached_preflight = video.get("quality_preflight")
+  if _quality_preflight_is_current(cached_preflight):
+    return QualityPreflightResponse(video_id=video_id, **cached_preflight)
+
+  playback_path = require_user_storage_path(_playback_storage_path(video), user_id, "playback_path")
+  video_work_slot = acquire_video_work_slot_or_429(
+    "quality_preflight",
+    user_id=user_id,
+    video_id=video_id_str,
+  )
+  storage = StorageService()
+  temp_file = None
+
+  try:
+    temp_file = storage.download_to_tempfile(playback_path)
+    preflight = SideSquatQualityPreflight().evaluate_file(
+      temp_file,
+      exercise_type=exercise_type,
+    )
+    repository.update_video(video_id_str, {"quality_preflight": preflight})
+    _record_quality_preflight_trace(video, preflight)
+  except RuntimeError as error:
+    raise HTTPException(
+      status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+      detail=str(error),
+    ) from error
+  finally:
+    if temp_file is not None:
+      storage.remove_tempfile(temp_file)
+    release_video_work_slot(video_work_slot)
+
+  return QualityPreflightResponse(video_id=video_id, **preflight)
 
 
 @router.post("/analyze/{video_id}", response_model=AnalyzeResponse)
@@ -847,6 +988,7 @@ def queue_analysis(
     analysis = repository.get_analysis_result(video_id_str)
 
     if not analysis_is_current(analysis):
+      _require_current_quality_preflight(video)
       playback_path = require_user_storage_path(_playback_storage_path(video), user_id, "playback_path")
       StorageService().validate_video_object(playback_path)
       _enforce_analysis_queue_limit(repository, user_id)
@@ -867,6 +1009,8 @@ def queue_analysis(
       status_code=status.HTTP_409_CONFLICT,
       detail=f"Video cannot be queued for analysis from status '{current_status}'.",
     )
+
+  _require_current_quality_preflight(video)
 
   playback_path = require_user_storage_path(_playback_storage_path(video), user_id, "playback_path")
   StorageService().validate_video_object(playback_path)

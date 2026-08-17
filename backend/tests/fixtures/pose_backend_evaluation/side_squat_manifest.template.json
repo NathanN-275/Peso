@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "allow_backend_selection": false,
+  "backends": ["mediapipe", "rtmpose"],
+  "config": {
+    "target_fps": 18,
+    "max_frame_dimension": 720,
+    "mediapipe_model_complexity": 2,
+    "min_detection_confidence": 0.6,
+    "min_tracking_confidence": 0.6,
+    "rtmpose_mode": "balanced",
+    "rtmpose_detection_frequency": 3,
+    "confidence_threshold": 0.35,
+    "sudden_displacement_heights_per_second": 4.0
+  },
+  "cases": [
+    {
+      "id": "replace-with-reviewed-side-squat",
+      "video_path": "/absolute/private/path/to/video.mov",
+      "annotations_path": null,
+      "exercise_type": "squat",
+      "view_type": "side",
+      "camera_case": "direct_side"
+    }
+  ]
+}

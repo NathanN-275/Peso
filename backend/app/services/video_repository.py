@@ -27,6 +27,9 @@ VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING = (
   "uploaded_size_bytes,was_compressed"
 )
 VIDEO_STORAGE_COLUMNS = f"{VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING},tracking_setup"
+VIDEO_STORAGE_COLUMNS_WITH_PREFLIGHT = (
+  f"{VIDEO_STORAGE_COLUMNS},quality_preflight,quality_preflight_required"
+)
 ANALYSIS_RESULT_COLUMNS = "id,video_id,model_version,result_json,created_at"
 ANALYSIS_RESULT_SAVE_MAX_ATTEMPTS = 3
 ANALYSIS_RESULT_SAVE_RETRY_BACKOFF_SECONDS = 0.5
@@ -42,30 +45,40 @@ class VideoRepository:
     try:
       response = (
         self.client.table("videos")
-        .select(VIDEO_STORAGE_COLUMNS)
+        .select(VIDEO_STORAGE_COLUMNS_WITH_PREFLIGHT)
         .eq("id", video_id)
         .limit(1)
         .execute()
       )
     except Exception as error:
-      logger.warning("Falling back to video query without tracking setup for video %s: %s", video_id, error)
+      logger.warning("Falling back to video query without quality preflight for video %s: %s", video_id, error)
       try:
         response = (
           self.client.table("videos")
-          .select(VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING)
+          .select(VIDEO_STORAGE_COLUMNS)
           .eq("id", video_id)
           .limit(1)
           .execute()
         )
-      except Exception as legacy_error:
-        logger.warning("Falling back to legacy video query for video %s: %s", video_id, legacy_error)
-        response = (
-          self.client.table("videos")
-          .select(VIDEO_LEGACY_BASE_COLUMNS)
-          .eq("id", video_id)
-          .limit(1)
-          .execute()
-        )
+      except Exception as tracking_error:
+        logger.warning("Falling back to video query without tracking setup for video %s: %s", video_id, tracking_error)
+        try:
+          response = (
+            self.client.table("videos")
+            .select(VIDEO_STORAGE_COLUMNS_WITHOUT_TRACKING)
+            .eq("id", video_id)
+            .limit(1)
+            .execute()
+          )
+        except Exception as legacy_error:
+          logger.warning("Falling back to legacy video query for video %s: %s", video_id, legacy_error)
+          response = (
+            self.client.table("videos")
+            .select(VIDEO_LEGACY_BASE_COLUMNS)
+            .eq("id", video_id)
+            .limit(1)
+            .execute()
+          )
 
     return response.data[0] if response.data else None
 
@@ -91,6 +104,33 @@ class VideoRepository:
       )
 
       if missing_tracking_column:
+        return False
+
+      raise
+
+  def supports_quality_preflight(self) -> bool:
+    # Both columns are required: one stores the evidence and one limits the
+    # gate to new submissions without changing legacy video behavior.
+    try:
+      (
+        self.client.table("videos")
+        .select("quality_preflight,quality_preflight_required")
+        .limit(1)
+        .execute()
+      )
+      return True
+    except Exception as error:
+      error_code = str(getattr(error, "code", "") or "")
+      error_message = str(error).lower()
+      missing_preflight_column = (
+        error_code == "42703"
+        or (
+          ("quality_preflight" in error_message or "quality_preflight_required" in error_message)
+          and ("does not exist" in error_message or "could not find" in error_message)
+        )
+      )
+
+      if missing_preflight_column:
         return False
 
       raise

@@ -605,6 +605,7 @@ export default function App() {
   );
   const rawSnapshot = snapshotIndex.get('raw_pose');
   const pinSnapshot = snapshotIndex.get('pin_fusion');
+  const qualityPreflightSnapshot = snapshotIndex.get('quality_preflight');
   const repairSnapshot = snapshotIndex.get('pose_repair');
   const barbellSnapshot = snapshotIndex.get('barbell_tracking');
   const rawFrame = useMemo(() => nearestFrame(rawSnapshot, currentTime), [currentTime, rawSnapshot]);
@@ -1087,6 +1088,7 @@ export default function App() {
         </section>
 
         {viewMode === 'diagnostics' ? <section className="diagnostics-grid">
+          <JsonPanel title="Quality preflight and sampled-frame evidence" value={qualityPreflightSnapshot?.payload.quality_preflight} />
           <JsonPanel title="Pin fusion and source decisions" value={pinSnapshot?.payload.tracking_assistance} />
           <JsonPanel title="Pose repair and occlusion decisions" value={repairSnapshot?.payload.pose_repair} />
           <JsonPanel title="Barbell and lift-specific diagnostics" value={barbellSnapshot?.payload.diagnostics} />

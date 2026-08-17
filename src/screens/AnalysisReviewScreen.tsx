@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
 import { discardAnalyzedVideo, saveAnalyzedVideo } from '../../lib/backendApi';
 import BarbellPathOverlay from '../components/BarbellPathOverlay';
+import ConfirmationDialog from '../components/ConfirmationDialog';
 import JointMotionTrailOverlay from '../components/JointMotionTrailOverlay';
 import PoseOverlay from '../components/PoseOverlay';
 import TrackingReferenceOverlay from '../components/TrackingReferenceOverlay';
@@ -24,6 +25,7 @@ import WorkoutDetailsSheet from '../components/WorkoutDetailsSheet';
 import tokens from '../theme/tokens';
 import { BarbellPath, VideoAnalysisResult } from '../types/videoAnalysis';
 import type { WorkoutSaveDetails } from '../../lib/workoutSavePolicy';
+import { shouldShowQualityAdvisory } from '../../lib/qualityPreflightPolicy';
 import {
   isReferenceTrackingTime,
   resolveSelectedTrackingSide,
@@ -125,6 +127,8 @@ export default function AnalysisReviewScreen({
   // This screen plays the analyzed clip and overlays pose feedback.
   const { session } = useAuth();
   const isSavedMode = mode === 'saved';
+  const qualityPreflight = result.qualityPreflight ?? result.diagnostics?.quality_preflight ?? null;
+  const [dismissedQualityAdvisoryVideoId, setDismissedQualityAdvisoryVideoId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(result.duration ?? 0);
   const [videoLayout, setVideoLayout] = useState({ width: 0, height: 0 });
@@ -141,6 +145,8 @@ export default function AnalysisReviewScreen({
   const [showWorkoutDetailsSheet, setShowWorkoutDetailsSheet] = useState(false);
   const [wasPlayingBeforeScrub, setWasPlayingBeforeScrub] = useState(false);
   const mediaAvailable = Boolean(videoUri);
+  const showQualityWarning = shouldShowQualityAdvisory(qualityPreflight, mode)
+    && dismissedQualityAdvisoryVideoId !== result.video_id;
 
   const player = useVideoPlayer(videoUri, (videoPlayer) => {
     // Configure playback for review mode instead of normal video controls.
@@ -446,6 +452,15 @@ export default function AnalysisReviewScreen({
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
+        <ConfirmationDialog
+          visible={showQualityWarning}
+          title="Video quality warning"
+          message="Tracking might not be accurate because of the video quality. Review the analysis carefully."
+          confirmLabel="View Analysis"
+          showCancel={false}
+          onConfirm={() => setDismissedQualityAdvisoryVideoId(result.video_id)}
+          onCancel={() => undefined}
+        />
         <View style={styles.topBar}>
           <Pressable
             accessibilityRole="button"
