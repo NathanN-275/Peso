@@ -46,6 +46,7 @@ type AnalysisReviewScreenProps = {
   videoUri: string | null;
   result: VideoAnalysisResult;
   mode?: 'pending' | 'saved';
+  qualityAdvisoryAcknowledged?: boolean;
   onBack?: () => void;
   onDiscarded?: () => void;
   onSaved?: (videoId: string) => void | Promise<void>;
@@ -118,6 +119,7 @@ export default function AnalysisReviewScreen({
   videoUri,
   result,
   mode = 'pending',
+  qualityAdvisoryAcknowledged = false,
   onBack,
   onDiscarded,
   onSaved,
@@ -146,6 +148,7 @@ export default function AnalysisReviewScreen({
   const [wasPlayingBeforeScrub, setWasPlayingBeforeScrub] = useState(false);
   const mediaAvailable = Boolean(videoUri);
   const showQualityWarning = shouldShowQualityAdvisory(qualityPreflight, mode)
+    && !qualityAdvisoryAcknowledged
     && dismissedQualityAdvisoryVideoId !== result.video_id;
 
   const player = useVideoPlayer(videoUri, (videoPlayer) => {

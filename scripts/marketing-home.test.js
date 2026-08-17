@@ -8,6 +8,8 @@ const homePagePath = path.join(projectRoot, 'web/src/pages/index.astro');
 const globalStylesPath = path.join(projectRoot, 'web/src/styles/global.css');
 const netlifyConfigPath = path.join(projectRoot, 'netlify.toml');
 const demoVideoPath = path.join(projectRoot, 'assets/demo/peso-pose-overlay.mp4');
+const projectLogPath = path.join(projectRoot, 'docs/architecture/index.html');
+const coachingPositioningPath = path.join(projectRoot, 'docs/marketing/coaching-positioning.md');
 
 test('marketing home defers the optimized demo video and preserves accessible controls', async () => {
   const homePage = await readFile(homePagePath, 'utf8');
@@ -65,10 +67,39 @@ test('content sections use blue titles followed by white subheadings', async () 
   const homePage = await readFile(homePagePath, 'utf8');
   const globalStyles = await readFile(globalStylesPath, 'utf8');
 
-  for (const title of ['Real analysis', 'How it works', 'Available feedback', 'Saved Lifts']) {
+  for (const title of ['See the evidence', 'How it works', 'Coaching connected to the lift', 'Coaching today', 'Saved Lifts']) {
     assert.match(homePage, new RegExp(`<h2[^>]*class="section-title"[^>]*>${title}<\\/h2>`));
   }
 
   assert.match(globalStyles, /\.section-title\s*\{[^}]*color:\s*var\(--blue\)/s);
   assert.match(globalStyles, /\.section-subtitle\s*\{[^}]*color:\s*var\(--text\)/s);
+});
+
+test('marketing home leads with evidence-backed coaching without overstating the product', async () => {
+  const homePage = await readFile(homePagePath, 'utf8');
+
+  assert.match(homePage, /<h1 id="hero-title">Improve each set<\/h1>/);
+  assert.match(homePage, /new and self-coached lifters/);
+  assert.match(homePage, /Observation<\/span><strong>Depth varied/);
+  assert.match(homePage, /Evidence<\/span><strong>Rep by rep/);
+  assert.match(homePage, /Next-set cue<\/span><strong>Match your deepest rep/);
+  assert.match(homePage, /If the footage is uncertain/);
+  assert.match(homePage, /limited detected rep-count context/);
+  assert.doesNotMatch(homePage, /replace(?:s|d)? (?:a|your) coach/i);
+  assert.doesNotMatch(homePage, /prevent(?:s|ing)? injur/i);
+  assert.doesNotMatch(homePage, /guarantee(?:s|d)? (?:strength|results|progress)/i);
+});
+
+test('project log documents implemented coaching separately from planned personalization', async () => {
+  const projectLog = await readFile(projectLogPath, 'utf8');
+  const positioning = await readFile(coachingPositioningPath, 'utf8');
+
+  assert.match(projectLog, /<h1>Improve each <span class="hero-word">set\.<\/span><\/h1>/);
+  assert.match(projectLog, /Explainable cues, built from visible evidence/);
+  assert.match(projectLog, /coaching-build-card__status">Implemented/);
+  assert.match(projectLog, /coaching-build-card__status">Limited today/);
+  assert.match(projectLog, /Rules plus history before machine learning/);
+  assert.match(projectLog, /0001-rules-plus-history-before-ml\.md/);
+  assert.match(positioning, /Tracking is evidence for the coaching result/);
+  assert.match(positioning, /Do not claim that Peso/);
 });

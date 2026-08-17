@@ -34,12 +34,12 @@ export default function SideSquatRecordingGuide({
   if (variant === 'essential') {
     return (
       <View
-        accessibilityLabel="Three essential side-view recording tips"
+        accessibilityLabel="Essential side-view recording tips"
         style={styles.essentialCard}
       >
         <View style={styles.essentialHeading}>
           <Ionicons name="scan-outline" size={18} color={tokens.colors.brand} />
-          <Text style={styles.essentialTitle}>3 setup tips</Text>
+          <Text style={styles.essentialTitle}>Setup tips</Text>
         </View>
         <View style={styles.essentialList}>
           {guidance.essentialItems.map((item) => (

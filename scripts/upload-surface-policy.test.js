@@ -6,11 +6,11 @@ const {
   usesMobileUploadFlow,
 } = require('../lib/uploadSurfacePolicy');
 
-test('native uploads always use the mobile advisory flow', () => {
+test('native uploads always use the mobile upload layout', () => {
   assert.equal(usesMobileUploadFlow({ isWeb: false, viewportWidth: 1024 }), true);
 });
 
-test('web uploads use the mobile flow below the shared 768px breakpoint', () => {
+test('web uploads use the mobile layout below the shared 768px breakpoint', () => {
   assert.equal(MOBILE_WEB_BREAKPOINT, 768);
   assert.equal(usesMobileUploadFlow({ isWeb: true, viewportWidth: 390 }), true);
   assert.equal(usesMobileUploadFlow({ isWeb: true, viewportWidth: 767 }), true);
