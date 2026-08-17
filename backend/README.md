@@ -146,7 +146,7 @@ New side-view squat submissions call `POST /videos/{video_id}/quality-preflight`
 
 ## Side-squat pose backend evaluation
 
-`scripts/evaluate_pose_backends.py` runs MediaPipe and RTMPose in isolated CPU workers on the same private manifest. It reports landmark/confidence coverage, physical-side stability proxies, temporal jitter residuals, bone-length consistency, sudden displacement frequency, labeled-bottom stability, processing time, peak resident memory, package/model versions, device, fallback events, and only the compatibility of the platform actually executed. Proxy metrics and ground-truth metrics are separate; sparse, missing, or synthetic labels set `accuracyClaimEligible` to false. The harness records evidence but never silently selects a production backend.
+`scripts/evaluate_pose_backends.py` runs the production hybrid profile, MediaPipe, and RTMPose in isolated CPU workers on the same private manifest. It reports landmark/confidence coverage, physical-side stability proxies, temporal jitter residuals, bone-length consistency, sudden displacement frequency, labeled-bottom stability, processing time, peak resident memory, package/model versions, device, fallback events, and only the compatibility of the platform actually executed. Proxy metrics and ground-truth metrics are separate; sparse, missing, or synthetic labels set `accuracyClaimEligible` to false. When explicitly enabled, the harness recommends a backend only when it passes every accuracy/identity gate and improves p95 labeled error over production; it never changes configuration.
 
 Use `scripts/prepare_pose_evaluation_annotations.py` to inspect or convert CVAT labels. The annotation schema, private manifest template, and exact commands are in `tests/fixtures/pose_backend_evaluation/README.md`. Source videos, real labels, model weights, and generated benchmark reports must remain outside Git.
 
@@ -177,6 +177,8 @@ failure reason.
 
 Model binaries must remain outside Git. Set `YOLO_TRACKING_MODEL_PATH` to an immutable
 artifact path and declare its exported class order in `YOLO_TRACKING_CLASS_NAMES`.
+Set `YOLO_TRACKING_MODEL_VERSION` to the reviewed model-card version; diagnostics also
+record the artifact SHA-256, input size, class order, and runtime.
 The required detector classes are `barbell_collar`, `rack_upright`, `j_hook`,
 `safety_arm`, `storage_peg`, `sleeve`, and `plate_face`; hardware classes are negative
 classes used to reject rack-associated false positives.
@@ -195,6 +197,42 @@ Each source video must occur in exactly one of `train`, `val`, or `test`; the cu
 single clip is only a pipeline smoke dataset. Do not promote a YOLO artifact until the
 held-out set contains at least ten varied independent source videos and meets the
 existing collar-error and zero-hardware-switch benchmark gates.
+
+Prepare and audit the supplied reference datasets outside Git:
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/prepare_endcap_dataset.py \
+  --archive /path/to/bar-path-yolov11.zip \
+  --audit-only
+
+PYTHONPATH=. .venv/bin/python scripts/prepare_endcap_dataset.py \
+  --archive /path/to/bar-path-yolov11.zip \
+  --output-dir /private/path/endcap-pretraining
+
+PYTHONPATH=. .venv/bin/python scripts/audit_fms_squat_reference.py \
+  --root '/private/path/Skeleton data' \
+  --output /private/path/fms-squat-audit.json
+```
+
+Train in a separate environment after licensing review and after reviewed Peso CVAT
+labels are available. Supply local YOLO11 base weights so training never performs an
+implicit network download:
+
+```bash
+python -m venv .training-venv
+.training-venv/bin/pip install -r requirements-training.txt
+.training-venv/bin/python scripts/train_yolo11_tracking.py \
+  --pretrain-data /private/path/endcap-pretraining/data.yaml \
+  --peso-data /private/path/peso-tracking/data.yaml \
+  --base-weight-dir /private/path/base-weights \
+  --output-dir /private/path/training-output \
+  --device 0
+```
+
+Run `scripts/run_tracking_core_benchmark.py --enforce` on both pin-assisted and
+automatic held-out results, then pass the combined latency/tracking evidence to
+`scripts/select_tracking_model.py`. The full provenance and promotion policy is in
+`docs/model-cards/squat-pose-barbell-tracking.md`.
 
 `POSE_FALLBACK_MODE` accepts:
 

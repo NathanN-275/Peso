@@ -17,12 +17,24 @@
     "ankle",
     "barbell_collar_center"
   ],
+  "rep_phases": [
+    "setup",
+    "descent",
+    "bottom_transition",
+    "ascent",
+    "top"
+  ],
+  "target_semantics": {
+    "hip": "anatomical_hip_joint_center",
+    "barbell_collar_center": "same_visible_near_side_collar_or_unloaded_sleeve_end_across_frames"
+  },
   "coordinate_space": "processed_video_pixels",
   "notes": [
     "Use original source clips, not screen recordings.",
     "Label dense keyframes across setup, descent, bottom, ascent, top, occlusion, and fastest motion.",
     "Add tight barbell_collar boxes around the collar-center point track before YOLO conversion.",
     "Hardware labels are required so the tracker can reject rack/J-hook/safety-arm/storage candidates.",
-    "Split train, validation, and test by source video only; never split frames from one source video."
+    "Split train, validation, and test by source video only; never split frames from one source video.",
+    "Do not derive ground truth from tracker output; every test-only label requires human review."
   ]
 }

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "label_schema": "label_schema.json",
+  "notes": [
+    "The seven repository videos are development/regression evidence, not unseen test data.",
+    "The five held-out entries must be replaced with newly recorded, independently labeled Peso videos.",
+    "No entry is benchmark-ready until annotation_status is reviewed_dense."
+  ],
+  "clips": [
+    {"id": "img-0012-side-loaded", "split": "train", "video_path": "../../../test_videos/IMG_0012.MOV", "camera_case": "direct_side", "annotation_status": "needed", "annotations_path": null},
+    {"id": "img-0013-side-loaded", "split": "train", "video_path": "../../../test_videos/IMG_0013.MOV", "camera_case": "direct_side", "annotation_status": "needed", "annotations_path": null},
+    {"id": "img-0054-wide-side", "split": "train", "video_path": "../../../test_videos/IMG_0054.MOV", "camera_case": "wide_side", "annotation_status": "needed", "annotations_path": null},
+    {"id": "img-2721-oblique", "split": "train", "video_path": "../../../test_videos/IMG_2721.mov", "camera_case": "oblique", "annotation_status": "needed", "annotations_path": null},
+    {"id": "img-2722-front-oblique", "split": "validation", "video_path": "../../../test_videos/IMG_2722.mov", "camera_case": "front_oblique", "annotation_status": "needed", "annotations_path": null},
+    {"id": "img-2723-unloaded-side", "split": "validation", "video_path": "../../../test_videos/IMG_2723.mov", "camera_case": "unloaded_side", "annotation_status": "needed", "annotations_path": null},
+    {"id": "img-7569-low-oblique", "split": "validation", "video_path": "../../../test_videos/IMG_7569.MOV", "camera_case": "low_oblique", "annotation_status": "needed", "annotations_path": null},
+    {"id": "heldout-direct-side-fast", "split": "test", "video_path": "/private/path/heldout-direct-side-fast.mov", "camera_case": "direct_side_fast", "test_only": true, "annotation_status": "missing_source_video", "annotations_path": null},
+    {"id": "heldout-direct-side-occlusion", "split": "test", "video_path": "/private/path/heldout-direct-side-occlusion.mov", "camera_case": "last_rep_occlusion", "test_only": true, "annotation_status": "missing_source_video", "annotations_path": null},
+    {"id": "heldout-oblique-rack", "split": "test", "video_path": "/private/path/heldout-oblique-rack.mov", "camera_case": "oblique_rack_hardware", "test_only": true, "annotation_status": "missing_source_video", "annotations_path": null},
+    {"id": "heldout-front-pose", "split": "test", "video_path": "/private/path/heldout-front-pose.mov", "camera_case": "front_pose", "test_only": true, "annotation_status": "missing_source_video", "annotations_path": null},
+    {"id": "heldout-low-light-unloaded", "split": "test", "video_path": "/private/path/heldout-low-light-unloaded.mov", "camera_case": "low_light_unloaded", "test_only": true, "annotation_status": "missing_source_video", "annotations_path": null}
+  ]
+}

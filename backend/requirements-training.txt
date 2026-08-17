@@ -1,0 +1,2 @@
+# Offline model-training environment only. Do not install in the production worker.
+ultralytics==8.4.121

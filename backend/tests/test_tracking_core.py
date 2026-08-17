@@ -37,6 +37,16 @@ def collar(x: float, y: float, confidence: float = 0.82) -> Detection:
 
 
 class TrackingCoreTest(unittest.TestCase):
+  def test_annotation_manifest_reserves_five_new_clips_for_held_out_testing(self) -> None:
+    manifest_path = Path(__file__).parent / "fixtures" / "tracking_core" / "annotation_manifest.template.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    held_out = [clip for clip in manifest["clips"] if clip.get("test_only")]
+
+    self.assertEqual(len(manifest["clips"]), 12)
+    self.assertEqual(len(held_out), 5)
+    self.assertTrue(all(clip["split"] == "test" for clip in held_out))
+    self.assertTrue(all(clip["annotation_status"] == "missing_source_video" for clip in held_out))
+
   def test_config_defaults_to_legacy(self) -> None:
     with patch.dict(os.environ, {}, clear=True):
       config = tracking_core_config_from_env()
