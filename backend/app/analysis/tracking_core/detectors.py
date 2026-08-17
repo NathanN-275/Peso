@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -123,16 +124,19 @@ class YoloOnnxObjectDetector:
     confidence_threshold: float = 0.45,
     nms_iou_threshold: float = 0.45,
     input_size: int = 640,
+    model_version: str | None = None,
   ) -> None:
     self.model_path = Path(model_path)
     self.class_names = class_names
     self.confidence_threshold = float(confidence_threshold)
     self.nms_iou_threshold = float(nms_iou_threshold)
     self.input_size = int(input_size)
+    self.model_version = model_version or self.model_path.stem
     if not self.model_path.is_file():
       raise FileNotFoundError(f"YOLO tracking model was not found: {self.model_path}")
     if not self.class_names:
       raise ValueError("YOLO_TRACKING_CLASS_NAMES must declare the exported model class order.")
+    self.model_sha256 = _sha256_file(self.model_path)
     try:
       import onnxruntime as ort
     except ImportError as error:  # pragma: no cover - requirements pin this dependency.
@@ -140,6 +144,16 @@ class YoloOnnxObjectDetector:
     self._session = ort.InferenceSession(str(self.model_path), providers=["CPUExecutionProvider"])
     self._input = self._session.get_inputs()[0]
     self._input_name = self._input.name
+
+  @property
+  def model_metadata(self) -> dict[str, object]:
+    return {
+      "version": self.model_version,
+      "sha256": self.model_sha256,
+      "class_names": list(self.class_names),
+      "input_size": self.input_size,
+      "runtime": "onnxruntime_cpu",
+    }
 
   def detect(
     self,
@@ -272,3 +286,11 @@ class YoloOnnxObjectDetector:
       scores.append(score)
       class_ids.append(class_id)
     return boxes, scores, class_ids
+
+
+def _sha256_file(path: Path) -> str:
+  digest = hashlib.sha256()
+  with path.open("rb") as source:
+    for chunk in iter(lambda: source.read(1024 * 1024), b""):
+      digest.update(chunk)
+  return digest.hexdigest()

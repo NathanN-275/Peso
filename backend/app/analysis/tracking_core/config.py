@@ -55,6 +55,7 @@ class TrackingCoreConfig:
   max_lane_distance: float = 0.065
   yolo_mode: str = "off"
   yolo_model_path: Path | None = None
+  yolo_model_version: str | None = None
   yolo_class_names: tuple[str, ...] = ()
   yolo_confidence_threshold: float = 0.45
   yolo_nms_iou_threshold: float = 0.45
@@ -76,6 +77,7 @@ def tracking_core_config_from_env() -> TrackingCoreConfig:
   raw_yolo_mode = (os.getenv("YOLO_TRACKING_MODE", "off").strip().lower() or "off")
   yolo_mode = raw_yolo_mode if raw_yolo_mode in SUPPORTED_YOLO_TRACKING_MODES else "off"
   model_raw = os.getenv("YOLO_TRACKING_MODEL_PATH", "").strip()
+  model_version = os.getenv("YOLO_TRACKING_MODEL_VERSION", "").strip() or None
   class_names = tuple(
     value.strip()
     for value in os.getenv("YOLO_TRACKING_CLASS_NAMES", "").split(",")
@@ -90,6 +92,7 @@ def tracking_core_config_from_env() -> TrackingCoreConfig:
     ),
     yolo_mode=yolo_mode,
     yolo_model_path=Path(model_raw) if model_raw else None,
+    yolo_model_version=model_version,
     yolo_class_names=class_names,
     yolo_confidence_threshold=_float_from_env(
       "YOLO_TRACKING_CONFIDENCE_THRESHOLD", 0.45, minimum=0.05, maximum=0.99

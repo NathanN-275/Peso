@@ -80,6 +80,12 @@ class TrackingCoreTest(unittest.TestCase):
     self.assertEqual(str(config.yolo_model_path), "/models/collar-v1.onnx")
     self.assertEqual(config.yolo_class_names[2], "safety_arm")
 
+  def test_config_accepts_model_version(self) -> None:
+    with patch.dict(os.environ, {"YOLO_TRACKING_MODEL_VERSION": "collar-v1.2.0"}, clear=True):
+      config = tracking_core_config_from_env()
+
+    self.assertEqual(config.yolo_model_version, "collar-v1.2.0")
+
   def test_detection_from_pixel_box_maps_to_normalized_center(self) -> None:
     detection = Detection.from_pixel_box(
       kind="barbell_collar",
@@ -120,11 +126,11 @@ class TrackingCoreTest(unittest.TestCase):
       frame(6, time=0.6, detections=[]),
     ])
 
-    self.assertEqual([point.source for point in points], ["detector_tracklet", "coast", "coast", "coast"])
+    self.assertEqual([point.source for point in points], ["detector_tracklet", "coast", "coast"])
     self.assertEqual(points[-1].identity_state, "coasting")
-    self.assertEqual(diagnostics["coasting_count"], 3)
+    self.assertEqual(diagnostics["coasting_count"], 2)
     self.assertGreaterEqual(diagnostics["identity_gap_count"], 1)
-    self.assertEqual(diagnostics["source_counts"]["gap"], 1)
+    self.assertEqual(diagnostics["source_counts"]["gap"], 2)
 
   def test_hardware_far_from_collar_does_not_reject_the_collar(self) -> None:
     tracker = BarbellIdentityTracker(TrackingCoreConfig(core="apache_v1", initial_lock_frames=1))
@@ -138,6 +144,84 @@ class TrackingCoreTest(unittest.TestCase):
     self.assertEqual(len(points), 1)
     self.assertEqual(points[0].object_class, "barbell_collar")
     self.assertEqual(diagnostics["hardware_rejection_count"], 0)
+
+  def test_candidate_association_prefers_predicted_lane_over_high_confidence_distractor(self) -> None:
+    tracker = BarbellIdentityTracker(TrackingCoreConfig(core="apache_v1", initial_lock_frames=1))
+    points, diagnostics = tracker.track([
+      frame(0, time=0.0, detections=[collar(0.50, 0.40, confidence=0.8)]),
+      frame(1, time=0.1, detections=[
+        collar(0.84, 0.78, confidence=0.99),
+        collar(0.505, 0.41, confidence=0.64),
+      ]),
+    ])
+
+    self.assertAlmostEqual(points[-1].point.x, 0.505)
+    self.assertEqual(diagnostics["ambiguous_candidate_frame_count"], 1)
+    self.assertEqual(diagnostics["rejected_candidate_count"], 1)
+
+  def test_candidate_association_rejects_overlapping_hardware_but_keeps_safe_collar(self) -> None:
+    tracker = BarbellIdentityTracker(TrackingCoreConfig(core="apache_v1", initial_lock_frames=1))
+    points, diagnostics = tracker.track([
+      frame(0, time=0.0, detections=[
+        Detection(
+          kind="barbell_collar",
+          confidence=0.96,
+          center=NormalizedPoint(0.30, 0.50),
+          bbox=(0.27, 0.47, 0.33, 0.53),
+        ),
+        Detection(
+          kind="j_hook",
+          confidence=0.99,
+          center=NormalizedPoint(0.30, 0.50),
+          bbox=(0.28, 0.45, 0.34, 0.55),
+        ),
+        Detection(
+          kind="barbell_collar",
+          confidence=0.70,
+          center=NormalizedPoint(0.75, 0.50),
+          bbox=(0.72, 0.47, 0.78, 0.53),
+        ),
+      ]),
+    ])
+
+    self.assertAlmostEqual(points[0].point.x, 0.75)
+    self.assertEqual(diagnostics["hardware_rejection_count"], 1)
+
+  def test_reference_pin_is_emitted_exactly_when_detector_is_nearby(self) -> None:
+    tracker = BarbellIdentityTracker(TrackingCoreConfig(core="apache_v1", initial_lock_frames=1))
+    points, _ = tracker.track(
+      [frame(12, time=0.4, detections=[collar(0.51, 0.41, confidence=0.70)])],
+      priors_by_frame={
+        12: TrackingPrior(
+          name="barbell",
+          center=NormalizedPoint(0.50, 0.40),
+          confidence=1.0,
+          source="reference",
+        )
+      },
+    )
+
+    self.assertEqual(points[0].point, NormalizedPoint(0.50, 0.40))
+    self.assertEqual(points[0].tracking_state, "reference")
+    self.assertEqual(points[0].source, "reference_pin")
+
+  def test_reference_pin_is_emitted_exactly_without_detector_output(self) -> None:
+    tracker = BarbellIdentityTracker(TrackingCoreConfig(core="apache_v1", initial_lock_frames=3))
+    points, _ = tracker.track(
+      [frame(12, time=0.4, detections=[])],
+      priors_by_frame={
+        12: TrackingPrior(
+          name="barbell",
+          center=NormalizedPoint(0.50, 0.40),
+          confidence=1.0,
+          source="reference_pin",
+        )
+      },
+    )
+
+    self.assertEqual(len(points), 1)
+    self.assertEqual(points[0].point, NormalizedPoint(0.50, 0.40))
+    self.assertEqual(points[0].tracking_state, "reference")
 
   def test_reacquire_requires_three_trusted_collar_frames(self) -> None:
     tracker = BarbellIdentityTracker(

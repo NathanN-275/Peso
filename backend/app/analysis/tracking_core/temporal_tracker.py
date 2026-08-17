@@ -48,6 +48,9 @@ class BarbellTrackerDiagnostics:
   coasting_count: int = 0
   reacquire_count: int = 0
   initial_lock_count: int = 0
+  candidate_count: int = 0
+  rejected_candidate_count: int = 0
+  ambiguous_candidate_frame_count: int = 0
   frames: list[dict[str, object]] = field(default_factory=list)
 
   def note_source(self, source: str) -> None:
@@ -81,28 +84,32 @@ class BarbellIdentityTracker:
     return output, self.to_diagnostics()
 
   def update(self, frame: DetectionFrame, *, prior: TrackingPrior | None = None) -> TrackPoint | None:
-    candidate = self._select_collar(frame.detections)
-    hardware = self._select_hardware(frame.detections)
-    reason: str | None = None
-    if hardware is not None and (
-      candidate is None or self._hardware_conflicts_with_candidate(hardware, candidate)
-    ):
-      self.diagnostics.hardware_rejection_count += 1
-      reason = f"hardware_{hardware.kind}_rejected"
-      candidate = None
-
-    if candidate is not None and candidate.confidence < self.config.min_collar_confidence:
-      reason = "low_collar_confidence"
-      candidate = None
-
-    if candidate is not None and not self._candidate_near_expected(candidate, time_seconds=frame.time, prior=prior):
-      reason = "outside_predicted_collar_lane"
-      candidate = None
+    if prior and not prior.stale and prior.source in {"reference", "reference_pin"}:
+      return self._accept_candidate(
+        frame,
+        Detection(
+          kind="barbell_collar",
+          confidence=max(float(prior.confidence), 0.99),
+          center=prior.center,
+          track_id="barbell-collar-0",
+        ),
+        prior=prior,
+        selection={"candidate_count": 0, "distance_source": "exact_reference_pin"},
+      )
+    candidate, reason, selection = self._select_collar_candidate(
+      frame.detections,
+      time_seconds=frame.time,
+      prior=prior,
+    )
 
     if candidate is not None:
-      return self._accept_candidate(frame, candidate, prior=prior)
+      return self._accept_candidate(frame, candidate, prior=prior, selection=selection)
 
-    return self._handle_missing(frame, reason=reason or "missing_collar_detection")
+    return self._handle_missing(
+      frame,
+      reason=reason or "missing_collar_detection",
+      selection=selection,
+    )
 
   def _accept_candidate(
     self,
@@ -110,20 +117,36 @@ class BarbellIdentityTracker:
     candidate: Detection,
     *,
     prior: TrackingPrior | None,
+    selection: dict[str, object] | None = None,
   ) -> TrackPoint | None:
     confidence = float(candidate.confidence)
     source = "detector_tracklet"
+    reference_prior = bool(
+      prior and not prior.stale and prior.source in {"reference", "reference_pin"}
+    )
     if prior and not prior.stale:
       distance = candidate.center.distance_to(prior.center)
       if distance <= self.config.max_lane_distance:
         confidence = min(max(confidence, float(prior.confidence)), 0.98)
         source = "detector_pin_prior"
+    if reference_prior:
+      source = "reference_pin"
 
-    if not self._locked:
+    if reference_prior:
+      self._locked = True
+      self._pending_lock_streak = 0
+      self._miss_count = 0
+      self._coast_started_at = None
+    elif not self._locked:
       self._pending_lock_streak += 1
       threshold = self.config.initial_lock_frames if self._last_point is None else self.config.reacquire_frames
       if self._pending_lock_streak < threshold:
-        self._record_frame(frame, source="pending_lock", reason="awaiting_tracklet_confirmation")
+        self._record_frame(
+          frame,
+          source="pending_lock",
+          reason="awaiting_tracklet_confirmation",
+          selection=selection,
+        )
         self.diagnostics.note_source("pending_lock")
         return None
       self._locked = True
@@ -135,9 +158,9 @@ class BarbellIdentityTracker:
 
     point = TrackPoint(
       time=frame.time,
-      point=candidate.center,
+      point=prior.center if reference_prior and prior is not None else candidate.center,
       confidence=confidence,
-      tracking_state="guided",
+      tracking_state="reference" if reference_prior else "guided",
       identity_state="locked",
       source=source,
       object_class=candidate.kind,
@@ -148,22 +171,28 @@ class BarbellIdentityTracker:
     self._miss_count = 0
     self._coast_started_at = None
     self.diagnostics.note_source(source)
-    self._record_frame(frame, source=source, emitted=point)
+    self._record_frame(frame, source=source, emitted=point, selection=selection)
     return point
 
-  def _handle_missing(self, frame: DetectionFrame, *, reason: str) -> TrackPoint | None:
+  def _handle_missing(
+    self,
+    frame: DetectionFrame,
+    *,
+    reason: str,
+    selection: dict[str, object] | None = None,
+  ) -> TrackPoint | None:
     self._pending_lock_streak = 0
     if not self._locked or self._last_point is None:
       self.diagnostics.identity_gap_count += 1
       self.diagnostics.note_source("gap")
-      self._record_frame(frame, source="gap", reason=reason)
+      self._record_frame(frame, source="gap", reason=reason, selection=selection)
       return None
 
     self._miss_count += 1
     if self._coast_started_at is None:
       self._coast_started_at = frame.time
     elapsed = max(0.0, frame.time - self._coast_started_at)
-    if elapsed <= self.config.max_coast_seconds:
+    if self._miss_count <= self.config.max_coast_frames and elapsed <= self.config.max_coast_seconds:
       predicted = self._predict(frame.time)
       point = TrackPoint(
         time=frame.time,
@@ -178,7 +207,7 @@ class BarbellIdentityTracker:
       self._advance(point)
       self.diagnostics.coasting_count += 1
       self.diagnostics.note_source("coast")
-      self._record_frame(frame, source="coast", reason=reason, emitted=point)
+      self._record_frame(frame, source="coast", reason=reason, emitted=point, selection=selection)
       return point
 
     self._locked = False
@@ -186,16 +215,98 @@ class BarbellIdentityTracker:
     self._coast_started_at = None
     self.diagnostics.identity_gap_count += 1
     self.diagnostics.note_source("gap")
-    self._record_frame(frame, source="gap", reason=reason)
+    self._record_frame(frame, source="gap", reason=reason, selection=selection)
     return None
 
-  def _select_collar(self, detections: tuple[Detection, ...]) -> Detection | None:
+  def _select_collar_candidate(
+    self,
+    detections: tuple[Detection, ...],
+    *,
+    time_seconds: float,
+    prior: TrackingPrior | None,
+  ) -> tuple[Detection | None, str | None, dict[str, object]]:
     candidates = [detection for detection in detections if detection.kind == "barbell_collar"]
-    return max(candidates, key=lambda item: item.confidence, default=None)
+    hardware = [detection for detection in detections if detection.kind in HARDWARE_KINDS]
+    self.diagnostics.candidate_count += len(candidates)
+    if len(candidates) > 1:
+      self.diagnostics.ambiguous_candidate_frame_count += 1
 
-  def _select_hardware(self, detections: tuple[Detection, ...]) -> Detection | None:
-    candidates = [detection for detection in detections if detection.kind in HARDWARE_KINDS]
-    return max(candidates, key=lambda item: item.confidence, default=None)
+    evaluations: list[tuple[float, Detection, float | None, str]] = []
+    rejected: list[dict[str, object]] = []
+    for candidate in candidates:
+      rejection_reason: str | None = None
+      if candidate.confidence < self.config.min_collar_confidence:
+        rejection_reason = "low_collar_confidence"
+      conflicting_hardware = next(
+        (item for item in hardware if self._hardware_conflicts_with_candidate(item, candidate)),
+        None,
+      )
+      if conflicting_hardware is not None:
+        rejection_reason = f"hardware_{conflicting_hardware.kind}_rejected"
+      if rejection_reason is None and not self._candidate_near_expected(
+        candidate,
+        time_seconds=time_seconds,
+        prior=prior,
+      ):
+        rejection_reason = "outside_predicted_collar_lane"
+      if rejection_reason is not None:
+        self.diagnostics.rejected_candidate_count += 1
+        if rejection_reason.startswith("hardware_"):
+          self.diagnostics.hardware_rejection_count += 1
+        rejected.append({
+          "confidence": round(float(candidate.confidence), 4),
+          "reason": rejection_reason,
+          "center": candidate.center.to_public(),
+        })
+        continue
+
+      distance, distance_source = self._association_distance(
+        candidate,
+        time_seconds=time_seconds,
+        prior=prior,
+      )
+      proximity_bonus = 0.0
+      if distance is not None:
+        proximity_bonus = max(0.0, 1.0 - (distance / max(self.config.max_lane_distance, 1e-6))) * 0.35
+      score = float(candidate.confidence) + proximity_bonus
+      evaluations.append((score, candidate, distance, distance_source))
+
+    if not evaluations:
+      if not candidates and hardware:
+        self.diagnostics.hardware_rejection_count += 1
+        reason = f"hardware_{max(hardware, key=lambda item: item.confidence).kind}_rejected"
+      else:
+        reason = str(rejected[0]["reason"]) if rejected else "missing_collar_detection"
+      return None, reason, {
+        "candidate_count": len(candidates),
+        "rejected": rejected,
+      }
+
+    score, selected, distance, distance_source = max(
+      evaluations,
+      key=lambda value: (value[0], value[1].confidence),
+    )
+    return selected, None, {
+      "candidate_count": len(candidates),
+      "selected_score": round(score, 5),
+      "selected_confidence": round(float(selected.confidence), 5),
+      "selected_distance": round(distance, 5) if distance is not None else None,
+      "distance_source": distance_source,
+      "rejected": rejected,
+    }
+
+  def _association_distance(
+    self,
+    candidate: Detection,
+    *,
+    time_seconds: float,
+    prior: TrackingPrior | None,
+  ) -> tuple[float | None, str]:
+    if prior and not prior.stale:
+      return candidate.center.distance_to(prior.center), "pin_prior"
+    if self._last_point is not None:
+      return candidate.center.distance_to(self._predict(time_seconds)), "predicted_lane"
+    return None, "initial_confidence"
 
   def _hardware_conflicts_with_candidate(self, hardware: Detection, candidate: Detection) -> bool:
     """Reject only collar candidates that overlap the detected hardware.
@@ -247,6 +358,7 @@ class BarbellIdentityTracker:
     source: str,
     reason: str | None = None,
     emitted: TrackPoint | None = None,
+    selection: dict[str, object] | None = None,
   ) -> None:
     if len(self.diagnostics.frames) >= 200:
       return
@@ -257,6 +369,7 @@ class BarbellIdentityTracker:
       "reason": reason,
       "detection_count": len(frame.detections),
       "emitted": emitted.to_public() if emitted else None,
+      "selection": selection,
     })
 
   def to_diagnostics(self) -> dict[str, object]:
@@ -267,5 +380,8 @@ class BarbellIdentityTracker:
       "coasting_count": self.diagnostics.coasting_count,
       "reacquire_count": self.diagnostics.reacquire_count,
       "initial_lock_count": self.diagnostics.initial_lock_count,
+      "candidate_count": self.diagnostics.candidate_count,
+      "rejected_candidate_count": self.diagnostics.rejected_candidate_count,
+      "ambiguous_candidate_frame_count": self.diagnostics.ambiguous_candidate_frame_count,
       "frames": list(self.diagnostics.frames),
     }
