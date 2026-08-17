@@ -26,6 +26,47 @@
 
   enableRevealMotion();
 
+  function matchDemoCardHeight() {
+    const compactLayout = window.matchMedia('(max-width: 780px)');
+
+    document.querySelectorAll('[data-match-height]').forEach((layout) => {
+      const source = layout.querySelector('[data-height-source]');
+      const target = layout.querySelector('[data-height-target]');
+      const targetCopy = target?.querySelector('.demo-card__copy');
+      if (!source || !target || !targetCopy) return;
+
+      const update = () => {
+        if (compactLayout.matches) {
+          target.style.removeProperty('--matched-demo-height');
+          target.style.removeProperty('--matched-demo-width');
+          return;
+        }
+
+        const targetHeight = Math.ceil(source.getBoundingClientRect().height);
+        target.style.setProperty('--matched-demo-height', `${targetHeight}px`);
+
+        let targetWidth = Math.min(260, Math.max(160, targetHeight * 0.34));
+        for (let pass = 0; pass < 3; pass += 1) {
+          target.style.setProperty('--matched-demo-width', `${targetWidth}px`);
+          const copyHeight = Math.ceil(targetCopy.getBoundingClientRect().height);
+          targetWidth = Math.max(160, (targetHeight - copyHeight) * (360 / 874));
+        }
+        target.style.setProperty('--matched-demo-width', `${Math.round(targetWidth)}px`);
+      };
+
+      update();
+      compactLayout.addEventListener('change', update);
+      if ('ResizeObserver' in window) {
+        new ResizeObserver(update).observe(source);
+      } else {
+        window.addEventListener('resize', update);
+      }
+      document.fonts?.ready.then(update);
+    });
+  }
+
+  matchDemoCardHeight();
+
   const data = window.PESO_PROJECT_ACTIVITY;
   if (!data) return;
 

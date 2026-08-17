@@ -501,25 +501,11 @@ h3 {
   transform: rotate(1.2deg);
 }
 
-.hero-device__bar {
-  height: 22px;
-  display: grid;
-  place-items: center;
-  background: #02050a;
-}
-
-.hero-device__bar span {
-  width: 68px;
-  height: 5px;
-  display: block;
-  border-radius: 999px;
-  background: #182333;
-}
-
 .hero-device video {
   width: 100%;
+  height: auto;
   display: block;
-  border-radius: 25px;
+  border-radius: 29px;
 }
 
 .signal-card {
@@ -1488,6 +1474,16 @@ h3 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.motion-showcase__grid {
+  grid-template-columns: repeat(2, minmax(0, min(24vw, 26svh, 280px)));
+  justify-content: center;
+  gap: clamp(18px, 3vw, 34px);
+}
+
+.motion-showcase__grid .demo-card__media {
+  aspect-ratio: 360 / 874;
+}
+
 .demo-card {
   overflow: hidden;
   display: flex;
@@ -1652,6 +1648,34 @@ h3 {
   grid-template-columns: minmax(240px, 0.68fr) minmax(0, 1.32fr);
   gap: 32px;
   align-items: start;
+}
+
+.media-flow-grid--matched {
+  grid-template-columns: minmax(240px, 420px) max-content;
+  justify-content: space-between;
+}
+
+.media-flow-grid__demo {
+  width: var(--matched-demo-width, min(24vw, 260px));
+  height: var(--matched-demo-height, auto);
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.media-flow-grid__demo .demo-card__media {
+  min-height: 0;
+  aspect-ratio: auto;
+}
+
+.media-flow-grid__demo .demo-card__copy {
+  padding: 18px;
+}
+
+.media-flow-grid__demo video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .phone-frame {
@@ -2272,6 +2296,24 @@ h3 {
   .demo-grid,
   .demo-grid--editorial {
     grid-template-columns: 1fr;
+  }
+
+  .motion-showcase__grid {
+    justify-content: stretch;
+  }
+
+  .media-flow-grid__demo {
+    width: 100%;
+    height: auto;
+    display: flex;
+  }
+
+  .media-flow-grid__demo .demo-card__media {
+    aspect-ratio: 360 / 874;
+  }
+
+  .media-flow-grid__demo video {
+    height: auto;
   }
 
   .evolution-track {
