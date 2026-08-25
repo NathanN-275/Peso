@@ -13,6 +13,7 @@
     "app:web:export": "EXPO_PUBLIC_WEB_SURFACE=web-app EXPO_PUBLIC_WEB_ROUTER_BASE=/app expo export --platform web --output-dir dist/app",
     "web:export": "npm run web:build",
     "web:build": "npm --prefix web run build && npm run app:web:export",
+    "web:budget": "node scripts/web-build-budget.js",
     "web:marketing": "npm --prefix web run dev",
     "web:preview": "node scripts/serve-web-preview.js",
     "web": "node scripts/start-dev.js --web",
@@ -25,8 +26,6 @@
     "audit:ci": "node scripts/npm-audit-ci.js"
   },
   "dependencies": {
-    "@expo-google-fonts/archivo-black": "^0.4.1",
-    "@expo-google-fonts/inter": "^0.4.1",
     "@expo/vector-icons": "^15.1.1",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@supabase/supabase-js": "^2.99.1",

@@ -157,16 +157,24 @@ export function WebAnalysisActivityProvider({ children }: { children: React.Reac
       const response: AnalysisActivityResponse = await getAnalysisActivity(accessToken, signal);
       const mergedItems = mergeAnalysisActivity(response.items, optimisticItemsRef.current, Date.now());
       const serverVideoIds = new Set(response.items.map((item) => item.video_id));
+      const optimisticVideoIds = new Set(optimisticItemsRef.current.map((item) => item.video_id));
       const remainingOptimisticItems = mergedItems.filter(
-        (item) => item.job_id.startsWith('optimistic:') && !serverVideoIds.has(item.video_id)
+        (item) => optimisticVideoIds.has(item.video_id) && !serverVideoIds.has(item.video_id)
       );
 
       optimisticItemsRef.current = remainingOptimisticItems;
       writeOptimisticItems(user.id, remainingOptimisticItems);
       itemsRef.current = mergedItems;
       setItems(mergedItems);
-      setActiveCount(response.active_count);
-      setActiveLimit(response.active_limit);
+      const visibleActiveCount = mergedItems.filter(
+        (item) => item.status === 'queued' || item.status === 'processing'
+      ).length;
+      const serverActiveCount = Number.isInteger(response.active_count) ? response.active_count : 0;
+      const serverActiveLimit = Number.isInteger(response.active_limit) && response.active_limit > 0
+        ? response.active_limit
+        : DEFAULT_ACTIVE_LIMIT;
+      setActiveCount(Math.max(serverActiveCount, visibleActiveCount));
+      setActiveLimit(serverActiveLimit);
       setError(null);
       return mergedItems;
     } catch (refreshError) {

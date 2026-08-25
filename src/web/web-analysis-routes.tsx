@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import { Navigate, useNavigate, useParams } from 'react-router';
 import { useAuth } from '../../context/AuthContext';
 import { fetchAnalysisResult, getVideoPlaybackUrl } from '../../lib/backendApi';
+import { getFreshBackendAccessToken } from '../../lib/backendAuth';
 import type { AnalysisActivityItem, VideoAnalysisResult } from '../types/videoAnalysis';
 import { useWebAnalysisActivity } from './web-analysis-activity';
 
@@ -151,10 +152,11 @@ export function WebReviewRoute({ onLibraryChanged }: { onLibraryChanged: () => v
     setResult(null);
     setVideoUri(null);
 
-    Promise.all([
-      getVideoPlaybackUrl(videoId, session.access_token),
-      fetchAnalysisResult(videoId, session.access_token, controller.signal),
-    ])
+    getFreshBackendAccessToken()
+      .then((accessToken) => Promise.all([
+        getVideoPlaybackUrl(videoId, accessToken),
+        fetchAnalysisResult(videoId, accessToken, controller.signal),
+      ]))
       .then(([playback, analysis]) => {
         if (!active) return;
         setVideoUri(playback.video_url);

@@ -10,8 +10,8 @@ client bundle, routing runtime, or authenticated state with the Web App.
 
 The browser-only Peso product mounted beneath `/app`. It uses the shared Peso
 visual language, Peso Accounts, and Saved Lift Library as mobile while retaining
-browser-specific submission and quota rules. Demo Analysis remains a local
-simulation and is distinct from authenticated library activity.
+browser-specific submission rules. The authenticated Web App uses the same
+durable analysis queue as native clients.
 
 ## Peso Account
 
@@ -41,13 +41,11 @@ review, or failed. It is the user's resumable path back to an unsaved Analysis
 Run and is not part of the Saved Lift Library. The client refreshes it on app
 or browser resume and polls only while foregrounded work is active.
 
-## Demo Analysis
+## Retired Demo Analysis
 
-A client-side Web App simulation used to preview the upload-to-review flow. The
-selected video stays on the browser device, its thumbnail is generated locally,
-and clock-based queued and analyzing phases produce a bundled fixture result.
-A Demo Analysis creates no upload, quota charge, backend request, or durable
-record and must not be treated as a server-owned Analysis Job.
+The former client-side authenticated Web App simulation. It used bundled
+fixture media and fake timers, and was removed for the real-analysis beta.
+Marketing preview media remains separate from authenticated Analysis Activity.
 
 ## Saved Lift
 

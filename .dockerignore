@@ -1,0 +1,15 @@
+.git
+.github
+.expo
+.pytest_cache
+.peso
+backend/.env
+backend/.pytest_cache
+backend/.venv
+backend/tests
+dashboard
+dist
+node_modules
+public
+web
+*.log

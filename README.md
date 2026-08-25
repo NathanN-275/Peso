@@ -95,16 +95,18 @@ Launching the web beta does not replace the mobile app. The Expo app remains in 
 * RTMPose fallback support
 * FFmpeg
 * Supabase Auth, Database, and Storage
+* Render web service and background worker
 
 ## How the app works
 
 1. The user records or uploads a lifting video.
 2. The app stores the video through Supabase.
 3. The backend receives an analysis request.
-4. The backend downloads the video and processes it frame by frame.
-5. Pose and barbell tracking are used to estimate movement quality.
-6. Rep summaries, diagnostics, overlays, and coaching feedback are saved.
-7. The Web App or mobile app displays the analyzed result to the user.
+4. A durable PostgreSQL job survives client and service restarts.
+5. The Render worker downloads the video and processes it frame by frame.
+6. Pose and barbell tracking are used to estimate movement quality.
+7. Rep summaries, diagnostics, overlays, and coaching feedback are saved.
+8. The Web App or mobile app displays the analyzed result to the user.
 
 ## Local development
 
@@ -305,14 +307,21 @@ Build both surfaces and preview the combined Netlify output locally:
 
 ```bash
 npm run web:build
+npm run web:budget
 npm run web:preview
 ```
 
 The build writes the static Astro pages to `dist/` and the Expo single-page app
 to `dist/app/`. `netlify.toml` serves existing marketing files first and rewrites
-only unknown `/app/*` paths to `/app/index.html`. Demo Analysis remains a
-browser-local simulation. Peso Account authentication, the shared Saved Lift
+only unknown `/app/*` paths to `/app/index.html`. The authenticated Web App uses
+durable real analysis keyed by `videoId`; fixture analysis is not part of the
+beta. Peso Account authentication, Analysis Activity, the shared Saved Lift
 Library, deletion, and export jobs use the authenticated backend.
+
+Production keeps Netlify for static frontend delivery, Supabase for auth,
+database records, and private video storage, and Render for the FastAPI service
+and continuous analysis worker. See
+`docs/deployment/render-analysis-beta.md` for the schema-first release order.
 
 ## Backend API overview
 
@@ -326,6 +335,7 @@ Main endpoints:
 
 * `POST /analyze/{video_id}` — queues analysis for an uploaded video
 * `GET /videos/{video_id}/status` — checks video processing status
+* `GET /videos/analysis-activity` — returns owner-scoped durable queue activity
 * `GET /analysis/{video_id}` — returns the latest analysis result
 * `POST /videos/{video_id}/save` — saves a video for later review
 * `POST /videos/{video_id}/discard` — discards a video

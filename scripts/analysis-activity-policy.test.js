@@ -92,9 +92,14 @@ test('Netlify web app uses durable video-id routes instead of demo timers', () =
   );
 
   assert.doesNotMatch(webAppSource, /<WebDemoSessionProvider>/);
+  assert.doesNotMatch(webAppSource, /useWebDemoSession|demo-analysis|processingPercent/);
+  assert.equal(fs.existsSync(path.join(__dirname, '../src/web/web-demo-session.tsx')), false);
+  assert.equal(fs.existsSync(path.join(__dirname, '../lib/webDemoSessionPolicy.js')), false);
   assert.match(webAppSource, /<WebAnalysisActivityProvider>/);
   assert.match(webRoutesSource, /UploadVideoScreen/);
   assert.match(webRoutesSource, /AnalysisReviewScreen/);
+  assert.match(webRoutesSource, /getFreshBackendAccessToken/);
+  assert.doesNotMatch(webRoutesSource, /getVideoPlaybackUrl\(videoId, session\.access_token\)/);
   assert.match(webAppSource, /path="\/processing\/:videoId"/);
   assert.match(webAppSource, /path="\/review\/:videoId"/);
   assert.match(webActivitySource, /getAnalysisActivity/);

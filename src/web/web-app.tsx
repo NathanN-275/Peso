@@ -40,7 +40,6 @@ import {
   type SavedLiftView,
 } from '../../lib/savedLiftSelectionPolicy';
 import type { SavedLiftExportJob, SavedVideo, VideoAnalysisRep } from '../types/videoAnalysis';
-import { useWebDemoSession } from './web-demo-session';
 import {
   WebAnalysisActivityProvider,
   useWebAnalysisActivity,
@@ -78,10 +77,7 @@ const fonts = {
 
 const previewImageAsset = require('../../assets/demo/peso-pose-overlay.jpg') as number;
 const previewImage = previewImageAsset as ImageSourcePropType;
-const barPathImage = previewImage;
 const logoImage = require('../../assets/peso-logo.png') as ImageSourcePropType;
-const analyzedVideoUri = '';
-const analyzedVideoPosterUri = '';
 const turnstileSiteKey = process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? '';
 const SAVED_LIFT_CACHE_TTL_MS = 60_000;
 
@@ -111,12 +107,6 @@ declare global {
   interface Window {
     turnstile?: TurnstileApi;
   }
-}
-
-function formatFileSize(size: number | null) {
-  if (size === null) return 'Size unavailable';
-  if (size < 1_000_000) return `${Math.max(1, Math.round(size / 1_000))} KB`;
-  return `${(size / 1_000_000).toFixed(1)} MB`;
 }
 
 function formatTime(seconds: number | null) {
@@ -1018,240 +1008,6 @@ function HomeScreen() {
   );
 }
 
-function RecordScreen() {
-  const navigate = useNavigate();
-  const recorderSupported =
-    typeof navigator !== 'undefined' &&
-    Boolean(navigator.mediaDevices?.getUserMedia) &&
-    typeof MediaRecorder !== 'undefined';
-  const [recording, setRecording] = useState(false);
-  const [recorded, setRecorded] = useState(false);
-
-  const finishRecording = () => {
-    setRecording(false);
-    setRecorded(true);
-  };
-
-  return (
-    <PageScroll>
-      <View style={styles.narrowPage}>
-        <Text accessibilityRole="header" selectable style={styles.pageHeading}>Record a squat set</Text>
-        <Text selectable style={styles.pageSubheading}>Keep your full body and both ends of the bar visible. Record one set from the side.</Text>
-        {!recorderSupported ? (
-          <View style={styles.fallbackCard} role="alert">
-            <Text selectable style={styles.fallbackTitle}>Recording is unavailable in this browser</Text>
-            <Text selectable style={styles.fallbackBody}>You can still choose a video already saved on this device.</Text>
-            <ActionButton label="Upload Video instead" onPress={() => navigate('/upload')} />
-          </View>
-        ) : (
-          <>
-            <View style={[styles.cameraStage, recording && styles.cameraStageRecording]}>
-              <View style={styles.cameraGuide}>
-                <View style={styles.cameraGuideBody} />
-                <View style={styles.cameraGuideBar} />
-              </View>
-              <View style={styles.cameraStatus}>
-                <View style={[styles.recordingDot, recording && styles.recordingDotLive]} />
-              <Text style={styles.cameraStatusText}>{recording ? 'Demo recording · 00:08' : recorded ? 'Clip ready · 00:18' : 'Camera preview'}</Text>
-              </View>
-              <Text selectable style={styles.cameraFixtureNote}>Camera permission is not requested in this demo.</Text>
-            </View>
-            <View style={styles.buttonRow}>
-              {!recording && !recorded && <ActionButton label="Start recording" onPress={() => setRecording(true)} />}
-              {recording && <ActionButton label="Stop recording" variant="danger" onPress={finishRecording} />}
-              {recorded && <ActionButton label="Continue to setup" onPress={() => navigate('/setup')} />}
-              {recorded && <ActionButton label="Record again" variant="secondary" onPress={() => setRecorded(false)} />}
-              <ActionButton label="Upload instead" variant="quiet" onPress={() => navigate('/upload')} />
-            </View>
-          </>
-        )}
-      </View>
-    </PageScroll>
-  );
-}
-
-function pickLocalVideo(onSelected: (file: File) => void) {
-  if (typeof document === 'undefined') return;
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = 'video/mp4,video/quicktime,video/webm';
-  input.hidden = true;
-  input.onchange = () => {
-    const file = input.files?.[0];
-    if (file) onSelected(file);
-    input.remove();
-  };
-  input.addEventListener('cancel', () => input.remove(), { once: true });
-  document.body.appendChild(input);
-  input.click();
-}
-
-function UploadScreen() {
-  const navigate = useNavigate();
-  const { session, selectFile } = useWebDemoSession();
-  return (
-    <PageScroll>
-      <View style={styles.narrowPage}>
-        <Text accessibilityRole="header" selectable style={styles.pageHeading}>Upload a squat video</Text>
-        <Text selectable style={styles.pageSubheading}>Choose a 15–30 second clip. MP4, MOV, and WebM are supported in this demo.</Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Choose a squat video from this device"
-          onPress={() => pickLocalVideo((file) => void selectFile(file))}
-          style={({ pressed }) => [styles.dropZone, pressed && styles.dropZonePressed]}
-        >
-          {session.thumbnailStatus === 'ready' && session.thumbnail ? (
-            <Image
-              source={{ uri: session.thumbnail }}
-              style={styles.uploadThumbnail as ImageStyle}
-              accessibilityLabel="Thumbnail from the selected squat video"
-            />
-          ) : (
-            <View style={styles.uploadIcon}>
-              <Text style={styles.uploadIconText}>
-                {session.thumbnailStatus === 'fallback' ? '!' : '↑'}
-              </Text>
-            </View>
-          )}
-          <Text selectable style={styles.dropZoneTitle}>{session.filename ?? 'Choose a video'}</Text>
-          <Text selectable style={styles.dropZoneBody}>
-            {session.thumbnailStatus === 'loading'
-              ? 'Creating a local thumbnail…'
-              : session.thumbnailStatus === 'fallback'
-                ? 'This browser could not decode a thumbnail. You can still continue with the demo.'
-                : session.selectedFile
-                  ? `${formatFileSize(session.size)} · ${session.duration === null ? 'Duration unavailable' : formatTime(session.duration)} · Stays on this device`
-                  : 'Select one file up to 50 MB'}
-          </Text>
-        </Pressable>
-        <View style={styles.requirementsCard}>
-          <Text selectable style={styles.requirementsTitle}>For the clearest result</Text>
-          {['One squat set only', 'Full body and bar visible', 'Stable side view', 'Good lighting with minimal obstruction'].map((item) => (
-            <View key={item} style={styles.requirementRow}><Text style={styles.requirementCheck}>✓</Text><Text selectable style={styles.requirementText}>{item}</Text></View>
-          ))}
-        </View>
-        <View style={styles.buttonRow}>
-          <ActionButton label="Continue to setup" disabled={!session.selectedFile} onPress={() => navigate('/setup')} />
-        </View>
-      </View>
-    </PageScroll>
-  );
-}
-
-function SelectCard({ selected, title, description, onPress }: { selected: boolean; title: string; description: string; onPress: () => void }) {
-  return (
-    <Pressable accessibilityRole="radio" accessibilityState={{ checked: selected }} onPress={onPress} style={[styles.selectCard, selected && styles.selectCardSelected]}>
-      <View style={[styles.radio, selected && styles.radioSelected]}>{selected && <View style={styles.radioDot} />}</View>
-      <View style={styles.selectCardCopy}>
-        <Text selectable style={styles.selectCardTitle}>{title}</Text>
-        <Text selectable style={styles.selectCardDescription}>{description}</Text>
-      </View>
-    </Pressable>
-  );
-}
-
-function SetupScreen() {
-  const navigate = useNavigate();
-  const { session, startAnalysis, clearSession } = useWebDemoSession();
-  const [view, setView] = useState<'side' | 'front'>('side');
-  const [visible, setVisible] = useState(true);
-  const submit = () => {
-    startAnalysis();
-    navigate('/processing/demo-analysis');
-  };
-
-  if (!session.selectedFile) {
-    return <Navigate to="/upload" replace />;
-  }
-
-  return (
-    <PageScroll>
-      <View style={styles.setupGrid}>
-        <View>
-          {session.thumbnailStatus === 'ready' && session.thumbnail ? (
-            <Image source={{ uri: session.thumbnail }} style={styles.setupPreview as ImageStyle} accessibilityLabel="Selected squat video preview" />
-          ) : (
-            <View style={styles.setupPreviewFallback} accessibilityLabel="Video thumbnail unavailable">
-              <Text style={styles.setupPreviewFallbackIcon}>▶</Text>
-              <Text selectable style={styles.setupPreviewFallbackText}>Preview unavailable</Text>
-            </View>
-          )}
-          <View style={styles.previewMeta}>
-            <Text numberOfLines={1} style={styles.previewMetaText}>{session.filename}</Text>
-            <Text style={styles.previewMetaText}>{session.duration === null ? '—:—' : formatTime(session.duration)}</Text>
-          </View>
-        </View>
-        <View style={styles.setupPanel}>
-          <Text accessibilityRole="header" selectable style={styles.pageHeading}>Confirm the setup</Text>
-          <Text selectable style={styles.pageSubheading}>Web beta accepts new squat submissions only.</Text>
-          <View style={styles.fieldGroup}>
-            <Text style={styles.fieldLabel}>Camera view</Text>
-            <SelectCard selected={view === 'side'} title="Side view" description="Recommended for depth, torso, and bar path." onPress={() => setView('side')} />
-            <SelectCard selected={view === 'front'} title="Front / three-quarter" description="Bilateral tracking; depth feedback may be limited." onPress={() => setView('front')} />
-          </View>
-          <CheckRow checked={visible} onPress={() => setVisible(!visible)} label="The lifter’s full body and visible end of the bar stay in frame." />
-          <View style={styles.infoCallout}><Text style={styles.infoCalloutText}>This demo keeps the selected file on your device and simulates the analysis locally.</Text></View>
-          <View style={styles.buttonRow}>
-            <ActionButton label="Submit for analysis" disabled={!visible} onPress={submit} />
-            <ActionButton label="Choose another video" variant="secondary" onPress={() => { clearSession(); navigate('/upload'); }} />
-          </View>
-        </View>
-      </View>
-    </PageScroll>
-  );
-}
-
-function ProcessingScreen() {
-  const navigate = useNavigate();
-  const { session, cancelAnalysis, clearSession } = useWebDemoSession();
-
-  if (session.phase === 'idle') {
-    return <Navigate to="/upload" replace />;
-  }
-
-  const stepIndex = session.phase === 'queued' ? 0 : session.phase === 'analyzing' ? 1 : 2;
-  const title = session.phase === 'queued'
-    ? 'Squat set is queued'
-    : session.phase === 'analyzing'
-      ? 'Analyzing your squat'
-      : 'Analysis ready to review';
-  const detail = session.phase === 'queued'
-    ? 'Your demo analysis will begin in a moment.'
-    : session.phase === 'analyzing'
-      ? 'Tracking movement and bar position in this client-side simulation.'
-      : 'The simulated result is complete. Review it when you are ready.';
-
-  return (
-    <PageScroll>
-      <View style={styles.processingPage}>
-        <View style={styles.processingVisual}>
-          <Image
-            source={session.thumbnail ? { uri: session.thumbnail } : barPathImage}
-            style={styles.processingImage as ImageStyle}
-            accessibilityLabel="Squat video awaiting analysis"
-          />
-          <View style={styles.processingOverlay}><Text style={styles.processingPercent}>{String(session.percentage).padStart(2, '0')}%</Text></View>
-        </View>
-        <Text accessibilityRole="header" selectable style={styles.pageHeading}>{title}</Text>
-        <Text selectable style={[styles.pageSubheading, styles.processingDescription]}>{detail}</Text>
-        <View style={styles.stepper} accessibilityLabel={`Analysis step ${stepIndex + 1} of 3`}>
-          {['Queued', 'Analyzing', 'Ready'].map((label, index) => (
-            <View key={label} style={styles.stepItem}>
-              <View style={[styles.stepDot, index <= stepIndex && styles.stepDotActive]}><Text style={styles.stepDotText}>{index + 1}</Text></View>
-              <Text style={[styles.stepLabel, index <= stepIndex && styles.stepLabelActive]}>{label}</Text>
-            </View>
-          ))}
-        </View>
-        {(session.phase === 'queued' || session.phase === 'analyzing') && (
-          <ActionButton label="Cancel demo analysis" variant="danger" onPress={() => { cancelAnalysis(); clearSession(); navigate('/'); }} />
-        )}
-        {session.phase === 'ready' && <ActionButton label="Review result" onPress={() => navigate('/review/demo-analysis')} />}
-        <ActionButton label="Back to Home" variant="quiet" onPress={() => navigate('/')} />
-      </View>
-    </PageScroll>
-  );
-}
-
 function MetricCard({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
     <View style={styles.metricCard}>
@@ -1264,8 +1020,8 @@ function MetricCard({ label, value, detail }: { label: string; value: string; de
 
 function AnalyzedVideoPlayer({
   label,
-  sourceUri = analyzedVideoUri,
-  posterUri = analyzedVideoPosterUri,
+  sourceUri = '',
+  posterUri = '',
 }: {
   label: string;
   sourceUri?: string;
@@ -1363,69 +1119,6 @@ function AnalyzedVideoPlayer({
         <Text style={styles.timecode}>{formatTime(currentTime)} / {formatTime(duration)}</Text>
       </View>
     </View>
-  );
-}
-
-function ReviewScreen() {
-  const navigate = useNavigate();
-  const { session, clearSession } = useWebDemoSession();
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const [reps, setReps] = useState('3');
-  const [load, setLoad] = useState('225');
-  const finishDemo = () => {
-    clearSession();
-    navigate('/');
-  };
-
-  if (session.phase !== 'ready') {
-    return <Navigate to={session.phase === 'idle' ? '/upload' : '/processing/demo-analysis'} replace />;
-  }
-
-  return (
-    <PageScroll>
-      <View style={styles.reviewGrid}>
-        <View>
-          <View style={styles.reviewMedia}>
-            <AnalyzedVideoPlayer label="Analyzed video controls" />
-          </View>
-          <Text selectable style={styles.mediaDescription}>The overlay marks the upper back, hip, knee, and ankle. Use the playback controls to inspect each rep.</Text>
-        </View>
-        <View style={styles.reviewPanel}>
-          <View style={styles.reviewTitleRow}>
-            <View>
-              <Text style={styles.reviewEyebrow}>ANALYSIS COMPLETE</Text>
-              <Text accessibilityRole="header" selectable style={styles.reviewPageHeading}>Squat · Side view</Text>
-            </View>
-            <View style={styles.readyBadge}><Text style={styles.readyBadgeText}>Ready</Text></View>
-          </View>
-          <View style={styles.metricGrid}>
-            <MetricCard label="Detected reps" value="3" detail="Model observation" />
-            <MetricCard label="Depth" value="3 / 3" detail="Reps reached depth" />
-            <MetricCard label="Bar path" value="Stable" detail="Over mid-foot" />
-          </View>
-          <View style={styles.cueCard}>
-            <Text selectable style={styles.cueLabel}>FOCUS FOR YOUR NEXT SET</Text>
-            <Text selectable style={styles.cueTitle}>Keep the descent as controlled as rep two.</Text>
-            <Text selectable style={styles.cueBody}>Rep two showed the most consistent torso angle and bar position. Use that pace as your reference.</Text>
-          </View>
-          <Pressable accessibilityRole="button" accessibilityState={{ expanded: detailsOpen }} onPress={() => setDetailsOpen(!detailsOpen)} style={styles.disclosureButton}>
-            <Text style={styles.disclosureTitle}>Optional workout details</Text>
-            <Text style={styles.disclosureIcon}>{detailsOpen ? '−' : '+'}</Text>
-          </Pressable>
-          {detailsOpen && (
-            <View style={styles.workoutFields}>
-              <Field label="Performed reps" placeholder="3" value={reps} onChangeText={setReps} />
-              <Field label="Load (lb)" placeholder="225" value={load} onChangeText={setLoad} />
-            </View>
-          )}
-          <View style={styles.buttonRow}>
-            <ActionButton label="Finish demo" compact onPress={finishDemo} />
-            <ActionButton label="Discard analysis" variant="danger" compact onPress={() => { clearSession(); navigate('/'); }} />
-          </View>
-          <Text selectable style={styles.expiryText}>Demo Analysis stays on this device and does not create a Saved Lift.</Text>
-        </View>
-      </View>
-    </PageScroll>
   );
 }
 
@@ -1729,7 +1422,7 @@ function SavedLiftDetailScreen() {
   const detectedReps = lift.analysis?.result_json.rep_count ?? lift.analysis?.rep_data.length ?? 0;
   const performedReps = lift.performed_reps ?? lift.corrected_rep_count ?? detectedReps;
   const cue = lift.analysis?.coaching_feedback[0] ?? lift.analysis?.summary[0] ?? 'No saved coaching cue is available.';
-  const posterUri = lift.thumbnail_url ?? analyzedVideoPosterUri;
+  const posterUri = lift.thumbnail_url ?? '';
 
   return (
     <PageScroll>
@@ -2051,7 +1744,6 @@ const styles = StyleSheet.create({
   processingVisual: { width: 220, height: 310, borderWidth: 1, borderColor: colors.line, borderRadius: 18, overflow: 'hidden', backgroundColor: '#05070A' },
   processingImage: { width: '100%', height: '100%' },
   processingOverlay: { position: 'absolute', right: 10, bottom: 10, width: 62, height: 62, borderRadius: 31, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5,9,15,.88)', borderWidth: 1, borderColor: '#3C68AD' },
-  processingPercent: { color: colors.blueText, fontFamily: fonts.bold, fontSize: 13, fontVariant: ['tabular-nums'] },
   processingDescription: { maxWidth: 560, textAlign: 'center', marginTop: -8 },
   stepper: { width: '100%', maxWidth: 520, paddingVertical: 14, flexDirection: 'row', justifyContent: 'space-between' },
   stepItem: { flex: 1, alignItems: 'center', gap: 7 },
