@@ -17,6 +17,25 @@ JOB_ID = "55555555-5555-5555-5555-555555555555"
 
 
 class AnalysisJobRepositoryTest(unittest.TestCase):
+  def test_readiness_probe_selects_every_required_observability_column(self) -> None:
+    client = MagicMock()
+    query = client.table.return_value.select.return_value.limit.return_value
+    query.execute.return_value.data = []
+
+    with patch(
+      "app.services.analysis_job_repository.get_supabase_admin_client",
+      return_value=client,
+    ):
+      AnalysisJobRepository().check_readiness()
+
+    client.table.assert_called_once_with("analysis_jobs")
+    selected_columns = client.table.return_value.select.call_args.args[0]
+    self.assertIn("stage", selected_columns)
+    self.assertIn("stage_timestamps", selected_columns)
+    self.assertIn("last_heartbeat_at", selected_columns)
+    self.assertIn("failure_class", selected_columns)
+    client.table.return_value.select.return_value.limit.assert_called_once_with(1)
+
   def test_enqueue_calls_atomic_database_rpc(self) -> None:
     client = MagicMock()
     client.rpc.return_value.execute.return_value.data = [

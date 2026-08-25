@@ -100,6 +100,8 @@ class AnalysisActivityItemResponse(BaseModel):
 
 class AnalysisActivityResponse(BaseModel):
   items: list[AnalysisActivityItemResponse]
+  active_count: int = Field(ge=0)
+  active_limit: int = Field(ge=1)
 
 
 class VideoStatusResponse(BaseModel):
@@ -1080,8 +1082,21 @@ def get_analysis_activity(
   repository = VideoRepository()
   jobs = AnalysisJobRepository()
   storage = StorageService()
-  videos = repository.list_analysis_activity_videos(user_id)
-  jobs_by_video_id = jobs.latest_for_videos([str(video["id"]) for video in videos])
+  settings = get_settings()
+
+  try:
+    videos = repository.list_analysis_activity_videos(user_id)
+    jobs_by_video_id = jobs.latest_for_videos([str(video["id"]) for video in videos])
+    active_count = repository.count_user_in_progress_videos(user_id)
+  except Exception as error:
+    logger.exception("Analysis activity queue schema is unavailable for user %s.", user_id)
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Analysis activity is temporarily unavailable. The queue schema is not ready.",
+    ) from error
+
+  if not isinstance(active_count, int):
+    active_count = 0
   items: list[AnalysisActivityItemResponse] = []
 
   for video in videos:
@@ -1129,7 +1144,11 @@ def get_analysis_activity(
       )
     )
 
-  return AnalysisActivityResponse(items=items)
+  return AnalysisActivityResponse(
+    items=items,
+    active_count=active_count,
+    active_limit=settings.max_user_in_progress_videos,
+  )
 
 
 @router.post("/videos/{video_id}/save", response_model=SaveVideoResponse)

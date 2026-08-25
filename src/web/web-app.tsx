@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Asset } from 'expo-asset';
 import {
   Image,
   Pressable,
@@ -41,7 +40,17 @@ import {
   type SavedLiftView,
 } from '../../lib/savedLiftSelectionPolicy';
 import type { SavedLiftExportJob, SavedVideo, VideoAnalysisRep } from '../types/videoAnalysis';
-import { WebDemoSessionProvider, useWebDemoSession } from './web-demo-session';
+import { useWebDemoSession } from './web-demo-session';
+import {
+  WebAnalysisActivityProvider,
+  useWebAnalysisActivity,
+} from './web-analysis-activity';
+import {
+  WebProcessingRoute,
+  WebRecordRoute,
+  WebReviewRoute,
+  WebUploadRoute,
+} from './web-analysis-routes';
 
 const colors = {
   ...tokens.colors,
@@ -69,12 +78,29 @@ const fonts = {
 
 const previewImageAsset = require('../../assets/demo/peso-pose-overlay.jpg') as number;
 const previewImage = previewImageAsset as ImageSourcePropType;
-const barPathImage = require('../../assets/demo/peso-pin-assisted-bar-path.jpg') as ImageSourcePropType;
+const barPathImage = previewImage;
 const logoImage = require('../../assets/peso-logo.png') as ImageSourcePropType;
-const analyzedVideoAsset = require('../../assets/demo/peso-pose-overlay.mp4') as number;
-const analyzedVideoUri = Asset.fromModule(analyzedVideoAsset).uri;
-const analyzedVideoPosterUri = Asset.fromModule(previewImageAsset).uri;
+const analyzedVideoUri = '';
+const analyzedVideoPosterUri = '';
 const turnstileSiteKey = process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? '';
+const SAVED_LIFT_CACHE_TTL_MS = 60_000;
+
+let savedLiftLibraryCache: {
+  userId: string;
+  lifts: SavedVideo[];
+  expiresAt: number;
+} | null = null;
+
+function invalidateSavedLiftLibraryCache() {
+  savedLiftLibraryCache = null;
+}
+
+function getCachedSavedLifts(userId?: string): SavedVideo[] | null {
+  const cache = savedLiftLibraryCache;
+  return cache && cache.userId === userId && cache.expiresAt > Date.now()
+    ? cache.lifts
+    : null;
+}
 
 type TurnstileApi = {
   render: (container: HTMLElement, options: Record<string, unknown>) => string;
@@ -654,7 +680,6 @@ function AppShell() {
   const { width, height } = useWindowDimensions();
   const location = useLocation();
   const { user } = useAuth();
-  const { session, clearSession } = useWebDemoSession();
   const [compact, setCompact] = useState(() =>
     readSidebarCollapsed(typeof window === 'undefined' ? null : window.localStorage)
   );
@@ -685,13 +710,6 @@ function AppShell() {
     );
   }, [compact]);
 
-  useEffect(() => {
-    const selectionRoutes = location.pathname === '/upload' || location.pathname === '/setup';
-    if (session.selectedFile && session.phase === 'idle' && !selectionRoutes) {
-      clearSession();
-    }
-  }, [clearSession, location.pathname, session.phase, session.selectedFile]);
-
   return (
     <View style={[styles.appRoot, { height: Math.max(height, 640) }]}>
       <View style={styles.appRow}>
@@ -699,7 +717,7 @@ function AppShell() {
         <View style={styles.appMain}>
           <View style={styles.topbar}>
             <View>
-              <Text selectable style={styles.topbarKicker}>{accountSurface ? 'PESO ACCOUNT' : 'DEMO ANALYSIS'}</Text>
+              <Text selectable style={styles.topbarKicker}>{accountSurface ? 'PESO ACCOUNT' : 'REAL ANALYSIS BETA'}</Text>
               <Text accessibilityRole="header" selectable style={styles.topbarTitle}>{title}</Text>
             </View>
             <View style={styles.topbarAccount}>
@@ -758,48 +776,59 @@ function PageScroll({ children }: { children: React.ReactNode }) {
 }
 
 function CapacityCard() {
-  const { session } = useWebDemoSession();
-  const used = session.phase === 'idle' ? 0 : 1;
-  const remaining = 3 - used;
+  const { activeCount, activeLimit } = useWebAnalysisActivity();
+  const used = Math.min(activeCount, activeLimit);
+  const remaining = Math.max(activeLimit - used, 0);
   return (
     <View style={styles.capacityCard}>
       <View style={styles.cardHeaderRow}>
         <View>
-          <Text selectable style={styles.cardLabel}>ROLLING 24-HOUR CAPACITY</Text>
-          <Text selectable style={styles.capacityNumber}>{remaining}<Text style={styles.capacityDenominator}> / 3 remaining</Text></Text>
+          <Text selectable style={styles.cardLabel}>ACTIVE ANALYSIS CAPACITY</Text>
+          <Text selectable style={styles.capacityNumber}>{remaining}<Text style={styles.capacityDenominator}> / {activeLimit} available</Text></Text>
         </View>
         <View style={[styles.statusPill, remaining === 0 && styles.statusPillWarning]}>
           <Text style={[styles.statusPillText, remaining === 0 && styles.statusPillWarningText]}>{remaining === 0 ? 'Full' : 'Available'}</Text>
         </View>
       </View>
-      <View style={styles.capacitySegments} accessibilityLabel={`${remaining} of 3 analysis slots remaining`}>
-        {[0, 1, 2].map((index) => <View key={index} style={[styles.capacitySegment, index < used && styles.capacitySegmentUsed]} />)}
+      <View style={styles.capacitySegments} accessibilityLabel={`${remaining} of ${activeLimit} analysis slots available`}>
+        {Array.from({ length: activeLimit }, (_, index) => <View key={index} style={[styles.capacitySegment, index < used && styles.capacitySegmentUsed]} />)}
       </View>
-      <Text selectable style={styles.cardFine}>{remaining === 0 ? 'Next slot opens today at 6:18 PM.' : 'A slot is charged when a web analysis is accepted.'}</Text>
+      <Text selectable style={styles.cardFine}>{remaining === 0 ? 'Wait for an active analysis to finish before starting another.' : 'Queued and processing videos count toward this limit.'}</Text>
     </View>
   );
 }
 
 function ActivityCard() {
   const navigate = useNavigate();
-  const { session } = useWebDemoSession();
-  const copy = session.phase === 'queued'
-    ? { title: 'Squat set is queued', detail: 'Your demo analysis will begin in a moment.' }
-    : session.phase === 'analyzing'
-      ? { title: 'Analyzing your squat', detail: `Tracking movement and bar position · ${session.percentage}%` }
-      : session.phase === 'ready'
-        ? { title: 'Analysis ready to review', detail: 'Your simulated result is ready when you are.' }
-        : { title: 'No active analysis', detail: 'Record or upload a side-view squat to start a demo analysis.' };
-  const toneStyle = session.phase === 'ready'
+  const { items, loading, error, refresh } = useWebAnalysisActivity();
+  const activity = items[0] ?? null;
+  const copy = activity?.stage === 'queued'
+    ? { title: 'Squat set is queued', detail: 'Waiting for an analysis worker.' }
+    : activity?.stage === 'downloading'
+      ? { title: 'Preparing your video', detail: 'Downloading the uploaded source.' }
+      : activity?.stage === 'pose'
+        ? { title: 'Estimating pose', detail: 'Tracking the lifter through the set.' }
+        : activity?.stage === 'barbell_tracking'
+          ? { title: 'Tracking the barbell', detail: 'Building the visible bar path.' }
+          : activity?.stage === 'saving'
+            ? { title: 'Saving your analysis', detail: 'Preparing the result for review.' }
+            : activity?.stage === 'ready'
+              ? { title: 'Analysis ready to review', detail: 'Your real result is ready.' }
+              : activity?.stage === 'failed'
+                ? { title: 'Analysis could not finish', detail: 'Try another side-view squat video.' }
+                : { title: 'No active analysis', detail: 'Record or upload a side-view squat to start a real analysis.' };
+  const toneStyle = activity?.stage === 'ready'
     ? styles.activityDotSuccess
-    : session.phase === 'idle'
+    : !activity
       ? styles.activityDotNeutral
       : styles.activityDotInfo;
 
-  const hasAction = session.phase !== 'idle';
-  const actionLabel = session.phase === 'ready' ? 'Review result' : 'View activity';
+  const hasAction = Boolean(activity);
+  const actionLabel = activity?.stage === 'ready' ? 'Review result' : 'View activity';
   const onAction = () => navigate(
-    session.phase === 'ready' ? '/review/demo-analysis' : '/processing/demo-analysis'
+    activity?.stage === 'ready'
+      ? `/review/${activity.video_id}`
+      : `/processing/${activity?.video_id}`
   );
 
   return (
@@ -807,9 +836,11 @@ function ActivityCard() {
       <View style={[styles.activityDot, toneStyle]} />
       <View style={styles.activityCopy}>
         <Text selectable style={styles.activityTitle}>{copy.title}</Text>
-        <Text selectable style={styles.activityDetail}>{copy.detail}</Text>
+        <Text selectable style={styles.activityDetail}>{loading && !activity ? 'Refreshing activity…' : copy.detail}</Text>
+        {error ? <Text selectable style={styles.formError}>{error}</Text> : null}
       </View>
       {hasAction && <ActionButton label={actionLabel} variant="secondary" compact onPress={onAction} />}
+      {error && <ActionButton label="Retry" variant="quiet" compact onPress={() => void refresh()} />}
     </View>
   );
 }
@@ -847,9 +878,10 @@ function QuickAction({
 }
 
 function useSavedLiftLibrary() {
-  const { session } = useAuth();
-  const [lifts, setLifts] = useState<SavedVideo[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { session, user } = useAuth();
+  const cachedLifts = getCachedSavedLifts(user?.id);
+  const [lifts, setLifts] = useState<SavedVideo[]>(cachedLifts ?? []);
+  const [loading, setLoading] = useState(cachedLifts === null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = async (signal?: AbortSignal) => {
@@ -857,7 +889,15 @@ function useSavedLiftLibrary() {
     setLoading(true);
     setError(null);
     try {
-      setLifts(await getSavedVideos(session.access_token, signal));
+      const nextLifts = await getSavedVideos(session.access_token, signal);
+      if (user?.id) {
+        savedLiftLibraryCache = {
+          userId: user.id,
+          lifts: nextLifts,
+          expiresAt: Date.now() + SAVED_LIFT_CACHE_TTL_MS,
+        };
+      }
+      setLifts(nextLifts);
     } catch (loadError) {
       if (!signal?.aborted) {
         setError(loadError instanceof Error ? loadError.message : 'Unable to load Saved Lifts.');
@@ -868,10 +908,18 @@ function useSavedLiftLibrary() {
   };
 
   useEffect(() => {
+    const nextCachedLifts = getCachedSavedLifts(user?.id);
+    if (nextCachedLifts) {
+      setLifts(nextCachedLifts);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     const controller = new AbortController();
     void refresh(controller.signal);
     return () => controller.abort();
-  }, [session?.access_token]);
+  }, [session?.access_token, user?.id]);
 
   return { lifts, loading, error, refresh: () => refresh() };
 }
@@ -918,9 +966,10 @@ function LiftRow({
 function HomeScreen() {
   const navigate = useNavigate();
   const { width } = useWindowDimensions();
-  const { session } = useWebDemoSession();
+  const { items, activeCount, activeLimit } = useWebAnalysisActivity();
   const { lifts, loading, error } = useSavedLiftLibrary();
-  const blocked = session.phase === 'queued' || session.phase === 'analyzing';
+  const blocked = activeCount >= activeLimit;
+  const readyItems = items.filter((item) => item.stage === 'ready');
   return (
     <PageScroll>
       <View style={styles.welcomeRow}>
@@ -942,13 +991,13 @@ function HomeScreen() {
         </View>
         <ActivityCard />
       </View>
-      {session.phase === 'ready' && (
+      {readyItems.length > 0 && (
         <View style={styles.pendingReviewBanner}>
           <View>
-            <Text selectable style={styles.pendingTitle}>1 result needs your review</Text>
-            <Text selectable style={styles.pendingBody}>Save or discard it before it expires tomorrow at 8:42 AM.</Text>
+            <Text selectable style={styles.pendingTitle}>{readyItems.length} result{readyItems.length === 1 ? '' : 's'} need your review</Text>
+            <Text selectable style={styles.pendingBody}>Save or discard completed analyses before they expire.</Text>
           </View>
-          <ActionButton label="Review now" compact onPress={() => navigate('/review/demo-analysis')} />
+          <ActionButton label="Review now" compact onPress={() => navigate(`/review/${readyItems[0].video_id}`)} />
         </View>
       )}
       <View style={styles.sectionBlock}>
@@ -1524,6 +1573,7 @@ function SavedLiftsScreen() {
     setActionError(null);
     try {
       await deleteSavedLifts(selectedIds, session.access_token);
+      invalidateSavedLiftLibraryCache();
       setSelectedIds([]);
       setSelectionMode(false);
       await refresh();
@@ -1781,7 +1831,7 @@ function SettingsScreen() {
 
 export default function WebApp() {
   return (
-    <WebDemoSessionProvider>
+    <WebAnalysisActivityProvider>
       <Routes>
         <Route path="/login" element={<LoginScreen />} />
         <Route path="/signup" element={<SignupScreen />} />
@@ -1789,11 +1839,11 @@ export default function WebApp() {
         <Route path="/reset" element={<ResetScreen />} />
         <Route element={<AccountRoute />}>
           <Route index element={<HomeScreen />} />
-          <Route path="/record" element={<RecordScreen />} />
-          <Route path="/upload" element={<UploadScreen />} />
-          <Route path="/setup" element={<SetupScreen />} />
-          <Route path="/processing/:jobId" element={<ProcessingScreen />} />
-          <Route path="/review/:jobId" element={<ReviewScreen />} />
+          <Route path="/record" element={<WebRecordRoute />} />
+          <Route path="/upload" element={<WebUploadRoute />} />
+          <Route path="/setup" element={<Navigate to="/upload" replace />} />
+          <Route path="/processing/:videoId" element={<WebProcessingRoute />} />
+          <Route path="/review/:videoId" element={<WebReviewRoute onLibraryChanged={invalidateSavedLiftLibraryCache} />} />
           <Route path="/saved-lifts" element={<SavedLiftsScreen />} />
           <Route path="/saved-lifts/:liftId" element={<SavedLiftDetailScreen />} />
           <Route path="/profile" element={<ProfileScreen />} />
@@ -1801,7 +1851,7 @@ export default function WebApp() {
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </WebDemoSessionProvider>
+    </WebAnalysisActivityProvider>
   );
 }
 

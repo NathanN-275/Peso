@@ -3,13 +3,57 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const { shouldPollAnalysisActivity } = require('../lib/analysisActivityPolicy');
+const {
+  mergeAnalysisActivity,
+  shouldPollAnalysisActivity,
+} = require('../lib/analysisActivityPolicy');
 
 test('analysis activity polls only for active queued or processing work', () => {
   assert.equal(shouldPollAnalysisActivity([{ status: 'queued' }], true), true);
   assert.equal(shouldPollAnalysisActivity([{ status: 'processing' }], true), true);
   assert.equal(shouldPollAnalysisActivity([{ status: 'ready' }, { status: 'failed' }], true), false);
   assert.equal(shouldPollAnalysisActivity([{ status: 'processing' }], false), false);
+});
+
+test('optimistic queued work survives a failed refresh and is replaced by server truth', () => {
+  const optimistic = {
+    job_id: 'optimistic:video-1',
+    video_id: 'video-1',
+    status: 'queued',
+    stage: 'queued',
+    created_at: '2026-08-24T23:00:00.000Z',
+  };
+
+  assert.deepEqual(
+    mergeAnalysisActivity([], [optimistic], Date.parse('2026-08-24T23:01:00.000Z')),
+    [optimistic]
+  );
+
+  const ready = {
+    ...optimistic,
+    job_id: 'job-1',
+    status: 'ready',
+    stage: 'ready',
+  };
+  assert.deepEqual(
+    mergeAnalysisActivity([ready], [optimistic], Date.parse('2026-08-24T23:01:00.000Z')),
+    [ready]
+  );
+});
+
+test('stale optimistic work expires instead of remaining forever', () => {
+  const optimistic = {
+    job_id: 'optimistic:video-1',
+    video_id: 'video-1',
+    status: 'queued',
+    stage: 'queued',
+    created_at: '2026-08-24T22:00:00.000Z',
+  };
+
+  assert.deepEqual(
+    mergeAnalysisActivity([], [optimistic], Date.parse('2026-08-24T23:00:01.000Z')),
+    []
+  );
 });
 
 test('successful queue handoff leaves the upload screen and restores from Home', () => {
@@ -31,6 +75,31 @@ test('successful queue handoff leaves the upload screen and restores from Home',
   assert.match(homeSource, /Download failed — Retry/);
   assert.match(homeSource, /ui_ready_delay_ms/);
   assert.match(rootSource, /throw error/);
+});
+
+test('Netlify web app uses durable video-id routes instead of demo timers', () => {
+  const webAppSource = fs.readFileSync(
+    path.join(__dirname, '../src/web/web-app.tsx'),
+    'utf8'
+  );
+  const webActivitySource = fs.readFileSync(
+    path.join(__dirname, '../src/web/web-analysis-activity.tsx'),
+    'utf8'
+  );
+  const webRoutesSource = fs.readFileSync(
+    path.join(__dirname, '../src/web/web-analysis-routes.tsx'),
+    'utf8'
+  );
+
+  assert.doesNotMatch(webAppSource, /<WebDemoSessionProvider>/);
+  assert.match(webAppSource, /<WebAnalysisActivityProvider>/);
+  assert.match(webRoutesSource, /UploadVideoScreen/);
+  assert.match(webRoutesSource, /AnalysisReviewScreen/);
+  assert.match(webAppSource, /path="\/processing\/:videoId"/);
+  assert.match(webAppSource, /path="\/review\/:videoId"/);
+  assert.match(webActivitySource, /getAnalysisActivity/);
+  assert.match(webActivitySource, /mergeAnalysisActivity/);
+  assert.match(webActivitySource, /localStorage/);
 });
 
 test('durable queue schema deduplicates active jobs and recovers expired leases', () => {

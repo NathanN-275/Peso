@@ -18,6 +18,15 @@ class AnalysisJobRepository:
   def __init__(self) -> None:
     self.client = get_supabase_admin_client()
 
+  def check_readiness(self) -> None:
+    """Fail when the deployed queue schema is older than this API contract."""
+    (
+      self.client.table("analysis_jobs")
+      .select(ANALYSIS_JOB_COLUMNS)
+      .limit(1)
+      .execute()
+    )
+
   def enqueue(self, video_id: str, *, allow_completed: bool = False) -> dict[str, Any]:
     response = self.client.rpc(
       "enqueue_video_analysis_job",

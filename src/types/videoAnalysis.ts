@@ -493,6 +493,8 @@ export type AnalysisActivityItem = {
 
 export type AnalysisActivityResponse = {
   items: AnalysisActivityItem[];
+  active_count: number;
+  active_limit: number;
 };
 
 export type AnalysisResponse = {

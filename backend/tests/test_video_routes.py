@@ -729,6 +729,7 @@ class VideoRoutesTest(unittest.TestCase):
         "expires_at": "2026-08-18T18:00:00+00:00",
       }
     ]
+    repository.count_user_in_progress_videos.return_value = 1
     jobs = MagicMock()
     jobs.latest_for_videos.return_value = {
       str(VIDEO_ID): {
@@ -757,7 +758,10 @@ class VideoRoutesTest(unittest.TestCase):
       response = get_analysis_activity(USER_ID)
 
     repository.list_analysis_activity_videos.assert_called_once_with(USER_ID)
+    repository.count_user_in_progress_videos.assert_called_once_with(USER_ID)
     jobs.latest_for_videos.assert_called_once_with([str(VIDEO_ID)])
+    self.assertEqual(response.active_count, 1)
+    self.assertEqual(response.active_limit, 3)
     self.assertEqual(len(response.items), 1)
     self.assertEqual(response.items[0].status, "queued")
     self.assertEqual(response.items[0].stage, "queued")
@@ -767,6 +771,37 @@ class VideoRoutesTest(unittest.TestCase):
     )
     self.assertEqual(response.items[0].failure_class, "transient_infrastructure")
     self.assertEqual(response.items[0].thumbnail_url, "https://example.test/activity-thumb")
+
+  def test_analysis_activity_returns_service_unavailable_when_queue_schema_is_missing(self) -> None:
+    repository = MagicMock()
+    repository.list_analysis_activity_videos.return_value = [
+      {
+        "id": str(VIDEO_ID),
+        "user_id": USER_ID,
+        "status": "queued",
+        "save_state": "pending",
+        "exercise_type": "squat",
+        "view_type": "side",
+        "created_at": "2026-08-17T18:00:00+00:00",
+        "updated_at": "2026-08-17T18:01:00+00:00",
+      }
+    ]
+    jobs = MagicMock()
+    jobs.latest_for_videos.side_effect = RuntimeError("column analysis_jobs.stage does not exist")
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.AnalysisJobRepository", return_value=jobs),
+      patch("app.routes.videos.StorageService", return_value=MagicMock()),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      get_analysis_activity(USER_ID)
+
+    self.assertEqual(raised.exception.status_code, 503)
+    self.assertEqual(
+      raised.exception.detail,
+      "Analysis activity is temporarily unavailable. The queue schema is not ready.",
+    )
 
   def test_queue_analysis_rejects_unqueueable_status(self) -> None:
     repository = MagicMock()
