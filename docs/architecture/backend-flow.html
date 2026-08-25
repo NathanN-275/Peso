@@ -80,60 +80,59 @@
       <div class="shell">
         <div class="section-heading">
           <p class="kicker">Analysis orchestration</p>
-          <h2 id="orchestration-title">Current mobile path and planned web path</h2>
-          <p>Both paths reach the same analysis pipeline. Their job durability differs.</p>
+          <h2 id="orchestration-title">One durable path for mobile and web</h2>
+          <p>Clients enqueue work, leave freely, and restore owner-scoped activity from the server.</p>
         </div>
 
         <ul class="legend" aria-label="Diagram status legend">
-          <li class="legend__item"><span class="legend__swatch" aria-hidden="true"></span>Current</li>
-          <li class="legend__item"><span class="legend__swatch legend__swatch--planned" aria-hidden="true"></span>Planned Web Beta</li>
+          <li class="legend__item"><span class="legend__swatch" aria-hidden="true"></span>Current durable path</li>
         </ul>
 
         <div class="branch-grid">
-          <div class="diagram" aria-label="Current analysis orchestration">
-            <h3 class="diagram__title">Current mobile analysis</h3>
-            <p class="diagram__description">FastAPI BackgroundTasks run the accepted job inside the API process.</p>
+          <div class="diagram" aria-label="Current analysis queue orchestration">
+            <h3 class="diagram__title">API and client</h3>
+            <p class="diagram__description">The request remains blocking only through upload, preflight, and queue confirmation.</p>
             <div class="flow flow--stack">
               <article class="flow-node">
                 <span class="flow-node__tag">POST /analyze</span>
                 <h3>Validate state + capacity</h3>
-                <p>Require quality preflight, owned storage, a queueable status, and an available work slot.</p>
+                <p>Require quality preflight, owned storage, a queueable status, and available user capacity.</p>
               </article>
               <span class="flow-arrow flow-arrow--down" aria-hidden="true">↓</span>
               <article class="flow-node flow-node--blue">
-                <span class="flow-node__tag">BackgroundTasks</span>
-                <h3>Set queued → process</h3>
-                <p>The API process starts <code>analyze_video</code> and updates video status.</p>
+                <span class="flow-node__tag">Database RPC</span>
+                <h3>Create or reuse a job</h3>
+                <p>One transaction records the queued job and prevents duplicate active work.</p>
               </article>
               <span class="flow-arrow flow-arrow--down" aria-hidden="true">↓</span>
               <article class="flow-node flow-node--success">
-                <span class="flow-node__tag">Client polling</span>
-                <h3>Read video status</h3>
-                <p>The client fetches the result after status becomes complete.</p>
+                <span class="flow-node__tag">Analysis Activity</span>
+                <h3>Return Home + restore</h3>
+                <p>The client polls only while visible and opens the existing review when ready.</p>
               </article>
             </div>
           </div>
 
-          <div class="diagram" aria-label="Planned durable Web Analysis Job orchestration">
-            <h3 class="diagram__title">Planned Web Analysis Job</h3>
+          <div class="diagram" aria-label="Durable Analysis Job worker orchestration">
+            <h3 class="diagram__title">Durable analysis worker</h3>
             <p class="diagram__description">Database job state survives API and worker restarts.</p>
             <div class="flow flow--stack">
-              <article class="flow-node flow-node--planned">
-                <span class="flow-node__tag">One transaction</span>
-                <h3>Create job + charge slot + enqueue</h3>
-                <p>The job row is the source of truth; anonymous clients never touch the queue.</p>
+              <article class="flow-node">
+                <span class="flow-node__tag">Leased claim</span>
+                <h3>Claim one available job</h3>
+                <p>Workers use an atomic claim; anonymous clients never touch the queue.</p>
               </article>
               <span class="flow-arrow flow-arrow--down" aria-hidden="true">↓</span>
-              <article class="flow-node flow-node--planned">
-                <span class="flow-node__tag">Separate worker</span>
-                <h3>Claim atomically + process</h3>
-                <p>One worker consumes the message, records attempts, and classifies failures.</p>
+              <article class="flow-node">
+                <span class="flow-node__tag">Lease heartbeat</span>
+                <h3>Analyze + renew</h3>
+                <p>The worker runs <code>analyze_video</code> and renews its lease during long work.</p>
               </article>
               <span class="flow-arrow flow-arrow--down" aria-hidden="true">↓</span>
-              <article class="flow-node flow-node--planned">
-                <span class="flow-node__tag">Owner projection</span>
-                <h3>Poll durable job state</h3>
-                <p>The browser can leave and return without losing the job or its retry history.</p>
+              <article class="flow-node flow-node--success">
+                <span class="flow-node__tag">Finish or retry</span>
+                <h3>Persist the outcome</h3>
+                <p>Success becomes ready for review; failures retry up to three attempts.</p>
               </article>
             </div>
           </div>
@@ -210,21 +209,26 @@
     <section class="section" aria-labelledby="states-title">
       <div class="shell">
         <div class="section-heading">
-          <p class="kicker">Planned job state</p>
+          <p class="kicker">Durable job state</p>
           <h2 id="states-title">The database tells the truth</h2>
         </div>
 
-        <div class="diagram" aria-label="Planned Web Analysis Job state model">
+        <div class="diagram" aria-label="Analysis Job state model">
           <div class="state-grid">
-            <article class="flow-node flow-node--planned">
+            <article class="flow-node">
               <span class="flow-node__tag">Start</span>
               <h3>Queued</h3>
-              <p>Accepted, slot charged, message available.</p>
+              <p>Accepted and waiting for a worker.</p>
             </article>
-            <article class="flow-node flow-node--planned">
+            <article class="flow-node">
               <span class="flow-node__tag">Claim</span>
               <h3>Processing</h3>
               <p>Worker owns the current attempt.</p>
+            </article>
+            <article class="flow-node">
+              <span class="flow-node__tag">Retry</span>
+              <h3>Retry wait</h3>
+              <p>A failed attempt is waiting for its backoff window.</p>
             </article>
             <article class="flow-node flow-node--success">
               <span class="flow-node__tag">Success</span>
@@ -234,7 +238,7 @@
             <article class="flow-node flow-node--danger">
               <span class="flow-node__tag">Terminal</span>
               <h3>Failed</h3>
-              <p>Failure class determines retry and refund.</p>
+              <p>Three attempts failed or an expired lease exhausted retries.</p>
             </article>
             <article class="flow-node">
               <span class="flow-node__tag">Cleanup</span>

@@ -26,12 +26,20 @@ rolling web capacity, active processing work, pending reviews, and recent Saved
 Lifts. Its navigation becomes a full sidebar, compact rail, or bottom bar as the
 viewport narrows.
 
-## Web Analysis Job
+## Analysis Job
 
-A server-owned request to analyze one squat video submitted through the Web
-App. A job records its owner, video, status, timestamps, attempts, expiry,
-failure class, and whether it currently consumes a rolling quota slot. Job state
-is not inferred from queue visibility.
+A server-owned request to analyze one uploaded lift from mobile or web. Its
+durable state continues independently of the client and survives API, worker,
+and client restarts. Public stages are Queued, Downloading, Pose, Barbell
+Tracking, Saving, Ready, and Failed. Stage timestamps and the worker heartbeat
+are durable; percentages are not inferred.
+
+## Analysis Activity
+
+The owner-scoped list of Analysis Jobs that are queued, processing, ready for
+review, or failed. It is the user's resumable path back to an unsaved Analysis
+Run and is not part of the Saved Lift Library. The client refreshes it on app
+or browser resume and polls only while foregrounded work is active.
 
 ## Demo Analysis
 
@@ -39,7 +47,7 @@ A client-side Web App simulation used to preview the upload-to-review flow. The
 selected video stays on the browser device, its thumbnail is generated locally,
 and clock-based queued and analyzing phases produce a bundled fixture result.
 A Demo Analysis creates no upload, quota charge, backend request, or durable
-record and must not be treated as a server-owned Web Analysis Job.
+record and must not be treated as a server-owned Analysis Job.
 
 ## Saved Lift
 

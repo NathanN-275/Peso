@@ -1,7 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AppState,
   Image,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,11 +12,20 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
-import { describeBackendRequestFailure, getSavedVideoOverview } from '../../lib/backendApi';
+import { shouldPollAnalysisActivity } from '../../lib/analysisActivityPolicy';
+import {
+  describeBackendRequestFailure,
+  getAnalysisActivity,
+  getSavedVideoOverview,
+} from '../../lib/backendApi';
 import BottomNav, { NAV_HEIGHT } from '../components/BottomNav';
 import { SkeletonBlock } from '../components/Skeleton';
 import tokens from '../theme/tokens';
-import type { SavedVideo, SavedVideoOverview } from '../types/videoAnalysis';
+import type {
+  AnalysisActivityItem,
+  SavedVideo,
+  SavedVideoOverview,
+} from '../types/videoAnalysis';
 import {
   formatExerciseLabel,
   getSavedWorkoutFacts,
@@ -25,11 +36,93 @@ type HomeScreenProps = {
   refreshKey?: number;
   onNavigateToAddVideo?: () => void;
   onNavigateToProfile?: () => void;
+  onOpenAnalysisActivity?: (videoId: string) => void | Promise<void>;
   onOpenSavedLiftFolder?: (exerciseType: string) => void;
   cachedSavedOverview?: SavedVideoOverview | null;
   savedOverviewLoaded?: boolean;
   onSavedOverviewLoaded?: (overview: SavedVideoOverview) => void;
 };
+
+function activityStatusCopy(activity: AnalysisActivityItem) {
+  switch (activity.stage) {
+    case 'queued':
+      return { label: 'Queued', detail: 'Waiting for analysis to start', icon: 'time-outline' as const };
+    case 'downloading':
+      return { label: 'Downloading', detail: 'Downloading video', icon: 'cloud-download-outline' as const };
+    case 'pose':
+      return { label: 'Pose', detail: 'Estimating pose', icon: 'body-outline' as const };
+    case 'barbell_tracking':
+      return { label: 'Barbell tracking', detail: 'Tracking barbell', icon: 'analytics-outline' as const };
+    case 'saving':
+      return { label: 'Saving', detail: 'Saving analysis', icon: 'save-outline' as const };
+    case 'ready':
+      return { label: 'Ready', detail: 'Ready to review', icon: 'checkmark-circle-outline' as const };
+    case 'failed':
+      return { label: 'Failed', detail: 'Analysis could not finish', icon: 'alert-circle-outline' as const };
+  }
+}
+
+function AnalysisActivityCard({
+  activity,
+  onOpen,
+}: {
+  activity: AnalysisActivityItem;
+  onOpen?: () => void;
+}) {
+  const copy = activityStatusCopy(activity);
+  const ready = activity.status === 'ready';
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
+  const [opening, setOpening] = useState(false);
+  const [openFailed, setOpenFailed] = useState(false);
+
+  useEffect(() => setThumbnailFailed(false), [activity.thumbnail_url]);
+
+  return (
+    <Pressable
+      accessibilityRole={ready ? 'button' : undefined}
+      accessibilityLabel={`${formatExerciseLabel(activity.exercise_type)} analysis ${copy.label}`}
+      disabled={!ready || opening}
+      onPress={() => {
+        if (!onOpen || opening) {
+          return;
+        }
+        setOpening(true);
+        setOpenFailed(false);
+        Promise.resolve(onOpen())
+          .catch(() => setOpenFailed(true))
+          .finally(() => setOpening(false));
+      }}
+      style={[styles.activityCard, ready && styles.activityCardReady]}
+    >
+      {activity.thumbnail_url && !thumbnailFailed ? (
+        <Image
+          source={{ uri: activity.thumbnail_url }}
+          style={styles.activityThumbnail}
+          onError={() => setThumbnailFailed(true)}
+        />
+      ) : (
+        <View style={styles.activityThumbnailPlaceholder}>
+          <Ionicons name="barbell-outline" size={26} color={tokens.colors.textMuted} />
+        </View>
+      )}
+      <View style={styles.activityCopy}>
+        <Text style={styles.activityExercise}>{formatExerciseLabel(activity.exercise_type)}</Text>
+        <Text style={styles.activityMeta}>{formatExerciseLabel(activity.view_type)} view</Text>
+        <View style={styles.activityStatusRow}>
+          <Ionicons
+            name={copy.icon}
+            size={17}
+            color={ready ? tokens.colors.brand : tokens.colors.textMuted}
+          />
+          <Text style={[styles.activityStatus, ready && styles.activityStatusReady]}>
+            {opening ? 'Loading review…' : openFailed ? 'Download failed — Retry' : copy.detail}
+          </Text>
+        </View>
+      </View>
+      {ready ? <Ionicons name="chevron-forward" size={22} color={tokens.colors.brand} /> : null}
+    </Pressable>
+  );
+}
 
 type SavedVideoGroup = {
   exerciseType: string;
@@ -147,6 +240,7 @@ export default function HomeScreen({
   refreshKey = 0,
   onNavigateToAddVideo,
   onNavigateToProfile,
+  onOpenAnalysisActivity,
   onOpenSavedLiftFolder,
   cachedSavedOverview = null,
   savedOverviewLoaded = false,
@@ -157,6 +251,85 @@ export default function HomeScreen({
   const [savedOverview, setSavedOverview] = useState<SavedVideoOverview | null>(cachedSavedOverview);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [analysisActivity, setAnalysisActivity] = useState<AnalysisActivityItem[]>([]);
+  const [activityError, setActivityError] = useState<string | null>(null);
+  const observedReadyJobsRef = useRef(new Set<string>());
+  const [surfaceActive, setSurfaceActive] = useState(
+    Platform.OS === 'web' ? typeof document === 'undefined' || document.visibilityState === 'visible' : true
+  );
+
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const handleVisibility = () => setSurfaceActive(document.visibilityState === 'visible');
+      document.addEventListener('visibilitychange', handleVisibility);
+      return () => document.removeEventListener('visibilitychange', handleVisibility);
+    }
+
+    const subscription = AppState.addEventListener('change', (state) => {
+      setSurfaceActive(state === 'active');
+    });
+    return () => subscription.remove();
+  }, []);
+
+  useEffect(() => {
+    if (!session?.access_token) {
+      setAnalysisActivity([]);
+      setActivityError(null);
+      return;
+    }
+    if (!surfaceActive) {
+      return;
+    }
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+
+    const poll = async () => {
+      try {
+        const response = await getAnalysisActivity(session.access_token, controller.signal);
+        if (cancelled) {
+          return;
+        }
+        setAnalysisActivity(response.items);
+        setActivityError(null);
+        response.items.forEach((item) => {
+          if (item.stage !== 'ready' || observedReadyJobsRef.current.has(item.job_id)) {
+            return;
+          }
+          const readyAt = item.stage_timestamps.ready
+            ? Date.parse(item.stage_timestamps.ready)
+            : Number.NaN;
+          if (Number.isFinite(readyAt)) {
+            console.info('[analysis-metric] ui_ready_delay_ms', {
+              jobId: item.job_id,
+              videoId: item.video_id,
+              durationMs: Math.max(Date.now() - readyAt, 0),
+            });
+          }
+          observedReadyJobsRef.current.add(item.job_id);
+        });
+        if (shouldPollAnalysisActivity(response.items, surfaceActive)) {
+          timer = setTimeout(() => void poll(), 4000);
+        }
+      } catch (error) {
+        if (cancelled || (error instanceof Error && error.name === 'AbortError')) {
+          return;
+        }
+        setActivityError('Unable to refresh analysis activity.');
+        timer = setTimeout(() => void poll(), 8000);
+      }
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+  }, [session?.access_token, surfaceActive, refreshKey]);
 
   useEffect(() => {
     if (!savedOverviewLoaded) {
@@ -250,6 +423,22 @@ export default function HomeScreen({
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
+          {analysisActivity.length > 0 || activityError ? (
+            <View style={styles.activitySection}>
+              <Text style={styles.activityTitle}>Analysis Activity</Text>
+              {analysisActivity.map((activity) => (
+                <AnalysisActivityCard
+                  key={activity.job_id}
+                  activity={activity}
+                  onOpen={activity.status === 'ready'
+                    ? () => { void onOpenAnalysisActivity?.(activity.video_id); }
+                    : undefined}
+                />
+              ))}
+              {activityError ? <Text style={styles.activityError}>{activityError}</Text> : null}
+            </View>
+          ) : null}
+
           <Text style={styles.pageTitle}>Saved Lifts</Text>
 
           {loading ? (
@@ -330,6 +519,80 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 22,
     paddingHorizontal: 14,
+  },
+  activitySection: {
+    gap: 10,
+    marginBottom: 28,
+    paddingHorizontal: 14,
+  },
+  activityTitle: {
+    color: tokens.colors.brand,
+    fontSize: 28,
+    lineHeight: 34,
+    fontWeight: '800',
+  },
+  activityCard: {
+    minHeight: 92,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderColor: '#283345',
+    borderRadius: 16,
+    backgroundColor: '#101722',
+    padding: 10,
+  },
+  activityCardReady: {
+    borderColor: tokens.colors.brand,
+  },
+  activityThumbnail: {
+    width: 68,
+    height: 68,
+    borderRadius: 10,
+    backgroundColor: '#252525',
+  },
+  activityThumbnailPlaceholder: {
+    width: 68,
+    height: 68,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    backgroundColor: '#252525',
+  },
+  activityCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  activityExercise: {
+    color: tokens.colors.textPrimary,
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '800',
+  },
+  activityMeta: {
+    color: tokens.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  activityStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 5,
+  },
+  activityStatus: {
+    color: tokens.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+  },
+  activityStatusReady: {
+    color: tokens.colors.brand,
+  },
+  activityError: {
+    color: '#FFB4B4',
+    fontSize: 12,
+    lineHeight: 16,
   },
   folderList: {
     gap: 24,

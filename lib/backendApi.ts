@@ -1,5 +1,6 @@
 import type {
   AnalysisResponse,
+  AnalysisActivityResponse,
   SaveState,
   SavedLiftExportJob,
   SavedVideo,
@@ -405,7 +406,12 @@ export async function triggerVideoAnalysis(videoId: string, accessToken: string,
   // Queue analysis for an uploaded video.
   const analyzePath = `/analyze/${videoId}`;
 
-  return requestJson<{ video_id: string; status: VideoAnalysisStatus }>(
+  return requestJson<{
+    video_id: string;
+    job_id: string | null;
+    status: VideoAnalysisStatus;
+    stage: AnalysisActivityResponse['items'][number]['stage'];
+  }>(
     analyzePath,
     accessToken,
     {
@@ -413,6 +419,10 @@ export async function triggerVideoAnalysis(videoId: string, accessToken: string,
       signal,
     }
   );
+}
+
+export async function getAnalysisActivity(accessToken: string, signal?: AbortSignal) {
+  return requestJson<AnalysisActivityResponse>('/videos/analysis-activity', accessToken, { signal });
 }
 
 export async function runVideoQualityPreflight(
@@ -438,7 +448,20 @@ export async function fetchVideoStatus(videoId: string, accessToken: string, sig
 
 export async function fetchAnalysisResult(videoId: string, accessToken: string, signal?: AbortSignal) {
   // Fetch the completed analysis payload once processing finishes.
-  return requestJson<AnalysisResponse>(`/analysis/${videoId}`, accessToken, { signal });
+  const startedAt = Date.now();
+  try {
+    const response = await requestJson<AnalysisResponse>(`/analysis/${videoId}`, accessToken, { signal });
+    const durationMs = Date.now() - startedAt;
+    console.info('[analysis-metric] result_download_ms', { videoId, durationMs });
+    return response;
+  } catch (error) {
+    console.warn('[analysis-metric] result_download_failed', {
+      videoId,
+      durationMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 export async function getSavedVideos(accessToken: string, signal?: AbortSignal) {

@@ -4,7 +4,7 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
-const { createDevEnvironment } = require('./start-dev-env');
+const { createDevEnvironment, parseDotenv } = require('./start-dev-env');
 
 const rootDir = path.resolve(__dirname, '..');
 const backendDir = path.join(rootDir, 'backend');
@@ -17,6 +17,15 @@ const devEnvironment = createDevEnvironment({
 const { backendPort, backendHealthUrl, expoEnv } = devEnvironment;
 const backendPython = path.join(backendDir, '.venv', 'bin', 'python');
 const pythonCommand = fs.existsSync(backendPython) ? backendPython : 'python3';
+const backendEnvPath = path.join(backendDir, '.env');
+const backendFileEnv = fs.existsSync(backendEnvPath)
+  ? parseDotenv(fs.readFileSync(backendEnvPath, 'utf8'))
+  : {};
+const workerEnv = {
+  ...devEnvironment.env,
+  ...backendFileEnv,
+  ...process.env,
+};
 const expoBinary = path.join(
   rootDir,
   'node_modules',
@@ -149,6 +158,17 @@ async function main() {
     await waitForBackendHealth();
     log('backend', `healthy at ${backendHealthUrl}`);
   }
+
+  log('worker', 'starting durable video analysis worker');
+  spawnProcess(
+    'worker',
+    pythonCommand,
+    ['-m', 'app.jobs.analysis_worker'],
+    {
+      cwd: backendDir,
+      env: workerEnv,
+    }
+  );
 
   log('expo', `starting Expo ${startWeb ? 'web' : 'native'} with backend ${expoEnv.EXPO_PUBLIC_BACKEND_URL}`);
   spawnProcess('expo', expoBinary, ['start', ...(startWeb ? ['--web'] : []), '--clear'], {

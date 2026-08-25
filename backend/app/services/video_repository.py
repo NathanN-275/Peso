@@ -239,6 +239,44 @@ class VideoRepository:
     )
     return int(response.count or 0)
 
+  def list_analysis_activity_videos(self, user_id: str, *, limit: int = 20) -> list[dict[str, Any]]:
+    """List unfinished or unreviewed analysis uploads owned by one user."""
+    try:
+      response = (
+        self.client.table("videos")
+        .select(VIDEO_STORAGE_COLUMNS)
+        .eq("user_id", user_id)
+        .eq("save_state", "pending")
+        .filter("discarded_at", "is", "null")
+        .in_("status", ["queued", "processing", "completed", "failed"])
+        .order("created_at", desc=True)
+        .limit(max(1, min(limit, 50)))
+        .execute()
+      )
+    except Exception as error:
+      logger.warning("Falling back to legacy analysis activity query for user %s: %s", user_id, error)
+      response = (
+        self.client.table("videos")
+        .select(VIDEO_LEGACY_BASE_COLUMNS)
+        .eq("user_id", user_id)
+        .eq("save_state", "pending")
+        .in_("status", ["queued", "processing", "completed", "failed"])
+        .order("created_at", desc=True)
+        .limit(max(1, min(limit, 50)))
+        .execute()
+      )
+
+    now = datetime.now(timezone.utc)
+    visible: list[dict[str, Any]] = []
+    for video in response.data or []:
+      expires_at = self._parse_timestamp(video.get("expires_at"))
+      if expires_at is not None and expires_at <= now:
+        continue
+      if video.get("discarded_at"):
+        continue
+      visible.append(video)
+    return visible
+
   def queue_owned_video_if_status(
     self,
     video_id: str,

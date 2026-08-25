@@ -539,6 +539,7 @@ class PipelineFallbackTest(unittest.TestCase):
     estimator = MagicMock()
     estimator.config = PoseEstimatorConfig(pose_backend="hybrid", pose_fallback_enabled=False)
     estimator.run.return_value = self._estimation()
+    reported_stages: list[str] = []
 
     with (
       patch("app.analysis.pipeline.VideoRepository", return_value=repository),
@@ -547,7 +548,7 @@ class PipelineFallbackTest(unittest.TestCase):
       patch("app.analysis.pipeline.PoseEstimator", return_value=estimator) as estimator_factory,
       patch("app.analysis.pipeline._analyze_squat_result", return_value=self._uncertain_result()),
     ):
-      pipeline.analyze_video("video-1")
+      pipeline.analyze_video("video-1", progress_callback=reported_stages.append)
 
     estimator_factory.assert_called_once()
     saved_result = repository.save_analysis_result.call_args.args[2]
@@ -558,6 +559,10 @@ class PipelineFallbackTest(unittest.TestCase):
     self.assertFalse(saved_result["fallback_triggered"])
     self.assertEqual(saved_result["fallback_unavailable_reason"], "fallback_disabled")
     self.assertEqual(saved_result["diagnostics"]["fallback_unavailable_reason"], "fallback_disabled")
+    self.assertEqual(
+      reported_stages,
+      ["downloading", "pose", "barbell_tracking", "saving"],
+    )
 
   def test_analyze_records_missing_dependency_when_rtmpose_fallback_fails(self) -> None:
     pipeline = self._import_pipeline()

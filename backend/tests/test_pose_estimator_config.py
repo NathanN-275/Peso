@@ -15,9 +15,81 @@ from app.analysis.pose_estimator import (
   _scaled_dimensions,
   pose_config_from_env,
 )
+from app.analysis.analysis_profiles import (
+  FAST_PROFILE_ID,
+  LEGACY_PROFILE_ID,
+  analysis_profile_from_env,
+)
+from app.analysis.sampling import (
+  active_motion_windows,
+  coarse_target_fps,
+  timestamp_sample_indices,
+)
 
 
 class PoseEstimatorConfigTest(unittest.TestCase):
+  def test_analysis_profile_defaults_to_rollback_profile(self) -> None:
+    with patch.dict(os.environ, {}, clear=True):
+      profile, mode = analysis_profile_from_env()
+
+    self.assertEqual(mode, "legacy")
+    self.assertEqual(profile.id, LEGACY_PROFILE_ID)
+    self.assertEqual((profile.target_fps, profile.max_frame_dimension), (18.0, 720))
+
+  def test_candidate_profile_uses_first_benchmark_candidate(self) -> None:
+    with patch.dict(os.environ, {
+      "ANALYSIS_PROFILE_MODE": "candidate",
+      "POSE_TARGET_FPS": "18",
+      "POSE_MAX_FRAME_DIMENSION": "720",
+    }, clear=True):
+      profile, mode = analysis_profile_from_env()
+      pose_config = pose_config_from_env()
+
+    self.assertEqual(mode, "candidate")
+    self.assertEqual(profile.id, FAST_PROFILE_ID)
+    self.assertEqual((profile.target_fps, profile.max_frame_dimension), (12.0, 640))
+    self.assertEqual((pose_config.target_fps, pose_config.max_frame_dimension), (12.0, 640))
+
+  def test_timestamp_schedule_does_not_oversample_sixty_fps_video(self) -> None:
+    indices = timestamp_sample_indices(
+      frame_count=601,
+      source_fps=60.0,
+      target_fps=18.0,
+    )
+
+    self.assertLessEqual(len(indices), 181)
+    self.assertEqual(indices[:5], [0, 4, 7, 10, 14])
+    self.assertTrue(all(next_index > index for index, next_index in zip(indices, indices[1:])))
+
+  def test_long_clip_coarse_pass_and_refinement_are_capped(self) -> None:
+    self.assertEqual(coarse_target_fps(120.0, 12.0), 5.0)
+    indices = timestamp_sample_indices(
+      frame_count=7200,
+      source_fps=60.0,
+      target_fps=12.0,
+      windows=[(10.0, 50.0)],
+      max_samples=360,
+    )
+    self.assertEqual(len(indices), 360)
+
+  def test_active_motion_windows_merge_adjacent_hip_motion(self) -> None:
+    frames = [
+      {
+        "timestamp_ms": index * 200,
+        "landmarks": {
+          "left_hip": {"y": y, "visibility": 0.9},
+          "right_hip": {"y": y + 0.01, "visibility": 0.9},
+        },
+      }
+      for index, y in enumerate([0.5, 0.5, 0.54, 0.6, 0.61, 0.56, 0.5, 0.5])
+    ]
+
+    windows = active_motion_windows(frames)
+
+    self.assertEqual(len(windows), 1)
+    self.assertLessEqual(windows[0][0], 0.4)
+    self.assertGreaterEqual(windows[0][1], 2.0)
+
   def test_defaults(self) -> None:
     with patch.dict(os.environ, {}, clear=True):
       config = pose_config_from_env()

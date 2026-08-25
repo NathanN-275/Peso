@@ -82,12 +82,20 @@ SUPABASE_POSTGREST_TIMEOUT_SECONDS=30
 SUPABASE_STORAGE_TIMEOUT_SECONDS=60
 FFMPEG_TIMEOUT_SECONDS=120
 MAX_GLOBAL_VIDEO_WORKERS=2
+ANALYSIS_WORKER_LEASE_SECONDS=3600
+ANALYSIS_WORKER_POLL_SECONDS=2
+ANALYSIS_WORKER_RECOVERY_SECONDS=60
+ANALYSIS_NORMAL_TIMEOUT_SECONDS=180
+ANALYSIS_MAX_TIMEOUT_SECONDS=600
+ANALYSIS_LONG_CLIP_TIMEOUT_MULTIPLIER=3
 EXPORT_COOLDOWN_SECONDS=30
 EXPORT_CACHE_TTL_HOURS=24
 MAX_SAVED_LIFT_EXPORT_BYTES=52428800
 ORPHAN_STORAGE_MIN_AGE_HOURS=24
 STALE_PROCESSING_HOURS=6
 MODEL_VERSION=mediapipe-rtmpose-v2-hip-crease-depth
+ANALYSIS_PROFILE_MODE=legacy
+ANALYSIS_CANDIDATE_PROFILE=fast_12fps_640px
 POSE_TARGET_FPS=18
 POSE_MAX_FRAME_DIMENSION=720
 POSE_MODEL_COMPLEXITY=2
@@ -253,17 +261,25 @@ PYTHONPATH=. .venv/bin/python scripts/summarize_analysis_benchmark.py \
   --results-dir /path/to/analysis-results
 ```
 
-The manifest deliberately does not ship synthetic lift clips or expected rep counts. Populate it with reviewed, representative recordings before using it as a release gate.
-Run the same corpus for the manifest's `current`, `balanced_15fps_640px`, and `fast_12fps_640px` profiles by setting `POSE_TARGET_FPS` and `POSE_MAX_FRAME_DIMENSION`; promote only a profile that passes every case and whose payload-ready p95 is within the target.
+The manifest deliberately does not ship synthetic lift clips or expected rep counts. Populate it with reviewed, representative recordings before using it as a release gate. Each saved benchmark result must include `benchmark_gates.passed`; the harness will not promote latency-only evidence.
+Run the same corpus in this order: `fast_12fps_640px`, `balanced_15fps_640px`, then `current_18fps_720px`. The harness selects the first profile that passes every reviewed accuracy, identity, and latency gate. `ANALYSIS_PROFILE_MODE=legacy|shadow|candidate|default` controls rollout, and changing it to `legacy` is the immediate rollback. Shadow mode runs and times the candidate pose and barbell paths but persists the legacy result, so enable it only for a bounded traffic sample.
 
 For a private two-minute recording, copy `tests/fixtures/analysis_benchmark/slow_recording.template.json` outside the repository, replace its exercise, view, and expected rep count, then compare all profiles without committing the source video or its results:
 
 ```bash
 PYTHONPATH=. .venv/bin/python scripts/summarize_analysis_benchmark.py \
   --manifest /private/slow-recording.json \
-  --profile-results current=/private/peso-results/current \
+  --profile-results fast_12fps_640px=/private/peso-results/12fps \
   --profile-results balanced_15fps_640px=/private/peso-results/15fps \
-  --profile-results fast_12fps_640px=/private/peso-results/12fps
+  --profile-results current_18fps_720px=/private/peso-results/current
+```
+
+Record `ui_ready_delay_ms` from queue/activity observations, then check both the
+60-second server budget and one-poll-interval delivery budget:
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/check_analysis_latency.py \
+  /private/peso-results/12fps/*.json
 ```
 
 ## CORS behavior
@@ -398,22 +414,52 @@ Protected endpoints require a Supabase access token:
 Authorization: Bearer <supabase_access_token>
 ```
 
+## Durable analysis worker
+
+Apply `supabase/migrations/20260713233319_durable_analysis_jobs.sql` and
+`supabase/migrations/202608170001_analysis_job_observability.sql`, then run
+the API and worker as separate processes from the same deployed revision:
+
+```bash
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+python -m app.jobs.analysis_worker
+```
+
+`npm start` and `npm run web` start the worker automatically for local Expo
+development. `python -m app.jobs.analysis_worker --once` is available for a
+single-job operational check. Do not deploy the API without a continuously
+running worker: the API intentionally returns `503` if the durable queue schema
+is unavailable rather than promising background work it cannot preserve.
+The worker runs every analysis in a child process, renews its database lease,
+and enforces a 180-second deadline for clips up to one minute. Longer clips use
+a duration-scaled deadline capped at ten minutes.
+
 ## API endpoints
 
 ### `POST /analyze/{video_id}`
 
-Queues a background analysis job for a video owned by the current user.
+Queues a durable analysis job for a video owned by the current user.
 
-The backend validates ownership with Supabase before queueing the job. The request returns immediately with `queued` while the analysis runs asynchronously.
+The backend validates ownership with Supabase before queueing the job. The request returns immediately with `queued`; a separate worker performs the analysis.
 
 Example response:
 
 ```json
 {
   "video_id": "uuid",
-  "status": "queued"
+  "job_id": "uuid",
+  "status": "queued",
+  "stage": "queued"
 }
 ```
+
+### `GET /videos/analysis-activity`
+
+Returns the current user's unsaved durable jobs as `queued`, `processing`,
+`ready`, or `failed`. Internal retry waits are presented as `queued`, and no
+other users' work is exposed. Responses include the public stage, stage
+timestamps, latest worker heartbeat, and a bounded failure class. The Home
+screen refreshes immediately on resume and polls active work every four seconds.
 
 ### `POST /videos/{video_id}/save`
 

@@ -75,6 +75,11 @@ type UploadVideoScreenProps = {
   initialVideoSetup?: VideoSetupSelection | null;
   onBack?: () => void;
   onRecordVideoPress?: () => void;
+  onAnalysisQueued?: (activity: {
+    videoId: string;
+    jobId: string | null;
+    status: VideoAnalysisStatus;
+  }) => void;
   onAnalysisSaved?: (videoId: string) => void | Promise<void>;
 };
 
@@ -134,6 +139,7 @@ export default function UploadVideoScreen({
   initialVideoSetup = null,
   onBack,
   onRecordVideoPress,
+  onAnalysisQueued,
   onAnalysisSaved,
 }: UploadVideoScreenProps) {
   // This screen handles selection, upload, queueing, and polling.
@@ -471,10 +477,26 @@ export default function UploadVideoScreen({
       }
       analysisQueuedForVideoRef.current = uploadResult.videoId;
       activeUploadedVideoRef.current = null;
+      uploadedVideo = null;
       rememberPendingQualityUpload(null);
       setAnalysisVideoId(uploadResult.videoId);
       setAnalysisStatus(queuedResponse.status);
       setStatusMessage(null);
+      analysisStartInFlightRef.current = false;
+      activeAnalysisRunRef.current = null;
+      setAnalysisRunning(false);
+      setUploading(false);
+      if (onAnalysisQueued) {
+        try {
+          onAnalysisQueued({
+            videoId: uploadResult.videoId,
+            jobId: queuedResponse.job_id,
+            status: queuedResponse.status,
+          });
+        } catch (callbackError) {
+          console.warn('Analysis was queued, but the Home handoff failed.', callbackError);
+        }
+      }
     } catch (error) {
       if (!analysisRunIsCurrent(run)) {
         if (uploadedVideo && activeUploadedVideoRef.current?.videoId === uploadedVideo.videoId) {
@@ -586,6 +608,20 @@ export default function UploadVideoScreen({
       setAnalysisVideoId(pendingUpload.videoId);
       setAnalysisStatus(queuedResponse.status);
       setStatusMessage(null);
+      analysisStartInFlightRef.current = false;
+      activeAnalysisRunRef.current = null;
+      setAnalysisRunning(false);
+      if (onAnalysisQueued) {
+        try {
+          onAnalysisQueued({
+            videoId: pendingUpload.videoId,
+            jobId: queuedResponse.job_id,
+            status: queuedResponse.status,
+          });
+        } catch (callbackError) {
+          console.warn('Analysis was queued, but the Home handoff failed.', callbackError);
+        }
+      }
     } catch (error) {
       if (!analysisRunIsCurrent(run)) {
         if (activeUploadedVideoRef.current?.videoId === pendingUpload.videoId) {

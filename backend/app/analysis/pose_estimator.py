@@ -5,9 +5,21 @@ import logging
 import math
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
+
+from .analysis_profiles import LEGACY_PROFILE_ID, analysis_profile_from_env, shadow_profile_from_env
+from .sampling import (
+  LONG_CLIP_THRESHOLD_SECONDS,
+  MAX_COARSE_SAMPLES,
+  MAX_REFINEMENT_SAMPLES,
+  REFINEMENT_TARGET_FPS,
+  active_motion_windows,
+  coarse_target_fps,
+  merge_pose_frames,
+  timestamp_sample_indices,
+)
 
 
 POSE_LANDMARK_NAMES = [
@@ -87,6 +99,8 @@ class PoseEstimatorConfig:
   pose_fallback_det_frequency: int = 3
   pose_fallback_mode: str = "balanced"
   debug_landmark_export_dir: str | None = None
+  analysis_profile_id: str = LEGACY_PROFILE_ID
+  analysis_profile_mode: str = "legacy"
 
 
 def _float_from_env(name: str, default: float, *, minimum: float, maximum: float | None = None) -> float:
@@ -150,9 +164,24 @@ def _choice_from_env(name: str, default: str, choices: set[str]) -> str:
 
 
 def pose_config_from_env() -> PoseEstimatorConfig:
+  profile, profile_mode = analysis_profile_from_env()
+  profile_is_authoritative = profile_mode in {"candidate", "default"}
   return PoseEstimatorConfig(
-    target_fps=_float_from_env("POSE_TARGET_FPS", 18.0, minimum=1.0, maximum=60.0),
-    max_frame_dimension=_int_from_env("POSE_MAX_FRAME_DIMENSION", 720, minimum=128, maximum=4096),
+    target_fps=(
+      profile.target_fps
+      if profile_is_authoritative
+      else _float_from_env("POSE_TARGET_FPS", profile.target_fps, minimum=1.0, maximum=60.0)
+    ),
+    max_frame_dimension=(
+      profile.max_frame_dimension
+      if profile_is_authoritative
+      else _int_from_env(
+        "POSE_MAX_FRAME_DIMENSION",
+        profile.max_frame_dimension,
+        minimum=128,
+        maximum=4096,
+      )
+    ),
     model_complexity=_int_from_env("POSE_MODEL_COMPLEXITY", 2, minimum=0, maximum=2),
     min_detection_confidence=_float_from_env(
       "POSE_MIN_DETECTION_CONFIDENCE",
@@ -172,6 +201,8 @@ def pose_config_from_env() -> PoseEstimatorConfig:
     pose_fallback_det_frequency=_int_from_env("POSE_FALLBACK_DET_FREQUENCY", 3, minimum=1, maximum=60),
     pose_fallback_mode=_choice_from_env("POSE_FALLBACK_MODE", "balanced", SUPPORTED_FALLBACK_MODES),
     debug_landmark_export_dir=(os.getenv("POSE_DEBUG_LANDMARK_EXPORT_DIR") or "").strip() or None,
+    analysis_profile_id=profile.id,
+    analysis_profile_mode=profile_mode,
   )
 
 
@@ -399,21 +430,10 @@ class PoseEstimator:
     # Lower sampling keeps processing fast while preserving squat motion.
     env_config = config or pose_config_from_env()
     if target_fps is not None:
-      env_config = PoseEstimatorConfig(
-        target_fps=target_fps,
-        max_frame_dimension=env_config.max_frame_dimension,
-        model_complexity=env_config.model_complexity,
-        min_detection_confidence=env_config.min_detection_confidence,
-        min_tracking_confidence=env_config.min_tracking_confidence,
-        pose_backend=env_config.pose_backend,
-        pose_fallback_enabled=env_config.pose_fallback_enabled,
-        pose_fallback_device=env_config.pose_fallback_device,
-        pose_fallback_det_frequency=env_config.pose_fallback_det_frequency,
-        pose_fallback_mode=env_config.pose_fallback_mode,
-        debug_landmark_export_dir=env_config.debug_landmark_export_dir,
-      )
+      env_config = replace(env_config, target_fps=target_fps)
     self.config = env_config
     self.target_fps = env_config.target_fps
+    self.last_backend_timings_ms = {"decode": 0, "pose_inference": 0}
 
   def run(self, file_path: str) -> dict[str, Any]:
     import cv2
@@ -439,6 +459,14 @@ class PoseEstimator:
     )
     duration_ms = int((frame_count / fps) * 1000) if fps > 0 else None
     frame_step = max(int(round(fps / self.target_fps)), 1) if fps > 0 else 1
+    duration_seconds = float(duration_ms or 0) / 1000.0
+    effective_coarse_fps = coarse_target_fps(duration_seconds, self.target_fps)
+    coarse_schedule = timestamp_sample_indices(
+      frame_count=frame_count,
+      source_fps=fps,
+      target_fps=effective_coarse_fps,
+      max_samples=(MAX_COARSE_SAMPLES if duration_seconds > LONG_CLIP_THRESHOLD_SECONDS else None),
+    )
 
     backend_name = "mediapipe" if self.config.pose_backend == "hybrid" else self.config.pose_backend
     if backend_name == "rtmpose" and not self.config.pose_fallback_enabled:
@@ -451,12 +479,50 @@ class PoseEstimator:
         cv2=cv2,
         fps=fps,
         frame_step=frame_step,
+        sample_source_indices=coarse_schedule or None,
         processed_width=processed_width,
         processed_height=processed_height,
         backend_name=backend_name,
       )
     finally:
       capture.release()
+
+    refinement_windows: list[tuple[float, float]] = []
+    refinement_expected_count = 0
+    refinement_sampled_count = 0
+    refinement_cap_reached = False
+    refinement_schedule: list[int] = []
+    if duration_seconds > LONG_CLIP_THRESHOLD_SECONDS and frames:
+      refinement_windows = active_motion_windows(frames)
+      if refinement_windows:
+        expected_refinement_schedule = timestamp_sample_indices(
+          frame_count=frame_count,
+          source_fps=fps,
+          target_fps=REFINEMENT_TARGET_FPS,
+          windows=refinement_windows,
+        )
+        refinement_expected_count = len(expected_refinement_schedule)
+        refinement_schedule = expected_refinement_schedule[:MAX_REFINEMENT_SAMPLES]
+        refinement_cap_reached = refinement_expected_count > len(refinement_schedule)
+        refinement_capture = cv2.VideoCapture(file_path)
+        if refinement_capture.isOpened():
+          if hasattr(cv2, "CAP_PROP_ORIENTATION_AUTO"):
+            refinement_capture.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
+          try:
+            refined_frames, refinement_sampled_count = self._run_backend(
+              capture=refinement_capture,
+              cv2=cv2,
+              fps=fps,
+              frame_step=frame_step,
+              sample_source_indices=refinement_schedule,
+              processed_width=processed_width,
+              processed_height=processed_height,
+              backend_name=backend_name,
+            )
+          finally:
+            refinement_capture.release()
+          frames = merge_pose_frames(frames, refined_frames)
+          sampled_frame_count = len(set(coarse_schedule) | set(refinement_schedule))
 
     _export_debug_landmarks(
       export_dir=self.config.debug_landmark_export_dir,
@@ -480,7 +546,26 @@ class PoseEstimator:
       "processed_frame_width": processed_width or None,
       "processed_frame_height": processed_height or None,
       "target_fps": self.config.target_fps,
+      "effective_coarse_fps": round(effective_coarse_fps, 3),
       "frame_step": frame_step,
+      "sampling_strategy": (
+        "coarse_then_rep_refinement"
+        if duration_seconds > LONG_CLIP_THRESHOLD_SECONDS
+        else "timestamp"
+      ),
+      "coarse_sample_count": len(coarse_schedule),
+      "refinement_sample_count": refinement_sampled_count,
+      "refinement_expected_sample_count": refinement_expected_count,
+      "refinement_windows": [
+        {"start": round(start, 3), "end": round(end, 3)}
+        for start, end in refinement_windows
+      ],
+      "sampling_incomplete": refinement_cap_reached,
+      "analysis_profile_id": self.config.analysis_profile_id,
+      "analysis_profile_mode": self.config.analysis_profile_mode,
+      "shadow_profile_id": (
+        shadow_profile.id if (shadow_profile := shadow_profile_from_env()) is not None else None
+      ),
       "pose_model_complexity": self.config.model_complexity,
       "pose_backend": backend_name,
       "requested_pose_backend": self.config.pose_backend,
@@ -493,6 +578,8 @@ class PoseEstimator:
         RTMPoseBackend.landmark_model if backend_name == "rtmpose" else MediaPipePoseBackend.landmark_model
       ),
       "processing_duration_ms": processing_duration_ms,
+      "decode_duration_ms": self.last_backend_timings_ms["decode"],
+      "pose_inference_duration_ms": self.last_backend_timings_ms["pose_inference"],
       "frames": frames,
     }
 
@@ -503,6 +590,7 @@ class PoseEstimator:
     cv2: Any,
     fps: float,
     frame_step: int,
+    sample_source_indices: list[int] | None = None,
     processed_width: int,
     processed_height: int,
     backend_name: str,
@@ -512,17 +600,29 @@ class PoseEstimator:
     sampled_index = 0
     frame_index = 0
     backend = _create_pose_backend(backend_name, self.config)
+    sample_source_index_set = set(sample_source_indices) if sample_source_indices is not None else None
+    decode_duration_seconds = 0.0
+    inference_duration_seconds = 0.0
 
     try:
       while capture.isOpened():
-        if frame_index % frame_step != 0:
+        should_sample = (
+          frame_index in sample_source_index_set
+          if sample_source_index_set is not None
+          else frame_index % frame_step == 0
+        )
+        if not should_sample:
+          decode_started = time.perf_counter()
           success = capture.grab()
+          decode_duration_seconds += time.perf_counter() - decode_started
           if not success:
             break
           frame_index += 1
           continue
 
+        decode_started = time.perf_counter()
         success, frame = capture.read()
+        decode_duration_seconds += time.perf_counter() - decode_started
         if not success:
           break
 
@@ -539,7 +639,9 @@ class PoseEstimator:
           if math.isfinite(decoded_timestamp_ms) and decoded_timestamp_ms >= 0
           else int((frame_index / fps) * 1000) if fps > 0 else sampled_index * 67
         )
+        inference_started = time.perf_counter()
         landmarks = backend.process(inference_frame, timestamp_ms)
+        inference_duration_seconds += time.perf_counter() - inference_started
 
         if landmarks:
           frames.append(
@@ -559,6 +661,9 @@ class PoseEstimator:
         frame_index += 1
     finally:
       backend.close()
+
+    self.last_backend_timings_ms["decode"] += int(decode_duration_seconds * 1000)
+    self.last_backend_timings_ms["pose_inference"] += int(inference_duration_seconds * 1000)
 
     return frames, sampled_frame_count
 

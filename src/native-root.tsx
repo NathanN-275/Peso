@@ -46,6 +46,7 @@ const AUTH_ROUTES = {
   webRecordVideo: 'web-record-video',
   savedLiftVideos: 'saved-lift-videos',
   savedVideoReview: 'saved-video-review',
+  pendingAnalysisReview: 'pending-analysis-review',
   profile: 'profile',
   settings: 'settings',
   welcome: 'welcome',
@@ -92,6 +93,7 @@ const WEB_ROUTE_HASHES: Record<AuthRoute, string> = {
   [AUTH_ROUTES.webRecordVideo]: '#/web-record-video',
   [AUTH_ROUTES.savedLiftVideos]: '#/saved-lift-videos',
   [AUTH_ROUTES.savedVideoReview]: '#/saved-video-review',
+  [AUTH_ROUTES.pendingAnalysisReview]: '#/pending-analysis-review',
   [AUTH_ROUTES.profile]: '#/profile',
   [AUTH_ROUTES.settings]: '#/settings',
   [AUTH_ROUTES.welcome]: '#/welcome',
@@ -143,6 +145,10 @@ function parseWebAuthRoute(hash: string): AuthRoute {
 
   if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.savedVideoReview]) {
     return AUTH_ROUTES.savedVideoReview;
+  }
+
+  if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.pendingAnalysisReview]) {
+    return AUTH_ROUTES.pendingAnalysisReview;
   }
 
   if (normalizedHash === WEB_ROUTE_HASHES[AUTH_ROUTES.profile]) {
@@ -422,6 +428,8 @@ function AppContent() {
   const [selectedSavedVideoPlaybackUri, setSelectedSavedVideoPlaybackUri] = useState<string | null>(null);
   const [selectedSavedVideoAnalysisResult, setSelectedSavedVideoAnalysisResult] =
     useState<VideoAnalysisResult | null>(null);
+  const [pendingAnalysisPlaybackUri, setPendingAnalysisPlaybackUri] = useState<string | null>(null);
+  const [pendingAnalysisResult, setPendingAnalysisResult] = useState<VideoAnalysisResult | null>(null);
   const routeRef = useRef(route);
   const hadSessionRef = useRef(false);
 
@@ -741,7 +749,43 @@ function AppContent() {
   const handleAnalysisSaved = (_videoId?: string) => {
     setRecordedUploadVideo(null);
     setRecordedUploadSetup(null);
+    setPendingAnalysisPlaybackUri(null);
+    setPendingAnalysisResult(null);
     invalidateSavedVideoCaches();
+    authNavigation.toHome();
+  };
+  const handleAnalysisQueued = () => {
+    setRecordedUploadVideo(null);
+    setRecordedUploadSetup(null);
+    setPendingRecordingSetup(null);
+    setHomeRefreshKey((key) => key + 1);
+    authNavigation.toHome();
+  };
+  const handleOpenAnalysisActivity = async (videoId: string) => {
+    if (!session?.access_token) {
+      return;
+    }
+
+    try {
+      const [playbackResponse, analysisResponse] = await Promise.all([
+        getVideoPlaybackUrl(videoId, session.access_token),
+        fetchAnalysisResult(videoId, session.access_token),
+      ]);
+      setPendingAnalysisPlaybackUri(playbackResponse.video_url);
+      setPendingAnalysisResult(analysisResponse.result_json);
+      navigateToAuthRoute(AUTH_ROUTES.pendingAnalysisReview);
+    } catch (error) {
+      Alert.alert(
+        'Unable to open analysis',
+        error instanceof Error ? error.message : 'Refresh Analysis Activity and try again.'
+      );
+      throw error;
+    }
+  };
+  const handlePendingAnalysisDiscarded = () => {
+    setPendingAnalysisPlaybackUri(null);
+    setPendingAnalysisResult(null);
+    setHomeRefreshKey((key) => key + 1);
     authNavigation.toHome();
   };
   const handleOpenSavedLiftFolder = (exerciseType: string) => {
@@ -948,6 +992,7 @@ function AppContent() {
         route !== AUTH_ROUTES.webRecordVideo &&
         route !== AUTH_ROUTES.savedLiftVideos &&
         route !== AUTH_ROUTES.savedVideoReview &&
+        route !== AUTH_ROUTES.pendingAnalysisReview &&
         route !== AUTH_ROUTES.profile &&
         route !== AUTH_ROUTES.settings &&
         !recoveryRouteActive
@@ -968,6 +1013,7 @@ function AppContent() {
       route === AUTH_ROUTES.webRecordVideo ||
       route === AUTH_ROUTES.savedLiftVideos ||
       route === AUTH_ROUTES.savedVideoReview ||
+      route === AUTH_ROUTES.pendingAnalysisReview ||
       route === AUTH_ROUTES.profile ||
       route === AUTH_ROUTES.settings
     ) {
@@ -1049,6 +1095,7 @@ function AppContent() {
             initialVideoSetup={recordedUploadSetup}
             onBack={handleUploadBack}
             onRecordVideoPress={Platform.OS === 'web' ? handleRecordVideoRoute : undefined}
+            onAnalysisQueued={handleAnalysisQueued}
             onAnalysisSaved={handleAnalysisSaved}
           />
         );
@@ -1062,6 +1109,22 @@ function AppContent() {
             setupResumeKey={recordingSetupResumeKey}
             onEditSetup={handleEditRecordingSetup}
             onUseRecording={(asset) => handleRecordedVideoAsset(asset, pendingRecordingSetup)}
+          />
+        );
+      }
+
+      if (
+        route === AUTH_ROUTES.pendingAnalysisReview
+        && pendingAnalysisPlaybackUri
+        && pendingAnalysisResult
+      ) {
+        return (
+          <AnalysisReviewScreen
+            mode="pending"
+            videoUri={pendingAnalysisPlaybackUri}
+            result={pendingAnalysisResult}
+            onDiscarded={handlePendingAnalysisDiscarded}
+            onSaved={handleAnalysisSaved}
           />
         );
       }
@@ -1153,6 +1216,7 @@ function AppContent() {
           refreshKey={homeRefreshKey}
           onNavigateToAddVideo={authNavigation.toAddVideo}
           onNavigateToProfile={handleProfileRoute}
+          onOpenAnalysisActivity={handleOpenAnalysisActivity}
           onOpenSavedLiftFolder={handleOpenSavedLiftFolder}
           cachedSavedOverview={savedOverview}
           savedOverviewLoaded={savedOverviewLoaded}

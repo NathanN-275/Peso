@@ -1,10 +1,12 @@
 {
   "version": 1,
   "target_payload_ready_ms": 30000,
+  "max_ui_ready_delay_ms": 4000,
+  "require_accuracy_gates": true,
   "pose_profiles": [
-    {"id": "current", "target_fps": 18, "max_frame_dimension": 720},
+    {"id": "fast_12fps_640px", "target_fps": 12, "max_frame_dimension": 640},
     {"id": "balanced_15fps_640px", "target_fps": 15, "max_frame_dimension": 640},
-    {"id": "fast_12fps_640px", "target_fps": 12, "max_frame_dimension": 640}
+    {"id": "current_18fps_720px", "target_fps": 18, "max_frame_dimension": 720}
   ],
   "cases": [
     {"id": "bench_press_side", "exercise": "bench press", "view": "side", "duration_seconds": 15, "expected_rep_count": null},

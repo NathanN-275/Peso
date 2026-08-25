@@ -464,6 +464,37 @@ export type VideoStatusResponse = {
   updated_at: string;
 };
 
+export type AnalysisActivityStatus = 'queued' | 'processing' | 'ready' | 'failed';
+export type AnalysisActivityStage =
+  | 'queued'
+  | 'downloading'
+  | 'pose'
+  | 'barbell_tracking'
+  | 'saving'
+  | 'ready'
+  | 'failed';
+
+export type AnalysisActivityItem = {
+  job_id: string;
+  video_id: string;
+  status: AnalysisActivityStatus;
+  stage: AnalysisActivityStage;
+  exercise_type: string;
+  view_type: string;
+  created_at: string;
+  updated_at: string;
+  expires_at: string | null;
+  thumbnail_url: string | null;
+  stage_started_at: string | null;
+  stage_timestamps: Partial<Record<AnalysisActivityStage, string>>;
+  last_heartbeat_at: string | null;
+  failure_class: string | null;
+};
+
+export type AnalysisActivityResponse = {
+  items: AnalysisActivityItem[];
+};
+
 export type AnalysisResponse = {
   video_id: string;
   status: VideoAnalysisStatus;

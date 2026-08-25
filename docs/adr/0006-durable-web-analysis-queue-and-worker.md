@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for post-prototype implementation
+Superseded by ADR 0009
 
 ## Decision
 

@@ -367,6 +367,60 @@ class BarbellTrackerTest(unittest.TestCase):
     self.assertTrue(result["barbellPath"]["available"])
     self.assertEqual(result["barbellPath"]["target"], "near_plate_collar_center")
 
+  def test_candidate_profile_reuses_sleeve_decode_for_loaded_plate_fallback(self) -> None:
+    plate_centers = [(178, 92 + index * 3) for index in range(18)]
+    with tempfile.TemporaryDirectory() as temp_dir:
+      path = Path(temp_dir) / "candidate-unified-decode.mp4"
+      write_plate_video(path, plate_centers, fps=18.0)
+      pose_frames = [
+        pose_frame(index, x=(center[0] - 42) / 320, y=center[1] / 240)
+        for index, center in enumerate(plate_centers)
+      ]
+
+      def weak_sleeve_with_cache(file_path, **kwargs):
+        observer = kwargs.get("frame_observer")
+        capture = cv2.VideoCapture(file_path)
+        frame_index = 0
+        try:
+          while capture.isOpened():
+            success, frame = capture.read()
+            if not success:
+              break
+            if observer is not None and 0.2 <= frame_index / 18.0 <= 0.95:
+              observer(frame_index, frame)
+            frame_index += 1
+        finally:
+          capture.release()
+        return {
+          "barbellPath": {
+            "available": True,
+            "target": "near_sleeve_end_center",
+            "coverage": 0.1,
+            "points": [],
+          },
+          "diagnostics": {"failure_reason": None},
+        }
+
+      with patch.object(
+        tracker_module,
+        "track_unloaded_sleeve_end",
+        side_effect=weak_sleeve_with_cache,
+      ):
+        result = BarbellTracker().track(
+          str(path),
+          pose_frames=pose_frames,
+          frame_step=1,
+          processed_width=320,
+          processed_height=240,
+          selected_side="left",
+          rep_windows=[{"rep_index": 1, "start": 0.2, "bottom": 0.55, "end": 0.95}],
+          target_fps=12.0,
+        )
+
+    self.assertTrue(result["barbellPath"]["available"])
+    self.assertEqual(result["diagnostics"]["video_decode_pass_count"], 1)
+    self.assertGreater(result["diagnostics"]["reused_sleeve_decode_frame_count"], 0)
+
   def test_reuses_nearest_pose_frames_during_short_pose_dropouts(self) -> None:
     plate_centers = [(178, 92 + index * 2) for index in range(24)]
     with tempfile.TemporaryDirectory() as temp_dir:

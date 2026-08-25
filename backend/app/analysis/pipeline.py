@@ -9,9 +9,10 @@ from bisect import bisect_left
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .barbell_tracker import BarbellTracker
+from .analysis_profiles import PROFILES
 from .feedback_engine import build_depth_summary_debug, build_feedback
 from .exercises.front_squat import FrontSquatAnalyzer, repair_front_pose_frames
 from .exercises.pressing import PressingAnalyzer, is_pressing_exercise
@@ -1185,6 +1186,7 @@ def _attach_barbell_tracking(
       selected_side=selected_side,
       rep_windows=[] if is_front_squat else rep_windows,
       manual_barbell_priors=barbell_track_priors(estimation.get("manual_tracking") or {}),
+      target_fps=float(estimation.get("target_fps") or 18.0),
     )
     if is_front_squat:
       tracking = _gate_front_visible_collar_tracking(tracking)
@@ -1401,7 +1403,11 @@ def _refresh_pressing_result_from_barbell(
   return result
 
 
-def analyze_video(video_id: str) -> None:
+def analyze_video(
+  video_id: str,
+  *,
+  progress_callback: Callable[[str], None] | None = None,
+) -> None:
   # The pipeline loads the video, estimates pose, then stores results.
   analysis_started = time.perf_counter()
   stage_timings_ms: dict[str, int] = {}
@@ -1423,6 +1429,19 @@ def analyze_video(video_id: str) -> None:
     stage_timings_ms[name] = duration_ms
     trace_call("stage", name, duration_ms)
     return duration_ms
+
+  def report_progress(stage: str) -> None:
+    if progress_callback is None:
+      return
+    try:
+      progress_callback(stage)
+    except Exception as progress_error:
+      logger.warning(
+        "Unable to report public stage %s for video %s: %s",
+        stage,
+        video_id,
+        progress_error,
+      )
 
   video = repository.get_video(video_id)
   if not video:
@@ -1451,6 +1470,7 @@ def analyze_video(video_id: str) -> None:
   try:
     repository.update_video(video_id, {"status": "processing"})
     # Download the clip into a temporary file for local processing.
+    report_progress("downloading")
     stage_started = time.perf_counter()
     source_storage_path = require_user_storage_path(
       str(video.get("playback_path") or video["storage_path"]),
@@ -1466,6 +1486,7 @@ def analyze_video(video_id: str) -> None:
     )
 
     # Pose estimation is the first stage of the backend analysis flow.
+    report_progress("pose")
     estimator = PoseEstimator()
     stage_started = time.perf_counter()
     estimation = estimator.run(str(temp_file))
@@ -1474,6 +1495,13 @@ def analyze_video(video_id: str) -> None:
       video_id,
       record_stage_timing("pose_estimation", stage_started),
     )
+    for timing_name, estimation_key in (
+      ("decode", "decode_duration_ms"),
+      ("pose_inference", "pose_inference_duration_ms"),
+    ):
+      timing_value = int(estimation.get(estimation_key) or 0)
+      stage_timings_ms[timing_name] = timing_value
+      trace_call("stage", timing_name, timing_value)
     trace_call(
       "snapshot",
       "raw_pose",
@@ -1702,9 +1730,72 @@ def analyze_video(video_id: str) -> None:
         stage_timings_ms.get("pose_fallback", 0) + stage_timings_ms.get("pin_assistance_fallback", 0),
       )
 
+    shadow_estimation: dict[str, Any] | None = None
+    shadow_result: dict[str, Any] | None = None
+    shadow_profile_id = estimation.get("shadow_profile_id")
+    shadow_diagnostics: dict[str, Any] | None = None
+    shadow_profile = PROFILES.get(str(shadow_profile_id)) if shadow_profile_id else None
+    if shadow_profile is not None:
+      shadow_diagnostics = {
+        "profile_id": shadow_profile.id,
+        "authoritative": False,
+      }
+      try:
+        shadow_started = time.perf_counter()
+        shadow_config = replace(
+          estimator.config,
+          target_fps=shadow_profile.target_fps,
+          max_frame_dimension=shadow_profile.max_frame_dimension,
+          analysis_profile_id=shadow_profile.id,
+          analysis_profile_mode="shadow_candidate",
+        )
+        shadow_estimation = PoseEstimator(config=shadow_config).run(str(temp_file))
+        shadow_diagnostics["pose_estimation_ms"] = record_stage_timing(
+          "shadow_pose_estimation",
+          shadow_started,
+        )
+        shadow_prepare_started = time.perf_counter()
+        shadow_estimation = _apply_tracking_assistance(
+          file_path=str(temp_file),
+          video=video,
+          estimation=shadow_estimation,
+        )
+        shadow_estimation = _run_yolo_tracking_prepass(
+          file_path=str(temp_file),
+          video=video,
+          estimation=shadow_estimation,
+        )
+        shadow_estimation = _apply_pose_repair(shadow_estimation, video)
+        shadow_result = _analyze_squat_result(
+          video_id=video_id,
+          video=video,
+          estimation=shadow_estimation,
+        )
+        shadow_diagnostics["prepare_and_metrics_ms"] = record_stage_timing(
+          "shadow_prepare_and_metrics",
+          shadow_prepare_started,
+        )
+        shadow_diagnostics["rep_count"] = int(shadow_result.get("rep_count") or 0)
+        shadow_diagnostics["pose_frame_count"] = int(
+          shadow_estimation.get("pose_frame_count") or 0
+        )
+        shadow_diagnostics["sampled_frame_count"] = int(
+          shadow_estimation.get("sampled_frame_count") or 0
+        )
+      except Exception as shadow_error:
+        logger.warning(
+          "Candidate shadow analysis failed without affecting video %s: %s",
+          video_id,
+          shadow_error,
+        )
+        shadow_estimation = None
+        shadow_result = None
+        shadow_diagnostics["error"] = str(shadow_error)
+
     result["duration"] = (estimation["duration_ms"] or 0) / 1000
     result["videoWidth"] = estimation.get("frame_width")
     result["videoHeight"] = estimation.get("frame_height")
+    report_progress("barbell_tracking")
     stage_started = time.perf_counter()
     _attach_barbell_tracking(
       result=result,
@@ -1712,6 +1803,32 @@ def analyze_video(video_id: str) -> None:
       file_path=str(temp_file),
       estimation=estimation,
     )
+    if shadow_estimation is not None and shadow_result is not None and shadow_diagnostics is not None:
+      shadow_barbell_started = time.perf_counter()
+      try:
+        _attach_barbell_tracking(
+          result=shadow_result,
+          video=video,
+          file_path=str(temp_file),
+          estimation=shadow_estimation,
+        )
+        shadow_diagnostics["barbell_tracking_ms"] = record_stage_timing(
+          "shadow_barbell_tracking",
+          shadow_barbell_started,
+        )
+        shadow_diagnostics["barbell_available"] = bool(
+          (shadow_result.get("barbellPath") or {}).get("available")
+        )
+        shadow_diagnostics["barbell_coverage"] = float(
+          (shadow_result.get("barbellPath") or {}).get("coverage") or 0.0
+        )
+      except Exception as shadow_barbell_error:
+        logger.warning(
+          "Candidate shadow barbell tracking failed without affecting video %s: %s",
+          video_id,
+          shadow_barbell_error,
+        )
+        shadow_diagnostics["barbell_error"] = str(shadow_barbell_error)
     result = _refresh_pressing_result_from_barbell(
       result=result,
       video=video,
@@ -1741,7 +1858,16 @@ def analyze_video(video_id: str) -> None:
       "sampled_frame_count": estimation.get("sampled_frame_count"),
       "pose_frame_count": estimation.get("pose_frame_count"),
       "target_fps": estimation.get("target_fps"),
+      "effective_coarse_fps": estimation.get("effective_coarse_fps"),
       "frame_step": estimation.get("frame_step"),
+      "sampling_strategy": estimation.get("sampling_strategy"),
+      "coarse_sample_count": estimation.get("coarse_sample_count"),
+      "refinement_sample_count": estimation.get("refinement_sample_count"),
+      "refinement_expected_sample_count": estimation.get("refinement_expected_sample_count"),
+      "sampling_incomplete": estimation.get("sampling_incomplete", False),
+      "analysis_profile_id": estimation.get("analysis_profile_id"),
+      "analysis_profile_mode": estimation.get("analysis_profile_mode"),
+      "shadow_profile_id": estimation.get("shadow_profile_id"),
       "pose_model_complexity": estimation.get("pose_model_complexity"),
       "pose_backend": estimation.get("pose_backend"),
       "requested_pose_backend": estimation.get("requested_pose_backend"),
@@ -1753,6 +1879,8 @@ def analyze_video(video_id: str) -> None:
       "fallback_unavailable_reason": result.get("fallback_unavailable_reason"),
       "landmark_model": estimation.get("landmark_model"),
       "pose_processing_duration_ms": estimation.get("processing_duration_ms"),
+      "decode_duration_ms": estimation.get("decode_duration_ms"),
+      "pose_inference_duration_ms": estimation.get("pose_inference_duration_ms"),
       "analysis_stage_timings_ms": dict(stage_timings_ms),
       "analysis_payload_ready_duration_ms": analysis_payload_ready_duration_ms,
     }
@@ -1770,11 +1898,25 @@ def analyze_video(video_id: str) -> None:
     diagnostics["analysis_model_version"] = settings.model_version
     diagnostics["analysis_stage_timings_ms"] = dict(stage_timings_ms)
     diagnostics["analysis_payload_ready_duration_ms"] = analysis_payload_ready_duration_ms
+    diagnostics["analysis_profile_id"] = estimation.get("analysis_profile_id")
+    diagnostics["analysis_profile_mode"] = estimation.get("analysis_profile_mode")
+    if shadow_diagnostics is not None:
+      diagnostics["analysis_profile_shadow"] = shadow_diagnostics
+    diagnostics["sampling_incomplete"] = bool(estimation.get("sampling_incomplete"))
+    if estimation.get("sampling_incomplete"):
+      result["analysis_incomplete"] = True
+      result["analysisIncomplete"] = True
+      summary_flags = list(result.get("summary_flags") or result.get("summaryFlags") or [])
+      if "long_clip_sample_cap_reached" not in summary_flags:
+        summary_flags.append("long_clip_sample_cap_reached")
+      result["summary_flags"] = summary_flags
+      result["summaryFlags"] = list(summary_flags)
     quality_preflight = video.get("quality_preflight")
     if isinstance(quality_preflight, dict):
       # Preserve the exact gate evidence with the result that consumed it.
       result["qualityPreflight"] = quality_preflight
       diagnostics["quality_preflight"] = quality_preflight
+    report_progress("saving")
     stage_started = time.perf_counter()
     repository.save_analysis_result(video_id, settings.model_version, result)
     logger.info(
