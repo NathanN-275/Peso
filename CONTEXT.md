@@ -1,5 +1,19 @@
 # Peso domain glossary
 
+## Product document terms
+
+**Product Requirements Document (PRD)**
+
+The current product contract: users, scope, requirements, success measures, and release direction.
+
+**Technical Design Document (TDD)**
+
+The current engineering blueprint: system boundaries, data flow, reliability, security, and verification strategy.
+
+**Production Readiness Review (PRR)**
+
+The release gate for a defined scope. It records evidence, known limits, required checks, and exit criteria; it does not claim that out-of-scope capabilities are ready.
+
 ## Marketing Site
 
 The public, statically generated Peso website at `/`, `/privacy`, and `/terms`.

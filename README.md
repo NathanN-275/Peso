@@ -108,6 +108,16 @@ Launching the web beta does not replace the mobile app. The Expo app remains in 
 7. Rep summaries, diagnostics, overlays, and coaching feedback are saved.
 8. The Web App or mobile app displays the analyzed result to the user.
 
+## Product and design documents
+
+These documents describe the current beta, not the original class proposal:
+
+* [Product Requirements Document](docs/product/PRD.md) - user, scope, requirements, and success measures
+* [Technical Design Document](docs/product/TDD.md) - architecture, data flow, security, and testing strategy
+* [Production Readiness Review](docs/product/PRR.md) - release checklist, evidence, and known limits
+
+The [GitHub Pages project log](https://nathann-275.github.io/Peso/) presents the product and architecture visually.
+
 ## Local development
 
 ### Requirements
