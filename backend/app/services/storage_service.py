@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import tempfile
 import logging
 from pathlib import Path
@@ -21,6 +23,8 @@ ALLOWED_VIDEO_MIME_TYPES = {
   "video/m4v",
   "video/webm",
 }
+ISO_BASE_MEDIA_EXTENSIONS = {".mp4", ".mov", ".m4v"}
+VIDEO_SIGNATURE_BYTES = 4096
 DEFAULT_CACHE_CONTROL_SECONDS = "3600"
 IMMUTABLE_CACHE_CONTROL_SECONDS = "31536000"
 
@@ -66,6 +70,64 @@ def _storage_item_is_folder(item: dict[str, Any]) -> bool:
   return isinstance(name, str) and not Path(name).suffix
 
 
+def _has_expected_video_signature(path: str, contents: bytes) -> bool:
+  extension = Path(path).suffix.lower()
+
+  if extension == ".webm":
+    return contents.startswith(b"\x1a\x45\xdf\xa3") and b"webm" in contents.lower()
+
+  if extension in ISO_BASE_MEDIA_EXTENSIONS:
+    return len(contents) >= 12 and contents[4:8] == b"ftyp"
+
+  return False
+
+
+def _validate_video_stream(path: Path, timeout_seconds: int) -> None:
+  ffprobe_binary = shutil.which("ffprobe")
+  if not ffprobe_binary:
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail="Video validation is unavailable because ffprobe is not installed.",
+    )
+
+  command = [
+    ffprobe_binary,
+    "-v",
+    "error",
+    "-nostdin",
+    "-protocol_whitelist",
+    "file,pipe",
+    "-select_streams",
+    "v:0",
+    "-show_entries",
+    "stream=codec_type",
+    "-of",
+    "default=noprint_wrappers=1:nokey=1",
+    str(path),
+  ]
+
+  try:
+    completed = subprocess.run(
+      command,
+      capture_output=True,
+      text=True,
+      check=False,
+      timeout=timeout_seconds,
+      env={"PATH": os.defpath, "HOME": tempfile.gettempdir()},
+    )
+  except (OSError, subprocess.TimeoutExpired) as error:
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail="Uploaded file could not be validated as a video.",
+    ) from error
+
+  if completed.returncode != 0 or completed.stdout.strip() != "video":
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail="Uploaded file contents do not contain a valid video stream.",
+    )
+
+
 class StorageService:
   def __init__(self, bucket: str | None = None) -> None:
     settings = get_settings()
@@ -73,6 +135,7 @@ class StorageService:
     self.max_video_upload_bytes = settings.max_video_upload_bytes
     self.download_signed_url_ttl_seconds = settings.storage_download_signed_url_ttl_seconds
     self.download_timeout_seconds = settings.supabase_storage_timeout_seconds
+    self.ffprobe_timeout_seconds = min(settings.ffmpeg_timeout_seconds, 30)
     self.client = get_supabase_admin_client()
 
   def get_object_info(self, storage_path: str) -> dict[str, Any]:
@@ -183,6 +246,30 @@ class StorageService:
       ) from error
 
     logger.info("Downloaded storage object path=%s size_bytes=%s", storage_path, downloaded_bytes)
+
+    try:
+      with temp_path.open("rb") as video_file:
+        header = video_file.read(VIDEO_SIGNATURE_BYTES)
+    except OSError as error:
+      self.remove_tempfile(temp_path)
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Unable to validate uploaded video contents.",
+      ) from error
+
+    if not _has_expected_video_signature(storage_path, header):
+      self.remove_tempfile(temp_path)
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Uploaded file contents do not match the selected video format.",
+      )
+
+    try:
+      _validate_video_stream(temp_path, self.ffprobe_timeout_seconds)
+    except HTTPException:
+      self.remove_tempfile(temp_path)
+      raise
+
     return temp_path
 
   def remove_tempfile(self, path: Path) -> None:

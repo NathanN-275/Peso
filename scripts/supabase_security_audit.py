@@ -65,6 +65,14 @@ def audit_supabase_security() -> list[str]:
   if re.search(r"grant\s+(?:all|insert|update|delete|insert\s*,\s*update|insert\s*,\s*update\s*,\s*delete).*on\s+public\.videos\s+to\s+authenticated", sql):
     errors.append("public.videos grants direct authenticated write privileges.")
 
+  video_upload_policies = list(re.finditer(
+    r'create\s+policy\s+"users can upload own private videos"\s+on\s+storage\.objects.*?;',
+    sql,
+    flags=re.DOTALL,
+  ))
+  if not video_upload_policies or "storage.extension(name)" not in video_upload_policies[-1].group(0):
+    errors.append("videos storage upload policy does not restrict object extensions.")
+
   return errors
 
 

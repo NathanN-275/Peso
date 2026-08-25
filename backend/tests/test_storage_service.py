@@ -37,7 +37,7 @@ sys.modules.setdefault("supabase", fake_supabase)
 
 from fastapi import HTTPException
 
-from app.services.storage_service import StorageService
+from app.services.storage_service import StorageService, _has_expected_video_signature
 
 
 class StorageServiceTest(unittest.TestCase):
@@ -49,6 +49,7 @@ class StorageServiceTest(unittest.TestCase):
     service.max_video_upload_bytes = 50 * 1024 * 1024
     service.download_signed_url_ttl_seconds = 120
     service.download_timeout_seconds = 60
+    service.ffprobe_timeout_seconds = 30
     return service
 
   def test_validate_video_object_accepts_browser_recorded_webm_with_codec_mime(self) -> None:
@@ -63,6 +64,10 @@ class StorageServiceTest(unittest.TestCase):
     result = service.validate_video_object("user/uploads/recording.webm")
 
     self.assertEqual(result, object_info)
+
+  def test_video_signature_accepts_webm_and_ios_compatible_containers(self) -> None:
+    self.assertTrue(_has_expected_video_signature("user/uploads/recording.webm", b"\x1a\x45\xdf\xa3\x93B\x82\x84webm"))
+    self.assertTrue(_has_expected_video_signature("user/uploads/recording.mov", b"\x00\x00\x00\x18ftypqt  \x00\x00\x00\x00"))
 
   def test_validate_video_object_rejects_invalid_mime_type(self) -> None:
     service = self._service({"metadata": {"mimetype": "text/plain", "size": "1024"}})
@@ -96,8 +101,55 @@ class StorageServiceTest(unittest.TestCase):
         return None
 
       def iter_bytes(self):
-        yield b"ab"
-        yield b"cd"
+        yield b"\x00\x00\x00\x18ftypisom"
+        yield b"\x00\x00\x00\x00"
+
+    class FakeStream:
+      def __enter__(self):
+        return FakeResponse()
+
+      def __exit__(self, *_args):
+        return False
+
+    http_client = MagicMock()
+    http_client.stream.return_value = FakeStream()
+
+    with (
+      patch("app.services.storage_service.get_pooled_http_client", return_value=http_client),
+      patch(
+        "app.services.storage_service.subprocess.run",
+        return_value=SimpleNamespace(returncode=0, stdout="video\n"),
+      ),
+    ):
+      temp_path = service.download_to_tempfile("user/uploads/recording.mp4")
+
+    try:
+      self.assertEqual(Path(temp_path).read_bytes(), b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00")
+      http_client.stream.assert_called_once_with(
+        "GET",
+        "https://storage.example.test/signed",
+        timeout=60,
+        follow_redirects=True,
+      )
+      storage_client.storage.from_.return_value.download.assert_not_called()
+    finally:
+      service.remove_tempfile(temp_path)
+
+  def test_download_to_tempfile_rejects_non_video_bytes_with_video_metadata(self) -> None:
+    object_info = {
+      "metadata": {
+        "mimetype": "video/mp4",
+        "size": "20",
+      }
+    }
+    service = self._service(object_info)
+
+    class FakeResponse:
+      def raise_for_status(self) -> None:
+        return None
+
+      def iter_bytes(self):
+        yield b"<?php echo 'not a video';"
 
     class FakeStream:
       def __enter__(self):
@@ -110,19 +162,50 @@ class StorageServiceTest(unittest.TestCase):
     http_client.stream.return_value = FakeStream()
 
     with patch("app.services.storage_service.get_pooled_http_client", return_value=http_client):
-      temp_path = service.download_to_tempfile("user/uploads/recording.mp4")
+      with self.assertRaises(HTTPException) as raised:
+        service.download_to_tempfile("user/uploads/not-a-video.mp4")
 
-    try:
-      self.assertEqual(Path(temp_path).read_bytes(), b"abcd")
-      http_client.stream.assert_called_once_with(
-        "GET",
-        "https://storage.example.test/signed",
-        timeout=60,
-        follow_redirects=True,
-      )
-      storage_client.storage.from_.return_value.download.assert_not_called()
-    finally:
-      service.remove_tempfile(temp_path)
+    self.assertEqual(raised.exception.status_code, 400)
+    self.assertIn("contents do not match", raised.exception.detail)
+
+  def test_download_to_tempfile_rejects_a_fake_mp4_header_without_a_video_stream(self) -> None:
+    object_info = {
+      "metadata": {
+        "mimetype": "video/mp4",
+        "size": "18",
+      }
+    }
+    service = self._service(object_info)
+
+    class FakeResponse:
+      def raise_for_status(self) -> None:
+        return None
+
+      def iter_bytes(self):
+        yield b"AAAAftypnot-a-video"
+
+    class FakeStream:
+      def __enter__(self):
+        return FakeResponse()
+
+      def __exit__(self, *_args):
+        return False
+
+    http_client = MagicMock()
+    http_client.stream.return_value = FakeStream()
+
+    with (
+      patch("app.services.storage_service.get_pooled_http_client", return_value=http_client),
+      patch(
+        "app.services.storage_service.subprocess.run",
+        return_value=SimpleNamespace(returncode=1, stdout=""),
+      ),
+    ):
+      with self.assertRaises(HTTPException) as raised:
+        service.download_to_tempfile("user/uploads/fake.mp4")
+
+    self.assertEqual(raised.exception.status_code, 400)
+    self.assertIn("valid video stream", raised.exception.detail)
 
 
 if __name__ == "__main__":

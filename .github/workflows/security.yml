@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - production
 
 jobs:
   production-release-source:

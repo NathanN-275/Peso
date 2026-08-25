@@ -10,7 +10,7 @@ type AuthContextValue = {
   initializing: boolean;
   configError: string | null;
   passwordRecoveryMode: boolean;
-  signInWithEmail: (email: string, password: string) => Promise<void>;
+  signInWithEmail: (email: string, password: string, captchaToken?: string) => Promise<void>;
   signUpWithEmail: (
     email: string,
     password: string,
@@ -18,13 +18,14 @@ type AuthContextValue = {
       name?: string;
       username?: string;
       phone?: string;
-    }
+    },
+    captchaToken?: string
   ) => Promise<{
     session: Session | null;
     user: User | null;
     requiresEmailConfirmation: boolean;
   }>;
-  resetPasswordForEmail: (email: string) => Promise<void>;
+  resetPasswordForEmail: (email: string, captchaToken?: string) => Promise<void>;
   updatePassword: (password: string) => Promise<void>;
   activatePasswordRecoveryMode: () => void;
   sendPhoneOtp: (phone: string) => Promise<void>;
@@ -39,6 +40,7 @@ const EMAIL_NOT_CONFIRMED_MESSAGE =
   'Please confirm your email address before logging in.';
 const AUTH_SERVICE_UNAVAILABLE_MESSAGE =
   'Unable to reach the auth service. Check your connection and try again.';
+const SIGN_UP_FAILED_MESSAGE = 'Unable to create an account. Check your details and try again.';
 
 function toSupabaseErrorDetails(error: unknown) {
   // Normalize Supabase errors so logs stay structured.
@@ -111,6 +113,21 @@ function getSignInErrorMessage(error: unknown) {
   return message ?? 'Unable to log in.';
 }
 
+function getSignUpErrorMessage(error: unknown) {
+  const message = getErrorMessage(error)?.toLowerCase() ?? '';
+  const name = getErrorName(error);
+
+  if (name === 'AuthRetryableFetchError' || message.includes('failed to fetch')) {
+    return AUTH_SERVICE_UNAVAILABLE_MESSAGE;
+  }
+
+  if (message.includes('captcha') || message.includes('turnstile')) {
+    return 'Security verification failed. Complete the security check and try again.';
+  }
+
+  return SIGN_UP_FAILED_MESSAGE;
+}
+
 function isMissingProfilesTableError(error: unknown) {
   // Missing profile tables are tolerated during early setup.
   if (!error || typeof error !== 'object') {
@@ -157,15 +174,15 @@ function deriveUsername(user: User) {
   return user.phone ?? null;
 }
 
-function getAuthRedirectUrl() {
+function getAuthRedirectUrl(route: 'login' | 'reset' = 'reset') {
   // Recovery links need a platform-specific redirect target.
   if (Platform.OS === 'web') {
     return typeof window !== 'undefined' && window.location.origin
-      ? `${window.location.origin}/?auth=reset-password`
+      ? `${window.location.origin}${process.env.EXPO_PUBLIC_WEB_ROUTER_BASE === '/' ? '' : '/app'}/${route}`
       : undefined;
   }
 
-  return ExpoLinking.createURL('reset-password');
+  return route === 'reset' ? ExpoLinking.createURL('reset-password') : undefined;
 }
 
 async function ensureProfile(user: User) {
@@ -314,20 +331,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     initializing,
     configError: supabaseConfigError,
     passwordRecoveryMode,
-    async signInWithEmail(email, password) {
+    async signInWithEmail(email, password, captchaToken) {
       // Password login is a thin wrapper over Supabase auth.
       if (!supabase) {
         throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
       }
 
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+        options: captchaToken ? { captchaToken } : undefined,
+      });
 
       if (error) {
         logSupabaseError('signInWithPassword failed', error);
         throw new Error(getSignInErrorMessage(error));
       }
     },
-    async signUpWithEmail(email, password, profile) {
+    async signUpWithEmail(email, password, profile, captchaToken) {
       // Signup stores profile hints in auth metadata.
       if (!supabase) {
         throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
@@ -340,6 +361,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         email,
         password,
         options: {
+          ...(getAuthRedirectUrl('login') ? { emailRedirectTo: getAuthRedirectUrl('login') } : {}),
+          ...(captchaToken ? { captchaToken } : {}),
           data: {
             ...(trimmedName ? { name: trimmedName } : {}),
             ...(trimmedUsername ? { username: trimmedUsername } : {}),
@@ -349,7 +372,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (error) {
-        throw error;
+        logSupabaseError('signUp failed', error);
+        throw new Error(getSignUpErrorMessage(error));
       }
 
       return {
@@ -358,34 +382,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         requiresEmailConfirmation: !data.session,
       };
     },
-    async resetPasswordForEmail(email) {
+    async resetPasswordForEmail(email, captchaToken) {
       // Request the reset email with a platform-appropriate callback URL.
       if (!supabase) {
         throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
       }
 
       const redirectTo = getAuthRedirectUrl();
-      console.log('[Supabase] reset redirectTo', redirectTo);
-      console.log('[Supabase] resetPasswordForEmail requested', {
-        email,
-        redirectTo,
-      });
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         ...(redirectTo ? { redirectTo } : {}),
+        ...(captchaToken ? { captchaToken } : {}),
       });
 
       if (error) {
-        logSupabaseError('resetPasswordForEmail failed', error, {
-          email,
-          redirectTo,
-        });
-        throw error;
+        logSupabaseError('resetPasswordForEmail failed', error);
+        const message = getErrorMessage(error)?.toLowerCase() ?? '';
+        if (message.includes('captcha') || message.includes('turnstile')) {
+          throw new Error('Security verification failed. Complete the security check and try again.');
+        }
+        if (getErrorName(error) === 'AuthRetryableFetchError' || message.includes('failed to fetch')) {
+          throw new Error(AUTH_SERVICE_UNAVAILABLE_MESSAGE);
+        }
+        throw new Error('Unable to request a password reset. Please try again.');
       }
-
-      console.log('[Supabase] resetPasswordForEmail succeeded', {
-        email,
-        redirectTo,
-      });
     },
     async updatePassword(password) {
       // Password updates clear recovery mode after success.

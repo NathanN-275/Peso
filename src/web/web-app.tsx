@@ -74,6 +74,18 @@ const logoImage = require('../../assets/peso-logo.png') as ImageSourcePropType;
 const analyzedVideoAsset = require('../../assets/demo/peso-pose-overlay.mp4') as number;
 const analyzedVideoUri = Asset.fromModule(analyzedVideoAsset).uri;
 const analyzedVideoPosterUri = Asset.fromModule(previewImageAsset).uri;
+const turnstileSiteKey = process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? '';
+
+type TurnstileApi = {
+  render: (container: HTMLElement, options: Record<string, unknown>) => string;
+  remove: (widgetId: string) => void;
+};
+
+declare global {
+  interface Window {
+    turnstile?: TurnstileApi;
+  }
+}
 
 function formatFileSize(size: number | null) {
   if (size === null) return 'Size unavailable';
@@ -274,6 +286,81 @@ function CheckRow({ checked, label, onPress }: { checked: boolean; label: React.
   );
 }
 
+function TurnstileChallenge({
+  action,
+  resetSignal,
+  onTokenChange,
+  onError,
+}: {
+  action: 'login' | 'signup' | 'reset_password';
+  resetSignal: number;
+  onTokenChange: (token: string | null) => void;
+  onError: (message: string | null) => void;
+}) {
+  const containerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!turnstileSiteKey) {
+      onTokenChange(null);
+      onError('Security verification is unavailable. Try again later.');
+      return;
+    }
+
+    let widgetId: string | null = null;
+    let active = true;
+    const render = () => {
+      if (!active || !containerRef.current || !window.turnstile) return;
+      containerRef.current.replaceChildren();
+      widgetId = window.turnstile.render(containerRef.current, {
+        sitekey: turnstileSiteKey,
+        action,
+        callback: (token: string) => {
+          onError(null);
+          onTokenChange(token);
+        },
+        'expired-callback': () => onTokenChange(null),
+        'error-callback': () => {
+          onTokenChange(null);
+          onError('Security verification failed. Reload the check and try again.');
+        },
+      });
+    };
+
+    const existingScript = document.querySelector<HTMLScriptElement>('script[data-peso-turnstile]');
+    const script = existingScript ?? document.createElement('script');
+    const onLoad = () => render();
+
+    if (window.turnstile) {
+      render();
+    } else if (existingScript) {
+      existingScript.addEventListener('load', onLoad);
+    } else {
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      script.async = true;
+      script.defer = true;
+      script.dataset.pesoTurnstile = 'true';
+      script.addEventListener('load', onLoad, { once: true });
+      script.addEventListener(
+        'error',
+        () => {
+          onTokenChange(null);
+          onError('Security verification is unavailable. Try again later.');
+        },
+        { once: true }
+      );
+      document.head.appendChild(script);
+    }
+
+    return () => {
+      active = false;
+      if (existingScript) existingScript.removeEventListener('load', onLoad);
+      if (widgetId && window.turnstile) window.turnstile.remove(widgetId);
+    };
+  }, [action, onError, onTokenChange, resetSignal]);
+
+  return <View ref={containerRef as never} style={styles.turnstileWidget} />;
+}
+
 function LoginScreen() {
   const navigate = useNavigate();
   const { session, signInWithEmail, configError } = useAuth();
@@ -281,6 +368,9 @@ function LoginScreen() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaError, setCaptchaError] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
 
   useEffect(() => {
     if (session) navigate('/', { replace: true });
@@ -290,12 +380,14 @@ function LoginScreen() {
     setSubmitting(true);
     setError(null);
     try {
-      await signInWithEmail(email.trim(), password);
+      await signInWithEmail(email.trim(), password, captchaToken ?? undefined);
       navigate('/', { replace: true });
     } catch (signInError) {
       setError(signInError instanceof Error ? signInError.message : 'Unable to sign in.');
     } finally {
       setSubmitting(false);
+      setCaptchaToken(null);
+      setCaptchaReset((value) => value + 1);
     }
   };
 
@@ -303,11 +395,15 @@ function LoginScreen() {
     <AuthLayout eyebrow="Welcome back" title="Sign in to Peso" description="Use the same account as the mobile app.">
       <Field label="Email" placeholder="you@example.com" value={email} onChangeText={setEmail} />
       <Field label="Password" placeholder="Enter your password" secureTextEntry value={password} onChangeText={setPassword} />
-      {(error || configError) && <Text selectable style={styles.formError}>{error ?? configError}</Text>}
+      <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification">
+        <Text style={styles.turnstileTitle}>Security check</Text>
+        <TurnstileChallenge action="login" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
+      </View>
+      {(error || captchaError || configError) && <Text selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
       <Pressable accessibilityRole="link" onPress={() => navigate('/reset')}>
         <Text style={styles.inlineLink}>Forgot password?</Text>
       </Pressable>
-      <ActionButton label={submitting ? 'Signing in…' : 'Sign in'} disabled={submitting || !email.trim() || !password} onPress={() => void signIn()} />
+      <ActionButton label={submitting ? 'Signing in…' : error ? 'Retry sign in' : 'Sign in'} disabled={submitting || !email.trim() || !password || !captchaToken} onPress={() => void signIn()} />
       <View style={styles.formFooterRow}>
         <Text style={styles.mutedText}>New to Peso?</Text>
         <Pressable accessibilityRole="link" onPress={() => navigate('/signup')}>
@@ -327,17 +423,22 @@ function SignupScreen() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaError, setCaptchaError] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
 
   const signUp = async () => {
     setSubmitting(true);
     setError(null);
     try {
-      const result = await signUpWithEmail(email.trim(), password);
+      const result = await signUpWithEmail(email.trim(), password, undefined, captchaToken ?? undefined);
       navigate(result.requiresEmailConfirmation ? '/verify' : '/', { replace: true });
     } catch (signUpError) {
       setError(signUpError instanceof Error ? signUpError.message : 'Unable to create account.');
     } finally {
       setSubmitting(false);
+      setCaptchaToken(null);
+      setCaptchaReset((value) => value + 1);
     }
   };
 
@@ -347,12 +448,12 @@ function SignupScreen() {
       <Field label="Password" placeholder="At least 8 characters" secureTextEntry value={password} onChangeText={setPassword} />
       <CheckRow checked={usResident} onPress={() => setUsResident(!usResident)} label="I confirm that I reside in the United States." />
       <CheckRow checked={terms} onPress={() => setTerms(!terms)} label="I agree to the beta Terms and acknowledge the Privacy Policy." />
-      <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification placeholder">
+      <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification">
         <Text style={styles.turnstileTitle}>Security check</Text>
-        <Text style={styles.turnstileBody}>Turnstile appears here when staging authentication is connected.</Text>
+        <TurnstileChallenge action="signup" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
       </View>
-      {(error || configError) && <Text selectable style={styles.formError}>{error ?? configError}</Text>}
-      <ActionButton label={submitting ? 'Creating account…' : 'Create account'} disabled={submitting || !email.trim() || password.length < 8 || !usResident || !terms} onPress={() => void signUp()} />
+      {(error || captchaError || configError) && <Text selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
+      <ActionButton label={submitting ? 'Creating account…' : error ? 'Retry account creation' : 'Create account'} disabled={submitting || !email.trim() || password.length < 8 || !usResident || !terms || !captchaToken} onPress={() => void signUp()} />
       <View style={styles.formFooterRow}>
         <Text style={styles.mutedText}>Already have an account?</Text>
         <Pressable accessibilityRole="link" onPress={() => navigate('/login')}>
@@ -378,31 +479,80 @@ function VerifyScreen() {
 
 function ResetScreen() {
   const navigate = useNavigate();
-  const { resetPasswordForEmail, configError } = useAuth();
+  const { resetPasswordForEmail, updatePassword, passwordRecoveryMode, configError } = useAuth();
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaError, setCaptchaError] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
 
   const reset = async () => {
+    setSubmitting(true);
     setError(null);
     try {
-      await resetPasswordForEmail(email.trim());
-      setMessage('Check your email for a secure reset link.');
+      await resetPasswordForEmail(email.trim(), captchaToken ?? undefined);
+      setMessage('If an account exists for this email, check your inbox for a secure reset link.');
     } catch (resetError) {
       setError(resetError instanceof Error ? resetError.message : 'Unable to send a reset link.');
+    } finally {
+      setSubmitting(false);
+      setCaptchaToken(null);
+      setCaptchaReset((value) => value + 1);
     }
   };
+
+  const completeRecovery = async () => {
+    if (password.length < 8) {
+      setError('Use a password with at least 8 characters.');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      await updatePassword(password);
+      setMessage('Password updated. Your Peso Account is ready to use.');
+      setPassword('');
+      setConfirmPassword('');
+    } catch (recoveryError) {
+      setError(recoveryError instanceof Error ? recoveryError.message : 'Unable to update your password.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (passwordRecoveryMode) {
+    return (
+      <AuthLayout eyebrow="Account recovery" title="Choose a new password" description="Set a new password for your Peso Account.">
+        <Field label="New password" placeholder="At least 8 characters" secureTextEntry value={password} onChangeText={setPassword} />
+        <Field label="Confirm password" placeholder="Enter the same password again" secureTextEntry value={confirmPassword} onChangeText={setConfirmPassword} />
+        {(error || configError) && <Text selectable style={styles.formError}>{error ?? configError}</Text>}
+        {message && <Text selectable style={styles.formSuccess}>{message}</Text>}
+        <ActionButton label={submitting ? 'Updating password…' : 'Update password'} disabled={submitting || !password || !confirmPassword} onPress={() => void completeRecovery()} />
+        {message && <ActionButton label="Continue to Peso" variant="quiet" onPress={() => navigate('/')} />}
+      </AuthLayout>
+    );
+  }
 
   return (
     <AuthLayout eyebrow="Account recovery" title="Reset your password" description="Enter your email and we’ll send a secure reset link.">
       <Field label="Email" placeholder="you@example.com" value={email} onChangeText={setEmail} />
-      <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification placeholder">
+      <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification">
         <Text style={styles.turnstileTitle}>Security check</Text>
-        <Text style={styles.turnstileBody}>Turnstile appears here when staging authentication is connected.</Text>
+        <TurnstileChallenge action="reset_password" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
       </View>
-      {(error || configError) && <Text selectable style={styles.formError}>{error ?? configError}</Text>}
+      {(error || captchaError || configError) && <Text selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
       {message && <Text selectable style={styles.formSuccess}>{message}</Text>}
-      <ActionButton label="Send reset link" disabled={!email.trim()} onPress={() => void reset()} />
+      <ActionButton label={submitting ? 'Sending reset link…' : error ? 'Retry reset link' : 'Send reset link'} disabled={submitting || !email.trim() || !captchaToken} onPress={() => void reset()} />
       <ActionButton label="Back to sign in" variant="quiet" onPress={() => navigate('/login')} />
     </AuthLayout>
   );
@@ -1739,7 +1889,7 @@ const styles = StyleSheet.create({
   checkLabel: { flex: 1, color: colors.secondaryText, fontFamily: fonts.regular, fontSize: 12, lineHeight: 19 },
   turnstileFixture: { padding: 14, borderWidth: 1, borderStyle: 'dashed', borderColor: '#44526A', borderRadius: 10, backgroundColor: '#0A0E15' },
   turnstileTitle: { color: colors.secondaryText, fontFamily: fonts.semibold, fontSize: 11 },
-  turnstileBody: { marginTop: 4, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 10, lineHeight: 15 },
+  turnstileWidget: { minHeight: 66, marginTop: 10 },
   messageCard: { padding: 18, borderWidth: 1, borderColor: '#294A7D', borderRadius: 12, backgroundColor: '#0D1B33' },
   messageCardTitle: { color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 13 },
   messageCardBody: { marginTop: 6, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 12, lineHeight: 19 },

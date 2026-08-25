@@ -47,3 +47,26 @@ Current tracked advisory exceptions:
 ## Request Provenance
 
 See [request-inventory.md](/Users/nathan/Downloads/peso-app/docs/request-inventory.md) for the current frontend-to-backend and frontend-to-Supabase request inventory, HTTP policy, and client/server field boundary.
+
+## Public Web Launch Gate
+
+Before enabling open web signup, complete and record these provider settings:
+
+- Supabase Auth: enable Cloudflare Turnstile CAPTCHA, require email confirmation,
+  configure the exact production `/app/login` and password-recovery redirect URLs,
+  set the password policy and review Auth rate limits.
+- Cloudflare: create a Turnstile widget restricted to the production web origin;
+  place only its site key in Netlify as `EXPO_PUBLIC_TURNSTILE_SITE_KEY`, and its
+  secret key only in Supabase Auth settings.
+- Netlify: verify the deployed CSP and HSTS headers on `/`, `/app/signup`, and a
+  deep link. The CSP intentionally permits HTTPS API targets because the backend
+  hostname is an environment setting; tighten `connect-src` to the final API and
+  Supabase origins once those domains are fixed.
+- GitHub: protect `production`, require the Security Checks and Deploy Preview
+  checks, and enable secret scanning, push protection, Dependabot alerts, and
+  Dependabot security updates.
+
+CAPTCHA is enforced project-wide by Supabase. Do not enable it in a shared
+Supabase project until native sign-in, signup, and password-reset flows also
+supply a valid CAPTCHA token; this repository change wires the Netlify web
+flows only.
