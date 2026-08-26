@@ -1584,6 +1584,7 @@ h3 {
   position: relative;
   overflow: hidden;
   background: var(--navy);
+  border-radius: calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px) 0 0;
 }
 
 .demo-card--wide .demo-card__media {
