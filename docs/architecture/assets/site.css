@@ -565,12 +565,14 @@ h3 {
 
 .scribble-note {
   position: absolute;
-  left: -112px;
+  left: -160px;
   bottom: 42px;
   z-index: 2;
   margin: 0;
   color: var(--blue-light);
+  width: 170px;
   font-size: 18px;
+  line-height: 1.05;
   transform: rotate(-4deg);
 }
 
