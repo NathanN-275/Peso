@@ -301,6 +301,33 @@ export default function UploadVideoScreen({
     setSetupModalVisible(false);
   }, [initialVideoSetup]);
 
+  const handoffToQueuedAnalysis = async (activity: {
+    videoId: string;
+    jobId: string | null;
+    status: VideoAnalysisStatus;
+  }) => {
+    // Keep the successful queue state visible long enough for people to
+    // understand why the app is returning to Home.
+    setUploading(false);
+    setAnalysisRunning(true);
+    setStatusMessage('Upload complete. Taking you back to Home…');
+    await new Promise<void>((resolve) => setTimeout(resolve, 450));
+
+    if (onAnalysisQueued) {
+      try {
+        onAnalysisQueued(activity);
+      } catch (callbackError) {
+        console.warn('Analysis was queued, but the Home handoff failed.', callbackError);
+        setAnalysisRunning(false);
+        setStatusMessage(null);
+      }
+      return;
+    }
+
+    setAnalysisRunning(false);
+    setStatusMessage(null);
+  };
+
   const handleStartAnalysis = async () => {
     // Upload first, then ask the backend to begin analysis.
     if (analysisStartInFlightRef.current || uploading || isAnalysisInProgress(analysisStatus)) {
@@ -481,22 +508,13 @@ export default function UploadVideoScreen({
       rememberPendingQualityUpload(null);
       setAnalysisVideoId(uploadResult.videoId);
       setAnalysisStatus(queuedResponse.status);
-      setStatusMessage(null);
       analysisStartInFlightRef.current = false;
       activeAnalysisRunRef.current = null;
-      setAnalysisRunning(false);
-      setUploading(false);
-      if (onAnalysisQueued) {
-        try {
-          onAnalysisQueued({
-            videoId: uploadResult.videoId,
-            jobId: queuedResponse.job_id,
-            status: queuedResponse.status,
-          });
-        } catch (callbackError) {
-          console.warn('Analysis was queued, but the Home handoff failed.', callbackError);
-        }
-      }
+      await handoffToQueuedAnalysis({
+        videoId: uploadResult.videoId,
+        jobId: queuedResponse.job_id,
+        status: queuedResponse.status,
+      });
     } catch (error) {
       if (!analysisRunIsCurrent(run)) {
         if (uploadedVideo && activeUploadedVideoRef.current?.videoId === uploadedVideo.videoId) {
@@ -607,21 +625,13 @@ export default function UploadVideoScreen({
       rememberPendingQualityUpload(null);
       setAnalysisVideoId(pendingUpload.videoId);
       setAnalysisStatus(queuedResponse.status);
-      setStatusMessage(null);
       analysisStartInFlightRef.current = false;
       activeAnalysisRunRef.current = null;
-      setAnalysisRunning(false);
-      if (onAnalysisQueued) {
-        try {
-          onAnalysisQueued({
-            videoId: pendingUpload.videoId,
-            jobId: queuedResponse.job_id,
-            status: queuedResponse.status,
-          });
-        } catch (callbackError) {
-          console.warn('Analysis was queued, but the Home handoff failed.', callbackError);
-        }
-      }
+      await handoffToQueuedAnalysis({
+        videoId: pendingUpload.videoId,
+        jobId: queuedResponse.job_id,
+        status: queuedResponse.status,
+      });
     } catch (error) {
       if (!analysisRunIsCurrent(run)) {
         if (activeUploadedVideoRef.current?.videoId === pendingUpload.videoId) {

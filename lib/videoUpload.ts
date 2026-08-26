@@ -21,6 +21,10 @@ import {
   QUALITY_PREFLIGHT_THRESHOLD_VERSION,
   requiresQualityPreflight,
 } from './qualityPreflightPolicy';
+import {
+  getStorageUploadErrorMessage,
+  normalizeVideoUploadFileName,
+} from './videoUploadPolicy';
 
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = resolveFrontendMaxUploadBytes();
@@ -222,32 +226,10 @@ function inferMimeTypeFromFilename(filename: string) {
   return null;
 }
 
-function inferExtensionFromMimeType(mimeType: string) {
-  // Choose a storage extension that matches the media type.
-  const normalizedMimeType = mimeType.split(';')[0]?.trim().toLowerCase();
-
-  if (normalizedMimeType === 'video/quicktime') {
-    return '.mov';
-  }
-
-  if (normalizedMimeType === 'video/x-m4v' || normalizedMimeType === 'video/m4v') {
-    return '.m4v';
-  }
-
-  if (normalizedMimeType === 'video/webm') {
-    return '.webm';
-  }
-
-  return '.mp4';
-}
-
 function buildUploadFileName(filename: string, contentType: string) {
-  // Preserve existing extensions when the picker already supplied one.
-  if (hasFileExtension(filename)) {
-    return filename;
-  }
-
-  return `video-upload${inferExtensionFromMimeType(contentType)}`;
+  // Storage policies validate the object name, so normalize picker metadata to
+  // an extension that matches the MIME type actually sent to Storage.
+  return normalizeVideoUploadFileName(filename, contentType);
 }
 
 function assertSupportedVideoFile(fileName: string, mimeType?: string | null) {
@@ -528,6 +510,11 @@ function formatSupabaseError(error: unknown) {
   return segments.join(' | ') || 'Unknown Supabase error';
 }
 
+function formatStorageUploadError(error: unknown) {
+  const detail = formatSupabaseError(error);
+  return getStorageUploadErrorMessage(detail);
+}
+
 async function resolveUploadSource(asset: UploadableVideoAsset): Promise<UploadSource> {
   // Convert the selected asset into the blob or file Supabase expects.
   const webAsset = asset as UploadableVideoAsset & WebImagePickerAsset;
@@ -717,6 +704,8 @@ export async function uploadVideoForAnalysis({
 
   const uploadSource = await resolveUploadSource(preparedVideo.asset);
   logVideoUploadDebug('Uploading prepared video file.', {
+    fileName: uploadSource.fileName,
+    contentType: uploadSource.contentType,
     originalSizeBytes: preparedVideo.originalSizeBytes,
     uploadedFileSizeBytes: uploadSource.sizeBytes,
     wasCompressed: preparedVideo.wasCompressed,
@@ -736,6 +725,13 @@ export async function uploadVideoForAnalysis({
   onStatusChange?.('Uploading video...');
   const storagePath = buildStoragePath(user.id, uploadSource.fileName);
 
+  logVideoUploadDebug('Sending video to Storage.', {
+    storagePath,
+    fileName: uploadSource.fileName,
+    contentType: uploadSource.contentType,
+    sizeBytes: uploadSource.sizeBytes,
+  });
+
   const { error: uploadError } = await supabase.storage.from('videos').upload(storagePath, uploadSource.body, {
     cacheControl: '3600',
     contentType: uploadSource.contentType,
@@ -743,7 +739,14 @@ export async function uploadVideoForAnalysis({
   });
 
   if (uploadError) {
-    throw uploadError;
+    logVideoUploadWarning('Storage rejected video upload.', {
+      storagePath,
+      fileName: uploadSource.fileName,
+      contentType: uploadSource.contentType,
+      sizeBytes: uploadSource.sizeBytes,
+      error: formatSupabaseError(uploadError),
+    });
+    throw new Error(formatStorageUploadError(uploadError));
   }
 
   const resolvedDurationMs =
@@ -763,6 +766,10 @@ export async function uploadVideoForAnalysis({
 
   try {
     const registeredVideo = await registerUploadedVideo(registerPayload, accessToken);
+    logVideoUploadDebug('Video upload registration completed.', {
+      videoId: registeredVideo.video_id,
+      storagePath: registeredVideo.storage_path,
+    });
     return {
       videoId: registeredVideo.video_id,
       status: 'uploaded',

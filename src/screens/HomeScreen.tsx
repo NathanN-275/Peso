@@ -34,6 +34,8 @@ import {
 type HomeScreenProps = {
   email?: string | null;
   refreshKey?: number;
+  queuedAnalysisConfirmation?: string | null;
+  onQueuedAnalysisConfirmationDismiss?: () => void;
   onNavigateToAddVideo?: () => void;
   onNavigateToProfile?: () => void;
   onOpenAnalysisActivity?: (videoId: string) => void | Promise<void>;
@@ -238,6 +240,8 @@ function SavedFoldersSkeleton() {
 
 export default function HomeScreen({
   refreshKey = 0,
+  queuedAnalysisConfirmation = null,
+  onQueuedAnalysisConfirmationDismiss,
   onNavigateToAddVideo,
   onNavigateToProfile,
   onOpenAnalysisActivity,
@@ -332,6 +336,15 @@ export default function HomeScreen({
   }, [session?.access_token, surfaceActive, refreshKey]);
 
   useEffect(() => {
+    if (!queuedAnalysisConfirmation) {
+      return;
+    }
+
+    const timer = setTimeout(() => onQueuedAnalysisConfirmationDismiss?.(), 7000);
+    return () => clearTimeout(timer);
+  }, [onQueuedAnalysisConfirmationDismiss, queuedAnalysisConfirmation]);
+
+  useEffect(() => {
     if (!savedOverviewLoaded) {
       return;
     }
@@ -423,6 +436,12 @@ export default function HomeScreen({
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
+          {queuedAnalysisConfirmation ? (
+            <View accessibilityRole="alert" style={styles.queueConfirmation}>
+              <Ionicons name="checkmark-circle-outline" size={22} color={tokens.colors.brand} />
+              <Text style={styles.queueConfirmationText}>{queuedAnalysisConfirmation}</Text>
+            </View>
+          ) : null}
           {analysisActivity.length > 0 || activityError ? (
             <View style={styles.activitySection}>
               <Text style={styles.activityTitle}>Analysis Activity</Text>
@@ -520,6 +539,26 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 22,
     paddingHorizontal: 14,
+  },
+  queueConfirmation: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 20,
+    marginHorizontal: 14,
+    borderWidth: 1,
+    borderColor: tokens.colors.brand,
+    borderRadius: 14,
+    backgroundColor: '#101722',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  queueConfirmationText: {
+    flex: 1,
+    color: tokens.colors.textPrimary,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '700',
   },
   activitySection: {
     gap: 10,
