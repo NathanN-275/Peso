@@ -1,5 +1,5 @@
 [build]
-  command = "npm --prefix web ci && npm run web:build"
+  command = "npm --prefix web ci && npm run web:build:release"
   ignore = "node scripts/netlify-ignore-build.js"
   publish = "dist"
 

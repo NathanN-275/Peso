@@ -3,6 +3,11 @@
 `render.yaml` defines a Starter API and a Standard worker without requiring a
 Render Pro workspace. Both use the root Docker image and the same backend code.
 
+Do not add or create the separate staging API/worker until the Render service
+costs are explicitly confirmed. Once approved, clone both services with
+`-staging` names, staging-only Supabase credentials, a staging CORS origin, and
+manual promotion. Never point a staging worker at the production queue.
+
 ## Required secrets
 
 Set these as secret environment variables on both services:

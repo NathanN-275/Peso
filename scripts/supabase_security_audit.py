@@ -36,6 +36,25 @@ def audit_supabase_security() -> list[str]:
   if re.search(r"security\s+definer", sql):
     errors.append("SECURITY DEFINER appears in migrations; manually verify it is not exposed or privilege-bypassing.")
 
+  if not re.search(
+    r"revoke\s+all\s+privileges\s+on\s+function\s+public\.rls_auto_enable\(\)\s+from\s+public\s*,\s*anon\s*,\s*authenticated",
+    sql,
+  ):
+    errors.append("public.rls_auto_enable() is not revoked from client roles.")
+
+  if not re.search(
+    r"alter\s+function\s+public\.set_updated_at\(\)\s+set\s+search_path",
+    sql,
+  ):
+    errors.append("public.set_updated_at() does not have a fixed search_path migration.")
+
+  for table in ("analysis_results", "profiles", "videos"):
+    if not re.search(
+      rf"revoke\s+all\s+privileges\s+on\s+table\s+public\.{table}\s+from\s+public\s*,\s*anon",
+      sql,
+    ):
+      errors.append(f"public.{table} is not revoked from unauthenticated roles.")
+
   for match in re.finditer(r"create\s+(?:or\s+replace\s+)?view\s+public\.([a-z0-9_]+).*?;", sql, flags=re.DOTALL):
     block = match.group(0)
     if "security_invoker" not in block:
