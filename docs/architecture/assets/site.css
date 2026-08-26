@@ -565,7 +565,7 @@ h3 {
 
 .scribble-note {
   position: absolute;
-  left: 8px;
+  left: -112px;
   bottom: 42px;
   z-index: 2;
   margin: 0;
@@ -608,18 +608,6 @@ h3 {
 
 .hero--compact .shell {
   position: relative;
-}
-
-.hero--compact .shell::after {
-  position: absolute;
-  top: -34px;
-  right: 0;
-  color: rgba(23, 105, 255, 0.12);
-  content: "↘";
-  font-family: "Caveat", cursive;
-  font-size: clamp(90px, 14vw, 170px);
-  line-height: 1;
-  transform: rotate(8deg);
 }
 
 .hero--compact h1 {
