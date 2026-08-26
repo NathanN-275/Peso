@@ -1,0 +1,23 @@
+- tapOn:
+    id: welcome-login
+- assertVisible:
+    id: auth-challenge
+- tapOn:
+    id: auth-email
+- inputText: ${PESO_E2E_EMAIL}
+- tapOn:
+    id: auth-password
+- inputText: ${PESO_E2E_PASSWORD}
+- hideKeyboard
+- extendedWaitUntil:
+    visible:
+      id: auth-submit
+      enabled: true
+    timeout: 30000
+- tapOn:
+    id: auth-submit
+    enabled: true
+- extendedWaitUntil:
+    visible:
+      id: home-screen
+    timeout: 30000

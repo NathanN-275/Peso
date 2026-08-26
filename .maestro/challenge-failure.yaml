@@ -1,0 +1,20 @@
+appId: com.anonymous.peso-app
+name: Security challenge failure and retry
+tags:
+  - ios
+  - auth
+  - challenge-failure
+---
+- launchApp:
+    clearState: true
+- tapOn:
+    id: welcome-login
+- extendedWaitUntil:
+    visible:
+      id: auth-challenge-retry
+    timeout: 30000
+- assertVisible: "Security verification failed.*"
+- tapOn:
+    id: auth-challenge-retry
+- assertVisible:
+    id: auth-challenge

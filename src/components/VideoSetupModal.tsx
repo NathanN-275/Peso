@@ -142,6 +142,7 @@ export default function VideoSetupModal({
 
             <View style={styles.section}>
               <Input
+                testID="setup-exercise"
                 label="Exercise Type"
                 placeholder="Search exercises"
                 value={exerciseQuery}
@@ -170,6 +171,7 @@ export default function VideoSetupModal({
                         return (
                           <Pressable
                             key={exercise}
+                            testID={`setup-exercise-${normalizeValue(exercise).replace(/\s+/g, '-')}`}
                             onPress={() => handleExerciseSelect(exercise)}
                             style={[
                               styles.suggestionItem,
@@ -206,6 +208,7 @@ export default function VideoSetupModal({
             <View style={styles.section}>
               <Text style={styles.fieldLabel}>Camera Angle</Text>
               <Pressable
+                testID="setup-angle"
                 accessibilityRole="button"
                 onPress={() => {
                   setAngleMenuOpen((current) => !current);
@@ -245,6 +248,7 @@ export default function VideoSetupModal({
                       return (
                         <Pressable
                           key={angle}
+                          testID={`setup-angle-${normalizeValue(angle)}`}
                           onPress={() => handleAngleSelect(angle)}
                           style={[
                             styles.dropdownOption,
@@ -280,6 +284,7 @@ export default function VideoSetupModal({
             <View style={styles.actions}>
               <Button
                 label="Continue"
+                testID="setup-continue"
                 onPress={handleContinue}
                 disabled={!canContinue}
                 style={styles.actionButton}
