@@ -226,19 +226,6 @@ async function hydrateAuthRedirectSession(parsedRoute: ParsedNativeAuthRoute) {
     return 'code';
   }
 
-  if (parsedRoute.accessToken && parsedRoute.refreshToken) {
-    const { error } = await supabase.auth.setSession({
-      access_token: parsedRoute.accessToken,
-      refresh_token: parsedRoute.refreshToken,
-    });
-
-    if (error) {
-      throw error;
-    }
-
-    return 'tokens';
-  }
-
   return null;
 }
 

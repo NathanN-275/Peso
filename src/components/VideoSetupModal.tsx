@@ -29,6 +29,8 @@ type VideoSetupModalProps = {
   onCancel: () => void;
   availableWidth?: number;
   availableHeight?: number;
+  isSelectionSupported?: (selection: VideoSetupSelection) => boolean;
+  unsupportedSelectionMessage?: string;
 };
 
 function normalizeValue(value: string) {
@@ -42,6 +44,8 @@ export default function VideoSetupModal({
   onCancel,
   availableWidth,
   availableHeight,
+  isSelectionSupported = () => true,
+  unsupportedSelectionMessage = 'This video setup is not supported yet.',
 }: VideoSetupModalProps) {
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -87,10 +91,16 @@ export default function VideoSetupModal({
     );
   }, [exerciseQuery]);
 
-  const canContinue = selectedExercise !== null && selectedAngle !== null;
+  const selectedSetup = selectedExercise && selectedAngle
+    ? { exercise: selectedExercise, angle: selectedAngle }
+    : null;
+  const selectionSupported = selectedSetup ? isSelectionSupported(selectedSetup) : false;
+  const canContinue = selectedSetup !== null && selectionSupported;
   const validationMessage =
     exerciseQuery.trim().length > 0 && selectedExercise === null
       ? 'Choose an exercise from the list.'
+      : selectedSetup && !selectionSupported
+        ? unsupportedSelectionMessage
       : 'Select an exercise and camera angle to continue.';
 
   const handleExerciseChange = (value: string) => {

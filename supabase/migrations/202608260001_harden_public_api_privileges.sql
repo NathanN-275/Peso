@@ -1,5 +1,11 @@
 -- Client roles do not need to invoke the event-trigger helper directly.
-revoke all privileges on function public.rls_auto_enable() from public, anon, authenticated;
+do $$
+begin
+  if to_regprocedure('public.rls_auto_enable()') is not null then
+    execute 'revoke all privileges on function public.rls_auto_enable() from public, anon, authenticated';
+  end if;
+end;
+$$;
 
 -- Trigger functions resolve built-ins from pg_catalog and app objects from public.
 alter function public.set_updated_at() set search_path = pg_catalog, public;

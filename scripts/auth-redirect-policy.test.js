@@ -18,9 +18,12 @@ test('native auth redirects accept only the exact Peso scheme and destinations',
   assert.equal(confirmation.trusted, true);
   assert.equal(confirmation.destination, 'login');
   assert.equal(confirmation.accessToken, 'access');
+  assert.equal(confirmation.hasSessionParams, false);
+  assert.match(confirmation.errorMessage, /no longer supported/i);
   assert.equal(recovery.trusted, true);
   assert.equal(recovery.destination, 'reset-password');
   assert.equal(recovery.code, 'recovery-code');
+  assert.equal(recovery.hasSessionParams, true);
 });
 
 test('native auth redirects reject unknown schemes, hosts, and path suffixes', () => {

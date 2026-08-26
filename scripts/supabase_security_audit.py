@@ -54,11 +54,14 @@ def audit_supabase_security() -> list[str]:
         "public.pending_video_analysis_job_count() is missing a reviewed SECURITY DEFINER safeguard."
       )
 
-  if not re.search(
-    r"revoke\s+all\s+privileges\s+on\s+function\s+public\.rls_auto_enable\(\)\s+from\s+public\s*,\s*anon\s*,\s*authenticated",
-    sql,
+  if not (
+    "to_regprocedure('public.rls_auto_enable()')" in sql
+    and re.search(
+      r"revoke\s+all\s+privileges\s+on\s+function\s+public\.rls_auto_enable\(\)\s+from\s+public\s*,\s*anon\s*,\s*authenticated",
+      sql,
+    )
   ):
-    errors.append("public.rls_auto_enable() is not revoked from client roles.")
+    errors.append("public.rls_auto_enable() is not conditionally revoked from client roles.")
 
   if not re.search(
     r"alter\s+function\s+public\.set_updated_at\(\)\s+set\s+search_path",

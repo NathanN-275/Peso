@@ -46,6 +46,10 @@ The client rejects unknown native schemes, hosts, path suffixes, credentials,
 and ports. Signup confirmation and password recovery are separate destinations;
 auth URL credentials are redacted from logs.
 
+Native callbacks use Supabase PKCE codes only. Before enabling this version,
+expire or reissue any outstanding implicit-flow email links: token-pair callbacks
+are rejected rather than installed as a session.
+
 ## Resend and Supabase Auth
 
 Use a verified auth-only sender domain and configure Resend as Supabase custom

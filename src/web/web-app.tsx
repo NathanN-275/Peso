@@ -49,7 +49,9 @@ import {
   WebProcessingRoute,
   WebRecordRoute,
   WebReviewRoute,
+  WebSubmissionChoiceRoute,
   WebUploadRoute,
+  WebVideoSetupRoute,
 } from './web-analysis-routes';
 import AuthChallenge from '../components/auth/AuthChallenge';
 
@@ -518,19 +520,19 @@ function ResetScreen() {
 
 const desktopNavItems = [
   { path: '/', label: 'Home', short: 'H' },
-  { path: '/record', label: 'Record', short: 'R' },
-  { path: '/upload', label: 'Upload Video', short: 'U' },
+  { path: '/setup', label: 'Analyze', short: 'A' },
   { path: '/saved-lifts', label: 'Saved Lifts', short: 'S' },
   { path: '/profile', label: 'Profile', short: 'P' },
 ];
 
-const mobileNavItems = desktopNavItems.filter((item) => item.path !== '/upload');
+const mobileNavItems = desktopNavItems;
 
 const routeTitles: Record<string, string> = {
   '/': 'Home',
+  '/setup': 'Video setup',
+  '/submit': 'Choose video',
   '/record': 'Record video',
   '/upload': 'Upload video',
-  '/setup': 'Video setup',
   '/saved-lifts': 'Saved Lifts',
   '/profile': 'Profile',
   '/settings': 'Settings',
@@ -912,8 +914,7 @@ function HomeScreen() {
       </View>
       <View style={styles.homeGrid}>
         <View style={styles.quickActionsColumn}>
-          <QuickAction title="Record Video" description="Use this device’s camera" symbol="●" disabled={blocked} onPress={() => navigate('/record')} />
-          <QuickAction title="Upload Video" description="Choose a video from this device" symbol="↑" disabled={blocked} onPress={() => navigate('/upload')} />
+          <QuickAction title="Analyze a squat" description="Set up, then upload or record" symbol="●" disabled={blocked} onPress={() => navigate('/setup')} />
         </View>
         <CapacityCard />
       </View>
@@ -1233,7 +1234,7 @@ function SavedLiftsScreen() {
         </View>
         <View style={styles.buttonRow}>
           <ActionButton label={selectionMode ? 'Cancel selection' : 'Select lifts'} variant="secondary" compact onPress={toggleSelectionMode} />
-          <ActionButton label="Analyze a squat" compact onPress={() => navigate('/upload')} />
+          <ActionButton label="Analyze a squat" compact onPress={() => navigate('/setup')} />
         </View>
       </View>
 
@@ -1474,9 +1475,10 @@ export default function WebApp() {
         <Route path="/reset" element={<ResetScreen />} />
         <Route element={<AccountRoute />}>
           <Route index element={<HomeScreen />} />
+          <Route path="/setup" element={<WebVideoSetupRoute />} />
+          <Route path="/submit" element={<WebSubmissionChoiceRoute />} />
           <Route path="/record" element={<WebRecordRoute />} />
           <Route path="/upload" element={<WebUploadRoute />} />
-          <Route path="/setup" element={<Navigate to="/upload" replace />} />
           <Route path="/processing/:videoId" element={<WebProcessingRoute />} />
           <Route path="/review/:videoId" element={<WebReviewRoute onLibraryChanged={invalidateSavedLiftLibraryCache} />} />
           <Route path="/saved-lifts" element={<SavedLiftsScreen />} />
