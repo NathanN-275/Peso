@@ -24,6 +24,7 @@ import {
 } from 'react-router';
 import tokens from '../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
+import { parseWebAuthRedirect } from '../../lib/auth-redirect';
 import {
   createSavedLiftExport,
   deleteSavedLifts,
@@ -50,6 +51,7 @@ import {
   WebReviewRoute,
   WebUploadRoute,
 } from './web-analysis-routes';
+import AuthChallenge from '../components/auth/AuthChallenge';
 
 const colors = {
   ...tokens.colors,
@@ -75,10 +77,21 @@ const fonts = {
   bold: 'Inter_700Bold',
 };
 
+function currentWebAuthLinkError() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  return parseWebAuthRedirect(
+    window.location.pathname,
+    window.location.search,
+    window.location.hash
+  ).errorMessage;
+}
+
 const previewImageAsset = require('../../assets/demo/peso-pose-overlay.jpg') as number;
 const previewImage = previewImageAsset as ImageSourcePropType;
 const logoImage = require('../../assets/peso-logo.png') as ImageSourcePropType;
-const turnstileSiteKey = process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? '';
 const SAVED_LIFT_CACHE_TTL_MS = 60_000;
 
 let savedLiftLibraryCache: {
@@ -96,17 +109,6 @@ function getCachedSavedLifts(userId?: string): SavedVideo[] | null {
   return cache && cache.userId === userId && cache.expiresAt > Date.now()
     ? cache.lifts
     : null;
-}
-
-type TurnstileApi = {
-  render: (container: HTMLElement, options: Record<string, unknown>) => string;
-  remove: (widgetId: string) => void;
-};
-
-declare global {
-  interface Window {
-    turnstile?: TurnstileApi;
-  }
 }
 
 function formatTime(seconds: number | null) {
@@ -302,87 +304,12 @@ function CheckRow({ checked, label, onPress }: { checked: boolean; label: React.
   );
 }
 
-function TurnstileChallenge({
-  action,
-  resetSignal,
-  onTokenChange,
-  onError,
-}: {
-  action: 'login' | 'signup' | 'reset_password';
-  resetSignal: number;
-  onTokenChange: (token: string | null) => void;
-  onError: (message: string | null) => void;
-}) {
-  const containerRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    if (!turnstileSiteKey) {
-      onTokenChange(null);
-      onError('Security verification is unavailable. Try again later.');
-      return;
-    }
-
-    let widgetId: string | null = null;
-    let active = true;
-    const render = () => {
-      if (!active || !containerRef.current || !window.turnstile) return;
-      containerRef.current.replaceChildren();
-      widgetId = window.turnstile.render(containerRef.current, {
-        sitekey: turnstileSiteKey,
-        action,
-        callback: (token: string) => {
-          onError(null);
-          onTokenChange(token);
-        },
-        'expired-callback': () => onTokenChange(null),
-        'error-callback': () => {
-          onTokenChange(null);
-          onError('Security verification failed. Reload the check and try again.');
-        },
-      });
-    };
-
-    const existingScript = document.querySelector<HTMLScriptElement>('script[data-peso-turnstile]');
-    const script = existingScript ?? document.createElement('script');
-    const onLoad = () => render();
-
-    if (window.turnstile) {
-      render();
-    } else if (existingScript) {
-      existingScript.addEventListener('load', onLoad);
-    } else {
-      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-      script.async = true;
-      script.defer = true;
-      script.dataset.pesoTurnstile = 'true';
-      script.addEventListener('load', onLoad, { once: true });
-      script.addEventListener(
-        'error',
-        () => {
-          onTokenChange(null);
-          onError('Security verification is unavailable. Try again later.');
-        },
-        { once: true }
-      );
-      document.head.appendChild(script);
-    }
-
-    return () => {
-      active = false;
-      if (existingScript) existingScript.removeEventListener('load', onLoad);
-      if (widgetId && window.turnstile) window.turnstile.remove(widgetId);
-    };
-  }, [action, onError, onTokenChange, resetSignal]);
-
-  return <View ref={containerRef as never} style={styles.turnstileWidget} />;
-}
-
 function LoginScreen() {
   const navigate = useNavigate();
   const { session, signInWithEmail, configError } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(currentWebAuthLinkError);
   const [submitting, setSubmitting] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [captchaError, setCaptchaError] = useState<string | null>(null);
@@ -393,10 +320,15 @@ function LoginScreen() {
   }, [navigate, session]);
 
   const signIn = async () => {
+    if (!captchaToken) {
+      setError('Complete the security check and try again.');
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
-      await signInWithEmail(email.trim(), password, captchaToken ?? undefined);
+      await signInWithEmail(email.trim(), password, captchaToken);
       navigate('/', { replace: true });
     } catch (signInError) {
       setError(signInError instanceof Error ? signInError.message : 'Unable to sign in.');
@@ -413,7 +345,7 @@ function LoginScreen() {
       <Field label="Password" placeholder="Enter your password" secureTextEntry value={password} onChangeText={setPassword} />
       <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification">
         <Text style={styles.turnstileTitle}>Security check</Text>
-        <TurnstileChallenge action="login" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
+        <AuthChallenge action="login" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
       </View>
       {(error || captchaError || configError) && <Text selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
       <Pressable accessibilityRole="link" onPress={() => navigate('/reset')}>
@@ -444,10 +376,15 @@ function SignupScreen() {
   const [captchaReset, setCaptchaReset] = useState(0);
 
   const signUp = async () => {
+    if (!captchaToken) {
+      setError('Complete the security check and try again.');
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
-      const result = await signUpWithEmail(email.trim(), password, undefined, captchaToken ?? undefined);
+      const result = await signUpWithEmail(email.trim(), password, undefined, captchaToken);
       navigate(result.requiresEmailConfirmation ? '/verify' : '/', { replace: true });
     } catch (signUpError) {
       setError(signUpError instanceof Error ? signUpError.message : 'Unable to create account.');
@@ -466,7 +403,7 @@ function SignupScreen() {
       <CheckRow checked={terms} onPress={() => setTerms(!terms)} label="I agree to the beta Terms and acknowledge the Privacy Policy." />
       <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification">
         <Text style={styles.turnstileTitle}>Security check</Text>
-        <TurnstileChallenge action="signup" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
+        <AuthChallenge action="signup" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
       </View>
       {(error || captchaError || configError) && <Text selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
       <ActionButton label={submitting ? 'Creating account…' : error ? 'Retry account creation' : 'Create account'} disabled={submitting || !email.trim() || password.length < 8 || !usResident || !terms || !captchaToken} onPress={() => void signUp()} />
@@ -500,17 +437,22 @@ function ResetScreen() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(currentWebAuthLinkError);
   const [submitting, setSubmitting] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [captchaError, setCaptchaError] = useState<string | null>(null);
   const [captchaReset, setCaptchaReset] = useState(0);
 
   const reset = async () => {
+    if (!captchaToken) {
+      setError('Complete the security check and try again.');
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
-      await resetPasswordForEmail(email.trim(), captchaToken ?? undefined);
+      await resetPasswordForEmail(email.trim(), captchaToken);
       setMessage('If an account exists for this email, check your inbox for a secure reset link.');
     } catch (resetError) {
       setError(resetError instanceof Error ? resetError.message : 'Unable to send a reset link.');
@@ -564,7 +506,7 @@ function ResetScreen() {
       <Field label="Email" placeholder="you@example.com" value={email} onChangeText={setEmail} />
       <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification">
         <Text style={styles.turnstileTitle}>Security check</Text>
-        <TurnstileChallenge action="reset_password" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
+        <AuthChallenge action="reset_password" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
       </View>
       {(error || captchaError || configError) && <Text selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
       {message && <Text selectable style={styles.formSuccess}>{message}</Text>}
