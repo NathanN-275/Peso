@@ -27,6 +27,7 @@ ISO_BASE_MEDIA_EXTENSIONS = {".mp4", ".mov", ".m4v"}
 VIDEO_SIGNATURE_BYTES = 4096
 DEFAULT_CACHE_CONTROL_SECONDS = "3600"
 IMMUTABLE_CACHE_CONTROL_SECONDS = "31536000"
+FFPROBE_ERROR_LOG_LIMIT = 500
 
 
 logger = logging.getLogger(__name__)
@@ -94,7 +95,6 @@ def _validate_video_stream(path: Path, timeout_seconds: int) -> None:
     ffprobe_binary,
     "-v",
     "error",
-    "-nostdin",
     "-protocol_whitelist",
     "file,pipe",
     "-select_streams",
@@ -109,19 +109,39 @@ def _validate_video_stream(path: Path, timeout_seconds: int) -> None:
   try:
     completed = subprocess.run(
       command,
+      stdin=subprocess.DEVNULL,
       capture_output=True,
       text=True,
       check=False,
       timeout=timeout_seconds,
       env={"PATH": os.defpath, "HOME": tempfile.gettempdir()},
     )
-  except (OSError, subprocess.TimeoutExpired) as error:
+  except subprocess.TimeoutExpired as error:
+    logger.warning(
+      "Video stream validation timed out path=%s timeout_seconds=%s",
+      path,
+      timeout_seconds,
+    )
     raise HTTPException(
-      status_code=status.HTTP_400_BAD_REQUEST,
-      detail="Uploaded file could not be validated as a video.",
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail="Video validation is temporarily unavailable. Please try again.",
+    ) from error
+  except OSError as error:
+    logger.exception("Unable to start ffprobe for video validation path=%s", path)
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail="Video validation is temporarily unavailable. Please try again.",
     ) from error
 
   if completed.returncode != 0 or completed.stdout.strip() != "video":
+    stderr = " ".join((completed.stderr or "").split())
+    sanitized_stderr = stderr.replace(str(path), "<video>")[:FFPROBE_ERROR_LOG_LIMIT]
+    logger.warning(
+      "ffprobe rejected uploaded video path=%s returncode=%s stderr=%s",
+      path,
+      completed.returncode,
+      sanitized_stderr or "<empty>",
+    )
     raise HTTPException(
       status_code=status.HTTP_400_BAD_REQUEST,
       detail="Uploaded file contents do not contain a valid video stream.",
