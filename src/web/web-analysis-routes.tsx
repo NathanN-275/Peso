@@ -7,6 +7,8 @@ import { fetchAnalysisResult, getVideoPlaybackUrl } from '../../lib/backendApi';
 import { getFreshBackendAccessToken } from '../../lib/backendAuth';
 import type { AnalysisActivityItem, VideoAnalysisResult } from '../types/videoAnalysis';
 import { useWebAnalysisActivity } from './web-analysis-activity';
+import VideoSetupModal from '../components/VideoSetupModal';
+import type { VideoSetupSelection } from '../constants/videoSetup';
 
 const UploadVideoScreen = lazy(() => import('../screens/UploadVideoScreen'));
 const WebVideoRecorderScreen = lazy(() => import('../screens/WebVideoRecorderScreen'));
@@ -49,23 +51,30 @@ export function WebUploadRoute() {
   const {
     pendingRecordedAsset,
     setPendingRecordedAsset,
+    pendingVideoSetup,
+    setPendingVideoSetup,
     recordQueued,
   } = useWebAnalysisActivity();
+
+  if (!pendingVideoSetup) {
+    return <Navigate to="/setup" replace />;
+  }
 
   return (
     <Suspense fallback={<RouteLoading label="Loading video upload…" />}>
       <UploadVideoScreen
         sourceMode={pendingRecordedAsset ? 'camera' : 'library'}
         initialSelectedVideo={pendingRecordedAsset}
-        initialVideoSetup={SIDE_SQUAT_SETUP}
+        initialVideoSetup={pendingVideoSetup}
         onBack={() => {
           setPendingRecordedAsset(null);
-          navigate('/');
+          navigate('/submit');
         }}
         onRecordVideoPress={() => navigate('/record')}
         onAnalysisQueued={(activity) => {
           recordQueued(activity);
           setPendingRecordedAsset(null);
+          setPendingVideoSetup(null);
           navigate(`/processing/${activity.videoId}`);
         }}
       />
@@ -75,19 +84,69 @@ export function WebUploadRoute() {
 
 export function WebRecordRoute() {
   const navigate = useNavigate();
-  const { setPendingRecordedAsset } = useWebAnalysisActivity();
+  const { pendingVideoSetup, setPendingRecordedAsset } = useWebAnalysisActivity();
+
+  if (!pendingVideoSetup) {
+    return <Navigate to="/setup" replace />;
+  }
 
   return (
     <Suspense fallback={<RouteLoading label="Starting the camera…" />}>
       <WebVideoRecorderScreen
-        setup={SIDE_SQUAT_SETUP}
-        onBack={() => navigate('/')}
+        setup={pendingVideoSetup}
+        onBack={() => navigate('/submit')}
         onUseRecording={(asset: ImagePicker.ImagePickerAsset) => {
           setPendingRecordedAsset(asset);
           navigate('/upload');
         }}
       />
     </Suspense>
+  );
+}
+
+export function WebVideoSetupRoute() {
+  const navigate = useNavigate();
+  const { pendingVideoSetup, setPendingVideoSetup } = useWebAnalysisActivity();
+
+  return (
+    <VideoSetupModal
+      visible
+      initialSelection={pendingVideoSetup ?? SIDE_SQUAT_SETUP}
+      onCancel={() => navigate('/')}
+      onContinue={(selection: VideoSetupSelection) => {
+        setPendingVideoSetup(selection);
+        navigate('/submit');
+      }}
+      isSelectionSupported={(selection) => (
+        selection.exercise === SIDE_SQUAT_SETUP.exercise && selection.angle === SIDE_SQUAT_SETUP.angle
+      )}
+      unsupportedSelectionMessage="The web beta currently supports Side-view Squat only."
+    />
+  );
+}
+
+export function WebSubmissionChoiceRoute() {
+  const navigate = useNavigate();
+  const { pendingVideoSetup } = useWebAnalysisActivity();
+
+  if (!pendingVideoSetup) {
+    return <Navigate to="/setup" replace />;
+  }
+
+  return (
+    <View style={styles.submissionChoice}>
+      <Text accessibilityRole="header" style={styles.heading}>Choose your video</Text>
+      <Text style={styles.body}>Side-view Squat selected. Upload a recording or use this device’s camera.</Text>
+      <Pressable accessibilityRole="button" onPress={() => navigate('/upload')} style={styles.primaryButton}>
+        <Text style={styles.primaryButtonText}>Upload Video</Text>
+      </Pressable>
+      <Pressable accessibilityRole="button" onPress={() => navigate('/record')} style={styles.secondaryButton}>
+        <Text style={styles.secondaryButtonText}>Record Video</Text>
+      </Pressable>
+      <Pressable accessibilityRole="button" onPress={() => navigate('/setup')} style={styles.secondaryButton}>
+        <Text style={styles.secondaryButtonText}>Edit setup</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -220,6 +279,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 16,
     backgroundColor: '#07090D',
+  },
+  submissionChoice: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 14,
+    paddingHorizontal: 24,
   },
   processingPage: {
     flex: 1,

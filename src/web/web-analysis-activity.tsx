@@ -18,6 +18,7 @@ import type {
   AnalysisActivityResponse,
   VideoAnalysisStatus,
 } from '../types/videoAnalysis';
+import type { VideoSetupSelection } from '../constants/videoSetup';
 
 const DEFAULT_ACTIVE_LIMIT = 3;
 const OPTIMISTIC_STORAGE_PREFIX = 'peso.analysis-activity.optimistic';
@@ -39,6 +40,8 @@ type WebAnalysisActivityContextValue = {
   removeActivity: (videoId: string) => void;
   pendingRecordedAsset: ImagePicker.ImagePickerAsset | null;
   setPendingRecordedAsset: (asset: ImagePicker.ImagePickerAsset | null) => void;
+  pendingVideoSetup: VideoSetupSelection | null;
+  setPendingVideoSetup: (selection: VideoSetupSelection | null) => void;
 };
 
 const WebAnalysisActivityContext = createContext<WebAnalysisActivityContextValue | null>(null);
@@ -112,6 +115,7 @@ export function WebAnalysisActivityProvider({ children }: { children: React.Reac
     Platform.OS !== 'web' || typeof document === 'undefined' || document.visibilityState === 'visible'
   );
   const [pendingRecordedAsset, setPendingRecordedAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [pendingVideoSetup, setPendingVideoSetup] = useState<VideoSetupSelection | null>(null);
   const optimisticItemsRef = useRef<AnalysisActivityItem[]>([]);
   const itemsRef = useRef<AnalysisActivityItem[]>([]);
 
@@ -258,6 +262,8 @@ export function WebAnalysisActivityProvider({ children }: { children: React.Reac
     removeActivity,
     pendingRecordedAsset,
     setPendingRecordedAsset,
+    pendingVideoSetup,
+    setPendingVideoSetup,
   }), [
     activeCount,
     activeLimit,
@@ -265,6 +271,7 @@ export function WebAnalysisActivityProvider({ children }: { children: React.Reac
     items,
     loading,
     pendingRecordedAsset,
+    pendingVideoSetup,
     recordQueued,
     refresh,
     removeActivity,
