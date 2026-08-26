@@ -23,7 +23,11 @@
     "start:physical": "node scripts/start-dev.js",
     "typecheck": "tsc --noEmit",
     "test:policy": "node --test scripts/*.test.js",
-    "audit:ci": "node scripts/npm-audit-ci.js"
+    "audit:ci": "node scripts/npm-audit-ci.js",
+    "maestro:auth": "maestro test .maestro/auth-smoke.yaml",
+    "maestro:release": "maestro test .maestro/side-squat-flow.yaml",
+    "test:web:e2e": "playwright test",
+    "test:web:e2e:list": "playwright test --list"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
@@ -56,6 +60,7 @@
     "react-router": "7.18.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/react": "~19.2.2",
     "babel-preset-expo": "~57.0.0",
     "postcss": "^8.4.49",

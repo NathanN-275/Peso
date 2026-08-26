@@ -416,7 +416,7 @@ export default function HomeScreen({
   const groups = useMemo(() => groupSavedOverview(savedOverview), [savedOverview]);
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} testID="home-screen">
       <View style={styles.container}>
         <ScrollView
           style={styles.scroll}
@@ -459,6 +459,7 @@ export default function HomeScreen({
               <Text style={styles.emptyTitle}>No saved videos yet</Text>
               <Text style={styles.emptyCopy}>Analyze and save a lift to see it here.</Text>
               <Pressable
+                testID="home-add-video"
                 accessibilityRole="button"
                 onPress={onNavigateToAddVideo}
                 style={styles.emptyAddButton}

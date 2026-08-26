@@ -1299,6 +1299,7 @@ export default function UploadVideoScreen({
       >
         <Button
           label="Back"
+          testID="upload-back"
           onPress={() => {
             void handleBackPress();
           }}
@@ -1520,6 +1521,7 @@ export default function UploadVideoScreen({
             <View style={styles.actions}>
               <Button
                 label={chooseVideoLabel}
+                testID="upload-choose-video"
                 onPress={sourceMode === 'camera' ? handleRecordVideoPress : handlePickVideoPress}
                 disabled={uploading}
                 variant="secondary"
@@ -1527,6 +1529,7 @@ export default function UploadVideoScreen({
               />
               <Button
                 label={videoSetup ? 'Edit Video Setup' : 'Open Video Setup'}
+                testID="upload-video-setup"
                 onPress={() => setSetupModalVisible(true)}
                 disabled={uploading}
                 variant="secondary"
@@ -1558,6 +1561,7 @@ export default function UploadVideoScreen({
           </View>
           <Button
             label="Start Analysis"
+            testID="upload-start-analysis"
             onPress={() => {
               if (pendingQualityUpload) {
                 void handleContinueAfterQualityWarning();
