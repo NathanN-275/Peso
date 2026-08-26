@@ -31,6 +31,10 @@ import {
   isBackendAuthError,
 } from '../../lib/backendAuth';
 import {
+  getVideoSubmissionFailureMessage,
+} from '../../lib/backendErrorPolicy';
+import type { VideoSubmissionFailurePhase } from '../../lib/backendErrorPolicy';
+import {
   cleanupUploadedVideoForAnalysis,
   uploadVideoForAnalysis,
 } from '../../lib/videoUpload';
@@ -373,6 +377,7 @@ export default function UploadVideoScreen({
     analysisRunGenerationRef.current = run.generation;
     activeAnalysisRunRef.current = run;
     let uploadedVideo: UploadVideoForAnalysisResult | null = null;
+    let failurePhase: VideoSubmissionFailurePhase = 'upload';
 
     try {
       // Start with a backend health check so failures are clearer.
@@ -432,6 +437,7 @@ export default function UploadVideoScreen({
       }
 
       if (requiresQualityPreflight(videoSetup)) {
+        failurePhase = 'quality_preflight';
         setStatusMessage('Checking recording quality...');
         const preflight = await runVideoQualityPreflight(
           uploadResult.videoId,
@@ -486,6 +492,7 @@ export default function UploadVideoScreen({
       }
 
       setStatusMessage('Starting analysis...');
+      failurePhase = 'queue_analysis';
       console.log('[analysis] starting backend analysis', uploadResult.videoId);
       const queuedResponse = await triggerVideoAnalysis(
         uploadResult.videoId,
@@ -531,7 +538,7 @@ export default function UploadVideoScreen({
 
       if (__DEV__) {
         console.warn('[analysis] upload or queue failed', {
-          phase: uploadedVideo ? 'queue_analysis' : 'upload',
+          phase: failurePhase,
           videoId: uploadedVideo?.videoId ?? null,
           error,
         });
@@ -560,7 +567,7 @@ export default function UploadVideoScreen({
         triggerFailedAfterUpload
           ? isBackendAuthError(error)
             ? backendAuthRecoveryMessage()
-            : 'Upload succeeded, but analysis could not start. The upload was cleaned up; please try again.'
+            : getVideoSubmissionFailureMessage(failurePhase, message)
           : message.includes('row-level security policy')
           ? `${message}. Apply the latest videos RLS migration to your Supabase project.`
           : message
