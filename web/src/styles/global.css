@@ -22,7 +22,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .skip-link { position: fixed; left: 16px; top: -64px; z-index: 100; background: white; color: #07090d; padding: 12px 16px; border-radius: 8px; font-weight: 700; }
 .skip-link:focus { top: 16px; }
 .page-shell { overflow: clip; }
-.site-header { width: min(calc(100% - 48px), var(--max)); min-height: 92px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; position: relative; z-index: 10; }
+.site-header { width: min(calc(100% - 48px), var(--max)); min-height: 92px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; position: relative; z-index: 10; border-bottom: 1px solid var(--line); }
 .site-header--compact { border-bottom: 1px solid var(--line); }
 .site-header nav, .site-footer nav { display: flex; align-items: center; gap: 28px; }
 .wordmark { width: 116px; display: block; }
