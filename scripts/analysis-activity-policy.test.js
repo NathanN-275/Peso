@@ -66,11 +66,14 @@ test('successful queue handoff leaves the upload screen and restores from Home',
 
   assert.match(uploadSource, /triggerVideoAnalysis[\s\S]*onAnalysisQueued/);
   assert.match(rootSource, /onAnalysisQueued=\{handleAnalysisQueued\}/);
+  assert.match(uploadSource, /Upload complete\. Taking you back to Home…/);
+  assert.match(rootSource, /Video queued for analysis\. You can upload or record another video\./);
   assert.match(rootSource, /pendingAnalysisReview/);
   assert.match(homeSource, /getAnalysisActivity/);
   assert.match(homeSource, /\{analysisActivity\.length > 0 \|\| activityError \? \(/);
   assert.doesNotMatch(homeSource, /activityLoading/);
   assert.match(homeSource, /Ready to review/);
+  assert.match(homeSource, /queuedAnalysisConfirmation/);
   assert.match(homeSource, /Tracking barbell/);
   assert.match(homeSource, /Download failed — Retry/);
   assert.match(homeSource, /ui_ready_delay_ms/);

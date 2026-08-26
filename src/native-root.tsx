@@ -287,6 +287,7 @@ function AppContent() {
     ).errorMessage;
   });
   const [homeRefreshKey, setHomeRefreshKey] = useState(0);
+  const [queuedAnalysisConfirmation, setQueuedAnalysisConfirmation] = useState<string | null>(null);
   const [uploadSourceMode, setUploadSourceMode] = useState<'camera' | 'library'>('library');
   const [recordedUploadVideo, setRecordedUploadVideo] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [recordedUploadSetup, setRecordedUploadSetup] = useState<VideoSetupSelection | null>(null);
@@ -644,6 +645,7 @@ function AppContent() {
     setRecordedUploadVideo(null);
     setRecordedUploadSetup(null);
     setPendingRecordingSetup(null);
+    setQueuedAnalysisConfirmation('Video queued for analysis. You can upload or record another video.');
     setHomeRefreshKey((key) => key + 1);
     authNavigation.toHome();
   };
@@ -1103,6 +1105,8 @@ function AppContent() {
         <HomeScreen
           email={user.email}
           refreshKey={homeRefreshKey}
+          queuedAnalysisConfirmation={queuedAnalysisConfirmation}
+          onQueuedAnalysisConfirmationDismiss={() => setQueuedAnalysisConfirmation(null)}
           onNavigateToAddVideo={authNavigation.toAddVideo}
           onNavigateToProfile={handleProfileRoute}
           onOpenAnalysisActivity={handleOpenAnalysisActivity}
