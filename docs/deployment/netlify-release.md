@@ -20,7 +20,15 @@ below and locate the Git commit attached to the currently published deploy.
    and the Netlify Deploy Preview check before a production merge.
 6. Set `EXPO_PUBLIC_PRODUCTION_BACKEND_URL` to the production Render API URL in
    both Preview and Production deploy contexts.
-7. At beta launch, disable site-wide password protection under **Project
+7. Configure these public build variables in every applicable deploy context:
+   `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`,
+   `EXPO_PUBLIC_TURNSTILE_SITE_KEY`, `EXPO_PUBLIC_AUTH_CHALLENGE_URL`, and
+   `EXPO_PUBLIC_PRODUCTION_BACKEND_URL`. The challenge URL must be the exact
+   HTTPS `/auth/turnstile/` page on that deploy's stable origin.
+8. Set `PESO_RELEASE_ENV=staging` on the stable staging branch deploy and
+   `PESO_RELEASE_ENV=production` in Production. Production builds reject
+   Cloudflare test site keys.
+9. At beta launch, disable site-wide password protection under **Project
    configuration > Access & security > Visitor access**. Netlify Basic Auth
    disables CDN caching for the whole site; use application authentication for
    `/app` instead.
@@ -69,10 +77,11 @@ Netlify serves static deploy assets from its global CDN. HTML uses
 and WOFF2 startup fonts use a one-year immutable browser lifetime. The Render API
 returns `Cache-Control: no-store` for authenticated and health responses.
 
-Run the production export and its release budget gate before a preview:
+The Netlify build runs the configuration validator before exporting. Run the
+same production export and budget gate before a preview:
 
 ```bash
-npm run web:build
+npm run web:build:release
 npm run web:budget
 ```
 
