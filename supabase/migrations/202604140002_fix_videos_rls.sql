@@ -1,6 +1,36 @@
-alter table public.videos
-  alter column user_id type uuid using user_id::uuid,
-  alter column user_id set not null;
+do $$
+declare
+  policy_record record;
+begin
+  for policy_record in
+    select policyname
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'videos'
+  loop
+    execute format('drop policy if exists %I on public.videos', policy_record.policyname);
+  end loop;
+end;
+$$;
+
+do $$
+begin
+  if exists (
+    select 1
+    from pg_attribute
+    where attrelid = 'public.videos'::regclass
+      and attname = 'user_id'
+      and atttypid <> 'uuid'::regtype
+      and not attisdropped
+  ) then
+    alter table public.videos
+      alter column user_id type uuid using user_id::uuid;
+  end if;
+
+  alter table public.videos
+    alter column user_id set not null;
+end;
+$$;
 
 do $$
 declare
@@ -33,21 +63,6 @@ end;
 $$;
 
 alter table public.videos enable row level security;
-
-do $$
-declare
-  policy_record record;
-begin
-  for policy_record in
-    select policyname
-    from pg_policies
-    where schemaname = 'public'
-      and tablename = 'videos'
-  loop
-    execute format('drop policy if exists %I on public.videos', policy_record.policyname);
-  end loop;
-end;
-$$;
 
 create policy "Users can view own videos"
 on public.videos
