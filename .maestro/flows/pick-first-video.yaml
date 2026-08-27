@@ -1,0 +1,28 @@
+- runFlow:
+    when:
+      visible: "Allow Full Access"
+    commands:
+      - tapOn: "Allow Full Access"
+- runFlow:
+    when:
+      visible: "Select Photos…"
+    commands:
+      - tapOn: "Select Photos…"
+- tapOn:
+    id: PXGGridLayout-Info
+    index: 0
+    optional: true
+- tapOn:
+    text: "Video, .*"
+    index: 0
+    optional: true
+- tapOn:
+    text: "Photo, .*"
+    index: 0
+    optional: true
+- tapOn:
+    text: "Add"
+    optional: true
+- tapOn:
+    text: "Done"
+    optional: true

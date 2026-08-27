@@ -55,6 +55,7 @@ __pycache__/
 
 # Local analysis observability artifacts
 backend/.peso/
+/artifacts/
 
 supabase/.temp/
 .agents/skills/

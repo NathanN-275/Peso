@@ -29,6 +29,11 @@ import WelcomeScreen from './screens/WelcomeScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import { supabase } from '../lib/supabase';
+import {
+  parseNativeAuthRedirect,
+  parseWebAuthRedirect,
+  redactAuthParams,
+} from '../lib/auth-redirect';
 import { deleteSavedVideo, fetchAnalysisResult, getVideoPlaybackUrl } from '../lib/backendApi';
 import type { SavedVideo } from '../lib/backendApi';
 import type { VideoSetupSelection } from './constants/videoSetup';
@@ -60,14 +65,8 @@ type AuthRoute = (typeof AUTH_ROUTES)[keyof typeof AUTH_ROUTES];
 
 type ParsedNativeAuthRoute = {
   route: AuthRoute | null;
-  protocol: string | null;
-  host: string | null;
-  hostname: string | null;
-  pathname: string | null;
-  search: string | null;
-  hash: string | null;
-  path: string | null;
-  normalizedRoute: string | null;
+  trusted: boolean;
+  destination: 'login' | 'reset-password' | null;
   queryParams: Record<string, string>;
   hashParams: Record<string, string>;
   code: string | null;
@@ -75,6 +74,7 @@ type ParsedNativeAuthRoute = {
   refreshToken: string | null;
   isRecoveryResetLink: boolean;
   hasRecoverySessionParams: boolean;
+  errorMessage: string | null;
 };
 
 type ParsedWebAuthLink = {
@@ -178,176 +178,41 @@ function parseWebAuthRoute(hash: string): AuthRoute {
   return AUTH_ROUTES.welcome;
 }
 
-function parseHashParams(hash: string) {
-  // Treat fragment values like query params for reset links.
-  const hashValue = hash.startsWith('#') ? hash.slice(1) : hash;
-  const hashParamsSource = hashValue.includes('?')
-    ? hashValue.slice(hashValue.indexOf('?') + 1)
-    : hashValue.includes('=')
-      ? hashValue
-      : '';
-
-  return new URLSearchParams(hashParamsSource);
-}
-
-function parseWebAuthLink(search: string, hash: string): ParsedWebAuthLink {
+function parseWebAuthLink(pathname: string, search: string, hash: string): ParsedWebAuthLink {
   // Detect web recovery links before the screen is chosen.
-  const searchParams = new URLSearchParams(search);
-  const hashParams = parseHashParams(hash);
-  const auth = searchParams.get('auth');
-  const type = hashParams.get('type');
-  const accessToken = hashParams.get('access_token');
-  const refreshToken = hashParams.get('refresh_token');
-  const code = hashParams.get('code');
-  const errorCode = hashParams.get('error_code');
-  const errorDescription = hashParams.get('error_description');
-  const normalizedErrorDescription = (errorDescription ?? '').toLowerCase();
-  const supabaseAuthErrorDetected =
-    errorCode === 'otp_expired' ||
-    !!errorDescription ||
-    normalizedErrorDescription.includes('email link is invalid or has expired');
-  const resetRouteDetected =
-    auth === AUTH_ROUTES.resetPassword ||
-    type === 'recovery' ||
-    !!code ||
-    !!accessToken ||
-    !!refreshToken ||
-    supabaseAuthErrorDetected;
+  const parsed = parseWebAuthRedirect(pathname, search, hash);
+  const supabaseAuthErrorDetected = Boolean(parsed.errorMessage);
+  const resetRouteDetected = parsed.isRecovery;
 
   return {
     route: resetRouteDetected ? AUTH_ROUTES.resetPasswordForm : null,
-    searchParams: paramsToRecord(searchParams),
-    hashParams: paramsToRecord(hashParams),
+    searchParams: parsed.queryParams,
+    hashParams: parsed.hashParams,
     resetRouteDetected,
     supabaseAuthErrorDetected,
-    errorMessage: supabaseAuthErrorDetected
-      ? 'Reset link expired or was already used. Please request a new reset email.'
-      : null,
+    errorMessage: parsed.errorMessage,
   };
-}
-
-function paramsToRecord(params: URLSearchParams) {
-  // Convert params into plain objects for logging and state.
-  return Array.from(params.entries()).reduce<Record<string, string>>((result, [key, value]) => {
-    result[key] = value;
-    return result;
-  }, {});
-}
-
-function redactDeepLinkParams(params: Record<string, string>) {
-  // Hide auth tokens from debug output.
-  return Object.fromEntries(
-    Object.entries(params).map(([key, value]) => {
-      if (['access_token', 'refresh_token', 'code'].includes(key)) {
-        return [key, value ? '[redacted]' : value];
-      }
-
-      return [key, value];
-    })
-  );
-}
-
-function normalizeRouteCandidate(value: string | null | undefined) {
-  // Collapse a route candidate into a comparable token.
-  if (!value) {
-    return '';
-  }
-
-  return value
-    .toLowerCase()
-    .replace(/^\/+|\/+$/g, '')
-    .replace(/^#+/g, '')
-    .replace(/^\//g, '');
 }
 
 function parseNativeAuthRoute(url: string): ParsedNativeAuthRoute {
-  // Parse native deep links and recovery callbacks into one shape.
-  let parsedUrl: URL;
-
-  try {
-    parsedUrl = new URL(url);
-  } catch {
-    return {
-      route: null,
-      protocol: null,
-      host: null,
-      hostname: null,
-      pathname: null,
-      search: null,
-      hash: null,
-      path: null,
-      normalizedRoute: null,
-      queryParams: {},
-      hashParams: {},
-      code: null,
-      accessToken: null,
-      refreshToken: null,
-      isRecoveryResetLink: false,
-      hasRecoverySessionParams: false,
-    };
-  }
-
-  const protocol = parsedUrl.protocol;
-  const host = parsedUrl.host;
-  const hostname = parsedUrl.hostname;
-  const pathname = parsedUrl.pathname;
-  const search = parsedUrl.search;
-  const hash = parsedUrl.hash;
-  const path = `${hostname}${pathname}`.replace(/\/+$/g, '').toLowerCase();
-  const queryParams = new URLSearchParams(parsedUrl.search);
-  const hashValue = parsedUrl.hash.startsWith('#') ? parsedUrl.hash.slice(1) : parsedUrl.hash;
-  const hashParamsSource = hashValue.includes('?') ? hashValue.slice(hashValue.indexOf('?') + 1) : hashValue;
-  const hashParams = new URLSearchParams(hashParamsSource);
-  const type = queryParams.get('type') ?? hashParams.get('type');
-  const code = queryParams.get('code') ?? hashParams.get('code');
-  const accessToken = queryParams.get('access_token') ?? hashParams.get('access_token');
-  const refreshToken = queryParams.get('refresh_token') ?? hashParams.get('refresh_token');
-  const normalizedUrl = url.toLowerCase();
-  const routeCandidates = [
-    normalizeRouteCandidate(host),
-    normalizeRouteCandidate(hostname),
-    normalizeRouteCandidate(pathname),
-    normalizeRouteCandidate(path),
-    normalizeRouteCandidate(`${hostname}/${pathname}`),
-    normalizedUrl.includes('reset-password-form')
-      ? 'reset-password-form'
-      : normalizedUrl.includes('reset-password')
-        ? 'reset-password'
-        : '',
-  ];
-  const normalizedRoute =
-    routeCandidates.find(
-      (candidate) => candidate === 'reset-password' || candidate === 'reset-password-form'
-    ) ?? null;
-  const isResetPasswordPath = !!normalizedRoute;
-  const hasRecoveryParams =
-    type === 'recovery' || !!code || (!!accessToken && !!refreshToken);
-  const isRecoveryResetLink = isResetPasswordPath || hasRecoveryParams;
-  const hasRecoverySessionParams = !!code || (!!accessToken && !!refreshToken);
+  const parsed = parseNativeAuthRedirect(url);
+  const isRecoveryResetLink = parsed.trusted && parsed.destination === 'reset-password';
 
   return {
-    route: isRecoveryResetLink ? AUTH_ROUTES.resetPasswordForm : null,
-    protocol,
-    host,
-    hostname,
-    pathname,
-    search,
-    hash,
-    path,
-    normalizedRoute,
-    queryParams: paramsToRecord(queryParams),
-    hashParams: paramsToRecord(hashParams),
-    code,
-    accessToken,
-    refreshToken,
+    ...parsed,
+    route: !parsed.trusted
+      ? null
+      : isRecoveryResetLink
+        ? AUTH_ROUTES.resetPasswordForm
+        : AUTH_ROUTES.login,
     isRecoveryResetLink,
-    hasRecoverySessionParams,
+    hasRecoverySessionParams: parsed.hasSessionParams,
   };
 }
 
-async function hydrateRecoverySession(parsedRoute: ParsedNativeAuthRoute) {
-  // Load the Supabase recovery session before showing the form.
-  if (!parsedRoute.isRecoveryResetLink || !supabase) {
+async function hydrateAuthRedirectSession(parsedRoute: ParsedNativeAuthRoute) {
+  // Load a session only from an exact, allowlisted Peso auth callback.
+  if (!parsedRoute.trusted || !parsedRoute.hasRecoverySessionParams || !supabase) {
     return null;
   }
 
@@ -391,7 +256,11 @@ function AppContent() {
   const [route, setRoute] = useState<AuthRoute>(() => {
     // Web starts from the current hash so refreshes keep the same screen.
     if (Platform.OS === 'web') {
-      const webAuthLink = parseWebAuthLink(window.location.search, window.location.hash);
+      const webAuthLink = parseWebAuthLink(
+        window.location.pathname,
+        window.location.search,
+        window.location.hash
+      );
 
       if (webAuthLink.route) {
         return webAuthLink.route;
@@ -406,12 +275,16 @@ function AppContent() {
   const [isHandlingRecoveryLink, setIsHandlingRecoveryLink] = useState(false);
   const [isRecoveryMode, setIsRecoveryMode] = useState(false);
   const [recoverySessionReady, setRecoverySessionReady] = useState(false);
-  const [webResetErrorMessage, setWebResetErrorMessage] = useState<string | null>(() => {
+  const [authLinkErrorMessage, setAuthLinkErrorMessage] = useState<string | null>(() => {
     if (Platform.OS !== 'web') {
       return null;
     }
 
-    return parseWebAuthLink(window.location.search, window.location.hash).errorMessage;
+    return parseWebAuthLink(
+      window.location.pathname,
+      window.location.search,
+      window.location.hash
+    ).errorMessage;
   });
   const [homeRefreshKey, setHomeRefreshKey] = useState(0);
   const [uploadSourceMode, setUploadSourceMode] = useState<'camera' | 'library'>('library');
@@ -456,55 +329,68 @@ function AppContent() {
     const handleUrl = async (url: string | null, source: 'initial' | 'runtime') => {
       // Route both initial and runtime URLs through the same parser.
       if (!url) {
-        console.log(`[DeepLink] raw ${source} URL`, url);
         console.log('[DeepLink] final route chosen', routeRef.current);
         return;
       }
 
-      console.log(`[DeepLink] raw ${source} URL`, url);
       const parsedRoute = parseNativeAuthRoute(url);
       const nextRoute = parsedRoute.route;
 
-      console.log('[DeepLink] parsed URL parts', {
-        protocol: parsedRoute.protocol,
-        host: parsedRoute.host,
-        hostname: parsedRoute.hostname,
-        pathname: parsedRoute.pathname,
-        search: parsedRoute.search,
-        hash: parsedRoute.hash,
-      });
-      console.log('[DeepLink] normalized route', parsedRoute.normalizedRoute);
-      console.log('[DeepLink] parsed query/hash params', {
-        queryParams: redactDeepLinkParams(parsedRoute.queryParams),
-        hashParams: redactDeepLinkParams(parsedRoute.hashParams),
+      console.log('[DeepLink] parsed auth redirect', {
+        source,
+        trusted: parsedRoute.trusted,
+        destination: parsedRoute.destination,
+        queryParams: redactAuthParams(parsedRoute.queryParams),
+        hashParams: redactAuthParams(parsedRoute.hashParams),
       });
       console.log('[DeepLink] recovery detected', parsedRoute.isRecoveryResetLink);
       console.log('[DeepLink] recovery session detected', parsedRoute.hasRecoverySessionParams);
       if (nextRoute) {
+        setAuthLinkErrorMessage(parsedRoute.errorMessage);
+        setRecoverySessionReady(false);
+
         if (parsedRoute.isRecoveryResetLink) {
-          console.log('[Recovery] mode on', { reason: 'deep-link-detected' });
-          setIsHandlingRecoveryLink(true);
-          setIsRecoveryMode(true);
-          setRecoverySessionReady(false);
-          activatePasswordRecoveryMode();
+          setIsHandlingRecoveryLink(!parsedRoute.errorMessage);
+          setIsRecoveryMode(false);
           setRoute(AUTH_ROUTES.resetPasswordForm);
         }
 
         try {
-          const exchangeMethod = await hydrateRecoverySession(parsedRoute);
+          const exchangeMethod = parsedRoute.errorMessage
+            ? null
+            : await hydrateAuthRedirectSession(parsedRoute);
           console.log('[Recovery] session exchange success', { method: exchangeMethod });
 
+          let hasSession = false;
           if (supabase) {
             const {
               data: { session: currentSession },
             } = await supabase.auth.getSession();
-            const hasSession = !!currentSession;
+            hasSession = !!currentSession;
 
             setRecoverySessionReady(hasSession);
             console.log('[Recovery] getSession after exchange', { hasSession });
           }
+
+          if (parsedRoute.isRecoveryResetLink && !parsedRoute.errorMessage) {
+            if (hasSession) {
+              console.log('[Recovery] mode on', { reason: 'verified-deep-link' });
+              setIsRecoveryMode(true);
+              activatePasswordRecoveryMode();
+            } else {
+              setAuthLinkErrorMessage(
+                'Reset link session expired or was not loaded. Please request a new reset link.'
+              );
+            }
+          }
         } catch (error) {
           setRecoverySessionReady(false);
+          setIsRecoveryMode(false);
+          setAuthLinkErrorMessage(
+            parsedRoute.isRecoveryResetLink
+              ? 'Reset link expired or was already used. Please request a new reset email.'
+              : 'Confirmation link expired or was already used. Please request a new confirmation email.'
+          );
           console.error('[Recovery] session exchange error', error);
         } finally {
           if (parsedRoute.isRecoveryResetLink) {
@@ -898,15 +784,18 @@ function AppContent() {
 
     const handleWebAuthLink = () => {
       // Check the current browser URL before using the route state.
-      const parsedWebLink = parseWebAuthLink(window.location.search, window.location.hash);
+      const parsedWebLink = parseWebAuthLink(
+        window.location.pathname,
+        window.location.search,
+        window.location.hash
+      );
 
-      console.log('[WebDeepLink] full window.location.href', window.location.href);
-      console.log('[WebDeepLink] search params', parsedWebLink.searchParams);
-      console.log('[WebDeepLink] hash params', redactDeepLinkParams(parsedWebLink.hashParams));
+      console.log('[WebDeepLink] search params', redactAuthParams(parsedWebLink.searchParams));
+      console.log('[WebDeepLink] hash params', redactAuthParams(parsedWebLink.hashParams));
       console.log('[WebDeepLink] reset route detected', parsedWebLink.resetRouteDetected);
       console.log('[WebDeepLink] Supabase auth error detected', parsedWebLink.supabaseAuthErrorDetected);
 
-      setWebResetErrorMessage(parsedWebLink.errorMessage);
+      setAuthLinkErrorMessage(parsedWebLink.errorMessage);
 
       if (parsedWebLink.route) {
         if (!parsedWebLink.supabaseAuthErrorDetected) {
@@ -1081,7 +970,7 @@ function AppContent() {
         <ResetPasswordFormScreen
           onBack={handleResetPasswordBack}
           onReset={handleResetPasswordSuccess}
-          initialErrorMessage={webResetErrorMessage}
+          initialErrorMessage={authLinkErrorMessage}
         />
       );
     }
@@ -1239,6 +1128,7 @@ function AppContent() {
         <LoginScreen
           onBack={authNavigation.toWelcome}
           onForgotPassword={authNavigation.toResetPassword}
+          initialErrorMessage={authLinkErrorMessage}
         />
       );
     }

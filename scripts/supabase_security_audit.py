@@ -33,8 +33,45 @@ def audit_supabase_security() -> list[str]:
     if not re.search(rf"alter\s+table\s+public\.{re.escape(table)}\s+enable\s+row\s+level\s+security", sql):
       errors.append(f"public.{table} is created without an enable row level security migration.")
 
-  if re.search(r"security\s+definer", sql):
-    errors.append("SECURITY DEFINER appears in migrations; manually verify it is not exposed or privilege-bypassing.")
+  security_definer_count = len(re.findall(r"security\s+definer", sql))
+  if security_definer_count != 1:
+    errors.append(
+      "Migrations must contain exactly the reviewed pending_video_analysis_job_count() SECURITY DEFINER."
+    )
+  else:
+    scaler_function_checks = (
+      r"create\s+or\s+replace\s+function\s+public\.pending_video_analysis_job_count\(\)",
+      r"returns\s+integer",
+      r"security\s+definer",
+      r"set\s+search_path\s*=\s*pg_catalog",
+      r"revoke\s+execute\s+on\s+function\s+public\.pending_video_analysis_job_count\(\)\s+"
+      r"from\s+public\s*,\s*anon\s*,\s*authenticated",
+      r"grant\s+execute\s+on\s+function\s+public\.pending_video_analysis_job_count\(\)\s+"
+      r"to\s+analysis_job_scaler",
+    )
+    if any(re.search(pattern, sql) is None for pattern in scaler_function_checks):
+      errors.append(
+        "public.pending_video_analysis_job_count() is missing a reviewed SECURITY DEFINER safeguard."
+      )
+
+  if not re.search(
+    r"revoke\s+all\s+privileges\s+on\s+function\s+public\.rls_auto_enable\(\)\s+from\s+public\s*,\s*anon\s*,\s*authenticated",
+    sql,
+  ):
+    errors.append("public.rls_auto_enable() is not revoked from client roles.")
+
+  if not re.search(
+    r"alter\s+function\s+public\.set_updated_at\(\)\s+set\s+search_path",
+    sql,
+  ):
+    errors.append("public.set_updated_at() does not have a fixed search_path migration.")
+
+  for table in ("analysis_results", "profiles", "videos"):
+    if not re.search(
+      rf"revoke\s+all\s+privileges\s+on\s+table\s+public\.{table}\s+from\s+public\s*,\s*anon",
+      sql,
+    ):
+      errors.append(f"public.{table} is not revoked from unauthenticated roles.")
 
   for match in re.finditer(r"create\s+(?:or\s+replace\s+)?view\s+public\.([a-z0-9_]+).*?;", sql, flags=re.DOTALL):
     block = match.group(0)
