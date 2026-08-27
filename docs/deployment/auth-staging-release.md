@@ -1,8 +1,9 @@
 # Authentication staging and release runbook
 
 This runbook is the source of truth for the side-view squat beta release. It
-does not authorize provider spend: record Supabase and Render costs and obtain
-explicit confirmation before creating the staging resources.
+does not authorize provider spend, Azure provisioning, public staging
+visibility, or production changes. Follow the cost and approval gates in
+`docs/deployment/azure-staging-release.md` before creating Azure resources.
 
 ## Staging stack
 
@@ -11,18 +12,18 @@ Create isolated resources in this order:
 1. A separate Supabase project in the confirmed organization and region. Apply
    every tracked migration, create the `videos` and avatar buckets, run the RLS
    audit and Supabase security advisor, and create isolated E2E users.
-2. A separate Render API and worker using only staging Supabase/service-role
-   values. Set an exact staging Netlify origin in CORS and verify `/health/ready`
-   before starting the worker.
+2. The Azure Container Apps staging API and event-driven worker defined in
+   `infra/azure/staging`, using only staging Supabase values. Bootstrap them
+   disabled, seed secrets locally, and verify `/health/ready` before allowing
+   worker executions.
 3. A stable Netlify branch deployment wired to the staging API and Supabase
    project. Its `EXPO_PUBLIC_AUTH_CHALLENGE_URL` must point to its own exact
    `https://<staging-host>/auth/turnstile/` page.
-4. A staging Turnstile test pair in Supabase Auth. Use Cloudflare's always-pass
-   site key `1x00000000000000000000AA` with always-pass secret
-   `1x0000000000000000000000000000000AA`. Use the always-fail site/secret pair
-   only in a separate failure-test deploy. Use the duplicate-token test secret
-   only in a separate duplicate-token run. Test and production keys must never
-   be mixed.
+4. A real staging-only Turnstile widget restricted to
+   `main--peso-webapp.netlify.app`. Put its site key only in the Netlify branch
+   context and its secret only in staging Supabase Auth. Cloudflare test keys
+   are allowed only in isolated automated challenge tests; never configure them
+   on the stable staging or production hosts.
 5. EAS `preview` environment values for the same staging URLs and public keys.
    `eas.json` binds development, preview, and production build profiles to the
    matching EAS environments.
@@ -103,3 +104,7 @@ Record evidence for all of the following before production rollout:
    Netlify deploy while investigating. Roll back API and worker together when
    the failure is backend-related; do not reverse additive queue migrations
    while jobs reference them.
+
+Changing the staging branch deploy from private to public is a separate release
+action. Obtain Nathan's action-time confirmation immediately before that change,
+then repeat the unauthenticated-route and authentication smoke tests.
