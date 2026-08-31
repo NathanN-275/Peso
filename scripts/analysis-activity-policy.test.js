@@ -7,6 +7,7 @@ const {
   mergeAnalysisActivity,
   shouldPollAnalysisActivity,
 } = require('../lib/analysisActivityPolicy');
+const { canRetryAnalysis } = require('../lib/analysisRecoveryPolicy');
 
 test('analysis activity polls only for active queued or processing work', () => {
   assert.equal(shouldPollAnalysisActivity([{ status: 'queued' }], true), true);
@@ -76,8 +77,24 @@ test('successful queue handoff leaves the upload screen and restores from Home',
   assert.match(homeSource, /queuedAnalysisConfirmation/);
   assert.match(homeSource, /Tracking barbell/);
   assert.match(homeSource, /Download failed — Retry/);
+  assert.match(homeSource, /Try analysis again/);
+  assert.match(homeSource, /Delete video/);
+  assert.match(homeSource, /Alert\.alert\([\s\S]*Delete failed video\?/);
+  assert.match(homeSource, /actionBusy/);
+  assert.match(homeSource, /setActivityError/);
+  assert.match(homeSource, /setActivityReloadKey/);
+  assert.match(homeSource, /triggerVideoAnalysis/);
+  assert.match(homeSource, /discardAnalyzedVideo/);
   assert.match(homeSource, /ui_ready_delay_ms/);
   assert.match(rootSource, /throw error/);
+});
+
+test('activity recovery policy keeps invalid uploads out of retry flows', () => {
+  assert.equal(canRetryAnalysis({
+    stage: 'failed',
+    failure_class: 'invalid_video',
+    recovery_action: 'replace_upload',
+  }), false);
 });
 
 test('Netlify web app uses durable video-id routes instead of demo timers', () => {
@@ -108,6 +125,13 @@ test('Netlify web app uses durable video-id routes instead of demo timers', () =
   assert.match(webActivitySource, /getAnalysisActivity/);
   assert.match(webActivitySource, /mergeAnalysisActivity/);
   assert.match(webActivitySource, /localStorage/);
+  assert.match(webAppSource, /window\.confirm\([\s\S]*Delete this failed video\?/);
+  assert.match(webAppSource, /recoveryBusy/);
+  assert.match(webAppSource, /setRecoveryError/);
+  assert.match(webAppSource, /recordQueued/);
+  assert.match(webAppSource, /removeActivity/);
+  assert.match(webAppSource, /triggerVideoAnalysis/);
+  assert.match(webAppSource, /discardAnalyzedVideo/);
 });
 
 test('durable queue schema deduplicates active jobs and recovers expired leases', () => {

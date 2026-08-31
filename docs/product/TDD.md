@@ -68,3 +68,7 @@ The backend currently exposes endpoints for analysis submission, activity/status
 ## Related decisions
 
 See `docs/adr/0006-durable-web-analysis-queue-and-worker.md`, `0009-durable-analysis-jobs-across-clients.md`, `0008-treat-recording-quality-as-advisory.md`, `0004-separate-workout-facts-from-model-observations.md`, and `0005-separate-static-marketing-and-web-app.md`.
+
+Future burst scaling is bounded by
+[`docs/architecture/analysis-queue-scaling.md`](../architecture/analysis-queue-scaling.md);
+it is a follow-up design, not a claim about current production capacity.

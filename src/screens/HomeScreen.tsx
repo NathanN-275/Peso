@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   AppState,
   Image,
   Platform,
@@ -14,10 +15,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
 import { shouldPollAnalysisActivity } from '../../lib/analysisActivityPolicy';
 import {
+  discardAnalyzedVideo,
   describeBackendRequestFailure,
   getAnalysisActivity,
   getSavedVideoOverview,
+  triggerVideoAnalysis,
 } from '../../lib/backendApi';
+import { canRetryAnalysis, failureCopy } from '../../lib/analysisRecoveryPolicy';
 import BottomNav, { NAV_HEIGHT } from '../components/BottomNav';
 import { SkeletonBlock } from '../components/Skeleton';
 import tokens from '../theme/tokens';
@@ -60,16 +64,22 @@ function activityStatusCopy(activity: AnalysisActivityItem) {
     case 'ready':
       return { label: 'Ready', detail: 'Ready to review', icon: 'checkmark-circle-outline' as const };
     case 'failed':
-      return { label: 'Failed', detail: 'Analysis could not finish', icon: 'alert-circle-outline' as const };
+      return { label: 'Failed', detail: failureCopy(activity), icon: 'alert-circle-outline' as const };
   }
 }
 
 function AnalysisActivityCard({
   activity,
   onOpen,
+  onRetry,
+  onDelete,
+  actionBusy,
 }: {
   activity: AnalysisActivityItem;
   onOpen?: () => void;
+  onRetry?: (videoId: string) => void;
+  onDelete?: (videoId: string) => void;
+  actionBusy?: boolean;
 }) {
   const copy = activityStatusCopy(activity);
   const ready = activity.status === 'ready';
@@ -79,23 +89,8 @@ function AnalysisActivityCard({
 
   useEffect(() => setThumbnailFailed(false), [activity.thumbnail_url]);
 
-  return (
-    <Pressable
-      accessibilityRole={ready ? 'button' : undefined}
-      accessibilityLabel={`${formatExerciseLabel(activity.exercise_type)} analysis ${copy.label}`}
-      disabled={!ready || opening}
-      onPress={() => {
-        if (!onOpen || opening) {
-          return;
-        }
-        setOpening(true);
-        setOpenFailed(false);
-        Promise.resolve(onOpen())
-          .catch(() => setOpenFailed(true))
-          .finally(() => setOpening(false));
-      }}
-      style={[styles.activityCard, ready && styles.activityCardReady]}
-    >
+  const content = (
+    <>
       {activity.thumbnail_url && !thumbnailFailed ? (
         <Image
           source={{ uri: activity.thumbnail_url }}
@@ -122,6 +117,51 @@ function AnalysisActivityCard({
         </View>
       </View>
       {ready ? <Ionicons name="chevron-forward" size={22} color={tokens.colors.brand} /> : null}
+      {activity.stage === 'failed' ? (
+        <View style={styles.activityActions}>
+          {canRetryAnalysis(activity) ? (
+            <Pressable
+              accessibilityRole="button"
+              disabled={actionBusy}
+              onPress={() => onRetry?.(activity.video_id)}
+              style={[styles.activityAction, actionBusy && styles.activityActionDisabled]}
+            >
+              <Text style={styles.activityActionText}>{actionBusy ? 'Retrying…' : 'Try analysis again'}</Text>
+            </Pressable>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            disabled={actionBusy}
+            onPress={() => onDelete?.(activity.video_id)}
+            style={[styles.activityAction, styles.activityDeleteAction, actionBusy && styles.activityActionDisabled]}
+          >
+            <Text style={styles.activityDeleteActionText}>{actionBusy ? 'Deleting…' : 'Delete video'}</Text>
+          </Pressable>
+        </View>
+      ) : null}
+    </>
+  );
+
+  if (!ready) {
+    return <View style={styles.activityCard}>{content}</View>;
+  }
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${formatExerciseLabel(activity.exercise_type)} analysis ${copy.label}`}
+      disabled={opening}
+      onPress={() => {
+        if (!onOpen || opening) return;
+        setOpening(true);
+        setOpenFailed(false);
+        Promise.resolve(onOpen())
+          .catch(() => setOpenFailed(true))
+          .finally(() => setOpening(false));
+      }}
+      style={[styles.activityCard, styles.activityCardReady]}
+    >
+      {content}
     </Pressable>
   );
 }
@@ -257,6 +297,8 @@ export default function HomeScreen({
   const [reloadKey, setReloadKey] = useState(0);
   const [analysisActivity, setAnalysisActivity] = useState<AnalysisActivityItem[]>([]);
   const [activityError, setActivityError] = useState<string | null>(null);
+  const [activityActionVideoId, setActivityActionVideoId] = useState<string | null>(null);
+  const [activityReloadKey, setActivityReloadKey] = useState(0);
   const observedReadyJobsRef = useRef(new Set<string>());
   const [surfaceActive, setSurfaceActive] = useState(
     Platform.OS === 'web' ? typeof document === 'undefined' || document.visibilityState === 'visible' : true
@@ -333,7 +375,7 @@ export default function HomeScreen({
         clearTimeout(timer);
       }
     };
-  }, [session?.access_token, surfaceActive, refreshKey]);
+  }, [activityReloadKey, session?.access_token, surfaceActive, refreshKey]);
 
   useEffect(() => {
     if (!queuedAnalysisConfirmation) {
@@ -428,6 +470,66 @@ export default function HomeScreen({
 
   const groups = useMemo(() => groupSavedOverview(savedOverview), [savedOverview]);
 
+  const retryFailedAnalysis = async (videoId: string) => {
+    if (!session?.access_token) return;
+
+    setActivityActionVideoId(videoId);
+    setActivityError(null);
+    try {
+      const response = await triggerVideoAnalysis(videoId, session.access_token);
+      setAnalysisActivity((items) => items.map((item) => (
+        item.video_id === videoId
+          ? {
+              ...item,
+              job_id: response.job_id ?? item.job_id,
+              status: response.status === 'processing' ? 'processing' : 'queued',
+              stage: response.stage === 'failed' || response.stage === 'ready'
+                ? 'queued'
+                : response.stage,
+              failure_class: null,
+              recovery_action: null,
+            }
+          : item
+      )));
+      setActivityReloadKey((key) => key + 1);
+    } catch (error) {
+      setActivityError(error instanceof Error ? error.message : 'Unable to retry analysis.');
+    } finally {
+      setActivityActionVideoId(null);
+    }
+  };
+
+  const deleteFailedAnalysis = (videoId: string) => {
+    if (!session?.access_token) return;
+
+    Alert.alert(
+      'Delete failed video?',
+      'This permanently removes the uploaded video and cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete video',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setActivityActionVideoId(videoId);
+              setActivityError(null);
+              try {
+                await discardAnalyzedVideo(videoId, session.access_token);
+                setAnalysisActivity((items) => items.filter((item) => item.video_id !== videoId));
+                setActivityReloadKey((key) => key + 1);
+              } catch (error) {
+                setActivityError(error instanceof Error ? error.message : 'Unable to delete this video.');
+              } finally {
+                setActivityActionVideoId(null);
+              }
+            })();
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} testID="home-screen">
       <View style={styles.container}>
@@ -452,6 +554,9 @@ export default function HomeScreen({
                   onOpen={activity.status === 'ready'
                     ? () => { void onOpenAnalysisActivity?.(activity.video_id); }
                     : undefined}
+                  onRetry={activity.stage === 'failed' ? (videoId) => void retryFailedAnalysis(videoId) : undefined}
+                  onDelete={activity.stage === 'failed' ? deleteFailedAnalysis : undefined}
+                  actionBusy={activityActionVideoId === activity.video_id}
                 />
               ))}
               {activityError ? <Text style={styles.activityError}>{activityError}</Text> : null}
@@ -574,6 +679,7 @@ const styles = StyleSheet.create({
   activityCard: {
     minHeight: 92,
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: 12,
     borderWidth: 1,
@@ -601,6 +707,7 @@ const styles = StyleSheet.create({
   },
   activityCopy: {
     flex: 1,
+    minWidth: 160,
     gap: 2,
   },
   activityExercise: {
@@ -628,6 +735,35 @@ const styles = StyleSheet.create({
   },
   activityStatusReady: {
     color: tokens.colors.brand,
+  },
+  activityActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    width: '100%',
+    paddingTop: 2,
+  },
+  activityAction: {
+    borderRadius: 8,
+    backgroundColor: tokens.colors.brand,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  activityActionDisabled: {
+    opacity: 0.6,
+  },
+  activityActionText: {
+    color: tokens.colors.textPrimary,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  activityDeleteAction: {
+    backgroundColor: '#5B2530',
+  },
+  activityDeleteActionText: {
+    color: '#FFB7C1',
+    fontSize: 12,
+    fontWeight: '800',
   },
   activityError: {
     color: '#FFB4B4',
