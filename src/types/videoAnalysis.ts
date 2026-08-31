@@ -465,6 +465,7 @@ export type VideoStatusResponse = {
 };
 
 export type AnalysisActivityStatus = 'queued' | 'processing' | 'ready' | 'failed';
+export type AnalysisRecoveryAction = 'retry' | 'replace_upload';
 export type AnalysisActivityStage =
   | 'queued'
   | 'downloading'
@@ -489,6 +490,7 @@ export type AnalysisActivityItem = {
   stage_timestamps: Partial<Record<AnalysisActivityStage, string>>;
   last_heartbeat_at: string | null;
   failure_class: string | null;
+  recovery_action: AnalysisRecoveryAction | null;
 };
 
 export type AnalysisActivityResponse = {

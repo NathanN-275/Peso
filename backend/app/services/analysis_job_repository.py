@@ -109,6 +109,14 @@ class AnalysisJobRepository:
       "failed_count": int(row.get("failed_count") or 0),
     }
 
+  def cancel_for_video(self, video_id: str) -> int:
+    response = self.client.rpc(
+      "cancel_video_analysis_jobs",
+      {"p_video_id": video_id},
+    ).execute()
+    value = self._scalar(response.data)
+    return int(value) if isinstance(value, (int, float)) else 0
+
   def latest_for_videos(self, video_ids: list[str]) -> dict[str, dict[str, Any]]:
     if not video_ids:
       return {}

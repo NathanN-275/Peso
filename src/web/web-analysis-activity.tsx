@@ -91,6 +91,7 @@ function optimisticActivity(activity: QueuedAnalysis): AnalysisActivityItem {
     stage_timestamps: { queued: timestamp },
     last_heartbeat_at: null,
     failure_class: null,
+    recovery_action: null,
   };
 }
 

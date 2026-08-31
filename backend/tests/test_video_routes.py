@@ -770,7 +770,106 @@ class VideoRoutesTest(unittest.TestCase):
       "2026-08-17T18:01:01+00:00",
     )
     self.assertEqual(response.items[0].failure_class, "transient_infrastructure")
+    self.assertIsNone(response.items[0].recovery_action)
     self.assertEqual(response.items[0].thumbnail_url, "https://example.test/activity-thumb")
+
+  def test_analysis_activity_returns_replace_upload_for_invalid_video(self) -> None:
+    repository = MagicMock()
+    repository.list_analysis_activity_videos.return_value = [{
+      "id": str(VIDEO_ID),
+      "status": "failed",
+      "exercise_type": "squat",
+      "view_type": "side",
+      "created_at": "2026-08-17T18:00:00+00:00",
+    }]
+    repository.count_user_in_progress_videos.return_value = 0
+    jobs = MagicMock()
+    jobs.latest_for_videos.return_value = {
+      str(VIDEO_ID): {
+        "id": "55555555-5555-5555-5555-555555555555",
+        "status": "failed",
+        "stage": "failed",
+        "failure_class": "invalid_video",
+        "created_at": "2026-08-17T18:00:00+00:00",
+        "updated_at": "2026-08-17T18:00:01+00:00",
+      }
+    }
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.AnalysisJobRepository", return_value=jobs),
+      patch("app.routes.videos.StorageService", return_value=MagicMock()),
+    ):
+      response = get_analysis_activity(USER_ID)
+
+    self.assertEqual(response.items[0].recovery_action, "replace_upload")
+
+  def test_analysis_activity_corrects_historical_invalid_stream_timeout(self) -> None:
+    repository = MagicMock()
+    repository.list_analysis_activity_videos.return_value = [{
+      "id": str(VIDEO_ID),
+      "status": "failed",
+      "exercise_type": "squat",
+      "view_type": "side",
+      "created_at": "2026-08-26T23:45:12+00:00",
+    }]
+    repository.count_user_in_progress_videos.return_value = 0
+    jobs = MagicMock()
+    jobs.latest_for_videos.return_value = {
+      str(VIDEO_ID): {
+        "id": "55555555-5555-5555-5555-555555555555",
+        "status": "failed",
+        "stage": "failed",
+        "failure_class": "analysis_timeout",
+        "last_error": (
+          "Uploaded file contents do not contain a valid video stream.\n"
+          "_validate_video_stream(temp_path, self.ffprobe_timeout_seconds)"
+        ),
+        "created_at": "2026-08-26T23:45:12+00:00",
+        "updated_at": "2026-08-26T23:45:19+00:00",
+      }
+    }
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.AnalysisJobRepository", return_value=jobs),
+      patch("app.routes.videos.StorageService", return_value=MagicMock()),
+    ):
+      response = get_analysis_activity(USER_ID)
+
+    self.assertEqual(response.items[0].failure_class, "invalid_video")
+    self.assertEqual(response.items[0].recovery_action, "replace_upload")
+
+  def test_analysis_activity_returns_retry_for_timeout(self) -> None:
+    repository = MagicMock()
+    repository.list_analysis_activity_videos.return_value = [{
+      "id": str(VIDEO_ID),
+      "status": "failed",
+      "exercise_type": "squat",
+      "view_type": "side",
+      "created_at": "2026-08-17T18:00:00+00:00",
+    }]
+    repository.count_user_in_progress_videos.return_value = 0
+    jobs = MagicMock()
+    jobs.latest_for_videos.return_value = {
+      str(VIDEO_ID): {
+        "id": "55555555-5555-5555-5555-555555555555",
+        "status": "failed",
+        "stage": "failed",
+        "failure_class": "analysis_timeout",
+        "created_at": "2026-08-17T18:00:00+00:00",
+        "updated_at": "2026-08-17T18:00:01+00:00",
+      }
+    }
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.AnalysisJobRepository", return_value=jobs),
+      patch("app.routes.videos.StorageService", return_value=MagicMock()),
+    ):
+      response = get_analysis_activity(USER_ID)
+
+    self.assertEqual(response.items[0].recovery_action, "retry")
 
   def test_analysis_activity_returns_service_unavailable_when_queue_schema_is_missing(self) -> None:
     repository = MagicMock()
@@ -1502,9 +1601,11 @@ class VideoRoutesTest(unittest.TestCase):
       "thumbnail_path": f"{USER_ID}/thumbnails/{VIDEO_ID}-thumb-v3.jpg",
     }
     storage = MagicMock()
+    jobs = MagicMock()
 
     with (
       patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.AnalysisJobRepository", return_value=jobs),
       patch("app.routes.videos.StorageService", return_value=storage),
     ):
       response = discard_video(VIDEO_ID, USER_ID)
@@ -1514,6 +1615,7 @@ class VideoRoutesTest(unittest.TestCase):
     storage.delete_storage_path.assert_any_call(f"{USER_ID}/thumbnails/{VIDEO_ID}-thumb-v3.jpg")
     storage.list_storage_prefix.assert_called_once_with(f"{USER_ID}/exports/{VIDEO_ID}-")
     storage.delete_storage_prefix.assert_not_called()
+    jobs.cancel_for_video.assert_called_once_with(str(VIDEO_ID))
     repository.mark_discarded.assert_called_once_with(str(VIDEO_ID))
     repository.delete_video_with_analysis.assert_not_called()
     self.assertTrue(response.discarded)
@@ -1529,16 +1631,42 @@ class VideoRoutesTest(unittest.TestCase):
     }
     storage = MagicMock()
     storage.list_storage_prefix.return_value = []
+    jobs = MagicMock()
 
     with (
       patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.AnalysisJobRepository", return_value=jobs),
       patch("app.routes.videos.StorageService", return_value=storage),
     ):
       response = discard_video(VIDEO_ID, USER_ID)
 
     storage.delete_storage_path.assert_called_once_with(f"{USER_ID}/uploads/{VIDEO_ID}.mov")
+    jobs.cancel_for_video.assert_called_once_with(str(VIDEO_ID))
     repository.mark_discarded.assert_called_once_with(str(VIDEO_ID))
     self.assertTrue(response.discarded)
+
+  def test_discard_stops_when_job_cancellation_is_unavailable(self) -> None:
+    repository = MagicMock()
+    repository.require_owned_video.return_value = {
+      "id": str(VIDEO_ID),
+      "user_id": USER_ID,
+      "storage_path": f"{USER_ID}/uploads/{VIDEO_ID}.mov",
+    }
+    jobs = MagicMock()
+    jobs.cancel_for_video.side_effect = RuntimeError("queue unavailable")
+    storage = MagicMock()
+
+    with (
+      patch("app.routes.videos.VideoRepository", return_value=repository),
+      patch("app.routes.videos.AnalysisJobRepository", return_value=jobs),
+      patch("app.routes.videos.StorageService", return_value=storage),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      discard_video(VIDEO_ID, USER_ID)
+
+    self.assertEqual(raised.exception.status_code, 503)
+    storage.delete_storage_path.assert_not_called()
+    repository.mark_discarded.assert_not_called()
 
   def test_mark_upload_failed_deletes_owned_storage_and_marks_failed(self) -> None:
     repository = MagicMock()

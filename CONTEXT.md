@@ -55,6 +55,13 @@ review, or failed. It is the user's resumable path back to an unsaved Analysis
 Run and is not part of the Saved Lift Library. The client refreshes it on app
 or browser resume and polls only while foregrounded work is active.
 
+## Analysis Recovery Action
+
+The user-safe next step for a failed Analysis Job. It is either retrying a
+transient or interrupted job with the same source video, or deleting an
+unreadable/problematic upload before submitting a replacement. It is distinct
+from tracking Recovery, which reacquires a physical tracking identity.
+
 ## Retired Demo Analysis
 
 The former client-side authenticated Web App simulation. It used bundled
