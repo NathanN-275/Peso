@@ -27,6 +27,18 @@ visual language, Peso Accounts, and Saved Lift Library as mobile while retaining
 browser-specific submission rules. The authenticated Web App uses the same
 durable analysis queue as native clients.
 
+## Production Backend
+
+The current hosted API and analysis worker on Render. Render remains
+authoritative for production, and the production frontend backend URL does not
+change as part of Student environment testing.
+
+## Student Environment
+
+The single non-production Azure Container Apps environment defined by ADR 0012.
+It is an isolated test backend for the stable private Netlify `main` branch
+deploy and is never a synonym for production or a production cutover.
+
 ## Peso Account
 
 The user identity shared across Peso web and mobile. An authenticated Peso

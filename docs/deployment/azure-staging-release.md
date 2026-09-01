@@ -1,5 +1,8 @@
 # Azure staging release and rollback
 
+> Superseded by ADR 0012 and `azure-student-setup.md`. This document is retained
+> for historical context only. Do not provision or deploy this West US 2 stack.
+
 This runbook provisions and operates only the isolated Peso staging API and
 analysis worker. It does not authorize Azure resource creation, provider spend,
 public Netlify visibility, or production changes. Complete the approval gates

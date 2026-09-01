@@ -33,23 +33,54 @@ def audit_supabase_security() -> list[str]:
     if not re.search(rf"alter\s+table\s+public\.{re.escape(table)}\s+enable\s+row\s+level\s+security", sql):
       errors.append(f"public.{table} is created without an enable row level security migration.")
 
-  security_definer_count = len(re.findall(r"security\s+definer", sql))
-  if security_definer_count != 1:
+  function_headers = list(re.finditer(
+    r"create\s+(?:or\s+replace\s+)?function\s+([a-z0-9_]+)\.([a-z0-9_]+)\([^)]*\)",
+    sql,
+  ))
+  security_definer_functions: set[str] = set()
+  for index, header in enumerate(function_headers):
+    next_start = function_headers[index + 1].start() if index + 1 < len(function_headers) else len(sql)
+    function_block = sql[header.start():next_start]
+    if re.search(r"security\s+definer", function_block):
+      security_definer_functions.add(f"{header.group(1)}.{header.group(2)}")
+  allowed_security_definer_functions = {
+    "azure_scaler.analysis_queue_depth",
+    "public.pending_video_analysis_job_count",
+  }
+  unexpected_security_definer_functions = security_definer_functions - allowed_security_definer_functions
+  if unexpected_security_definer_functions:
     errors.append(
-      "Migrations must contain exactly the reviewed pending_video_analysis_job_count() SECURITY DEFINER."
+      "Unexpected SECURITY DEFINER functions appear in migrations: "
+      + ", ".join(sorted(unexpected_security_definer_functions))
     )
-  else:
-    scaler_function_checks = (
+
+  if "azure_scaler.analysis_queue_depth" in security_definer_functions:
+    scaler_function = re.search(
+      r"create\s+or\s+replace\s+function\s+azure_scaler\.analysis_queue_depth\(\).*?\$\$;",
+      sql,
+      flags=re.DOTALL,
+    )
+    scaler_block = scaler_function.group(0) if scaler_function else ""
+    if "set search_path = ''" not in scaler_block:
+      errors.append("azure_scaler.analysis_queue_depth() does not use an empty fixed search_path.")
+    if not re.search(
+      r"revoke\s+all\s+privileges\s+on\s+function\s+azure_scaler\.analysis_queue_depth\(\)\s+"
+      r"from\s+public\s*,\s*anon\s*,\s*authenticated\s*,\s*service_role",
+      sql,
+    ):
+      errors.append("azure_scaler.analysis_queue_depth() is not revoked from every application role.")
+
+  if "public.pending_video_analysis_job_count" in security_definer_functions:
+    staging_scaler_checks = (
       r"create\s+or\s+replace\s+function\s+public\.pending_video_analysis_job_count\(\)",
       r"returns\s+integer",
-      r"security\s+definer",
       r"set\s+search_path\s*=\s*pg_catalog",
       r"revoke\s+execute\s+on\s+function\s+public\.pending_video_analysis_job_count\(\)\s+"
       r"from\s+public\s*,\s*anon\s*,\s*authenticated",
       r"grant\s+execute\s+on\s+function\s+public\.pending_video_analysis_job_count\(\)\s+"
       r"to\s+analysis_job_scaler",
     )
-    if any(re.search(pattern, sql) is None for pattern in scaler_function_checks):
+    if any(re.search(pattern, sql) is None for pattern in staging_scaler_checks):
       errors.append(
         "public.pending_video_analysis_job_count() is missing a reviewed SECURITY DEFINER safeguard."
       )

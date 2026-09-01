@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted
+Superseded by ADR 0012
+
+The West US 2 staging design was reconciled into the single Central US Student
+environment. Retain this record for history; do not provision or deploy it.
 
 ## Context
 

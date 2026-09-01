@@ -18,8 +18,9 @@ below and locate the Git commit attached to the currently published deploy.
    and block direct pushes, force pushes, and branch deletion.
 5. Require the existing security checks, the `production-release-source` check,
    and the Netlify Deploy Preview check before a production merge.
-6. Set `EXPO_PUBLIC_PRODUCTION_BACKEND_URL` to the production Render API URL in
-   both Preview and Production deploy contexts.
+6. Keep `EXPO_PUBLIC_PRODUCTION_BACKEND_URL` on the currently approved hosted
+   backend. The Azure Student hostname is allowed only in the exact staging/test
+   deploy and is not a production cutover.
 7. Configure these public build variables in every applicable deploy context:
    `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`,
    `EXPO_PUBLIC_TURNSTILE_SITE_KEY`, `EXPO_PUBLIC_AUTH_CHALLENGE_URL`, and
@@ -74,8 +75,8 @@ required site update.
 
 Netlify serves static deploy assets from its global CDN. HTML uses
 `Cache-Control: public, max-age=0, must-revalidate`; fingerprinted Expo assets
-and WOFF2 startup fonts use a one-year immutable browser lifetime. The Render API
-returns `Cache-Control: no-store` for authenticated and health responses.
+and WOFF2 startup fonts use a one-year immutable browser lifetime. Hosted APIs
+return `Cache-Control: no-store` for authenticated and health responses.
 
 The Netlify build runs the configuration validator before exporting. Run the
 same production export and budget gate before a preview:
@@ -92,7 +93,8 @@ from startup only when `dist/app/index.html` does not reference them directly.
 After deploying without site-wide password protection, verify `/app/`, one
 `/app/_expo/static/*` asset, and one `/app/fonts/*` asset. HTML must revalidate;
 fingerprinted assets and fonts must be immutable; repeated static requests
-should report a Netlify cache hit. Never cache authenticated Render responses.
+should report a Netlify cache hit. Never cache authenticated backend responses,
+including the isolated Azure Student API.
 
 ## Usage baseline and monitoring
 

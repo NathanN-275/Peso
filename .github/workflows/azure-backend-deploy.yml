@@ -1,0 +1,257 @@
+name: Azure Student Backend Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_reference:
+        description: Immutable GHCR image including @sha256 digest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-student-backend
+  cancel-in-progress: false
+
+env:
+  AZURE_RESOURCE_GROUP: peso-student-centralus-rg
+  AZURE_API_NAME: peso-student-api
+  AZURE_WORKER_NAME: peso-student-analysis-worker
+
+jobs:
+  validate:
+    name: Validate student release candidate
+    runs-on: ubuntu-latest
+    environment: student
+    env:
+      EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
+      EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+      EXPO_PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.EXPO_PUBLIC_TURNSTILE_SITE_KEY }}
+      EXPO_PUBLIC_AUTH_CHALLENGE_URL: ${{ vars.EXPO_PUBLIC_AUTH_CHALLENGE_URL }}
+      EXPO_PUBLIC_PRODUCTION_BACKEND_URL: ${{ vars.CURRENT_NON_AZURE_BACKEND_URL }}
+      PESO_RELEASE_ENV: staging
+      SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: release-test-service-role
+      SUPABASE_JWT_SECRET: release-test-jwt-secret
+      CLEANUP_JOB_TOKEN: release-test-cleanup-token
+      BACKEND_ALLOW_UNAUTHENTICATED_DEV_CLEANUP: "false"
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: ${{ vars.SUPABASE_CLI_VERSION }}
+
+      - name: Install frontend dependencies
+        run: |
+          npm ci
+          npm --prefix web ci
+          npm --prefix dashboard ci
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: python -m pip install --requirement requirements.txt
+
+      - name: Validate policy and types
+        run: |
+          npm run test:policy
+          npm run typecheck
+          npm run dashboard:typecheck
+
+      - name: Validate backend behavior
+        working-directory: backend
+        run: python -m pytest tests
+
+      - name: Validate immutable image and exact test origin
+        env:
+          IMAGE_REFERENCE: ${{ inputs.image_reference }}
+          STUDENT_NETLIFY_ORIGIN: ${{ vars.STUDENT_NETLIFY_ORIGIN }}
+          PRODUCTION_NETLIFY_ORIGIN: ${{ vars.PRODUCTION_NETLIFY_ORIGIN }}
+        run: |
+          if [[ ! "$IMAGE_REFERENCE" =~ ^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.\/-]+@sha256:[a-f0-9]{64}$ ]]; then
+            echo "image_reference must be an immutable lowercase GHCR sha256 reference." >&2
+            exit 1
+          fi
+
+          node - "$STUDENT_NETLIFY_ORIGIN" "$PRODUCTION_NETLIFY_ORIGIN" <<'NODE'
+          const origin = process.argv[2];
+          const productionOrigin = process.argv[3];
+          const url = new URL(origin);
+          const productionUrl = new URL(productionOrigin);
+          if (
+            url.protocol !== 'https:' ||
+            url.origin !== origin ||
+            !url.hostname.endsWith('.netlify.app') ||
+            url.port !== '' ||
+            productionUrl.origin !== productionOrigin ||
+            origin === productionOrigin
+          ) {
+            throw new Error('STUDENT_NETLIFY_ORIGIN must be one exact non-production Netlify HTTPS origin.');
+          }
+          NODE
+
+      - name: Build student Bicep templates
+        run: |
+          az bicep build --file infra/azure/bootstrap.bicep
+          az bicep build --file infra/azure/student.bicep
+
+      - name: Preview reviewed additive Supabase migrations
+        run: supabase db push --db-url "$SUPABASE_DB_URL" --dry-run
+
+  preview:
+    name: Preview fixed student resource group
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: student
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      IMAGE_REFERENCE: ${{ inputs.image_reference }}
+      STUDENT_NETLIFY_ORIGIN: ${{ vars.STUDENT_NETLIFY_ORIGIN }}
+      GHCR_USERNAME: ${{ vars.GHCR_USERNAME }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sign in to Azure with student OIDC identity
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify fixed student scope
+        run: |
+          actual_id="$(az group show --name "$AZURE_RESOURCE_GROUP" --query id --output tsv)"
+          expected_id="/subscriptions/${{ vars.AZURE_SUBSCRIPTION_ID }}/resourceGroups/peso-student-centralus-rg"
+          if [[ "${actual_id,,}" != "${expected_id,,}" ]]; then
+            echo "Refusing deployment outside $expected_id; resolved $actual_id." >&2
+            exit 1
+          fi
+
+      - name: Preview only the student resource group
+        run: |
+          az deployment group what-if \
+            --name "peso-student-${GITHUB_RUN_ID}" \
+            --resource-group peso-student-centralus-rg \
+            --template-file infra/azure/student.bicep \
+            --parameters imageReference="$IMAGE_REFERENCE" \
+              ghcrUsername="$GHCR_USERNAME" \
+              netlifyTestOrigin="$STUDENT_NETLIFY_ORIGIN" \
+            --result-format FullResourcePayloads \
+            --no-pretty-print > azure-student-what-if.json
+
+      - name: Upload what-if for deployment approval
+        uses: actions/upload-artifact@v4
+        with:
+          name: azure-student-what-if-${{ github.run_id }}
+          path: azure-student-what-if.json
+          if-no-files-found: error
+          retention-days: 30
+
+  deploy:
+    name: Approve, deploy, and verify student backend
+    needs: preview
+    runs-on: ubuntu-latest
+    environment: student
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      IMAGE_REFERENCE: ${{ inputs.image_reference }}
+      STUDENT_NETLIFY_ORIGIN: ${{ vars.STUDENT_NETLIFY_ORIGIN }}
+      GHCR_USERNAME: ${{ vars.GHCR_USERNAME }}
+      GHCR_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      AZURE_SCALER_POSTGRES_ROLE: peso_azure_scaler_student
+      AZURE_SCALER_POSTGRES_PASSWORD: ${{ secrets.AZURE_SCALER_POSTGRES_PASSWORD }}
+      RUNTIME_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      RUNTIME_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      RUNTIME_SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
+      RUNTIME_CLEANUP_JOB_TOKEN: ${{ secrets.CLEANUP_JOB_TOKEN }}
+      SCALER_POSTGRES_CONNECTION: ${{ secrets.AZURE_SCALER_POSTGRES_CONNECTION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: ${{ vars.SUPABASE_CLI_VERSION }}
+
+      - name: Sign in to Azure with student OIDC identity
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Reconfirm fixed student scope
+        run: |
+          actual_id="$(az group show --name "$AZURE_RESOURCE_GROUP" --query id --output tsv)"
+          expected_id="/subscriptions/${{ vars.AZURE_SUBSCRIPTION_ID }}/resourceGroups/peso-student-centralus-rg"
+          if [[ "${actual_id,,}" != "${expected_id,,}" ]]; then
+            echo "Refusing deployment outside $expected_id; resolved $actual_id." >&2
+            exit 1
+          fi
+
+      - name: Apply reviewed additive Supabase migrations
+        run: |
+          supabase db push --db-url "$SUPABASE_DB_URL"
+          supabase migration list --db-url "$SUPABASE_DB_URL"
+
+      - name: Configure least-privileged student scaler login
+        run: ./scripts/configure_azure_scaler_role.sh
+
+      - name: Store runtime and GHCR credentials in Key Vault
+        run: |
+          key_vault_name="$(az keyvault list \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "[?tags.environment=='student'].name | [0]" \
+            --output tsv)"
+          : "${key_vault_name:?Student Key Vault was not found. Run the bootstrap first.}"
+
+          az keyvault secret set --vault-name "$key_vault_name" --name ghcr-token --value "$GHCR_TOKEN" --output none
+          az keyvault secret set --vault-name "$key_vault_name" --name supabase-url --value "$RUNTIME_SUPABASE_URL" --output none
+          az keyvault secret set --vault-name "$key_vault_name" --name supabase-service-role-key --value "$RUNTIME_SUPABASE_SERVICE_ROLE_KEY" --output none
+          az keyvault secret set --vault-name "$key_vault_name" --name supabase-jwt-secret --value "$RUNTIME_SUPABASE_JWT_SECRET" --output none
+          az keyvault secret set --vault-name "$key_vault_name" --name cleanup-job-token --value "$RUNTIME_CLEANUP_JOB_TOKEN" --output none
+          az keyvault secret set --vault-name "$key_vault_name" --name scaler-postgres-connection --value "$SCALER_POSTGRES_CONNECTION" --output none
+
+      - name: Deploy student infrastructure
+        run: |
+          az deployment group create \
+            --name "peso-student-${GITHUB_RUN_ID}" \
+            --resource-group peso-student-centralus-rg \
+            --template-file infra/azure/student.bicep \
+            --parameters imageReference="$IMAGE_REFERENCE" \
+              ghcrUsername="$GHCR_USERNAME" \
+              netlifyTestOrigin="$STUDENT_NETLIFY_ORIGIN" \
+            --query properties.outputs \
+            --output json > azure-student-deployment-outputs.json
+
+      - name: Verify health and exact CORS
+        run: |
+          api_url="$(node -e "const o=require('./azure-student-deployment-outputs.json'); process.stdout.write(o.apiUrl.value)")"
+          ./scripts/verify_azure_backend.sh "$api_url" "$STUDENT_NETLIFY_ORIGIN"
+
+      - name: Verify budget amount and three alerts
+        run: ./scripts/verify_azure_student_budget.sh
+
+      - name: Upload exact deployed resource IDs
+        uses: actions/upload-artifact@v4
+        with:
+          name: azure-student-resource-ids-${{ github.run_id }}
+          path: azure-student-deployment-outputs.json
+          if-no-files-found: error
+          retention-days: 30
