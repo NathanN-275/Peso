@@ -1,21 +1,21 @@
 # Authentication staging and release runbook
 
 This runbook is the source of truth for the side-view squat beta release. It
-does not authorize provider spend: record Supabase and Render costs and obtain
+does not authorize provider spend: record Supabase and Azure costs and obtain
 explicit confirmation before creating the staging resources.
 
-## Staging stack
+## Student test stack
 
 Create isolated resources in this order:
 
-1. A separate Supabase project in the confirmed organization and region. Apply
-   every tracked migration, create the `videos` and avatar buckets, run the RLS
-   audit and Supabase security advisor, and create isolated E2E users.
-2. A separate Render API and worker using only staging Supabase/service-role
-   values. Set an exact staging Netlify origin in CORS and verify `/health/ready`
-   before starting the worker.
-3. A stable Netlify branch deployment wired to the staging API and Supabase
-   project. Its `EXPO_PUBLIC_AUTH_CHALLENGE_URL` must point to its own exact
+1. The existing Supabase project with two dedicated Student E2E users. Preview
+   and review additive migrations, run the RLS audit and Supabase security
+   advisor, and keep all test rows/storage objects owner-scoped to those users.
+2. The single Central US Azure Student Container Apps API and event-triggered
+   worker. Set one exact test Netlify origin in CORS and verify
+   `/health/ready` before testing the worker.
+3. A stable Netlify test deployment wired to the Student API and existing
+   Supabase project. Its `EXPO_PUBLIC_AUTH_CHALLENGE_URL` must point to its exact
    `https://<staging-host>/auth/turnstile/` page.
 4. A staging Turnstile test pair in Supabase Auth. Use Cloudflare's always-pass
    site key `1x00000000000000000000AA` with always-pass secret
@@ -66,7 +66,7 @@ Install Playwright's Chromium browser once on the release runner, then provide:
 PESO_E2E_ENV=staging
 PESO_E2E_ALLOW_ADMIN_FIXTURES=true
 PESO_E2E_WEB_BASE_URL=https://<stable-staging-host>
-PESO_E2E_SUPABASE_URL=https://<staging-project>.supabase.co
+PESO_E2E_SUPABASE_URL=https://<existing-project>.supabase.co
 PESO_E2E_SUPABASE_SERVICE_ROLE_KEY=<runner-secret>
 PESO_E2E_SIGNUP_EMAIL=<isolated-test-inbox>
 PESO_E2E_SIGNUP_PASSWORD=<isolated-password>

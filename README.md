@@ -95,7 +95,8 @@ Launching the web beta does not replace the mobile app. The Expo app remains in 
 * RTMPose fallback support
 * FFmpeg
 * Supabase Auth, Database, and Storage
-* Render web service and background worker
+* Render for the current hosted API and worker
+* Azure Container Apps for the isolated non-production Student candidate
 
 ## How the app works
 
@@ -103,7 +104,7 @@ Launching the web beta does not replace the mobile app. The Expo app remains in 
 2. The app stores the video through Supabase.
 3. The backend receives an analysis request.
 4. A durable PostgreSQL job survives client and service restarts.
-5. The Render worker downloads the video and processes it frame by frame.
+5. The active job worker downloads the video and processes it frame by frame.
 6. Pose and barbell tracking are used to estimate movement quality.
 7. Rep summaries, diagnostics, overlays, and coaching feedback are saved.
 8. The Web App or mobile app displays the analyzed result to the user.
@@ -328,10 +329,10 @@ durable real analysis keyed by `videoId`; fixture analysis is not part of the
 beta. Peso Account authentication, Analysis Activity, the shared Saved Lift
 Library, deletion, and export jobs use the authenticated backend.
 
-Production keeps Netlify for static frontend delivery, Supabase for auth,
-database records, and private video storage, and Render for the FastAPI service
-and continuous analysis worker. See
-`docs/deployment/render-analysis-beta.md` for the schema-first release order.
+The website stays on Netlify and continues using the current non-Azure backend.
+Supabase remains responsible for auth, database records, and private video
+storage. The Azure Students work is an isolated Central US test backend only;
+see `docs/deployment/azure-student-setup.md` for its scope and acceptance gate.
 
 ## Backend API overview
 

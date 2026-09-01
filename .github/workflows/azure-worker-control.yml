@@ -1,0 +1,89 @@
+name: Azure Student Compute Control
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Reversible student compute action
+        required: true
+        type: choice
+        options:
+          - pause-worker
+          - resume-worker
+          - pause-all
+          - resume-all
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: azure-student-compute-control
+  cancel-in-progress: false
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    environment: student
+    env:
+      AZURE_RESOURCE_GROUP: peso-student-centralus-rg
+      AZURE_WORKER_NAME: peso-student-analysis-worker
+      AZURE_API_NAME: peso-student-api
+      ACTION: ${{ inputs.action }}
+    steps:
+      - name: Sign in to Azure with student OIDC identity
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Apply and verify compute control
+        run: |
+          worker_query='SELECT azure_scaler.analysis_queue_depth()'
+          if [[ "$ACTION" == "pause-worker" || "$ACTION" == "pause-all" ]]; then
+            worker_query='SELECT 0'
+          fi
+
+          worker_id="$(az containerapp job show \
+            --name "$AZURE_WORKER_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query id --output tsv)"
+          az resource update \
+            --ids "$worker_id" \
+            --api-version 2024-03-01 \
+            --set "properties.configuration.eventTriggerConfig.scale.rules[0].metadata.query=$worker_query" \
+            --output none
+
+          if [[ "$ACTION" == "pause-worker" || "$ACTION" == "pause-all" ]]; then
+            az containerapp job stop \
+              --name "$AZURE_WORKER_NAME" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --output none
+          fi
+
+          if [[ "$ACTION" == "pause-all" ]]; then
+            az containerapp ingress disable \
+              --name "$AZURE_API_NAME" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --output none
+          elif [[ "$ACTION" == "resume-all" ]]; then
+            az containerapp ingress enable \
+              --name "$AZURE_API_NAME" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --type external \
+              --target-port 10000 \
+              --transport http \
+              --allow-insecure false \
+              --output none
+          fi
+
+          actual_query="$(az containerapp job show \
+            --name "$AZURE_WORKER_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query 'properties.configuration.eventTriggerConfig.scale.rules[0].metadata.query' \
+            --output tsv)"
+          if [[ "$actual_query" != "$worker_query" ]]; then
+            echo "Worker trigger update did not persist." >&2
+            exit 1
+          fi
