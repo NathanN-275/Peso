@@ -60,6 +60,10 @@ Front-view videos are also supported, but that analysis is still in development 
 
 Launching the web beta does not replace the mobile app. The Expo app remains in active development and will continue to evolve alongside the web product. The web beta provides a practical way to ship Peso and validate the core experience, while mobile development continues to improve recording, uploading, and reviewing lifts directly from a phone.
 
+### Validate the Azure Student backend candidate
+
+Current infrastructure work is focused on an isolated, non-production Azure Student environment in Central US. Azure Container Apps provides a scale-to-zero API and event-triggered analysis worker, with runtime secrets in Key Vault and GitHub deployments authenticated through short-lived OIDC. The existing Netlify website, Render backend, Supabase project, and production resources remain unchanged while the candidate goes through its deployment, cost, security, and long-clip acceptance checks.
+
 ## Tech stack
 
 ### Marketing Site
@@ -96,7 +100,9 @@ Launching the web beta does not replace the mobile app. The Expo app remains in 
 * FFmpeg
 * Supabase Auth, Database, and Storage
 * Render for the current hosted API and worker
-* Azure Container Apps for the isolated non-production Student candidate
+* Azure Container Apps for the isolated non-production Student backend candidate
+* Azure Key Vault and managed identities for candidate runtime secrets
+* GitHub Actions OIDC for candidate deployments without a stored Azure client secret
 
 ## How the app works
 
@@ -331,8 +337,10 @@ Library, deletion, and export jobs use the authenticated backend.
 
 The website stays on Netlify and continues using the current non-Azure backend.
 Supabase remains responsible for auth, database records, and private video
-storage. The Azure Students work is an isolated Central US test backend only;
-see `docs/deployment/azure-student-setup.md` for its scope and acceptance gate.
+storage. The Azure Students work is an isolated Central US test backend
+candidate only; it is not production and does not replace the current hosted
+backend until its acceptance gate passes. See
+`docs/deployment/azure-student-setup.md` for its scope and acceptance gate.
 
 ## Backend API overview
 
@@ -413,7 +421,7 @@ backend/.venv/bin/python scripts/cleanup_supabase_storage.py --dry-run
 
 Peso is under active development.
 
-The current version demonstrates the core product idea: upload a lifting video, analyze the movement, and return useful visual feedback. The next major milestone is launching the web beta while improving tracking reliability across real-world gym videos with clutter, occlusion, and imperfect camera angles. The mobile app remains in active development alongside that work.
+The current version demonstrates the core product idea: upload a lifting video, analyze the movement, and return useful visual feedback. Current work is split across three tracks: completing the focused authenticated web beta, improving tracking reliability across real-world gym videos with clutter and occlusion, and validating the isolated Azure Student backend candidate. The mobile app remains in active development alongside that work.
 
 ## Repository structure
 
