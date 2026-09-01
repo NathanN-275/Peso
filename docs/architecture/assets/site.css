@@ -154,6 +154,22 @@ video {
   white-space: nowrap;
 }
 
+.site-nav a.site-nav__beta {
+  margin-left: 5px;
+  border: 1px solid rgba(23, 105, 255, 0.22);
+  background: rgba(23, 105, 255, 0.09);
+  color: var(--blue-dark);
+  box-shadow: 0 5px 16px rgba(23, 105, 255, 0.11);
+}
+
+.site-nav a.site-nav__beta:hover,
+.site-nav a.site-nav__beta[aria-current="page"] {
+  border-color: rgba(23, 105, 255, 0.34);
+  background: rgba(23, 105, 255, 0.16);
+  color: var(--blue-dark);
+  box-shadow: 0 7px 20px rgba(23, 105, 255, 0.16);
+}
+
 .site-nav a::after {
   position: absolute;
   right: 14px;
