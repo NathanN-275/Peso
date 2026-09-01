@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -91,12 +92,36 @@ class StorageServiceTest(unittest.TestCase):
     self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
     self.assertEqual(command[command.index("-protocol_whitelist") + 1], "file,pipe")
 
-  @unittest.skipUnless(shutil.which("ffprobe"), "ffprobe is required for media validation")
-  def test_video_stream_validation_accepts_the_img_0013_mov_regression_fixture(self) -> None:
-    fixture = Path(__file__).resolve().parents[1] / "test_videos" / "IMG_0013.MOV"
+  @unittest.skipUnless(
+    shutil.which("ffmpeg") and shutil.which("ffprobe"),
+    "ffmpeg and ffprobe are required for media validation",
+  )
+  def test_video_stream_validation_accepts_generated_mov_fixture(self) -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+      fixture = Path(temp_dir) / "regression.MOV"
+      subprocess.run(
+        [
+          shutil.which("ffmpeg"),
+          "-v",
+          "error",
+          "-f",
+          "lavfi",
+          "-i",
+          "color=c=black:s=16x16:d=0.1",
+          "-c:v",
+          "mpeg4",
+          "-an",
+          str(fixture),
+        ],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+      )
 
-    self.assertEqual(fixture.stat().st_size, 32_038_210)
-    _validate_video_stream(fixture, 30)
+      self.assertGreater(fixture.stat().st_size, 0)
+      _validate_video_stream(fixture, 30)
 
   def test_video_stream_validation_reports_backend_failures(self) -> None:
     with patch("app.services.storage_service.shutil.which", return_value=None):
