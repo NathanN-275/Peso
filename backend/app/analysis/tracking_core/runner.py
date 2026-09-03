@@ -45,6 +45,7 @@ def _detector_from_config(config: TrackingCoreConfig) -> ObjectDetectorBackend:
       confidence_threshold=config.yolo_confidence_threshold,
       nms_iou_threshold=config.yolo_nms_iou_threshold,
       input_size=config.yolo_input_size,
+      model_version=config.yolo_model_version,
     )
   return NullObjectDetector()
 
@@ -89,6 +90,9 @@ def detect_tracking_objects(
   try:
     detector = detector or _detector_from_config(config)
     diagnostics["object_detector"] = detector.name
+    model_metadata = getattr(detector, "model_metadata", None)
+    if isinstance(model_metadata, dict):
+      diagnostics["detector_model"] = dict(model_metadata)
     detection_frames = detector.detect(
       video_path=video_path,
       width=width,
@@ -141,6 +145,9 @@ def run_apache_v1_tracking(
   if detection_frames is None:
     detector = detector or _detector_from_config(config)
     diagnostics["object_detector"] = detector.name
+    model_metadata = getattr(detector, "model_metadata", None)
+    if isinstance(model_metadata, dict):
+      diagnostics["detector_model"] = dict(model_metadata)
     detection_frames, detector_diagnostics = detect_tracking_objects(
       video_path=video_path,
       pose_frames=pose_frames,

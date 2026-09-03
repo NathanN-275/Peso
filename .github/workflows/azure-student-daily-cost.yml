@@ -1,0 +1,36 @@
+name: Azure Student Daily Cost Check
+
+on:
+  schedule:
+    - cron: "17 12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: azure-student-daily-cost
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    environment: student
+    env:
+      AZURE_RESOURCE_GROUP: peso-student-centralus-rg
+      AZURE_WORKER_NAME: peso-student-analysis-worker
+      AZURE_API_NAME: peso-student-api
+      AZURE_LOG_WORKSPACE_NAME: peso-student-logs
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sign in to Azure with student OIDC identity
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Record spend and health; enforce $8/$10 controls
+        run: ./scripts/check_azure_student_cost.sh

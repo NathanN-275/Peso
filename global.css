@@ -2,6 +2,51 @@
 @tailwind components;
 @tailwind utilities;
 
+@font-face {
+  font-family: "ArchivoBlack_400Regular";
+  src: url("/app/fonts/archivo-black-latin.woff2") format("woff2"),
+    url("/fonts/archivo-black-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter_400Regular";
+  src: url("/app/fonts/inter-latin-variable.woff2") format("woff2"),
+    url("/fonts/inter-latin-variable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter_500Medium";
+  src: url("/app/fonts/inter-latin-variable.woff2") format("woff2"),
+    url("/fonts/inter-latin-variable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter_600SemiBold";
+  src: url("/app/fonts/inter-latin-variable.woff2") format("woff2"),
+    url("/fonts/inter-latin-variable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter_700Bold";
+  src: url("/app/fonts/inter-latin-variable.woff2") format("woff2"),
+    url("/fonts/inter-latin-variable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
 html,
 body,
 #root {

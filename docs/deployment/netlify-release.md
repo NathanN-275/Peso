@@ -18,6 +18,21 @@ below and locate the Git commit attached to the currently published deploy.
    and block direct pushes, force pushes, and branch deletion.
 5. Require the existing security checks, the `production-release-source` check,
    and the Netlify Deploy Preview check before a production merge.
+6. Keep `EXPO_PUBLIC_PRODUCTION_BACKEND_URL` on the currently approved hosted
+   backend. The Azure Student hostname is allowed only in the exact staging/test
+   deploy and is not a production cutover.
+7. Configure these public build variables in every applicable deploy context:
+   `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`,
+   `EXPO_PUBLIC_TURNSTILE_SITE_KEY`, `EXPO_PUBLIC_AUTH_CHALLENGE_URL`, and
+   `EXPO_PUBLIC_PRODUCTION_BACKEND_URL`. The challenge URL must be the exact
+   HTTPS `/auth/turnstile/` page on that deploy's stable origin.
+8. Set `PESO_RELEASE_ENV=staging` on the stable staging branch deploy and
+   `PESO_RELEASE_ENV=production` in Production. Production builds reject
+   Cloudflare test site keys.
+9. At beta launch, disable site-wide password protection under **Project
+   configuration > Access & security > Visitor access**. Netlify Basic Auth
+   disables CDN caching for the whole site; use application authentication for
+   `/app` instead.
 
 If the current published commit is not an ancestor of `main`, review the first
 `main` to `production` release carefully because it reconciles the live and
@@ -55,6 +70,31 @@ workflow metadata, or root Markdown documentation. Any web, shared application,
 asset, dependency, configuration, mixed, empty, or unresolved change continues
 the build. This fail-open behavior prevents an optimization from suppressing a
 required site update.
+
+## CDN and startup budgets
+
+Netlify serves static deploy assets from its global CDN. HTML uses
+`Cache-Control: public, max-age=0, must-revalidate`; fingerprinted Expo assets
+and WOFF2 startup fonts use a one-year immutable browser lifetime. Hosted APIs
+return `Cache-Control: no-store` for authenticated and health responses.
+
+The Netlify build runs the configuration validator before exporting. Run the
+same production export and budget gate before a preview:
+
+```bash
+npm run web:build:release
+npm run web:budget
+```
+
+The directly referenced startup scripts must remain below 600 KB after gzip,
+and WOFF2 fonts below 200 KB. Lazy native-preview and review chunks are excluded
+from startup only when `dist/app/index.html` does not reference them directly.
+
+After deploying without site-wide password protection, verify `/app/`, one
+`/app/_expo/static/*` asset, and one `/app/fonts/*` asset. HTML must revalidate;
+fingerprinted assets and fonts must be immutable; repeated static requests
+should report a Netlify cache hit. Never cache authenticated backend responses,
+including the isolated Azure Student API.
 
 ## Usage baseline and monitoring
 

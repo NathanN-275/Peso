@@ -69,6 +69,34 @@ UNSAFE_HUB_REASONS = {
 }
 
 
+class _CachedSampleCapture:
+  """OpenCV-shaped reader for frames decoded by the sleeve/plate unified pass."""
+
+  def __init__(self, frames: dict[int, Any]) -> None:
+    self.frames = frames
+    self.position = 0
+    self.final_index = max(frames, default=-1)
+
+  def isOpened(self) -> bool:
+    return self.position <= self.final_index
+
+  def grab(self) -> bool:
+    if not self.isOpened():
+      return False
+    self.position += 1
+    return True
+
+  def read(self) -> tuple[bool, Any | None]:
+    if not self.isOpened():
+      return False, None
+    frame = self.frames.get(self.position)
+    self.position += 1
+    return (frame is not None), frame
+
+  def release(self) -> None:
+    self.position = self.final_index + 1
+
+
 def _time_key(point: dict[str, Any]) -> float:
   return round(float(point.get("time") or 0.0), 4)
 
@@ -1087,6 +1115,7 @@ class BarbellTracker:
     rep_windows: list[dict[str, Any]] | None = None,
     manual_barbell_priors: dict[int, dict[str, float]] | None = None,
     debug_output_path: str | None = None,
+    target_fps: float | None = None,
   ) -> dict[str, Any]:
     import cv2
 
@@ -1106,6 +1135,7 @@ class BarbellTracker:
     )
     pin_lane_result: dict[str, Any] | None = None
     started = time.perf_counter()
+    local_tracking_duration_seconds = 0.0
     if not Path(file_path).is_file():
       return _empty_result("video_unavailable")
 
@@ -1146,8 +1176,12 @@ class BarbellTracker:
       key=lambda window: window["start"],
     )
 
+    effective_target_fps = min(
+      max(float(target_fps or BARBELL_TRACK_TARGET_FPS), 1.0),
+      BARBELL_TRACK_TARGET_FPS,
+    )
     pose_frame_step = max(int(frame_step or 1), 1)
-    target_frame_step = max(int(round(fps / BARBELL_TRACK_TARGET_FPS)), 1) if fps > 0 else pose_frame_step
+    target_frame_step = max(int(round(fps / effective_target_fps)), 1) if fps > 0 else pose_frame_step
     tracking_frame_step = pose_frame_step * max(int(round(target_frame_step / pose_frame_step)), 1)
     pose_by_source_index = {
       int(frame.get("source_frame_index", -1)): frame
@@ -1155,6 +1189,8 @@ class BarbellTracker:
       if frame.get("source_frame_index") is not None
     }
     pose_source_indices = sorted(pose_by_source_index)
+    tracking_source_index_set = set(pose_source_indices)
+    use_pose_timestamp_schedule = effective_target_fps < BARBELL_TRACK_TARGET_FPS
     if not pose_by_source_index:
       capture.release()
       return _empty_result(
@@ -1165,6 +1201,18 @@ class BarbellTracker:
         coordinate_space=coordinate_space,
       )
 
+    decoded_active_frames: dict[int, Any] = {}
+
+    def retain_decoded_frame(source_frame_index: int, frame: Any) -> None:
+      decoded_active_frames[source_frame_index] = frame.copy()
+
+    sleeve_scan_attempted = bool(
+      not normalized_manual_priors
+      and normalized_rep_windows
+      and width <= 720
+      and height <= 1280
+    )
+    sleeve_started = time.perf_counter()
     sleeve_result = (
       track_unloaded_sleeve_end(
         file_path,
@@ -1174,6 +1222,8 @@ class BarbellTracker:
         processed_height=height,
         selected_side=normalized_selected_side,
         rep_windows=normalized_rep_windows,
+        target_fps=effective_target_fps,
+        frame_observer=retain_decoded_frame,
       )
       if not normalized_manual_priors
       and normalized_rep_windows
@@ -1181,12 +1231,23 @@ class BarbellTracker:
       and height <= 1280
       else None
     )
+    sleeve_detection_duration_ms = int((time.perf_counter() - sleeve_started) * 1000)
     if (
       sleeve_result is not None
       and float(sleeve_result.get("barbellPath", {}).get("coverage") or 0.0) >= 0.18
     ):
       capture.release()
+      sleeve_result.setdefault("diagnostics", {})["sleeve_detection_duration_ms"] = sleeve_detection_duration_ms
+      sleeve_result["diagnostics"]["plate_detection_duration_ms"] = 0
+      sleeve_result["diagnostics"]["video_decode_pass_count"] = 1
       return sleeve_result
+
+    reused_sleeve_decode = bool(
+      decoded_active_frames and effective_target_fps < BARBELL_TRACK_TARGET_FPS
+    )
+    if reused_sleeve_decode:
+      capture.release()
+      capture = _CachedSampleCapture(decoded_active_frames)
 
     if normalized_manual_priors and manual_priors_have_reference:
       pin_result, pin_diagnostics = build_pin_assisted_barbell_result(
@@ -1447,7 +1508,7 @@ class BarbellTracker:
       debug_writer = cv2.VideoWriter(
         debug_output_path,
         cv2.VideoWriter_fourcc(*"mp4v"),
-        BARBELL_TRACK_TARGET_FPS,
+        effective_target_fps,
         debug_frame_size,
       )
 
@@ -1460,19 +1521,39 @@ class BarbellTracker:
 
     try:
       while capture.isOpened():
+        if reused_sleeve_decode and normalized_rep_windows:
+          source_timestamp = frame_index / fps if fps > 0 else 0.0
+          source_in_active_rep = any(
+            window["start"] <= source_timestamp <= window["end"]
+            for window in normalized_rep_windows
+          )
+          if not source_in_active_rep:
+            success = capture.grab()
+            if not success:
+              break
+            frame_index += 1
+            continue
+        should_sample = (
+          frame_index in tracking_source_index_set
+          if use_pose_timestamp_schedule
+          else frame_index % tracking_frame_step == 0
+        )
+        if not should_sample:
+          success = capture.grab()
+          if not success:
+            break
+          frame_index += 1
+          continue
+
         success, frame = capture.read()
         if not success:
           break
-
-        if frame_index % tracking_frame_step != 0:
-          frame_index += 1
-          continue
 
         if frame.shape[1] != width or frame.shape[0] != height:
           frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        timestamp = frame_index / fps if fps > 0 else len(samples) / 18.0
+        timestamp = frame_index / fps if fps > 0 else len(samples) / effective_target_fps
         current_rep = next(
           (
             window
@@ -1924,6 +2005,7 @@ class BarbellTracker:
             bad_candidate_rejection_counts["pose_shoulder_outlier"] = (
               bad_candidate_rejection_counts.get("pose_shoulder_outlier", 0) + 1
             )
+          local_tracking_started = time.perf_counter()
           next_lock, local_stats = _track_local_patch(
             cv2,
             previous_gray,
@@ -1933,6 +2015,7 @@ class BarbellTracker:
             width=width,
             height=height,
           )
+          local_tracking_duration_seconds += time.perf_counter() - local_tracking_started
           optical_flow_point_count = local_stats["optical_flow_point_count"]
           optical_flow_inlier_count = local_stats["optical_flow_inlier_count"]
           template_match_score = local_stats["template_match_score"]
@@ -3344,7 +3427,12 @@ class BarbellTracker:
         "reused_nearest_pose_frame_count": reused_nearest_pose_frame_count,
         "failure_reason": None,
         "processing_duration_ms": processing_duration_ms,
-        "target_fps": BARBELL_TRACK_TARGET_FPS,
+        "target_fps": effective_target_fps,
+        "sleeve_detection_duration_ms": sleeve_detection_duration_ms,
+        "plate_detection_duration_ms": max(processing_duration_ms - sleeve_detection_duration_ms, 0),
+        "video_decode_pass_count": 1 if reused_sleeve_decode or not sleeve_scan_attempted else 2,
+        "reused_sleeve_decode_frame_count": len(decoded_active_frames) if reused_sleeve_decode else 0,
+        "local_tracking_duration_ms": int(local_tracking_duration_seconds * 1000),
         "tracking_frame_step": tracking_frame_step,
         "tracking_mode": tracking_mode,
         "local_tracker_type": local_tracker_type,

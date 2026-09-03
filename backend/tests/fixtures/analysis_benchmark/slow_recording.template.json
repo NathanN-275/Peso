@@ -1,11 +1,26 @@
 {
   "version": 1,
   "target_payload_ready_ms": 60000,
+  "max_ui_ready_delay_ms": 4000,
+  "require_ui_ready_delay": true,
+  "require_accuracy_gates": true,
   "pose_profiles": [
-    {"id": "current", "target_fps": 18, "max_frame_dimension": 720},
+    {"id": "fast_12fps_640px", "target_fps": 12, "max_frame_dimension": 640},
     {"id": "balanced_15fps_640px", "target_fps": 15, "max_frame_dimension": 640},
-    {"id": "fast_12fps_640px", "target_fps": 12, "max_frame_dimension": 640}
+    {"id": "current_18fps_720px", "target_fps": 18, "max_frame_dimension": 720}
   ],
+  "accuracy_gates": {
+    "visible_joint_coverage_min": 0.95,
+    "pose_p95_body_height_error_max": 0.05,
+    "side_identity_switches_max": 0,
+    "bottom_frame_error_max": 2,
+    "barbell_active_rep_coverage_min": 0.90,
+    "pin_p95_px_max": 10,
+    "pin_max_px_max": 18,
+    "automatic_p95_px_max": 16,
+    "automatic_max_px_max": 26,
+    "hardware_identity_switches_max": 0
+  },
   "cases": [
     {
       "id": "slow_recording",

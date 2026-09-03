@@ -113,9 +113,51 @@ class PoseBackendEvaluationTest(unittest.TestCase):
     spec.loader.exec_module(harness)
 
     harness._validate_manifest(manifest)
-    self.assertEqual(manifest["backends"], ["mediapipe", "rtmpose"])
+    self.assertEqual(manifest["backends"], ["hybrid", "mediapipe", "rtmpose"])
     self.assertFalse(manifest["allow_backend_selection"])
     self.assertEqual(manifest["config"]["target_fps"], 18)
+
+  def test_backend_selection_requires_lower_p95_and_zero_identity_switches(self) -> None:
+    script_path = Path(__file__).parents[1] / "scripts" / "evaluate_pose_backends.py"
+    spec = importlib.util.spec_from_file_location("pose_backend_harness_selection", script_path)
+    assert spec and spec.loader
+    harness = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(harness)
+    manifest = {
+      "allow_backend_selection": True,
+      "production_backend": "hybrid",
+      "backends": ["hybrid", "rtmpose"],
+      "acceptance_thresholds": {
+        "minimum_visible_joint_coverage": 0.95,
+        "max_p95_normalized_error": 0.05,
+        "minimum_visible_side_identity_accuracy": 1.0,
+        "maximum_side_identity_switches": 0,
+      },
+    }
+
+    def result(name: str, p95: float, switches: int = 0):
+      return {
+        "backend": name,
+        "status": "completed",
+        "wallDurationMs": 100,
+        "groundTruthMetrics": {
+          "accuracyClaimEligible": True,
+          "p95NormalizedLabeledPointError": p95,
+          "matchedPointCoverage": 0.98,
+          "visibleSideIdentityAccuracy": 1.0,
+        },
+        "proxyMetrics": {"visibleSideIdentityStability": {"sideSwitchCount": switches}},
+      }
+
+    selection = harness.select_pose_backend([
+      {"backends": [result("hybrid", 0.045), result("rtmpose", 0.035)]}
+    ], manifest)
+    blocked = harness.select_pose_backend([
+      {"backends": [result("hybrid", 0.045), result("rtmpose", 0.035, switches=1)]}
+    ], manifest)
+
+    self.assertEqual(selection["recommendedProductionBackend"], "rtmpose")
+    self.assertIsNone(blocked["recommendedProductionBackend"])
 
 
 if __name__ == "__main__":

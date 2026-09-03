@@ -46,6 +46,7 @@ type AnalysisReviewScreenProps = {
   videoUri: string | null;
   result: VideoAnalysisResult;
   mode?: 'pending' | 'saved';
+  qualityAdvisoryAcknowledged?: boolean;
   onBack?: () => void;
   onDiscarded?: () => void;
   onSaved?: (videoId: string) => void | Promise<void>;
@@ -118,6 +119,7 @@ export default function AnalysisReviewScreen({
   videoUri,
   result,
   mode = 'pending',
+  qualityAdvisoryAcknowledged = false,
   onBack,
   onDiscarded,
   onSaved,
@@ -146,6 +148,7 @@ export default function AnalysisReviewScreen({
   const [wasPlayingBeforeScrub, setWasPlayingBeforeScrub] = useState(false);
   const mediaAvailable = Boolean(videoUri);
   const showQualityWarning = shouldShowQualityAdvisory(qualityPreflight, mode)
+    && !qualityAdvisoryAcknowledged
     && dismissedQualityAdvisoryVideoId !== result.video_id;
 
   const player = useVideoPlayer(videoUri, (videoPlayer) => {
@@ -450,7 +453,7 @@ export default function AnalysisReviewScreen({
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} testID="review-screen">
       <View style={styles.container}>
         <ConfirmationDialog
           visible={showQualityWarning}
@@ -463,6 +466,7 @@ export default function AnalysisReviewScreen({
         />
         <View style={styles.topBar}>
           <Pressable
+            testID="review-back"
             accessibilityRole="button"
             onPress={handleBack}
             disabled={saving || discarding || deletingSavedVideo}
@@ -473,6 +477,7 @@ export default function AnalysisReviewScreen({
           <Text style={styles.title}>{formatFlagLabel(result.exercise)}</Text>
           {isSavedMode ? (
             <Pressable
+              testID="review-delete"
               accessibilityRole="button"
               onPress={() => setShowSavedDeleteSheet(true)}
               disabled={deletingSavedVideo}
@@ -486,6 +491,7 @@ export default function AnalysisReviewScreen({
             </Pressable>
           ) : (
             <Pressable
+              testID="review-save"
               accessibilityRole="button"
               onPress={() => setShowWorkoutDetailsSheet(true)}
               disabled={saving || discarding}

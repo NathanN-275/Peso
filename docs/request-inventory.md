@@ -30,6 +30,9 @@ All FastAPI calls flow through `lib/backendApi.ts`, which adds bearer auth when 
 ## Supabase Client Requests
 
 - Auth session management is centralized in `context/AuthContext.tsx`.
+- Netlify web sign-in, signup, and password reset include a Cloudflare Turnstile token in
+  the Supabase Auth request. Supabase Auth must be configured to require it;
+  the token is single-use and the client never retries the request automatically.
 - Direct profile reads/writes are in `lib/profile.ts`; these depend on profile RLS and must only send profile-owned fields.
 - Profile avatar upload is in `lib/profile.ts`; client validates MIME/size for UX, while storage policies must enforce bucket/folder ownership.
 - Video upload to Supabase Storage is in `lib/videoUpload.ts`; client uploads only under the authenticated user folder, then registers through `POST /videos`.

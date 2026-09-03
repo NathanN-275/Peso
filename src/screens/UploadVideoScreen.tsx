@@ -31,6 +31,10 @@ import {
   isBackendAuthError,
 } from '../../lib/backendAuth';
 import {
+  getVideoSubmissionFailureMessage,
+} from '../../lib/backendErrorPolicy';
+import type { VideoSubmissionFailurePhase } from '../../lib/backendErrorPolicy';
+import {
   cleanupUploadedVideoForAnalysis,
   uploadVideoForAnalysis,
 } from '../../lib/videoUpload';
@@ -75,6 +79,11 @@ type UploadVideoScreenProps = {
   initialVideoSetup?: VideoSetupSelection | null;
   onBack?: () => void;
   onRecordVideoPress?: () => void;
+  onAnalysisQueued?: (activity: {
+    videoId: string;
+    jobId: string | null;
+    status: VideoAnalysisStatus;
+  }) => void;
   onAnalysisSaved?: (videoId: string) => void | Promise<void>;
 };
 
@@ -134,6 +143,7 @@ export default function UploadVideoScreen({
   initialVideoSetup = null,
   onBack,
   onRecordVideoPress,
+  onAnalysisQueued,
   onAnalysisSaved,
 }: UploadVideoScreenProps) {
   // This screen handles selection, upload, queueing, and polling.
@@ -163,6 +173,7 @@ export default function UploadVideoScreen({
   const [quotaWarningMessage, setQuotaWarningMessage] = useState<string | null>(null);
   const [qualityPreflight, setQualityPreflight] = useState<QualityPreflightResult | null>(null);
   const [pendingQualityUpload, setPendingQualityUpload] = useState<UploadVideoForAnalysisResult | null>(null);
+  const [qualityAdvisoryAcknowledged, setQualityAdvisoryAcknowledged] = useState(false);
   const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
   const [displayedVideoSizeBytes, setDisplayedVideoSizeBytes] = useState<number | null>(null);
   const analysisStartInFlightRef = useRef(false);
@@ -252,6 +263,7 @@ export default function UploadVideoScreen({
     setStatusMessage(null);
     setQuotaWarningMessage(null);
     setQualityPreflight(null);
+    setQualityAdvisoryAcknowledged(false);
     rememberPendingQualityUpload(null);
     setDisplayedVideoSizeBytes(
       typeof asset.fileSize === 'number' && !Number.isNaN(asset.fileSize) ? asset.fileSize : null
@@ -292,6 +304,33 @@ export default function UploadVideoScreen({
     }
     setSetupModalVisible(false);
   }, [initialVideoSetup]);
+
+  const handoffToQueuedAnalysis = async (activity: {
+    videoId: string;
+    jobId: string | null;
+    status: VideoAnalysisStatus;
+  }) => {
+    // Keep the successful queue state visible long enough for people to
+    // understand why the app is returning to Home.
+    setUploading(false);
+    setAnalysisRunning(true);
+    setStatusMessage('Upload complete. Taking you back to Home…');
+    await new Promise<void>((resolve) => setTimeout(resolve, 450));
+
+    if (onAnalysisQueued) {
+      try {
+        onAnalysisQueued(activity);
+      } catch (callbackError) {
+        console.warn('Analysis was queued, but the Home handoff failed.', callbackError);
+        setAnalysisRunning(false);
+        setStatusMessage(null);
+      }
+      return;
+    }
+
+    setAnalysisRunning(false);
+    setStatusMessage(null);
+  };
 
   const handleStartAnalysis = async () => {
     // Upload first, then ask the backend to begin analysis.
@@ -338,6 +377,7 @@ export default function UploadVideoScreen({
     analysisRunGenerationRef.current = run.generation;
     activeAnalysisRunRef.current = run;
     let uploadedVideo: UploadVideoForAnalysisResult | null = null;
+    let failurePhase: VideoSubmissionFailurePhase = 'upload';
 
     try {
       // Start with a backend health check so failures are clearer.
@@ -397,6 +437,7 @@ export default function UploadVideoScreen({
       }
 
       if (requiresQualityPreflight(videoSetup)) {
+        failurePhase = 'quality_preflight';
         setStatusMessage('Checking recording quality...');
         const preflight = await runVideoQualityPreflight(
           uploadResult.videoId,
@@ -416,7 +457,7 @@ export default function UploadVideoScreen({
 
         setQualityPreflight(preflight);
         const preflightDecision = getQualityPreflightQueueDecision(preflight, {
-          advisoryOnly: mobileUploadFlow,
+          advisoryOnly: true,
         });
         if (preflightDecision.mustReplaceVideo) {
           setStatusMessage('Cleaning up blocked upload...');
@@ -451,6 +492,7 @@ export default function UploadVideoScreen({
       }
 
       setStatusMessage('Starting analysis...');
+      failurePhase = 'queue_analysis';
       console.log('[analysis] starting backend analysis', uploadResult.videoId);
       const queuedResponse = await triggerVideoAnalysis(
         uploadResult.videoId,
@@ -469,10 +511,17 @@ export default function UploadVideoScreen({
       }
       analysisQueuedForVideoRef.current = uploadResult.videoId;
       activeUploadedVideoRef.current = null;
+      uploadedVideo = null;
       rememberPendingQualityUpload(null);
       setAnalysisVideoId(uploadResult.videoId);
       setAnalysisStatus(queuedResponse.status);
-      setStatusMessage(null);
+      analysisStartInFlightRef.current = false;
+      activeAnalysisRunRef.current = null;
+      await handoffToQueuedAnalysis({
+        videoId: uploadResult.videoId,
+        jobId: queuedResponse.job_id,
+        status: queuedResponse.status,
+      });
     } catch (error) {
       if (!analysisRunIsCurrent(run)) {
         if (uploadedVideo && activeUploadedVideoRef.current?.videoId === uploadedVideo.videoId) {
@@ -489,7 +538,7 @@ export default function UploadVideoScreen({
 
       if (__DEV__) {
         console.warn('[analysis] upload or queue failed', {
-          phase: uploadedVideo ? 'queue_analysis' : 'upload',
+          phase: failurePhase,
           videoId: uploadedVideo?.videoId ?? null,
           error,
         });
@@ -518,7 +567,7 @@ export default function UploadVideoScreen({
         triggerFailedAfterUpload
           ? isBackendAuthError(error)
             ? backendAuthRecoveryMessage()
-            : 'Upload succeeded, but analysis could not start. The upload was cleaned up; please try again.'
+            : getVideoSubmissionFailureMessage(failurePhase, message)
           : message.includes('row-level security policy')
           ? `${message}. Apply the latest videos RLS migration to your Supabase project.`
           : message
@@ -540,6 +589,7 @@ export default function UploadVideoScreen({
     }
 
     setErrorMessage(null);
+    setQualityAdvisoryAcknowledged(true);
     setStatusMessage('Starting analysis with quality warnings...');
     setAnalysisRunning(true);
     analysisStartInFlightRef.current = true;
@@ -582,7 +632,13 @@ export default function UploadVideoScreen({
       rememberPendingQualityUpload(null);
       setAnalysisVideoId(pendingUpload.videoId);
       setAnalysisStatus(queuedResponse.status);
-      setStatusMessage(null);
+      analysisStartInFlightRef.current = false;
+      activeAnalysisRunRef.current = null;
+      await handoffToQueuedAnalysis({
+        videoId: pendingUpload.videoId,
+        jobId: queuedResponse.job_id,
+        status: queuedResponse.status,
+      });
     } catch (error) {
       if (!analysisRunIsCurrent(run)) {
         if (activeUploadedVideoRef.current?.videoId === pendingUpload.videoId) {
@@ -1100,11 +1156,6 @@ export default function UploadVideoScreen({
     : 'Confirm the exercise and camera angle, then select a video from your camera roll.';
   const chooseVideoLabel = isCameraMode ? 'Record Video' : 'Choose Video';
   const changeVideoLabel = isCameraMode ? 'Record Again' : 'Choose Another Video';
-  const qualityPreflightLabel = qualityPreflight?.status === 'blocked'
-    ? 'Recording needs changes'
-    : qualityPreflight?.status === 'warning'
-    ? 'Recording has warnings'
-    : 'Recording quality passed';
   const diagnostics = analysisResult?.diagnostics;
   const videoQualityRows = diagnostics
     ? [
@@ -1127,8 +1178,7 @@ export default function UploadVideoScreen({
     !analysisRunning &&
     !isAnalysisInProgress(analysisStatus) &&
     analysisStatus !== 'completed' &&
-    (mobileUploadFlow || qualityPreflight?.status !== 'blocked') &&
-    (!pendingQualityUpload || mobileUploadFlow);
+    !pendingQualityUpload;
 
   const handleScreenLayout = ({ nativeEvent }: LayoutChangeEvent) => {
     // Track the viewport so the setup modal can fit correctly.
@@ -1160,6 +1210,7 @@ export default function UploadVideoScreen({
     setStatusMessage(null);
     setQuotaWarningMessage(null);
     setQualityPreflight(null);
+    setQualityAdvisoryAcknowledged(false);
     rememberPendingQualityUpload(null);
     setThumbnailUri(null);
     setDisplayedVideoSizeBytes(null);
@@ -1184,6 +1235,7 @@ export default function UploadVideoScreen({
       <AnalysisReviewScreen
         videoUri={selectedVideo.uri}
         result={analysisResult}
+        qualityAdvisoryAcknowledged={qualityAdvisoryAcknowledged}
         onDiscarded={handleReviewDiscarded}
         onSaved={handleAnalysisReviewSaved}
       />
@@ -1215,6 +1267,22 @@ export default function UploadVideoScreen({
           setStatusMessage(null);
         }}
         onCancel={() => setRemovePinsDialogVisible(false)}
+      />
+      <ConfirmationDialog
+        visible={Boolean(pendingQualityUpload && qualityPreflight)}
+        title="Video quality warning"
+        message={qualityPreflight
+          ? `Tracking confidence: ${Math.round(qualityPreflight.overallConfidence * 100)}%. This video may produce less accurate pose and barbell tracking. Continue and review the results carefully, or choose another video.`
+          : ''}
+        confirmLabel="Continue to Analysis"
+        cancelLabel="Choose Another Video"
+        stackActions
+        onConfirm={() => {
+          void handleContinueAfterQualityWarning();
+        }}
+        onCancel={() => {
+          void handlePickVideoPress();
+        }}
       />
       {selectedVideo ? (
         <TrackingPinSetupModal
@@ -1248,6 +1316,7 @@ export default function UploadVideoScreen({
       >
         <Button
           label="Back"
+          testID="upload-back"
           onPress={() => {
             void handleBackPress();
           }}
@@ -1279,7 +1348,7 @@ export default function UploadVideoScreen({
           ) : null}
 
           <SideSquatRecordingGuide
-            variant={mobileUploadFlow ? 'essential' : 'full'}
+            variant="essential"
             setup={videoSetup}
           />
 
@@ -1303,58 +1372,6 @@ export default function UploadVideoScreen({
                   />
                 </View>
               </View>
-            </View>
-          ) : null}
-
-          {isWeb && !mobileUploadFlow && selectedVideo && qualityPreflight ? (
-            <View
-              accessibilityRole="summary"
-              accessibilityLabel={qualityPreflightLabel}
-              style={[
-                styles.qualityCard,
-                qualityPreflight.status === 'blocked'
-                  ? styles.qualityCardBlocked
-                  : qualityPreflight.status === 'warning'
-                  ? styles.qualityCardWarning
-                  : styles.qualityCardPassed,
-              ]}
-            >
-              <View style={styles.qualityCardHeading}>
-                <Ionicons
-                  name={
-                    qualityPreflight.status === 'blocked'
-                      ? 'close-circle'
-                      : qualityPreflight.status === 'warning'
-                      ? 'warning'
-                      : 'checkmark-circle'
-                  }
-                  size={22}
-                  color={
-                    qualityPreflight.status === 'blocked'
-                      ? '#FF8A8A'
-                      : qualityPreflight.status === 'warning'
-                      ? '#FFD166'
-                      : '#79D69E'
-                  }
-                />
-                <Text style={styles.qualityCardTitle}>{qualityPreflightLabel}</Text>
-              </View>
-              <Text style={styles.qualityConfidenceText}>
-                Tracking confidence: {Math.round(qualityPreflight.overallConfidence * 100)}%
-              </Text>
-              {qualityPreflight.userMessages.map((message) => (
-                <Text key={message} style={styles.qualityMessageText}>• {message}</Text>
-              ))}
-              {qualityPreflight.status === 'warning' && pendingQualityUpload ? (
-                <Text style={styles.qualityHelperText}>
-                  You can continue with clearly marked confidence warnings, or choose another recording.
-                </Text>
-              ) : null}
-              {qualityPreflight.status === 'blocked' ? (
-                <Text style={styles.qualityHelperText}>
-                  This upload was removed and will not enter full analysis. Choose a better recording to continue.
-                </Text>
-              ) : null}
             </View>
           ) : null}
 
@@ -1436,15 +1453,6 @@ export default function UploadVideoScreen({
                 variant="secondary"
                 style={styles.primaryAction}
               />
-              {pendingQualityUpload ? (
-                <Button
-                  label="Continue With Warnings"
-                  onPress={() => {
-                    void handleContinueAfterQualityWarning();
-                  }}
-                  style={styles.primaryAction}
-                />
-              ) : null}
               {canStartAnalysis ? (
                 <Button
                   label="Start Analysis"
@@ -1530,6 +1538,7 @@ export default function UploadVideoScreen({
             <View style={styles.actions}>
               <Button
                 label={chooseVideoLabel}
+                testID="upload-choose-video"
                 onPress={sourceMode === 'camera' ? handleRecordVideoPress : handlePickVideoPress}
                 disabled={uploading}
                 variant="secondary"
@@ -1537,6 +1546,7 @@ export default function UploadVideoScreen({
               />
               <Button
                 label={videoSetup ? 'Edit Video Setup' : 'Open Video Setup'}
+                testID="upload-video-setup"
                 onPress={() => setSetupModalVisible(true)}
                 disabled={uploading}
                 variant="secondary"
@@ -1568,6 +1578,7 @@ export default function UploadVideoScreen({
           </View>
           <Button
             label="Start Analysis"
+            testID="upload-start-analysis"
             onPress={() => {
               if (pendingQualityUpload) {
                 void handleContinueAfterQualityWarning();
@@ -1746,56 +1757,6 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontWeight: '600',
     marginTop: 4,
-  },
-  qualityCard: {
-    width: '100%',
-    marginTop: 16,
-    borderRadius: 16,
-    borderWidth: 1,
-    paddingHorizontal: 18,
-    paddingVertical: 16,
-    gap: 8,
-  },
-  qualityCardBlocked: {
-    borderColor: '#8C3D47',
-    backgroundColor: '#211217',
-  },
-  qualityCardWarning: {
-    borderColor: '#7D692F',
-    backgroundColor: '#211D11',
-  },
-  qualityCardPassed: {
-    borderColor: '#356B4D',
-    backgroundColor: '#102018',
-  },
-  qualityCardHeading: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  qualityCardTitle: {
-    flex: 1,
-    color: tokens.colors.textPrimary,
-    fontSize: 16,
-    lineHeight: 22,
-    fontWeight: '700',
-  },
-  qualityConfidenceText: {
-    color: tokens.colors.textPrimary,
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '600',
-  },
-  qualityMessageText: {
-    color: tokens.colors.textMuted,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  qualityHelperText: {
-    color: tokens.colors.textMuted,
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 2,
   },
   thumbnailFrame: {
     width: 88,

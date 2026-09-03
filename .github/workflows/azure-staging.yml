@@ -1,0 +1,178 @@
+name: Publish and deploy Azure staging
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: azure-staging-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_REPOSITORY: ghcr.io/nathann-275/peso-backend
+  AZURE_RESOURCE_GROUP: rg-peso-staging-westus2
+  AZURE_API_NAME: peso-backend-staging
+  AZURE_WORKER_JOB_NAME: peso-analysis-worker-staging
+  AZURE_RESOURCE_API_VERSION: 2025-01-01
+
+jobs:
+  verify:
+    name: Verify release source
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run frontend policy tests
+        run: npm run test:policy
+
+      - name: Typecheck frontend
+        run: npm run typecheck
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run backend tests
+        working-directory: backend
+        env:
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: test-service-role
+          SUPABASE_JWT_SECRET: test-jwt-secret
+          CLEANUP_JOB_TOKEN: test-cleanup-token
+          BACKEND_ALLOW_UNAUTHENTICATED_DEV_CLEANUP: "false"
+        run: python -m unittest discover -s tests
+
+      - name: Build and lint Azure Bicep
+        run: |
+          az bicep install --version v0.46.1
+          az bicep build --file infra/azure/staging/main.bicep --stdout > /dev/null
+
+  publish:
+    name: Publish immutable backend image
+    if: github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.registry.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish backend image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          pull: true
+          tags: |
+            ${{ env.IMAGE_REPOSITORY }}:sha-${{ github.sha }}
+            ${{ env.IMAGE_REPOSITORY }}:main
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Resolve the pushed registry digest
+        id: registry
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_REPOSITORY }}:sha-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          REGISTRY_DIGEST="$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{json .Manifest}}' | jq -r '.digest')"
+          test "${REGISTRY_DIGEST#sha256:}" != "${REGISTRY_DIGEST}"
+          test "${#REGISTRY_DIGEST}" -eq 71
+          echo "digest=${REGISTRY_DIGEST}" >> "${GITHUB_OUTPUT}"
+
+      - name: Require anonymous access to the public image
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_REPOSITORY }}:sha-${{ github.sha }}
+          EXPECTED_DIGEST: ${{ steps.registry.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker logout ghcr.io
+          PUBLIC_DIGEST="$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{json .Manifest}}' | jq -r '.digest')"
+          test "${PUBLIC_DIGEST}" = "${EXPECTED_DIGEST}"
+
+  deploy:
+    name: Deploy immutable digest to Azure staging
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      vars.AZURE_STAGING_DEPLOY_ENABLED == 'true'
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Sign in to Azure with GitHub OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_STAGING_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Update only the API and worker image references
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          IMAGE_DIGEST: ${{ needs.publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          DEPLOY_IMAGE="${IMAGE_REPOSITORY}@${IMAGE_DIGEST}"
+          API_RESOURCE_ID="/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${AZURE_RESOURCE_GROUP}/providers/Microsoft.App/containerApps/${AZURE_API_NAME}"
+          WORKER_RESOURCE_ID="/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${AZURE_RESOURCE_GROUP}/providers/Microsoft.App/jobs/${AZURE_WORKER_JOB_NAME}"
+
+          az resource update \
+            --ids "${WORKER_RESOURCE_ID}" \
+            --api-version "${AZURE_RESOURCE_API_VERSION}" \
+            --set "properties.template.containers[0].image=${DEPLOY_IMAGE}" \
+            --output none
+
+          az resource update \
+            --ids "${API_RESOURCE_ID}" \
+            --api-version "${AZURE_RESOURCE_API_VERSION}" \
+            --set "properties.template.containers[0].image=${DEPLOY_IMAGE}" \
+            --output none
+
+          DEPLOYED_WORKER_IMAGE="$(az resource show --ids "${WORKER_RESOURCE_ID}" --api-version "${AZURE_RESOURCE_API_VERSION}" --query 'properties.template.containers[0].image' --output tsv)"
+          DEPLOYED_API_IMAGE="$(az resource show --ids "${API_RESOURCE_ID}" --api-version "${AZURE_RESOURCE_API_VERSION}" --query 'properties.template.containers[0].image' --output tsv)"
+
+          test "${DEPLOYED_WORKER_IMAGE}" = "${DEPLOY_IMAGE}"
+          test "${DEPLOYED_API_IMAGE}" = "${DEPLOY_IMAGE}"

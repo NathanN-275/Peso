@@ -1,7 +1,14 @@
 {
   "schema_version": 1,
   "allow_backend_selection": false,
-  "backends": ["mediapipe", "rtmpose"],
+  "production_backend": "hybrid",
+  "backends": ["hybrid", "mediapipe", "rtmpose"],
+  "acceptance_thresholds": {
+    "minimum_visible_joint_coverage": 0.95,
+    "max_p95_normalized_error": 0.05,
+    "minimum_visible_side_identity_accuracy": 1.0,
+    "maximum_side_identity_switches": 0
+  },
   "config": {
     "target_fps": 18,
     "max_frame_dimension": 720,

@@ -8,10 +8,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from ..analysis.pipeline import analyze_video
 from ..analysis.side_squat.quality_preflight import (
   QUALITY_PREFLIGHT_MODEL_VERSION,
   QUALITY_PREFLIGHT_THRESHOLD_VERSION,
@@ -27,6 +26,7 @@ from ..services.analyzed_video_exports import (
   playback_storage_path,
 )
 from ..services.analysis_trace import get_analysis_trace_service
+from ..services.analysis_job_repository import AnalysisJobRepository
 from ..services.auth import get_current_user_id
 from ..services.config import get_settings
 from ..services.saved_lift_exports import ARCHIVE_BUCKET, SavedLiftExportService
@@ -41,7 +41,6 @@ from ..services.video_storage_paths import (
   storage_path_belongs_to_user,
 )
 from ..services.video_work_limits import (
-  VideoWorkSlot,
   acquire_video_work_slot_or_429,
   release_video_work_slot,
 )
@@ -78,6 +77,32 @@ class StrictRequestModel(BaseModel):
 class AnalyzeResponse(BaseModel):
   video_id: UUID
   status: str
+  job_id: UUID | None = None
+  stage: Literal["queued", "downloading", "pose", "barbell_tracking", "saving", "ready", "failed"]
+
+
+class AnalysisActivityItemResponse(BaseModel):
+  job_id: UUID
+  video_id: UUID
+  status: Literal["queued", "processing", "ready", "failed"]
+  stage: Literal["queued", "downloading", "pose", "barbell_tracking", "saving", "ready", "failed"]
+  exercise_type: str
+  view_type: str
+  created_at: str
+  updated_at: str
+  expires_at: str | None = None
+  thumbnail_url: str | None = None
+  stage_started_at: str | None = None
+  stage_timestamps: dict[str, str] = Field(default_factory=dict)
+  last_heartbeat_at: str | None = None
+  failure_class: str | None = None
+  recovery_action: Literal["retry", "replace_upload"] | None = None
+
+
+class AnalysisActivityResponse(BaseModel):
+  items: list[AnalysisActivityItemResponse]
+  active_count: int = Field(ge=0)
+  active_limit: int = Field(ge=1)
 
 
 class VideoStatusResponse(BaseModel):
@@ -731,16 +756,6 @@ def _delete_owned_storage_path(storage: StorageService, path: str, user_id: str,
     return False
 
 
-def _run_analysis_job(video_id: str, video_work_slot: VideoWorkSlot | None = None) -> None:
-  # Background tasks run analysis outside the request lifecycle.
-  try:
-    analyze_video(video_id)
-  except Exception:
-    logger.exception("Background analysis failed for video %s", video_id)
-  finally:
-    release_video_work_slot(video_work_slot)
-
-
 def _video_storage_paths(video: dict) -> list[str]:
   return [
     str(video.get("storage_path") or ""),
@@ -975,71 +990,210 @@ def run_quality_preflight(
 @router.post("/analyze/{video_id}", response_model=AnalyzeResponse)
 def queue_analysis(
   video_id: UUID,
-  background_tasks: BackgroundTasks,
   user_id: str = Depends(get_current_user_id),
 ) -> AnalyzeResponse:
-  # Queue analysis only when the video belongs to the current user.
+  # The durable queue owns work after this request returns.
   repository = VideoRepository()
   video_id_str = str(video_id)
   video = repository.require_owned_video(video_id_str, user_id)
   current_status = video["status"]
+  allow_completed = False
 
   if current_status == "completed":
     analysis = repository.get_analysis_result(video_id_str)
 
-    if not analysis_is_current(analysis):
-      _require_current_quality_preflight(video)
-      playback_path = require_user_storage_path(_playback_storage_path(video), user_id, "playback_path")
-      StorageService().validate_video_object(playback_path)
-      _enforce_analysis_queue_limit(repository, user_id)
-      video_work_slot = acquire_video_work_slot_or_429("analysis", user_id=user_id, video_id=video_id_str)
-      try:
-        repository.update_video(video_id_str, {"status": "queued"})
-      except Exception:
-        release_video_work_slot(video_work_slot)
-        raise
-      background_tasks.add_task(_run_analysis_job, video_id_str, video_work_slot)
-      return AnalyzeResponse(video_id=video_id, status="queued")
+    if analysis_is_current(analysis):
+      return AnalyzeResponse(video_id=video_id, status="completed", stage="ready")
+    allow_completed = True
 
-  if current_status in IDEMPOTENT_ANALYSIS_STATUSES:
-    return AnalyzeResponse(video_id=video_id, status=current_status)
-
-  if current_status not in QUEUEABLE_ANALYSIS_STATUSES:
+  if current_status not in IDEMPOTENT_ANALYSIS_STATUSES and current_status not in QUEUEABLE_ANALYSIS_STATUSES:
     raise HTTPException(
       status_code=status.HTTP_409_CONFLICT,
       detail=f"Video cannot be queued for analysis from status '{current_status}'.",
     )
 
-  _require_current_quality_preflight(video)
+  is_existing_job = current_status in {"queued", "processing"}
+  if not is_existing_job:
+    _require_current_quality_preflight(video)
 
-  playback_path = require_user_storage_path(_playback_storage_path(video), user_id, "playback_path")
-  StorageService().validate_video_object(playback_path)
-  _enforce_analysis_queue_limit(repository, user_id)
-  video_work_slot = acquire_video_work_slot_or_429("analysis", user_id=user_id, video_id=video_id_str)
+    playback_path = require_user_storage_path(_playback_storage_path(video), user_id, "playback_path")
+    StorageService().validate_video_object(playback_path)
+    _enforce_analysis_queue_limit(repository, user_id)
+
   try:
-    queued_video = repository.queue_owned_video_if_status(
-      video_id_str,
-      user_id,
-      QUEUEABLE_ANALYSIS_STATUSES,
+    jobs = AnalysisJobRepository()
+    job = jobs.enqueue(video_id_str, allow_completed=allow_completed)
+  except Exception as error:
+    logger.exception("Durable analysis queue is unavailable for video %s.", video_id_str)
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Analysis queue is unavailable. Apply the durable analysis jobs migration and start the worker.",
+    ) from error
+
+  public_status = str(job.get("status") or "queued")
+  if public_status == "retry_wait":
+    public_status = "queued"
+  return AnalyzeResponse(
+    video_id=video_id,
+    job_id=job.get("id"),
+    status=public_status,
+    stage=(
+      str(job.get("stage"))
+      if str(job.get("stage") or "") in {
+        "queued", "downloading", "pose", "barbell_tracking", "saving", "ready", "failed"
+      }
+      else "queued"
+    ),
+  )
+
+
+def _analysis_activity_status(video: dict, job: dict) -> str | None:
+  video_status = str(video.get("status") or "")
+  job_status = str(job.get("status") or "")
+  if video_status == "completed" or job_status == "completed":
+    return "ready"
+  if video_status == "failed" or job_status == "failed":
+    return "failed"
+  if job_status in {"queued", "retry_wait"}:
+    return "queued"
+  if job_status == "processing":
+    return "processing"
+  return None
+
+
+def _analysis_activity_stage(video: dict, job: dict) -> str:
+  public_status = _analysis_activity_status(video, job)
+  if public_status == "ready":
+    return "ready"
+  if public_status == "failed":
+    return "failed"
+  if public_status == "queued":
+    return "queued"
+  persisted = str(job.get("stage") or "")
+  if persisted in {"downloading", "pose", "barbell_tracking", "saving"}:
+    return persisted
+  return "downloading"
+
+
+def _public_analysis_failure_class(job: dict) -> str | None:
+  raw_failure = str(job.get("failure_class") or "")
+  normalized_error = str(job.get("last_error") or "").lower()
+  if any(
+    marker in normalized_error
+    for marker in (
+      "unable to open uploaded video",
+      "invalid video",
+      "unsupported video",
+      "valid video stream",
+      "contents do not match the selected video format",
+      "unable to validate uploaded video contents",
     )
-  except Exception:
-    release_video_work_slot(video_work_slot)
-    raise
+  ):
+    return "invalid_video"
 
-  if queued_video:
-    background_tasks.add_task(_run_analysis_job, video_id_str, video_work_slot)
-    return AnalyzeResponse(video_id=video_id, status=queued_video["status"])
+  allowed_failures = {
+    "analysis_timeout",
+    "analysis_runtime",
+    "invalid_video",
+    "transient_infrastructure",
+    "worker_lease_expired",
+    "worker_process_exit",
+  }
+  if raw_failure in allowed_failures:
+    return raw_failure
+  return "unknown" if raw_failure else None
 
-  release_video_work_slot(video_work_slot)
-  latest_video = repository.require_owned_video(video_id_str, user_id)
-  latest_status = latest_video["status"]
 
-  if latest_status in IDEMPOTENT_ANALYSIS_STATUSES:
-    return AnalyzeResponse(video_id=video_id, status=latest_status)
+def _analysis_recovery_action(video: dict, job: dict) -> str | None:
+  if _analysis_activity_status(video, job) != "failed":
+    return None
 
-  raise HTTPException(
-    status_code=status.HTTP_409_CONFLICT,
-    detail=f"Video could not be queued because its status is now '{latest_status}'.",
+  retryable_failures = {
+    "analysis_timeout",
+    "transient_infrastructure",
+    "worker_lease_expired",
+    "worker_process_exit",
+  }
+  if _public_analysis_failure_class(job) in retryable_failures:
+    return "retry"
+  return "replace_upload"
+
+
+@router.get("/videos/analysis-activity", response_model=AnalysisActivityResponse)
+def get_analysis_activity(
+  user_id: str = Depends(get_current_user_id),
+) -> AnalysisActivityResponse:
+  """Return the durable, owner-scoped work that still needs user attention."""
+  repository = VideoRepository()
+  jobs = AnalysisJobRepository()
+  storage = StorageService()
+  settings = get_settings()
+
+  try:
+    videos = repository.list_analysis_activity_videos(user_id)
+    jobs_by_video_id = jobs.latest_for_videos([str(video["id"]) for video in videos])
+    active_count = repository.count_user_in_progress_videos(user_id)
+  except Exception as error:
+    logger.exception("Analysis activity queue schema is unavailable for user %s.", user_id)
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Analysis activity is temporarily unavailable. The queue schema is not ready.",
+    ) from error
+
+  if not isinstance(active_count, int):
+    active_count = 0
+  items: list[AnalysisActivityItemResponse] = []
+
+  for video in videos:
+    video_id = str(video["id"])
+    job = jobs_by_video_id.get(video_id)
+    if not job:
+      continue
+    public_status = _analysis_activity_status(video, job)
+    if public_status is None:
+      continue
+
+    thumbnail_url = None
+    if video.get("thumbnail_path"):
+      try:
+        _, thumbnail_url, _ = _create_owned_signed_url(
+          storage,
+          str(video["thumbnail_path"]),
+          user_id,
+          "thumbnail_path",
+        )
+      except Exception as error:
+        logger.warning("Unable to sign analysis activity thumbnail for video %s: %s", video_id, error)
+
+    items.append(
+      AnalysisActivityItemResponse(
+        job_id=job["id"],
+        video_id=video_id,
+        status=public_status,
+        stage=_analysis_activity_stage(video, job),
+        exercise_type=str(video.get("exercise_type") or "unknown"),
+        view_type=str(video.get("view_type") or "unknown"),
+        created_at=str(job.get("created_at") or video.get("created_at") or ""),
+        updated_at=str(job.get("updated_at") or video.get("updated_at") or ""),
+        expires_at=video.get("expires_at"),
+        thumbnail_url=thumbnail_url,
+        stage_started_at=(str(job["stage_started_at"]) if job.get("stage_started_at") else None),
+        stage_timestamps={
+          str(stage): str(timestamp)
+          for stage, timestamp in (job.get("stage_timestamps") or {}).items()
+        },
+        last_heartbeat_at=(
+          str(job["last_heartbeat_at"]) if job.get("last_heartbeat_at") else None
+        ),
+        failure_class=_public_analysis_failure_class(job),
+        recovery_action=_analysis_recovery_action(video, job),
+      )
+    )
+
+  return AnalysisActivityResponse(
+    items=items,
+    active_count=active_count,
+    active_limit=settings.max_user_in_progress_videos,
   )
 
 
@@ -1370,8 +1524,18 @@ def discard_video(
 ) -> DiscardVideoResponse:
   # Discard removes storage objects and keeps a discarded metadata row.
   repository = VideoRepository()
+  jobs = AnalysisJobRepository()
   storage = StorageService()
   video = repository.require_owned_video(str(video_id), user_id)
+
+  try:
+    jobs.cancel_for_video(str(video_id))
+  except Exception as error:
+    logger.exception("Unable to cancel analysis job before discarding video %s.", video_id)
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Unable to stop analysis safely. Please try again.",
+    ) from error
 
   paths = [
     str(video.get("storage_path") or ""),

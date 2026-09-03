@@ -20,6 +20,8 @@ type InputProps = {
   returnKeyType?: TextInputProps['returnKeyType'];
   onSubmitEditing?: TextInputProps['onSubmitEditing'];
   showPasswordToggle?: boolean;
+  testID?: string;
+  accessibilityLabel?: string;
 };
 
 export default function Input({
@@ -39,6 +41,8 @@ export default function Input({
   returnKeyType,
   onSubmitEditing,
   showPasswordToggle = false,
+  testID,
+  accessibilityLabel,
 }: InputProps) {
   const [passwordVisible, setPasswordVisible] = useState(false);
   const hasPasswordToggle = secureTextEntry === true && showPasswordToggle;
@@ -56,6 +60,8 @@ export default function Input({
       ) : null}
       <View style={styles.inputWrap}>
         <TextInput
+          testID={testID}
+          accessibilityLabel={accessibilityLabel ?? label}
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}

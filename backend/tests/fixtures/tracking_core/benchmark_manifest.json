@@ -8,6 +8,8 @@
     "pin_assisted_collar_max_px": 18,
     "automatic_collar_p95_px": 16,
     "automatic_collar_max_px": 26,
+    "minimum_active_rep_coverage": 0.9,
+    "maximum_latency_ratio": 1.1,
     "hardware_identity_switches": 0
   },
   "required_clip_categories": [

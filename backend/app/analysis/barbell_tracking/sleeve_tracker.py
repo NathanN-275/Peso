@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import math
+import time
 from bisect import bisect_left
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 from .candidate import Candidate
@@ -180,6 +182,8 @@ def track_unloaded_sleeve_end(
   selected_side: str | None,
   rep_windows: list[dict[str, Any]] | None,
   include_rejected_diagnostics: bool = False,
+  target_fps: float = BARBELL_TRACK_TARGET_FPS,
+  frame_observer: Callable[[int, Any], None] | None = None,
 ) -> dict[str, Any] | None:
   import cv2
 
@@ -194,7 +198,8 @@ def track_unloaded_sleeve_end(
 
   fps = capture.get(cv2.CAP_PROP_FPS) or 0.0
   pose_frame_step = max(int(frame_step or 1), 1)
-  target_frame_step = max(int(round(fps / BARBELL_TRACK_TARGET_FPS)), 1) if fps > 0 else pose_frame_step
+  effective_target_fps = min(max(float(target_fps), 1.0), BARBELL_TRACK_TARGET_FPS)
+  target_frame_step = max(int(round(fps / effective_target_fps)), 1) if fps > 0 else pose_frame_step
   tracking_frame_step = pose_frame_step * max(int(round(target_frame_step / pose_frame_step)), 1)
   pose_by_source_index = {
     int(frame.get("source_frame_index", -1)): frame
@@ -202,6 +207,8 @@ def track_unloaded_sleeve_end(
     if frame.get("source_frame_index") is not None
   }
   pose_source_indices = sorted(pose_by_source_index)
+  tracking_source_index_set = set(pose_source_indices)
+  use_pose_timestamp_schedule = effective_target_fps < BARBELL_TRACK_TARGET_FPS
   if not pose_by_source_index:
     capture.release()
     return None
@@ -231,20 +238,30 @@ def track_unloaded_sleeve_end(
   path_drift_rejection_count = 0
   anchor_drift_rejection_count = 0
   descriptor_bridge_count = 0
+  local_tracking_duration_seconds = 0.0
   reused_nearest_pose_frame_count = 0
   normalized_windows = sorted(rep_windows or [], key=lambda window: float(window.get("start", 0.0)))
   frame_index = 0
 
   try:
     while capture.isOpened():
-      success, frame = capture.read()
-      if not success:
-        break
-      if frame_index % tracking_frame_step != 0:
+      should_sample = (
+        frame_index in tracking_source_index_set
+        if use_pose_timestamp_schedule
+        else frame_index % tracking_frame_step == 0
+      )
+      if not should_sample:
+        success = capture.grab()
+        if not success:
+          break
         frame_index += 1
         continue
 
-      timestamp = frame_index / fps if fps > 0 else len(samples) / BARBELL_TRACK_TARGET_FPS
+      success, frame = capture.read()
+      if not success:
+        break
+
+      timestamp = frame_index / fps if fps > 0 else len(samples) / effective_target_fps
       current_rep = next(
         (
           window
@@ -279,6 +296,9 @@ def track_unloaded_sleeve_end(
         sample_shoulders.append(None)
         frame_index += 1
         continue
+
+      if frame_observer is not None:
+        frame_observer(frame_index, frame)
 
       pose_frame = pose_by_source_index.get(frame_index)
       if pose_frame is None:
@@ -357,6 +377,7 @@ def track_unloaded_sleeve_end(
           > max(34.0, max_dimension * 0.055)
         ):
           local_shoulder = (float(previous_shoulder_x), float(previous_shoulder_y))
+        local_tracking_started = time.perf_counter()
         next_lock, local_stats = _track_local_patch(
           cv2,
           previous_gray,
@@ -366,6 +387,7 @@ def track_unloaded_sleeve_end(
           width=width,
           height=height,
         )
+        local_tracking_duration_seconds += time.perf_counter() - local_tracking_started
         if next_lock is not None:
           local_point = next_lock["final_bar_point"]
           local_reference = (
@@ -837,5 +859,6 @@ def track_unloaded_sleeve_end(
         "source": "processed_frame",
       },
       "failure_reason": None,
+      "local_tracking_duration_ms": int(local_tracking_duration_seconds * 1000),
     },
   }

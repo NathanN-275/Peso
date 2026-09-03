@@ -10,6 +10,7 @@ type ConfirmationDialogProps = {
   cancelLabel?: string;
   showCancel?: boolean;
   destructive?: boolean;
+  stackActions?: boolean;
   checkboxLabel?: string;
   checkboxValue?: boolean;
   onCheckboxChange?: (value: boolean) => void;
@@ -25,6 +26,7 @@ export default function ConfirmationDialog({
   cancelLabel = 'Cancel',
   showCancel = true,
   destructive = false,
+  stackActions = false,
   checkboxLabel,
   checkboxValue = false,
   onCheckboxChange,
@@ -59,16 +61,24 @@ export default function ConfirmationDialog({
             <Text style={styles.checkboxLabel}>{checkboxLabel}</Text>
           </Pressable>
         ) : null}
-        <View style={styles.actions}>
+        <View style={[styles.actions, stackActions && styles.stackedActions]}>
           {showCancel ? (
-            <Pressable accessibilityRole="button" onPress={onCancel} style={styles.cancelButton}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={onCancel}
+              style={[styles.cancelButton, stackActions && styles.stackedAction]}
+            >
               <Text style={styles.cancelText}>{cancelLabel}</Text>
             </Pressable>
           ) : null}
           <Pressable
             accessibilityRole="button"
             onPress={onConfirm}
-            style={[styles.confirmButton, destructive && styles.destructiveButton]}
+            style={[
+              styles.confirmButton,
+              destructive && styles.destructiveButton,
+              stackActions && styles.stackedAction,
+            ]}
           >
             <Text style={styles.confirmText}>{confirmLabel}</Text>
           </Pressable>
@@ -138,6 +148,11 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     gap: 10,
   },
+  stackedActions: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+  },
+  stackedAction: { width: '100%' },
   cancelButton: {
     minHeight: 42,
     minWidth: 84,

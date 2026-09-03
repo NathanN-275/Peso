@@ -109,10 +109,21 @@ Current infrastructure work is focused on an isolated, non-production Azure Stud
 1. The user records or uploads a lifting video.
 2. The app stores the video through Supabase.
 3. The backend receives an analysis request.
-4. The backend downloads the video and processes it frame by frame.
-5. Pose and barbell tracking are used to estimate movement quality.
-6. Rep summaries, diagnostics, overlays, and coaching feedback are saved.
-7. The Web App or mobile app displays the analyzed result to the user.
+4. A durable PostgreSQL job survives client and service restarts.
+5. The active job worker downloads the video and processes it frame by frame.
+6. Pose and barbell tracking are used to estimate movement quality.
+7. Rep summaries, diagnostics, overlays, and coaching feedback are saved.
+8. The Web App or mobile app displays the analyzed result to the user.
+
+## Product and design documents
+
+These documents describe the current beta, not the original class proposal:
+
+* [Product Requirements Document](docs/product/PRD.md) - user, scope, requirements, and success measures
+* [Technical Design Document](docs/product/TDD.md) - architecture, data flow, security, and testing strategy
+* [Production Readiness Review](docs/product/PRR.md) - release checklist, evidence, and known limits
+
+The [GitHub Pages project log](https://nathann-275.github.io/Peso/) presents the product and architecture visually.
 
 ## Local development
 
@@ -313,13 +324,15 @@ Build both surfaces and preview the combined Netlify output locally:
 
 ```bash
 npm run web:build
+npm run web:budget
 npm run web:preview
 ```
 
 The build writes the static Astro pages to `dist/` and the Expo single-page app
 to `dist/app/`. `netlify.toml` serves existing marketing files first and rewrites
-only unknown `/app/*` paths to `/app/index.html`. Demo Analysis remains a
-browser-local simulation. Peso Account authentication, the shared Saved Lift
+only unknown `/app/*` paths to `/app/index.html`. The authenticated Web App uses
+durable real analysis keyed by `videoId`; fixture analysis is not part of the
+beta. Peso Account authentication, Analysis Activity, the shared Saved Lift
 Library, deletion, and export jobs use the authenticated backend.
 
 The website stays on Netlify and continues using the current non-Azure backend.
@@ -341,6 +354,7 @@ Main endpoints:
 
 * `POST /analyze/{video_id}` — queues analysis for an uploaded video
 * `GET /videos/{video_id}/status` — checks video processing status
+* `GET /videos/analysis-activity` — returns owner-scoped durable queue activity
 * `GET /analysis/{video_id}` — returns the latest analysis result
 * `POST /videos/{video_id}/save` — saves a video for later review
 * `POST /videos/{video_id}/discard` — discards a video

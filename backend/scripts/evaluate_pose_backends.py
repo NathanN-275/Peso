@@ -16,7 +16,7 @@ from app.analysis.evaluation.pose_backend_metrics import evaluate_pose_result
 from app.analysis.pose_estimator import PoseEstimator, PoseEstimatorConfig
 
 
-SUPPORTED_BACKENDS = ("mediapipe", "rtmpose")
+SUPPORTED_BACKENDS = ("hybrid", "mediapipe", "rtmpose")
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -49,6 +49,14 @@ def _compatibility_payload(success: bool) -> dict[str, Any]:
   }
 
 
+def _backend_versions(backend: str) -> dict[str, str | None]:
+  return {
+    "mediapipe": _package_version("mediapipe") if backend in {"mediapipe", "hybrid"} else None,
+    "rtmlib": _package_version("rtmlib") if backend in {"rtmpose", "hybrid"} else None,
+    "onnxruntime": _package_version("onnxruntime") if backend in {"rtmpose", "hybrid"} else None,
+  }
+
+
 def _worker(args: argparse.Namespace) -> int:
   annotations = _load_json(args.annotations) if args.annotations else None
   config = PoseEstimatorConfig(
@@ -76,11 +84,7 @@ def _worker(args: argparse.Namespace) -> int:
     result = {
       "status": "completed",
       "backend": args.worker_backend,
-      "backendVersion": (
-        _package_version("mediapipe")
-        if args.worker_backend == "mediapipe"
-        else _package_version("rtmlib")
-      ),
+      "backendVersions": _backend_versions(args.worker_backend),
       "landmarkModel": estimation.get("landmark_model"),
       "device": "cpu",
       "backendSelectionReason": "benchmark_requested_backend",
@@ -104,11 +108,7 @@ def _worker(args: argparse.Namespace) -> int:
     result = {
       "status": "failed",
       "backend": args.worker_backend,
-      "backendVersion": (
-        _package_version("mediapipe")
-        if args.worker_backend == "mediapipe"
-        else _package_version("rtmlib")
-      ),
+      "backendVersions": _backend_versions(args.worker_backend),
       "device": "cpu",
       "backendSelectionReason": "benchmark_requested_backend",
       "fallbackEvents": [],
@@ -240,35 +240,107 @@ def _run_manifest(manifest_path: Path) -> dict[str, Any]:
       "backends": backend_results,
     })
 
-  completed_results = [
-    backend
-    for case in results
-    for backend in case["backends"]
-    if backend.get("status") == "completed"
-  ]
-  accuracy_eligible = bool(completed_results) and all(
-    backend.get("groundTruthMetrics", {}).get("accuracyClaimEligible") is True
-    for backend in completed_results
-  )
-  selection_allowed = manifest.get("allow_backend_selection") is True
+  selection = select_pose_backend(results, manifest)
   return {
     "schemaVersion": 1,
     "manifest": manifest_path.name,
     "generatedAtUnixMs": int(time.time() * 1000),
     "config": config,
     "results": results,
-    "selection": {
-      "status": "evidence_ready_for_review" if selection_allowed and accuracy_eligible else "not_selected",
-      "reason": (
-        "manual_review_required"
-        if selection_allowed and accuracy_eligible
-        else "manifest_disallows_automatic_selection"
-        if not selection_allowed
-        else "dense_ground_truth_requirements_not_met"
-      ),
-      "productionBackend": None,
-      "note": "This harness records evidence but never silently changes the production backend.",
-    },
+    "selection": selection,
+  }
+
+
+def select_pose_backend(results: list[dict[str, Any]], manifest: dict[str, Any]) -> dict[str, Any]:
+  thresholds = manifest.get("acceptance_thresholds") or {}
+  backend_names = list(manifest.get("backends") or [])
+  profiles: dict[str, dict[str, Any]] = {}
+  for backend_name in backend_names:
+    samples = [
+      backend
+      for case in results
+      for backend in case.get("backends") or []
+      if backend.get("backend") == backend_name
+    ]
+    p95_values = [
+      backend.get("groundTruthMetrics", {}).get("p95NormalizedLabeledPointError")
+      for backend in samples
+    ]
+    coverages = [
+      backend.get("groundTruthMetrics", {}).get("matchedPointCoverage")
+      for backend in samples
+    ]
+    identity_accuracies = [
+      backend.get("groundTruthMetrics", {}).get("visibleSideIdentityAccuracy")
+      for backend in samples
+    ]
+    side_switches = sum(
+      int(backend.get("proxyMetrics", {}).get("visibleSideIdentityStability", {}).get("sideSwitchCount") or 0)
+      for backend in samples
+    )
+    failures: list[str] = []
+    if len(samples) != len(results) or any(sample.get("status") != "completed" for sample in samples):
+      failures.append("backend did not complete every case")
+    if any(sample.get("groundTruthMetrics", {}).get("accuracyClaimEligible") is not True for sample in samples):
+      failures.append("dense ground truth is incomplete")
+    if not p95_values or any(value is None for value in p95_values):
+      failures.append("p95 labeled-point error is missing")
+    elif max(float(value) for value in p95_values) > float(thresholds.get("max_p95_normalized_error", 0.05)):
+      failures.append("p95 labeled-point error exceeds threshold")
+    if not coverages or any(value is None for value in coverages):
+      failures.append("visible-joint coverage is missing")
+    elif min(float(value) for value in coverages) < float(thresholds.get("minimum_visible_joint_coverage", 0.95)):
+      failures.append("visible-joint coverage is below threshold")
+    if not identity_accuracies or any(value is None for value in identity_accuracies):
+      failures.append("visible-side identity accuracy is missing")
+    elif min(float(value) for value in identity_accuracies) < float(thresholds.get("minimum_visible_side_identity_accuracy", 1.0)):
+      failures.append("visible-side identity accuracy is below threshold")
+    if side_switches > int(thresholds.get("maximum_side_identity_switches", 0)):
+      failures.append("side identity switched during a clip")
+    profiles[backend_name] = {
+      "passed": not failures,
+      "failures": failures,
+      "worstP95NormalizedLabeledPointError": max((float(value) for value in p95_values if value is not None), default=None),
+      "minimumMatchedPointCoverage": min((float(value) for value in coverages if value is not None), default=None),
+      "minimumVisibleSideIdentityAccuracy": min((float(value) for value in identity_accuracies if value is not None), default=None),
+      "sideIdentitySwitchCount": side_switches,
+      "wallDurationMs": sum(int(sample.get("wallDurationMs") or 0) for sample in samples),
+    }
+
+  production_backend = str(manifest.get("production_backend") or "hybrid")
+  baseline = profiles.get(production_backend)
+  candidates = [
+    (name, profile)
+    for name, profile in profiles.items()
+    if name != production_backend and profile["passed"]
+  ]
+  improved = [
+    (name, profile)
+    for name, profile in candidates
+    if baseline
+    and baseline.get("worstP95NormalizedLabeledPointError") is not None
+    and profile.get("worstP95NormalizedLabeledPointError") is not None
+    and float(profile["worstP95NormalizedLabeledPointError"]) < float(baseline["worstP95NormalizedLabeledPointError"])
+  ]
+  recommended = min(
+    improved,
+    key=lambda item: (float(item[1]["worstP95NormalizedLabeledPointError"]), int(item[1]["wallDurationMs"])),
+    default=None,
+  )
+  selection_allowed = manifest.get("allow_backend_selection") is True
+  return {
+    "status": "evidence_ready_for_review" if selection_allowed and recommended else "not_selected",
+    "reason": (
+      "candidate_improves_p95_and_passes_identity_gates"
+      if selection_allowed and recommended
+      else "manifest_disallows_backend_selection"
+      if not selection_allowed
+      else "no_candidate_improved_on_production_backend"
+    ),
+    "productionBackend": production_backend,
+    "recommendedProductionBackend": recommended[0] if selection_allowed and recommended else None,
+    "profiles": profiles,
+    "note": "This harness recommends evidence for review but never changes production configuration.",
   }
 
 

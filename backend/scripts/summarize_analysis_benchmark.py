@@ -24,6 +24,8 @@ def _summarize_results(manifest: dict[str, Any], results_dir: Path) -> dict[str,
   failures: list[str] = []
   payload_ready_ms: list[int] = []
   stage_timings: dict[str, list[int]] = {}
+  require_accuracy_gates = bool(manifest.get("require_accuracy_gates"))
+  ui_ready_delays_ms: list[int] = []
 
   for case in manifest["cases"]:
     result_path = results_dir / f"{case['id']}.json"
@@ -31,6 +33,10 @@ def _summarize_results(manifest: dict[str, Any], results_dir: Path) -> dict[str,
       missing.append(case["id"])
       continue
     result = _load_json(result_path)
+    if require_accuracy_gates:
+      gate_evidence = result.get("benchmark_gates") or {}
+      if gate_evidence.get("passed") is not True:
+        failures.append(f"{case['id']}: reviewed accuracy gates did not pass")
     if case["expected_rep_count"] is not None and result.get("rep_count") != case["expected_rep_count"]:
       failures.append(f"{case['id']}: expected {case['expected_rep_count']} reps, got {result.get('rep_count')}")
     timings = result.get("analysis_stage_timings_ms") or {}
@@ -42,6 +48,11 @@ def _summarize_results(manifest: dict[str, Any], results_dir: Path) -> dict[str,
     for stage, duration in timings.items():
       if isinstance(duration, int):
         stage_timings.setdefault(stage, []).append(duration)
+    ui_ready_delay = result.get("ui_ready_delay_ms")
+    if isinstance(ui_ready_delay, int):
+      ui_ready_delays_ms.append(ui_ready_delay)
+    elif manifest.get("require_ui_ready_delay"):
+      failures.append(f"{case['id']}: missing ui_ready_delay_ms")
 
   summary: dict[str, Any] = {
     "missing_cases": missing,
@@ -51,7 +62,13 @@ def _summarize_results(manifest: dict[str, Any], results_dir: Path) -> dict[str,
     "payload_ready_p95_ms": _percentile(payload_ready_ms, 95),
     "stage_p50_ms": {stage: _percentile(values, 50) for stage, values in stage_timings.items()},
     "stage_p95_ms": {stage: _percentile(values, 95) for stage, values in stage_timings.items()},
+    "ui_ready_delay_p95_ms": _percentile(ui_ready_delays_ms, 95),
   }
+  ui_budget = int(manifest.get("max_ui_ready_delay_ms") or 4000)
+  if summary["ui_ready_delay_p95_ms"] is not None and summary["ui_ready_delay_p95_ms"] > ui_budget:
+    failures.append(
+      f"UI ready delay p95 {summary['ui_ready_delay_p95_ms']}ms exceeds {ui_budget}ms"
+    )
   summary["passed"] = (
     not missing
     and not failures
@@ -96,12 +113,12 @@ def main() -> int:
   expected_profile_ids = [profile["id"] for profile in manifest.get("pose_profiles") or []]
   missing_profiles = [profile_id for profile_id in expected_profile_ids if profile_id not in summaries]
   eligible = [
-    (profile_id, summary)
-    for profile_id, summary in summaries.items()
-    if summary["passed"]
+    (profile_id, summaries[profile_id])
+    for profile_id in expected_profile_ids
+    if profile_id in summaries and summaries[profile_id]["passed"]
   ]
   recommended_profile = (
-    min(eligible, key=lambda item: item[1]["payload_ready_p95_ms"])[0]
+    eligible[0][0]
     if eligible and not missing_profiles
     else None
   )

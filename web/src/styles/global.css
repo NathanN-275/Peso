@@ -22,7 +22,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .skip-link { position: fixed; left: 16px; top: -64px; z-index: 100; background: white; color: #07090d; padding: 12px 16px; border-radius: 8px; font-weight: 700; }
 .skip-link:focus { top: 16px; }
 .page-shell { overflow: clip; }
-.site-header { width: min(calc(100% - 48px), var(--max)); min-height: 92px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; position: relative; z-index: 10; }
+.site-header { width: min(calc(100% - 48px), var(--max)); min-height: 92px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; position: relative; z-index: 10; border-bottom: 1px solid var(--line); }
 .site-header--compact { border-bottom: 1px solid var(--line); }
 .site-header nav, .site-footer nav { display: flex; align-items: center; gap: 28px; }
 .wordmark { width: 116px; display: block; }
@@ -63,7 +63,7 @@ h3 { font-size: 20px; }
 .result-card strong { margin-top: 8px; font-size: 18px; }
 .result-card small { margin-top: 3px; color: var(--muted); font-size: 10px; line-height: 1.4; }
 
-.demo-section, .feedback-section, .history-section { padding: 128px 0; border-top: 1px solid rgba(35,45,61,.66); }
+.demo-section, .coaching-proof-section, .feedback-section, .history-section { padding: 128px 0; border-top: 1px solid rgba(35,45,61,.66); }
 .section-heading { max-width: 560px; }
 .section-title { color: var(--blue); font-size: clamp(38px, 4.7vw, 62px); }
 .section-subtitle { margin: 16px 0 0; color: var(--text); font-size: clamp(24px, 2.8vw, 36px); font-weight: 700; letter-spacing: -.025em; line-height: 1.15; text-wrap: balance; }
@@ -86,6 +86,17 @@ h3 { font-size: 20px; }
 .step-number { color: #568dff; font-family: "Archivo Black"; font-size: 28px; }
 .workflow-grid h3 { margin-top: 72px; }
 .workflow-grid p, .feedback-grid p { color: var(--muted); line-height: 1.6; font-size: 14px; }
+
+.coaching-proof-card { padding: 22px; border: 1px solid #315083; border-radius: 20px; background: linear-gradient(145deg, rgba(18,31,53,.96), rgba(10,14,21,.96)); box-shadow: 0 30px 70px rgba(0,0,0,.3); }
+.coaching-proof-media { display: grid; grid-template-columns: 116px 1fr; gap: 20px; align-items: center; }
+.coaching-proof-media img { width: 116px; height: 176px; border: 1px solid #38517a; border-radius: 14px; object-fit: cover; object-position: top; }
+.coaching-proof-media strong { display: block; margin: 10px 0; font-size: 20px; line-height: 1.25; }
+.coaching-proof-media p:last-child { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.coaching-flow { margin: 22px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.coaching-flow li { padding: 15px 16px; border: 1px solid var(--line); border-radius: 13px; background: rgba(7,10,15,.62); }
+.coaching-flow span, .coaching-flow strong { display: block; }
+.coaching-flow span { color: #84adff; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.coaching-flow strong { margin-top: 6px; font-size: 14px; line-height: 1.45; }
 
 .feedback-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .feedback-grid article { min-height: 190px; padding: 24px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
@@ -153,11 +164,13 @@ h3 { font-size: 20px; }
   .result-stack { gap: 8px; }
   .result-card { padding: 12px; }
   .result-card strong { font-size: 15px; }
-  .demo-section, .feedback-section, .history-section { padding: 88px 0; }
+  .demo-section, .coaching-proof-section, .feedback-section, .history-section { padding: 88px 0; }
   .demo-stage { grid-template-columns: minmax(190px, 1fr) 130px; gap: 10px; }
   .demo-readout { padding: 14px; }
   .workflow-section { padding: 88px 16px; }
   .feedback-grid { grid-template-columns: 1fr; }
+  .coaching-proof-media { grid-template-columns: 92px 1fr; gap: 14px; }
+  .coaching-proof-media img { width: 92px; height: 142px; }
   .lift-card--featured { translate: 0; }
   .final-cta { width: calc(100% - 32px); min-height: 460px; margin-bottom: 80px; padding: 54px 22px; }
   .site-footer { width: calc(100% - 32px); grid-template-columns: 1fr; }

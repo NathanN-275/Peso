@@ -1,5 +1,19 @@
 # Peso domain glossary
 
+## Product document terms
+
+**Product Requirements Document (PRD)**
+
+The current product contract: users, scope, requirements, success measures, and release direction.
+
+**Technical Design Document (TDD)**
+
+The current engineering blueprint: system boundaries, data flow, reliability, security, and verification strategy.
+
+**Production Readiness Review (PRR)**
+
+The release gate for a defined scope. It records evidence, known limits, required checks, and exit criteria; it does not claim that out-of-scope capabilities are ready.
+
 ## Marketing Site
 
 The public, statically generated Peso website at `/`, `/privacy`, and `/terms`.
@@ -10,8 +24,20 @@ client bundle, routing runtime, or authenticated state with the Web App.
 
 The browser-only Peso product mounted beneath `/app`. It uses the shared Peso
 visual language, Peso Accounts, and Saved Lift Library as mobile while retaining
-browser-specific submission and quota rules. Demo Analysis remains a local
-simulation and is distinct from authenticated library activity.
+browser-specific submission rules. The authenticated Web App uses the same
+durable analysis queue as native clients.
+
+## Production Backend
+
+The current hosted API and analysis worker on Render. Render remains
+authoritative for production, and the production frontend backend URL does not
+change as part of Student environment testing.
+
+## Student Environment
+
+The single non-production Azure Container Apps environment defined by ADR 0012.
+It is an isolated test backend for the stable private Netlify `main` branch
+deploy and is never a synonym for production or a production cutover.
 
 ## Peso Account
 
@@ -26,20 +52,33 @@ rolling web capacity, active processing work, pending reviews, and recent Saved
 Lifts. Its navigation becomes a full sidebar, compact rail, or bottom bar as the
 viewport narrows.
 
-## Web Analysis Job
+## Analysis Job
 
-A server-owned request to analyze one squat video submitted through the Web
-App. A job records its owner, video, status, timestamps, attempts, expiry,
-failure class, and whether it currently consumes a rolling quota slot. Job state
-is not inferred from queue visibility.
+A server-owned request to analyze one uploaded lift from mobile or web. Its
+durable state continues independently of the client and survives API, worker,
+and client restarts. Public stages are Queued, Downloading, Pose, Barbell
+Tracking, Saving, Ready, and Failed. Stage timestamps and the worker heartbeat
+are durable; percentages are not inferred.
 
-## Demo Analysis
+## Analysis Activity
 
-A client-side Web App simulation used to preview the upload-to-review flow. The
-selected video stays on the browser device, its thumbnail is generated locally,
-and clock-based queued and analyzing phases produce a bundled fixture result.
-A Demo Analysis creates no upload, quota charge, backend request, or durable
-record and must not be treated as a server-owned Web Analysis Job.
+The owner-scoped list of Analysis Jobs that are queued, processing, ready for
+review, or failed. It is the user's resumable path back to an unsaved Analysis
+Run and is not part of the Saved Lift Library. The client refreshes it on app
+or browser resume and polls only while foregrounded work is active.
+
+## Analysis Recovery Action
+
+The user-safe next step for a failed Analysis Job. It is either retrying a
+transient or interrupted job with the same source video, or deleting an
+unreadable/problematic upload before submitting a replacement. It is distinct
+from tracking Recovery, which reacquires a physical tracking identity.
+
+## Retired Demo Analysis
+
+The former client-side authenticated Web App simulation. It used bundled
+fixture media and fake timers, and was removed for the real-analysis beta.
+Marketing preview media remains separate from authenticated Analysis Activity.
 
 ## Saved Lift
 

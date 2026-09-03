@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Asset } from 'expo-asset';
 import {
   Image,
   Pressable,
@@ -25,13 +24,18 @@ import {
 } from 'react-router';
 import tokens from '../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
+import { parseWebAuthRedirect } from '../../lib/auth-redirect';
 import {
   createSavedLiftExport,
+  discardAnalyzedVideo,
   deleteSavedLifts,
   getSavedLiftExport,
   getSavedVideoPlaybackUrl,
   getSavedVideos,
+  triggerVideoAnalysis,
 } from '../../lib/backendApi';
+import { canRetryAnalysis, failureCopy } from '../../lib/analysisRecoveryPolicy';
+import { getFreshBackendAccessToken } from '../../lib/backendAuth';
 import { readSidebarCollapsed, writeSidebarCollapsed } from '../../lib/sidebarPreferencePolicy';
 import {
   normalizeSavedLiftView,
@@ -41,7 +45,19 @@ import {
   type SavedLiftView,
 } from '../../lib/savedLiftSelectionPolicy';
 import type { SavedLiftExportJob, SavedVideo, VideoAnalysisRep } from '../types/videoAnalysis';
-import { WebDemoSessionProvider, useWebDemoSession } from './web-demo-session';
+import {
+  WebAnalysisActivityProvider,
+  useWebAnalysisActivity,
+} from './web-analysis-activity';
+import {
+  WebProcessingRoute,
+  WebRecordRoute,
+  WebReviewRoute,
+  WebSubmissionChoiceRoute,
+  WebUploadRoute,
+  WebVideoSetupRoute,
+} from './web-analysis-routes';
+import AuthChallenge from '../components/auth/AuthChallenge';
 
 const colors = {
   ...tokens.colors,
@@ -67,18 +83,38 @@ const fonts = {
   bold: 'Inter_700Bold',
 };
 
+function currentWebAuthLinkError() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  return parseWebAuthRedirect(
+    window.location.pathname,
+    window.location.search,
+    window.location.hash
+  ).errorMessage;
+}
+
 const previewImageAsset = require('../../assets/demo/peso-pose-overlay.jpg') as number;
 const previewImage = previewImageAsset as ImageSourcePropType;
-const barPathImage = require('../../assets/demo/peso-pin-assisted-bar-path.jpg') as ImageSourcePropType;
 const logoImage = require('../../assets/peso-logo.png') as ImageSourcePropType;
-const analyzedVideoAsset = require('../../assets/demo/peso-pose-overlay.mp4') as number;
-const analyzedVideoUri = Asset.fromModule(analyzedVideoAsset).uri;
-const analyzedVideoPosterUri = Asset.fromModule(previewImageAsset).uri;
+const SAVED_LIFT_CACHE_TTL_MS = 60_000;
 
-function formatFileSize(size: number | null) {
-  if (size === null) return 'Size unavailable';
-  if (size < 1_000_000) return `${Math.max(1, Math.round(size / 1_000))} KB`;
-  return `${(size / 1_000_000).toFixed(1)} MB`;
+let savedLiftLibraryCache: {
+  userId: string;
+  lifts: SavedVideo[];
+  expiresAt: number;
+} | null = null;
+
+function invalidateSavedLiftLibraryCache() {
+  savedLiftLibraryCache = null;
+}
+
+function getCachedSavedLifts(userId?: string): SavedVideo[] | null {
+  const cache = savedLiftLibraryCache;
+  return cache && cache.userId === userId && cache.expiresAt > Date.now()
+    ? cache.lifts
+    : null;
 }
 
 function formatTime(seconds: number | null) {
@@ -279,23 +315,33 @@ function LoginScreen() {
   const { session, signInWithEmail, configError } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(currentWebAuthLinkError);
   const [submitting, setSubmitting] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaError, setCaptchaError] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
 
   useEffect(() => {
     if (session) navigate('/', { replace: true });
   }, [navigate, session]);
 
   const signIn = async () => {
+    if (!captchaToken) {
+      setError('Complete the security check and try again.');
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
-      await signInWithEmail(email.trim(), password);
+      await signInWithEmail(email.trim(), password, captchaToken);
       navigate('/', { replace: true });
     } catch (signInError) {
       setError(signInError instanceof Error ? signInError.message : 'Unable to sign in.');
     } finally {
       setSubmitting(false);
+      setCaptchaToken(null);
+      setCaptchaReset((value) => value + 1);
     }
   };
 
@@ -303,11 +349,15 @@ function LoginScreen() {
     <AuthLayout eyebrow="Welcome back" title="Sign in to Peso" description="Use the same account as the mobile app.">
       <Field label="Email" placeholder="you@example.com" value={email} onChangeText={setEmail} />
       <Field label="Password" placeholder="Enter your password" secureTextEntry value={password} onChangeText={setPassword} />
-      {(error || configError) && <Text selectable style={styles.formError}>{error ?? configError}</Text>}
+      <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification">
+        <Text style={styles.turnstileTitle}>Security check</Text>
+        <AuthChallenge action="login" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
+      </View>
+      {(error || captchaError || configError) && <Text selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
       <Pressable accessibilityRole="link" onPress={() => navigate('/reset')}>
         <Text style={styles.inlineLink}>Forgot password?</Text>
       </Pressable>
-      <ActionButton label={submitting ? 'Signing in…' : 'Sign in'} disabled={submitting || !email.trim() || !password} onPress={() => void signIn()} />
+      <ActionButton label={submitting ? 'Signing in…' : error ? 'Retry sign in' : 'Sign in'} disabled={submitting || !email.trim() || !password || !captchaToken} onPress={() => void signIn()} />
       <View style={styles.formFooterRow}>
         <Text style={styles.mutedText}>New to Peso?</Text>
         <Pressable accessibilityRole="link" onPress={() => navigate('/signup')}>
@@ -327,17 +377,27 @@ function SignupScreen() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaError, setCaptchaError] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
 
   const signUp = async () => {
+    if (!captchaToken) {
+      setError('Complete the security check and try again.');
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
-      const result = await signUpWithEmail(email.trim(), password);
+      const result = await signUpWithEmail(email.trim(), password, undefined, captchaToken);
       navigate(result.requiresEmailConfirmation ? '/verify' : '/', { replace: true });
     } catch (signUpError) {
       setError(signUpError instanceof Error ? signUpError.message : 'Unable to create account.');
     } finally {
       setSubmitting(false);
+      setCaptchaToken(null);
+      setCaptchaReset((value) => value + 1);
     }
   };
 
@@ -347,12 +407,12 @@ function SignupScreen() {
       <Field label="Password" placeholder="At least 8 characters" secureTextEntry value={password} onChangeText={setPassword} />
       <CheckRow checked={usResident} onPress={() => setUsResident(!usResident)} label="I confirm that I reside in the United States." />
       <CheckRow checked={terms} onPress={() => setTerms(!terms)} label="I agree to the beta Terms and acknowledge the Privacy Policy." />
-      <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification placeholder">
+      <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification">
         <Text style={styles.turnstileTitle}>Security check</Text>
-        <Text style={styles.turnstileBody}>Turnstile appears here when staging authentication is connected.</Text>
+        <AuthChallenge action="signup" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
       </View>
-      {(error || configError) && <Text selectable style={styles.formError}>{error ?? configError}</Text>}
-      <ActionButton label={submitting ? 'Creating account…' : 'Create account'} disabled={submitting || !email.trim() || password.length < 8 || !usResident || !terms} onPress={() => void signUp()} />
+      {(error || captchaError || configError) && <Text selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
+      <ActionButton label={submitting ? 'Creating account…' : error ? 'Retry account creation' : 'Create account'} disabled={submitting || !email.trim() || password.length < 8 || !usResident || !terms || !captchaToken} onPress={() => void signUp()} />
       <View style={styles.formFooterRow}>
         <Text style={styles.mutedText}>Already have an account?</Text>
         <Pressable accessibilityRole="link" onPress={() => navigate('/login')}>
@@ -378,31 +438,85 @@ function VerifyScreen() {
 
 function ResetScreen() {
   const navigate = useNavigate();
-  const { resetPasswordForEmail, configError } = useAuth();
+  const { resetPasswordForEmail, updatePassword, passwordRecoveryMode, configError } = useAuth();
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(currentWebAuthLinkError);
+  const [submitting, setSubmitting] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaError, setCaptchaError] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
 
   const reset = async () => {
+    if (!captchaToken) {
+      setError('Complete the security check and try again.');
+      return;
+    }
+
+    setSubmitting(true);
     setError(null);
     try {
-      await resetPasswordForEmail(email.trim());
-      setMessage('Check your email for a secure reset link.');
+      await resetPasswordForEmail(email.trim(), captchaToken);
+      setMessage('If an account exists for this email, check your inbox for a secure reset link.');
     } catch (resetError) {
       setError(resetError instanceof Error ? resetError.message : 'Unable to send a reset link.');
+    } finally {
+      setSubmitting(false);
+      setCaptchaToken(null);
+      setCaptchaReset((value) => value + 1);
     }
   };
+
+  const completeRecovery = async () => {
+    if (password.length < 8) {
+      setError('Use a password with at least 8 characters.');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      await updatePassword(password);
+      setMessage('Password updated. Your Peso Account is ready to use.');
+      setPassword('');
+      setConfirmPassword('');
+    } catch (recoveryError) {
+      setError(recoveryError instanceof Error ? recoveryError.message : 'Unable to update your password.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (passwordRecoveryMode) {
+    return (
+      <AuthLayout eyebrow="Account recovery" title="Choose a new password" description="Set a new password for your Peso Account.">
+        <Field label="New password" placeholder="At least 8 characters" secureTextEntry value={password} onChangeText={setPassword} />
+        <Field label="Confirm password" placeholder="Enter the same password again" secureTextEntry value={confirmPassword} onChangeText={setConfirmPassword} />
+        {(error || configError) && <Text selectable style={styles.formError}>{error ?? configError}</Text>}
+        {message && <Text selectable style={styles.formSuccess}>{message}</Text>}
+        <ActionButton label={submitting ? 'Updating password…' : 'Update password'} disabled={submitting || !password || !confirmPassword} onPress={() => void completeRecovery()} />
+        {message && <ActionButton label="Continue to Peso" variant="quiet" onPress={() => navigate('/')} />}
+      </AuthLayout>
+    );
+  }
 
   return (
     <AuthLayout eyebrow="Account recovery" title="Reset your password" description="Enter your email and we’ll send a secure reset link.">
       <Field label="Email" placeholder="you@example.com" value={email} onChangeText={setEmail} />
-      <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification placeholder">
+      <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification">
         <Text style={styles.turnstileTitle}>Security check</Text>
-        <Text style={styles.turnstileBody}>Turnstile appears here when staging authentication is connected.</Text>
+        <AuthChallenge action="reset_password" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
       </View>
-      {(error || configError) && <Text selectable style={styles.formError}>{error ?? configError}</Text>}
+      {(error || captchaError || configError) && <Text selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
       {message && <Text selectable style={styles.formSuccess}>{message}</Text>}
-      <ActionButton label="Send reset link" disabled={!email.trim()} onPress={() => void reset()} />
+      <ActionButton label={submitting ? 'Sending reset link…' : error ? 'Retry reset link' : 'Send reset link'} disabled={submitting || !email.trim() || !captchaToken} onPress={() => void reset()} />
       <ActionButton label="Back to sign in" variant="quiet" onPress={() => navigate('/login')} />
     </AuthLayout>
   );
@@ -410,19 +524,19 @@ function ResetScreen() {
 
 const desktopNavItems = [
   { path: '/', label: 'Home', short: 'H' },
-  { path: '/record', label: 'Record', short: 'R' },
-  { path: '/upload', label: 'Upload Video', short: 'U' },
+  { path: '/setup', label: 'Analyze', short: 'A' },
   { path: '/saved-lifts', label: 'Saved Lifts', short: 'S' },
   { path: '/profile', label: 'Profile', short: 'P' },
 ];
 
-const mobileNavItems = desktopNavItems.filter((item) => item.path !== '/upload');
+const mobileNavItems = desktopNavItems;
 
 const routeTitles: Record<string, string> = {
   '/': 'Home',
+  '/setup': 'Video setup',
+  '/submit': 'Choose video',
   '/record': 'Record video',
   '/upload': 'Upload video',
-  '/setup': 'Video setup',
   '/saved-lifts': 'Saved Lifts',
   '/profile': 'Profile',
   '/settings': 'Settings',
@@ -504,7 +618,6 @@ function AppShell() {
   const { width, height } = useWindowDimensions();
   const location = useLocation();
   const { user } = useAuth();
-  const { session, clearSession } = useWebDemoSession();
   const [compact, setCompact] = useState(() =>
     readSidebarCollapsed(typeof window === 'undefined' ? null : window.localStorage)
   );
@@ -535,13 +648,6 @@ function AppShell() {
     );
   }, [compact]);
 
-  useEffect(() => {
-    const selectionRoutes = location.pathname === '/upload' || location.pathname === '/setup';
-    if (session.selectedFile && session.phase === 'idle' && !selectionRoutes) {
-      clearSession();
-    }
-  }, [clearSession, location.pathname, session.phase, session.selectedFile]);
-
   return (
     <View style={[styles.appRoot, { height: Math.max(height, 640) }]}>
       <View style={styles.appRow}>
@@ -549,7 +655,7 @@ function AppShell() {
         <View style={styles.appMain}>
           <View style={styles.topbar}>
             <View>
-              <Text selectable style={styles.topbarKicker}>{accountSurface ? 'PESO ACCOUNT' : 'DEMO ANALYSIS'}</Text>
+              <Text selectable style={styles.topbarKicker}>{accountSurface ? 'PESO ACCOUNT' : 'REAL ANALYSIS BETA'}</Text>
               <Text accessibilityRole="header" selectable style={styles.topbarTitle}>{title}</Text>
             </View>
             <View style={styles.topbarAccount}>
@@ -608,58 +714,121 @@ function PageScroll({ children }: { children: React.ReactNode }) {
 }
 
 function CapacityCard() {
-  const { session } = useWebDemoSession();
-  const used = session.phase === 'idle' ? 0 : 1;
-  const remaining = 3 - used;
+  const { activeCount, activeLimit } = useWebAnalysisActivity();
+  const used = Math.min(activeCount, activeLimit);
+  const remaining = Math.max(activeLimit - used, 0);
   return (
     <View style={styles.capacityCard}>
       <View style={styles.cardHeaderRow}>
         <View>
-          <Text selectable style={styles.cardLabel}>ROLLING 24-HOUR CAPACITY</Text>
-          <Text selectable style={styles.capacityNumber}>{remaining}<Text style={styles.capacityDenominator}> / 3 remaining</Text></Text>
+          <Text selectable style={styles.cardLabel}>ACTIVE ANALYSIS CAPACITY</Text>
+          <Text selectable style={styles.capacityNumber}>{remaining}<Text style={styles.capacityDenominator}> / {activeLimit} available</Text></Text>
         </View>
         <View style={[styles.statusPill, remaining === 0 && styles.statusPillWarning]}>
           <Text style={[styles.statusPillText, remaining === 0 && styles.statusPillWarningText]}>{remaining === 0 ? 'Full' : 'Available'}</Text>
         </View>
       </View>
-      <View style={styles.capacitySegments} accessibilityLabel={`${remaining} of 3 analysis slots remaining`}>
-        {[0, 1, 2].map((index) => <View key={index} style={[styles.capacitySegment, index < used && styles.capacitySegmentUsed]} />)}
+      <View style={styles.capacitySegments} accessibilityLabel={`${remaining} of ${activeLimit} analysis slots available`}>
+        {Array.from({ length: activeLimit }, (_, index) => <View key={index} style={[styles.capacitySegment, index < used && styles.capacitySegmentUsed]} />)}
       </View>
-      <Text selectable style={styles.cardFine}>{remaining === 0 ? 'Next slot opens today at 6:18 PM.' : 'A slot is charged when a web analysis is accepted.'}</Text>
+      <Text selectable style={styles.cardFine}>{remaining === 0 ? 'Wait for an active analysis to finish before starting another.' : 'Queued and processing videos count toward this limit.'}</Text>
     </View>
   );
 }
 
 function ActivityCard() {
   const navigate = useNavigate();
-  const { session } = useWebDemoSession();
-  const copy = session.phase === 'queued'
-    ? { title: 'Squat set is queued', detail: 'Your demo analysis will begin in a moment.' }
-    : session.phase === 'analyzing'
-      ? { title: 'Analyzing your squat', detail: `Tracking movement and bar position · ${session.percentage}%` }
-      : session.phase === 'ready'
-        ? { title: 'Analysis ready to review', detail: 'Your simulated result is ready when you are.' }
-        : { title: 'No active analysis', detail: 'Record or upload a side-view squat to start a demo analysis.' };
-  const toneStyle = session.phase === 'ready'
+  const { session } = useAuth();
+  const { items, loading, error, refresh, recordQueued, removeActivity } = useWebAnalysisActivity();
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const activity = items[0] ?? null;
+  const copy = activity?.stage === 'queued'
+    ? { title: 'Squat set is queued', detail: 'Waiting for an analysis worker.' }
+    : activity?.stage === 'downloading'
+      ? { title: 'Preparing your video', detail: 'Downloading the uploaded source.' }
+      : activity?.stage === 'pose'
+        ? { title: 'Estimating pose', detail: 'Tracking the lifter through the set.' }
+        : activity?.stage === 'barbell_tracking'
+          ? { title: 'Tracking the barbell', detail: 'Building the visible bar path.' }
+          : activity?.stage === 'saving'
+            ? { title: 'Saving your analysis', detail: 'Preparing the result for review.' }
+            : activity?.stage === 'ready'
+              ? { title: 'Analysis ready to review', detail: 'Your real result is ready.' }
+              : activity?.stage === 'failed'
+                ? { title: 'Analysis could not finish', detail: failureCopy(activity) }
+                : { title: 'No active analysis', detail: 'Record or upload a side-view squat to start a real analysis.' };
+  const toneStyle = activity?.stage === 'ready'
     ? styles.activityDotSuccess
-    : session.phase === 'idle'
+    : !activity
       ? styles.activityDotNeutral
       : styles.activityDotInfo;
 
-  const hasAction = session.phase !== 'idle';
-  const actionLabel = session.phase === 'ready' ? 'Review result' : 'View activity';
+  const hasAction = Boolean(activity);
+  const actionLabel = activity?.stage === 'ready' ? 'Review result' : 'View activity';
   const onAction = () => navigate(
-    session.phase === 'ready' ? '/review/demo-analysis' : '/processing/demo-analysis'
+    activity?.stage === 'ready'
+      ? `/review/${activity.video_id}`
+      : `/processing/${activity?.video_id}`
   );
+
+  const retryAnalysis = async () => {
+    if (!activity || !session?.access_token || recoveryBusy) return;
+
+    setRecoveryBusy(true);
+    setRecoveryError(null);
+    try {
+      const accessToken = await getFreshBackendAccessToken();
+      const response = await triggerVideoAnalysis(activity.video_id, accessToken);
+      recordQueued({
+        videoId: response.video_id,
+        jobId: response.job_id,
+        status: response.status,
+      });
+    } catch (actionError) {
+      setRecoveryError(actionError instanceof Error ? actionError.message : 'Unable to retry analysis.');
+    } finally {
+      setRecoveryBusy(false);
+    }
+  };
+
+  const deleteVideo = async () => {
+    if (!activity || !session?.access_token || recoveryBusy) return;
+    if (!window.confirm('Delete this failed video? This permanently removes the uploaded video and cannot be undone.')) {
+      return;
+    }
+
+    setRecoveryBusy(true);
+    setRecoveryError(null);
+    try {
+      const accessToken = await getFreshBackendAccessToken();
+      await discardAnalyzedVideo(activity.video_id, accessToken);
+      removeActivity(activity.video_id);
+    } catch (actionError) {
+      setRecoveryError(actionError instanceof Error ? actionError.message : 'Unable to delete this video.');
+    } finally {
+      setRecoveryBusy(false);
+    }
+  };
 
   return (
     <View style={styles.activityCard}>
       <View style={[styles.activityDot, toneStyle]} />
       <View style={styles.activityCopy}>
         <Text selectable style={styles.activityTitle}>{copy.title}</Text>
-        <Text selectable style={styles.activityDetail}>{copy.detail}</Text>
+        <Text selectable style={styles.activityDetail}>{loading && !activity ? 'Refreshing activity…' : copy.detail}</Text>
+        {error ? <Text selectable style={styles.formError}>{error}</Text> : null}
+        {recoveryError ? <Text selectable style={styles.formError}>{recoveryError}</Text> : null}
       </View>
-      {hasAction && <ActionButton label={actionLabel} variant="secondary" compact onPress={onAction} />}
+      {activity?.stage === 'failed' ? (
+        <View style={styles.activityActions}>
+          {canRetryAnalysis(activity) ? (
+            <ActionButton label={recoveryBusy ? 'Retrying…' : 'Try analysis again'} compact disabled={recoveryBusy} onPress={() => void retryAnalysis()} />
+          ) : null}
+          <ActionButton label={recoveryBusy ? 'Deleting…' : 'Delete video'} variant="danger" compact disabled={recoveryBusy} onPress={() => void deleteVideo()} />
+        </View>
+      ) : hasAction && <ActionButton label={actionLabel} variant="secondary" compact onPress={onAction} />}
+      {error && <ActionButton label="Retry" variant="quiet" compact onPress={() => void refresh()} />}
     </View>
   );
 }
@@ -697,9 +866,10 @@ function QuickAction({
 }
 
 function useSavedLiftLibrary() {
-  const { session } = useAuth();
-  const [lifts, setLifts] = useState<SavedVideo[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { session, user } = useAuth();
+  const cachedLifts = getCachedSavedLifts(user?.id);
+  const [lifts, setLifts] = useState<SavedVideo[]>(cachedLifts ?? []);
+  const [loading, setLoading] = useState(cachedLifts === null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = async (signal?: AbortSignal) => {
@@ -707,7 +877,15 @@ function useSavedLiftLibrary() {
     setLoading(true);
     setError(null);
     try {
-      setLifts(await getSavedVideos(session.access_token, signal));
+      const nextLifts = await getSavedVideos(session.access_token, signal);
+      if (user?.id) {
+        savedLiftLibraryCache = {
+          userId: user.id,
+          lifts: nextLifts,
+          expiresAt: Date.now() + SAVED_LIFT_CACHE_TTL_MS,
+        };
+      }
+      setLifts(nextLifts);
     } catch (loadError) {
       if (!signal?.aborted) {
         setError(loadError instanceof Error ? loadError.message : 'Unable to load Saved Lifts.');
@@ -718,10 +896,18 @@ function useSavedLiftLibrary() {
   };
 
   useEffect(() => {
+    const nextCachedLifts = getCachedSavedLifts(user?.id);
+    if (nextCachedLifts) {
+      setLifts(nextCachedLifts);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     const controller = new AbortController();
     void refresh(controller.signal);
     return () => controller.abort();
-  }, [session?.access_token]);
+  }, [session?.access_token, user?.id]);
 
   return { lifts, loading, error, refresh: () => refresh() };
 }
@@ -768,9 +954,10 @@ function LiftRow({
 function HomeScreen() {
   const navigate = useNavigate();
   const { width } = useWindowDimensions();
-  const { session } = useWebDemoSession();
+  const { items, activeCount, activeLimit } = useWebAnalysisActivity();
   const { lifts, loading, error } = useSavedLiftLibrary();
-  const blocked = session.phase === 'queued' || session.phase === 'analyzing';
+  const blocked = activeCount >= activeLimit;
+  const readyItems = items.filter((item) => item.stage === 'ready');
   return (
     <PageScroll>
       <View style={styles.welcomeRow}>
@@ -781,8 +968,7 @@ function HomeScreen() {
       </View>
       <View style={styles.homeGrid}>
         <View style={styles.quickActionsColumn}>
-          <QuickAction title="Record Video" description="Use this device’s camera" symbol="●" disabled={blocked} onPress={() => navigate('/record')} />
-          <QuickAction title="Upload Video" description="Choose a video from this device" symbol="↑" disabled={blocked} onPress={() => navigate('/upload')} />
+          <QuickAction title="Analyze a squat" description="Set up, then upload or record" symbol="●" disabled={blocked} onPress={() => navigate('/setup')} />
         </View>
         <CapacityCard />
       </View>
@@ -792,13 +978,13 @@ function HomeScreen() {
         </View>
         <ActivityCard />
       </View>
-      {session.phase === 'ready' && (
+      {readyItems.length > 0 && (
         <View style={styles.pendingReviewBanner}>
           <View>
-            <Text selectable style={styles.pendingTitle}>1 result needs your review</Text>
-            <Text selectable style={styles.pendingBody}>Save or discard it before it expires tomorrow at 8:42 AM.</Text>
+            <Text selectable style={styles.pendingTitle}>{readyItems.length} result{readyItems.length === 1 ? '' : 's'} need your review</Text>
+            <Text selectable style={styles.pendingBody}>Save or discard completed analyses before they expire.</Text>
           </View>
-          <ActionButton label="Review now" compact onPress={() => navigate('/review/demo-analysis')} />
+          <ActionButton label="Review now" compact onPress={() => navigate(`/review/${readyItems[0].video_id}`)} />
         </View>
       )}
       <View style={styles.sectionBlock}>
@@ -819,240 +1005,6 @@ function HomeScreen() {
   );
 }
 
-function RecordScreen() {
-  const navigate = useNavigate();
-  const recorderSupported =
-    typeof navigator !== 'undefined' &&
-    Boolean(navigator.mediaDevices?.getUserMedia) &&
-    typeof MediaRecorder !== 'undefined';
-  const [recording, setRecording] = useState(false);
-  const [recorded, setRecorded] = useState(false);
-
-  const finishRecording = () => {
-    setRecording(false);
-    setRecorded(true);
-  };
-
-  return (
-    <PageScroll>
-      <View style={styles.narrowPage}>
-        <Text accessibilityRole="header" selectable style={styles.pageHeading}>Record a squat set</Text>
-        <Text selectable style={styles.pageSubheading}>Keep your full body and both ends of the bar visible. Record one set from the side.</Text>
-        {!recorderSupported ? (
-          <View style={styles.fallbackCard} role="alert">
-            <Text selectable style={styles.fallbackTitle}>Recording is unavailable in this browser</Text>
-            <Text selectable style={styles.fallbackBody}>You can still choose a video already saved on this device.</Text>
-            <ActionButton label="Upload Video instead" onPress={() => navigate('/upload')} />
-          </View>
-        ) : (
-          <>
-            <View style={[styles.cameraStage, recording && styles.cameraStageRecording]}>
-              <View style={styles.cameraGuide}>
-                <View style={styles.cameraGuideBody} />
-                <View style={styles.cameraGuideBar} />
-              </View>
-              <View style={styles.cameraStatus}>
-                <View style={[styles.recordingDot, recording && styles.recordingDotLive]} />
-              <Text style={styles.cameraStatusText}>{recording ? 'Demo recording · 00:08' : recorded ? 'Clip ready · 00:18' : 'Camera preview'}</Text>
-              </View>
-              <Text selectable style={styles.cameraFixtureNote}>Camera permission is not requested in this demo.</Text>
-            </View>
-            <View style={styles.buttonRow}>
-              {!recording && !recorded && <ActionButton label="Start recording" onPress={() => setRecording(true)} />}
-              {recording && <ActionButton label="Stop recording" variant="danger" onPress={finishRecording} />}
-              {recorded && <ActionButton label="Continue to setup" onPress={() => navigate('/setup')} />}
-              {recorded && <ActionButton label="Record again" variant="secondary" onPress={() => setRecorded(false)} />}
-              <ActionButton label="Upload instead" variant="quiet" onPress={() => navigate('/upload')} />
-            </View>
-          </>
-        )}
-      </View>
-    </PageScroll>
-  );
-}
-
-function pickLocalVideo(onSelected: (file: File) => void) {
-  if (typeof document === 'undefined') return;
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = 'video/mp4,video/quicktime,video/webm';
-  input.hidden = true;
-  input.onchange = () => {
-    const file = input.files?.[0];
-    if (file) onSelected(file);
-    input.remove();
-  };
-  input.addEventListener('cancel', () => input.remove(), { once: true });
-  document.body.appendChild(input);
-  input.click();
-}
-
-function UploadScreen() {
-  const navigate = useNavigate();
-  const { session, selectFile } = useWebDemoSession();
-  return (
-    <PageScroll>
-      <View style={styles.narrowPage}>
-        <Text accessibilityRole="header" selectable style={styles.pageHeading}>Upload a squat video</Text>
-        <Text selectable style={styles.pageSubheading}>Choose a 15–30 second clip. MP4, MOV, and WebM are supported in this demo.</Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Choose a squat video from this device"
-          onPress={() => pickLocalVideo((file) => void selectFile(file))}
-          style={({ pressed }) => [styles.dropZone, pressed && styles.dropZonePressed]}
-        >
-          {session.thumbnailStatus === 'ready' && session.thumbnail ? (
-            <Image
-              source={{ uri: session.thumbnail }}
-              style={styles.uploadThumbnail as ImageStyle}
-              accessibilityLabel="Thumbnail from the selected squat video"
-            />
-          ) : (
-            <View style={styles.uploadIcon}>
-              <Text style={styles.uploadIconText}>
-                {session.thumbnailStatus === 'fallback' ? '!' : '↑'}
-              </Text>
-            </View>
-          )}
-          <Text selectable style={styles.dropZoneTitle}>{session.filename ?? 'Choose a video'}</Text>
-          <Text selectable style={styles.dropZoneBody}>
-            {session.thumbnailStatus === 'loading'
-              ? 'Creating a local thumbnail…'
-              : session.thumbnailStatus === 'fallback'
-                ? 'This browser could not decode a thumbnail. You can still continue with the demo.'
-                : session.selectedFile
-                  ? `${formatFileSize(session.size)} · ${session.duration === null ? 'Duration unavailable' : formatTime(session.duration)} · Stays on this device`
-                  : 'Select one file up to 50 MB'}
-          </Text>
-        </Pressable>
-        <View style={styles.requirementsCard}>
-          <Text selectable style={styles.requirementsTitle}>For the clearest result</Text>
-          {['One squat set only', 'Full body and bar visible', 'Stable side view', 'Good lighting with minimal obstruction'].map((item) => (
-            <View key={item} style={styles.requirementRow}><Text style={styles.requirementCheck}>✓</Text><Text selectable style={styles.requirementText}>{item}</Text></View>
-          ))}
-        </View>
-        <View style={styles.buttonRow}>
-          <ActionButton label="Continue to setup" disabled={!session.selectedFile} onPress={() => navigate('/setup')} />
-        </View>
-      </View>
-    </PageScroll>
-  );
-}
-
-function SelectCard({ selected, title, description, onPress }: { selected: boolean; title: string; description: string; onPress: () => void }) {
-  return (
-    <Pressable accessibilityRole="radio" accessibilityState={{ checked: selected }} onPress={onPress} style={[styles.selectCard, selected && styles.selectCardSelected]}>
-      <View style={[styles.radio, selected && styles.radioSelected]}>{selected && <View style={styles.radioDot} />}</View>
-      <View style={styles.selectCardCopy}>
-        <Text selectable style={styles.selectCardTitle}>{title}</Text>
-        <Text selectable style={styles.selectCardDescription}>{description}</Text>
-      </View>
-    </Pressable>
-  );
-}
-
-function SetupScreen() {
-  const navigate = useNavigate();
-  const { session, startAnalysis, clearSession } = useWebDemoSession();
-  const [view, setView] = useState<'side' | 'front'>('side');
-  const [visible, setVisible] = useState(true);
-  const submit = () => {
-    startAnalysis();
-    navigate('/processing/demo-analysis');
-  };
-
-  if (!session.selectedFile) {
-    return <Navigate to="/upload" replace />;
-  }
-
-  return (
-    <PageScroll>
-      <View style={styles.setupGrid}>
-        <View>
-          {session.thumbnailStatus === 'ready' && session.thumbnail ? (
-            <Image source={{ uri: session.thumbnail }} style={styles.setupPreview as ImageStyle} accessibilityLabel="Selected squat video preview" />
-          ) : (
-            <View style={styles.setupPreviewFallback} accessibilityLabel="Video thumbnail unavailable">
-              <Text style={styles.setupPreviewFallbackIcon}>▶</Text>
-              <Text selectable style={styles.setupPreviewFallbackText}>Preview unavailable</Text>
-            </View>
-          )}
-          <View style={styles.previewMeta}>
-            <Text numberOfLines={1} style={styles.previewMetaText}>{session.filename}</Text>
-            <Text style={styles.previewMetaText}>{session.duration === null ? '—:—' : formatTime(session.duration)}</Text>
-          </View>
-        </View>
-        <View style={styles.setupPanel}>
-          <Text accessibilityRole="header" selectable style={styles.pageHeading}>Confirm the setup</Text>
-          <Text selectable style={styles.pageSubheading}>Web beta accepts new squat submissions only.</Text>
-          <View style={styles.fieldGroup}>
-            <Text style={styles.fieldLabel}>Camera view</Text>
-            <SelectCard selected={view === 'side'} title="Side view" description="Recommended for depth, torso, and bar path." onPress={() => setView('side')} />
-            <SelectCard selected={view === 'front'} title="Front / three-quarter" description="Bilateral tracking; depth feedback may be limited." onPress={() => setView('front')} />
-          </View>
-          <CheckRow checked={visible} onPress={() => setVisible(!visible)} label="The lifter’s full body and visible end of the bar stay in frame." />
-          <View style={styles.infoCallout}><Text style={styles.infoCalloutText}>This demo keeps the selected file on your device and simulates the analysis locally.</Text></View>
-          <View style={styles.buttonRow}>
-            <ActionButton label="Submit for analysis" disabled={!visible} onPress={submit} />
-            <ActionButton label="Choose another video" variant="secondary" onPress={() => { clearSession(); navigate('/upload'); }} />
-          </View>
-        </View>
-      </View>
-    </PageScroll>
-  );
-}
-
-function ProcessingScreen() {
-  const navigate = useNavigate();
-  const { session, cancelAnalysis, clearSession } = useWebDemoSession();
-
-  if (session.phase === 'idle') {
-    return <Navigate to="/upload" replace />;
-  }
-
-  const stepIndex = session.phase === 'queued' ? 0 : session.phase === 'analyzing' ? 1 : 2;
-  const title = session.phase === 'queued'
-    ? 'Squat set is queued'
-    : session.phase === 'analyzing'
-      ? 'Analyzing your squat'
-      : 'Analysis ready to review';
-  const detail = session.phase === 'queued'
-    ? 'Your demo analysis will begin in a moment.'
-    : session.phase === 'analyzing'
-      ? 'Tracking movement and bar position in this client-side simulation.'
-      : 'The simulated result is complete. Review it when you are ready.';
-
-  return (
-    <PageScroll>
-      <View style={styles.processingPage}>
-        <View style={styles.processingVisual}>
-          <Image
-            source={session.thumbnail ? { uri: session.thumbnail } : barPathImage}
-            style={styles.processingImage as ImageStyle}
-            accessibilityLabel="Squat video awaiting analysis"
-          />
-          <View style={styles.processingOverlay}><Text style={styles.processingPercent}>{String(session.percentage).padStart(2, '0')}%</Text></View>
-        </View>
-        <Text accessibilityRole="header" selectable style={styles.pageHeading}>{title}</Text>
-        <Text selectable style={[styles.pageSubheading, styles.processingDescription]}>{detail}</Text>
-        <View style={styles.stepper} accessibilityLabel={`Analysis step ${stepIndex + 1} of 3`}>
-          {['Queued', 'Analyzing', 'Ready'].map((label, index) => (
-            <View key={label} style={styles.stepItem}>
-              <View style={[styles.stepDot, index <= stepIndex && styles.stepDotActive]}><Text style={styles.stepDotText}>{index + 1}</Text></View>
-              <Text style={[styles.stepLabel, index <= stepIndex && styles.stepLabelActive]}>{label}</Text>
-            </View>
-          ))}
-        </View>
-        {(session.phase === 'queued' || session.phase === 'analyzing') && (
-          <ActionButton label="Cancel demo analysis" variant="danger" onPress={() => { cancelAnalysis(); clearSession(); navigate('/'); }} />
-        )}
-        {session.phase === 'ready' && <ActionButton label="Review result" onPress={() => navigate('/review/demo-analysis')} />}
-        <ActionButton label="Back to Home" variant="quiet" onPress={() => navigate('/')} />
-      </View>
-    </PageScroll>
-  );
-}
-
 function MetricCard({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
     <View style={styles.metricCard}>
@@ -1065,8 +1017,8 @@ function MetricCard({ label, value, detail }: { label: string; value: string; de
 
 function AnalyzedVideoPlayer({
   label,
-  sourceUri = analyzedVideoUri,
-  posterUri = analyzedVideoPosterUri,
+  sourceUri = '',
+  posterUri = '',
 }: {
   label: string;
   sourceUri?: string;
@@ -1164,69 +1116,6 @@ function AnalyzedVideoPlayer({
         <Text style={styles.timecode}>{formatTime(currentTime)} / {formatTime(duration)}</Text>
       </View>
     </View>
-  );
-}
-
-function ReviewScreen() {
-  const navigate = useNavigate();
-  const { session, clearSession } = useWebDemoSession();
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const [reps, setReps] = useState('3');
-  const [load, setLoad] = useState('225');
-  const finishDemo = () => {
-    clearSession();
-    navigate('/');
-  };
-
-  if (session.phase !== 'ready') {
-    return <Navigate to={session.phase === 'idle' ? '/upload' : '/processing/demo-analysis'} replace />;
-  }
-
-  return (
-    <PageScroll>
-      <View style={styles.reviewGrid}>
-        <View>
-          <View style={styles.reviewMedia}>
-            <AnalyzedVideoPlayer label="Analyzed video controls" />
-          </View>
-          <Text selectable style={styles.mediaDescription}>The overlay marks the upper back, hip, knee, and ankle. Use the playback controls to inspect each rep.</Text>
-        </View>
-        <View style={styles.reviewPanel}>
-          <View style={styles.reviewTitleRow}>
-            <View>
-              <Text style={styles.reviewEyebrow}>ANALYSIS COMPLETE</Text>
-              <Text accessibilityRole="header" selectable style={styles.reviewPageHeading}>Squat · Side view</Text>
-            </View>
-            <View style={styles.readyBadge}><Text style={styles.readyBadgeText}>Ready</Text></View>
-          </View>
-          <View style={styles.metricGrid}>
-            <MetricCard label="Detected reps" value="3" detail="Model observation" />
-            <MetricCard label="Depth" value="3 / 3" detail="Reps reached depth" />
-            <MetricCard label="Bar path" value="Stable" detail="Over mid-foot" />
-          </View>
-          <View style={styles.cueCard}>
-            <Text selectable style={styles.cueLabel}>FOCUS FOR YOUR NEXT SET</Text>
-            <Text selectable style={styles.cueTitle}>Keep the descent as controlled as rep two.</Text>
-            <Text selectable style={styles.cueBody}>Rep two showed the most consistent torso angle and bar position. Use that pace as your reference.</Text>
-          </View>
-          <Pressable accessibilityRole="button" accessibilityState={{ expanded: detailsOpen }} onPress={() => setDetailsOpen(!detailsOpen)} style={styles.disclosureButton}>
-            <Text style={styles.disclosureTitle}>Optional workout details</Text>
-            <Text style={styles.disclosureIcon}>{detailsOpen ? '−' : '+'}</Text>
-          </Pressable>
-          {detailsOpen && (
-            <View style={styles.workoutFields}>
-              <Field label="Performed reps" placeholder="3" value={reps} onChangeText={setReps} />
-              <Field label="Load (lb)" placeholder="225" value={load} onChangeText={setLoad} />
-            </View>
-          )}
-          <View style={styles.buttonRow}>
-            <ActionButton label="Finish demo" compact onPress={finishDemo} />
-            <ActionButton label="Discard analysis" variant="danger" compact onPress={() => { clearSession(); navigate('/'); }} />
-          </View>
-          <Text selectable style={styles.expiryText}>Demo Analysis stays on this device and does not create a Saved Lift.</Text>
-        </View>
-      </View>
-    </PageScroll>
   );
 }
 
@@ -1374,6 +1263,7 @@ function SavedLiftsScreen() {
     setActionError(null);
     try {
       await deleteSavedLifts(selectedIds, session.access_token);
+      invalidateSavedLiftLibraryCache();
       setSelectedIds([]);
       setSelectionMode(false);
       await refresh();
@@ -1398,7 +1288,7 @@ function SavedLiftsScreen() {
         </View>
         <View style={styles.buttonRow}>
           <ActionButton label={selectionMode ? 'Cancel selection' : 'Select lifts'} variant="secondary" compact onPress={toggleSelectionMode} />
-          <ActionButton label="Analyze a squat" compact onPress={() => navigate('/upload')} />
+          <ActionButton label="Analyze a squat" compact onPress={() => navigate('/setup')} />
         </View>
       </View>
 
@@ -1529,7 +1419,7 @@ function SavedLiftDetailScreen() {
   const detectedReps = lift.analysis?.result_json.rep_count ?? lift.analysis?.rep_data.length ?? 0;
   const performedReps = lift.performed_reps ?? lift.corrected_rep_count ?? detectedReps;
   const cue = lift.analysis?.coaching_feedback[0] ?? lift.analysis?.summary[0] ?? 'No saved coaching cue is available.';
-  const posterUri = lift.thumbnail_url ?? analyzedVideoPosterUri;
+  const posterUri = lift.thumbnail_url ?? '';
 
   return (
     <PageScroll>
@@ -1631,7 +1521,7 @@ function SettingsScreen() {
 
 export default function WebApp() {
   return (
-    <WebDemoSessionProvider>
+    <WebAnalysisActivityProvider>
       <Routes>
         <Route path="/login" element={<LoginScreen />} />
         <Route path="/signup" element={<SignupScreen />} />
@@ -1639,11 +1529,12 @@ export default function WebApp() {
         <Route path="/reset" element={<ResetScreen />} />
         <Route element={<AccountRoute />}>
           <Route index element={<HomeScreen />} />
-          <Route path="/record" element={<RecordScreen />} />
-          <Route path="/upload" element={<UploadScreen />} />
-          <Route path="/setup" element={<SetupScreen />} />
-          <Route path="/processing/:jobId" element={<ProcessingScreen />} />
-          <Route path="/review/:jobId" element={<ReviewScreen />} />
+          <Route path="/setup" element={<WebVideoSetupRoute />} />
+          <Route path="/submit" element={<WebSubmissionChoiceRoute />} />
+          <Route path="/record" element={<WebRecordRoute />} />
+          <Route path="/upload" element={<WebUploadRoute />} />
+          <Route path="/processing/:videoId" element={<WebProcessingRoute />} />
+          <Route path="/review/:videoId" element={<WebReviewRoute onLibraryChanged={invalidateSavedLiftLibraryCache} />} />
           <Route path="/saved-lifts" element={<SavedLiftsScreen />} />
           <Route path="/saved-lifts/:liftId" element={<SavedLiftDetailScreen />} />
           <Route path="/profile" element={<ProfileScreen />} />
@@ -1651,7 +1542,7 @@ export default function WebApp() {
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </WebDemoSessionProvider>
+    </WebAnalysisActivityProvider>
   );
 }
 
@@ -1739,7 +1630,7 @@ const styles = StyleSheet.create({
   checkLabel: { flex: 1, color: colors.secondaryText, fontFamily: fonts.regular, fontSize: 12, lineHeight: 19 },
   turnstileFixture: { padding: 14, borderWidth: 1, borderStyle: 'dashed', borderColor: '#44526A', borderRadius: 10, backgroundColor: '#0A0E15' },
   turnstileTitle: { color: colors.secondaryText, fontFamily: fonts.semibold, fontSize: 11 },
-  turnstileBody: { marginTop: 4, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 10, lineHeight: 15 },
+  turnstileWidget: { minHeight: 66, marginTop: 10 },
   messageCard: { padding: 18, borderWidth: 1, borderColor: '#294A7D', borderRadius: 12, backgroundColor: '#0D1B33' },
   messageCardTitle: { color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 13 },
   messageCardBody: { marginTop: 6, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 12, lineHeight: 19 },
@@ -1781,6 +1672,7 @@ const styles = StyleSheet.create({
   activityDotInfo: { backgroundColor: colors.brand },
   activityDotSuccess: { backgroundColor: colors.green },
   activityCopy: { flex: 1, minWidth: 120 },
+  activityActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8 },
   activityTitle: { color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 13 },
   activityDetail: { marginTop: 5, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 11, lineHeight: 17 },
   pendingReviewBanner: { padding: 18, borderWidth: 1, borderColor: '#2D579A', borderRadius: 14, backgroundColor: '#0D1B34', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 15 },
@@ -1851,7 +1743,6 @@ const styles = StyleSheet.create({
   processingVisual: { width: 220, height: 310, borderWidth: 1, borderColor: colors.line, borderRadius: 18, overflow: 'hidden', backgroundColor: '#05070A' },
   processingImage: { width: '100%', height: '100%' },
   processingOverlay: { position: 'absolute', right: 10, bottom: 10, width: 62, height: 62, borderRadius: 31, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5,9,15,.88)', borderWidth: 1, borderColor: '#3C68AD' },
-  processingPercent: { color: colors.blueText, fontFamily: fonts.bold, fontSize: 13, fontVariant: ['tabular-nums'] },
   processingDescription: { maxWidth: 560, textAlign: 'center', marginTop: -8 },
   stepper: { width: '100%', maxWidth: 520, paddingVertical: 14, flexDirection: 'row', justifyContent: 'space-between' },
   stepItem: { flex: 1, alignItems: 'center', gap: 7 },

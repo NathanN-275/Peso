@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Image,
@@ -14,6 +14,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import Button from '../components/Button';
 import Input from '../components/Input';
+import AuthChallenge from '../components/auth/AuthChallenge';
 import tokens from '../theme/tokens';
 
 const titleImage = require('../../Login.png');
@@ -21,15 +22,27 @@ const titleImage = require('../../Login.png');
 type LoginScreenProps = {
   onBack: () => void;
   onForgotPassword: () => void;
+  initialErrorMessage?: string | null;
 };
 
-export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenProps) {
+export default function LoginScreen({
+  onBack,
+  onForgotPassword,
+  initialErrorMessage = null,
+}: LoginScreenProps) {
   // Login uses the shared auth context for email/password sign-in.
   const { signInWithEmail } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(initialErrorMessage);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaError, setCaptchaError] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
+
+  useEffect(() => {
+    setErrorMessage(initialErrorMessage);
+  }, [initialErrorMessage]);
 
   const handleSignIn = async () => {
     // Normalize the email so duplicate casing does not matter.
@@ -40,16 +53,23 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
       return;
     }
 
+    if (!captchaToken) {
+      setErrorMessage('Complete the security check and try again.');
+      return;
+    }
+
     setSubmitting(true);
     setErrorMessage(null);
 
     try {
       // Any auth error is surfaced directly in the form.
-      await signInWithEmail(normalizedEmail, password);
+      await signInWithEmail(normalizedEmail, password, captchaToken);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to log in.');
     } finally {
       setSubmitting(false);
+      setCaptchaToken(null);
+      setCaptchaReset((value) => value + 1);
     }
   };
 
@@ -93,6 +113,7 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
               {/* These are the only fields needed for password auth. */}
               <Input
                 label="Email"
+                testID="auth-email"
                 placeholder="name@example.com"
                 value={email}
                 onChangeText={setEmail}
@@ -103,6 +124,7 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
               />
               <Input
                 label="Password"
+                testID="auth-password"
                 placeholder="Enter your password"
                 value={password}
                 onChangeText={setPassword}
@@ -112,12 +134,22 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
               />
             </View>
 
-            {errorMessage ? (
+            <View style={{ marginTop: 20 }}>
+              <Text style={styles.securityTitle}>Security check</Text>
+              <AuthChallenge
+                action="login"
+                resetSignal={captchaReset}
+                onTokenChange={setCaptchaToken}
+                onError={setCaptchaError}
+              />
+            </View>
+
+            {errorMessage || captchaError ? (
               <Text
                 className="text-text-primary"
                 style={{ marginTop: 16, fontSize: 14, lineHeight: 20, color: '#FF8A8A' }}
               >
-                {errorMessage}
+                {errorMessage ?? captchaError}
               </Text>
             ) : null}
 
@@ -137,8 +169,9 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
             <View style={{ marginTop: 20, gap: 12 }}>
               <Button
                 label={submitting ? 'Logging In...' : 'Log In'}
+                testID="auth-submit"
                 onPress={handleSignIn}
-                disabled={submitting}
+                disabled={submitting || !captchaToken}
                 style={{ width: '100%' }}
               />
               <Button
@@ -156,6 +189,12 @@ export default function LoginScreen({ onBack, onForgotPassword }: LoginScreenPro
 }
 
 const styles = StyleSheet.create({
+  securityTitle: {
+    color: '#D0D5DD',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
   titleImage: {
     width: '1000%',
     height: 500, 
