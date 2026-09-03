@@ -392,6 +392,47 @@ export async function registerUploadedVideo(payload: RegisterUploadedVideoReques
   });
 }
 
+export type CreateUploadReservationRequest = Omit<RegisterUploadedVideoRequest, 'storage_path'> & {
+  file_name: string;
+  content_type: string;
+  size_bytes: number;
+};
+
+export async function createUploadReservation(payload: CreateUploadReservationRequest, accessToken: string) {
+  return requestJson<{
+    reservation_id: string;
+    state: 'issued';
+    blob_path: string;
+    upload_url: string;
+    upload_headers: Record<string, string>;
+    expires_at: string;
+  }>('/upload-reservations', accessToken, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function completeUploadReservation(reservationId: string, accessToken: string) {
+  return requestJson<{
+    reservation_id: string;
+    state: 'verified' | 'consumed';
+    video_id: string;
+    status: 'uploaded';
+    storage_path: string;
+    uploaded_size_bytes: number;
+    media_metadata: Record<string, unknown>;
+  }>(`/upload-reservations/${reservationId}/complete`, accessToken, {
+    method: 'POST',
+    timeoutMs: 180_000,
+  });
+}
+
+export async function cancelUploadReservation(reservationId: string, accessToken: string) {
+  return requestJson<{ cancelled: boolean }>(`/upload-reservations/${reservationId}`, accessToken, {
+    method: 'DELETE',
+  });
+}
+
 export async function markVideoUploadFailed(videoId: string, accessToken: string) {
   return requestJson<{ video_id: string; status: 'failed' }>(
     `/videos/${videoId}/upload-failed`,

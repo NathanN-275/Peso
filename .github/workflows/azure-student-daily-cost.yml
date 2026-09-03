@@ -23,10 +23,10 @@ jobs:
       AZURE_API_NAME: peso-student-api
       AZURE_LOG_WORKSPACE_NAME: peso-student-logs
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Sign in to Azure with student OIDC identity
-        uses: azure/login@v3
+        uses: azure/login@4c03e4685fe81df2c50d5714c7d93cf39d8deb7f # v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}

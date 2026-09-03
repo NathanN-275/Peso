@@ -1,15 +1,12 @@
-.git
-.github
-.expo
-.pytest_cache
-.peso
-backend/.env
-backend/.pytest_cache
-backend/.venv
-backend/tests
-dashboard
-dist
-node_modules
-public
-web
-*.log
+# Only files copied by Dockerfile may enter the build context.
+**
+!Dockerfile
+!backend/
+backend/**
+!backend/requirements.txt
+!backend/app/
+!backend/app/**
+backend/app/**/__pycache__/
+backend/app/**/*.pyc
+backend/app/**/.DS_Store
+backend/app/**/.env*

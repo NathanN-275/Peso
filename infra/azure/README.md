@@ -1,5 +1,11 @@
 # Azure Student infrastructure
 
+The production-security reservation path adds a separate operator-provisioned
+[`security-foundation.bicep`](security-foundation.bicep). Read the
+[staging, migration, and rollback gate](../../docs/deployment/production-security.md)
+before enabling `enableUploadReservations`; it defaults to false. Routine CI
+does not receive permission to create the foundation's role assignments.
+
 This directory defines one isolated, non-production Azure environment:
 `peso-student-centralus-rg` in Central US. It deliberately contains no
 production environment, dedicated Container Apps workload profile, VNet,

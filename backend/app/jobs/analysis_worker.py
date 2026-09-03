@@ -134,6 +134,9 @@ class InlineAnalysisRunner:
 
 
 def _run_analysis_child(video_id: str, messages: Any) -> None:
+  from ..services.security_logging import configure_security_logging
+  configure_security_logging()
+
   def report_stage(stage: str) -> None:
     messages.put({"type": "stage", "stage": stage})
 
@@ -361,7 +364,7 @@ class AnalysisWorker:
           failure_class=outcome.failure_class or "analysis_runtime",
           retryable=outcome.retryable,
         )
-        logger.warning("Analysis job %s moved to %s.", job_id, next_status or "unknown")
+        logger.warning("Analysis job failure event=analysis_job_failure job_id=%s next_status=%s failure_class=%s", job_id, next_status or "unknown", outcome.failure_class)
         return True
     except Exception as error:
       logger.exception("Analysis worker failed while supervising job %s for video %s.", job_id, video_id)
@@ -373,7 +376,7 @@ class AnalysisWorker:
         failure_class=failure_class,
         retryable=retryable,
       )
-      logger.warning("Analysis job %s moved to %s.", job_id, next_status or "unknown")
+      logger.warning("Analysis job failure event=analysis_job_failure job_id=%s next_status=%s failure_class=%s", job_id, next_status or "unknown", failure_class)
     else:
       if not self.jobs.complete(job_id, self.worker_id):
         logger.error("Analysis job %s completed work after losing its lease.", job_id)
@@ -413,7 +416,8 @@ def main() -> None:
   parser = argparse.ArgumentParser(description="Run the durable Peso video analysis worker.")
   parser.add_argument("--once", action="store_true", help="Claim at most one available job and exit.")
   args = parser.parse_args()
-  logging.basicConfig(level=logging.INFO)
+  from ..services.security_logging import configure_security_logging
+  configure_security_logging()
   worker = AnalysisWorker(
     lease_seconds=_positive_int_env("ANALYSIS_WORKER_LEASE_SECONDS", DEFAULT_LEASE_SECONDS),
     poll_seconds=_positive_float_env("ANALYSIS_WORKER_POLL_SECONDS", DEFAULT_POLL_SECONDS),

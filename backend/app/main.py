@@ -10,15 +10,25 @@ from fastapi.middleware.gzip import GZipMiddleware
 from .routes.videos import router as videos_router
 from .routes.analysis_runs import router as analysis_runs_router
 from .routes.saved_lift_exports import router as saved_lift_exports_router
+from .routes.upload_reservations import router as upload_reservations_router
+from .routes.budget_admission import router as budget_admission_router
+from .services.security_logging import configure_security_logging
 from .services.config import get_settings
 from .services.http_client import close_pooled_http_client
 from .services.analysis_job_repository import AnalysisJobRepository
 
 
-logging.basicConfig(level=logging.INFO)
+configure_security_logging()
 
 settings = get_settings()
-app = FastAPI(title="Peso Video Analysis API", version="1.0.0")
+is_production = settings.backend_env in {"production", "prod"}
+app = FastAPI(
+  title="Peso Video Analysis API",
+  version="1.0.0",
+  docs_url=None if is_production else "/docs",
+  redoc_url=None if is_production else "/redoc",
+  openapi_url=None if is_production else "/openapi.json",
+)
 
 
 class LocalDevPrivateNetworkMiddleware(BaseHTTPMiddleware):
@@ -26,6 +36,15 @@ class LocalDevPrivateNetworkMiddleware(BaseHTTPMiddleware):
     response = await call_next(request)
 
     response.headers.setdefault("Cache-Control", "no-store")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+    # Interactive documentation is development-only and loads its own assets.
+    if is_production or request.url.path not in {"/docs", "/redoc", "/docs/oauth2-redirect"}:
+      response.headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+    if settings.backend_env in {"production", "prod"}:
+      response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 
     if settings.cors_allow_private_network:
       response.headers["Access-Control-Allow-Private-Network"] = "true"
@@ -46,6 +65,8 @@ app.add_middleware(LocalDevPrivateNetworkMiddleware)
 app.include_router(videos_router)
 app.include_router(analysis_runs_router)
 app.include_router(saved_lift_exports_router)
+app.include_router(upload_reservations_router)
+app.include_router(budget_admission_router)
 
 
 @app.get("/health")

@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from .supabase_client import get_supabase_admin_client
+from .config import get_settings
+from .security_logging import redact_sensitive_text
 
 
 ANALYSIS_JOB_COLUMNS = (
@@ -26,13 +28,19 @@ class AnalysisJobRepository:
       .limit(1)
       .execute()
     )
+    if get_settings().upload_reservations_enabled:
+      self.client.table("upload_reservations").select("id,state,validation_owner,cleanup_confirmed_at").limit(1).execute()
+      self.client.table("upload_admission_control").select("id,enabled").eq("id", 1).single().execute()
 
   def enqueue(self, video_id: str, *, allow_completed: bool = False) -> dict[str, Any]:
+    settings = get_settings()
     response = self.client.rpc(
       "enqueue_video_analysis_job",
       {
         "p_video_id": video_id,
         "p_allow_completed": allow_completed,
+        "p_max_user_jobs": settings.max_user_in_progress_videos,
+        "p_max_global_jobs": settings.max_global_active_upload_reservations,
       },
     ).execute()
     return self._require_row(response.data, "Unable to enqueue video analysis.")
@@ -93,7 +101,7 @@ class AnalysisJobRepository:
       {
         "p_job_id": job_id,
         "p_worker_id": worker_id,
-        "p_error": error,
+        "p_error": redact_sensitive_text(error),
         "p_failure_class": failure_class,
         "p_retryable": retryable,
       },

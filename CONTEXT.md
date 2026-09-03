@@ -60,6 +60,20 @@ and client restarts. Public stages are Queued, Downloading, Pose, Barbell
 Tracking, Saving, Ready, and Failed. Stage timestamps and the worker heartbeat
 are durable; percentages are not inferred.
 
+## Upload admission
+
+**Upload Reservation**:
+A temporary, owner-bound allocation of capacity for one submitted lift video.
+_Avoid_: Upload permission, upload slot
+
+**Verified Upload**:
+A submitted lift video whose actual contents and media limits have been checked and accepted for analysis.
+_Avoid_: Uploaded video when verification has not finished
+
+**Media Validation Job**:
+A bounded verification pass that determines whether a submitted video qualifies as a Verified Upload; it does not evaluate lifting technique.
+_Avoid_: Recording Quality Advisory, Analysis Job
+
 ## Analysis Activity
 
 The owner-scoped list of Analysis Jobs that are queued, processing, ready for
