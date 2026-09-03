@@ -21,6 +21,7 @@ import {
   getSavedVideoOverview,
   triggerVideoAnalysis,
 } from '../../lib/backendApi';
+import { getFreshBackendAccessToken } from '../../lib/backendAuth';
 import { canRetryAnalysis, failureCopy } from '../../lib/analysisRecoveryPolicy';
 import BottomNav, { NAV_HEIGHT } from '../components/BottomNav';
 import { SkeletonBlock } from '../components/Skeleton';
@@ -476,7 +477,8 @@ export default function HomeScreen({
     setActivityActionVideoId(videoId);
     setActivityError(null);
     try {
-      const response = await triggerVideoAnalysis(videoId, session.access_token);
+      const accessToken = await getFreshBackendAccessToken();
+      const response = await triggerVideoAnalysis(videoId, accessToken);
       setAnalysisActivity((items) => items.map((item) => (
         item.video_id === videoId
           ? {
@@ -515,7 +517,8 @@ export default function HomeScreen({
               setActivityActionVideoId(videoId);
               setActivityError(null);
               try {
-                await discardAnalyzedVideo(videoId, session.access_token);
+                const accessToken = await getFreshBackendAccessToken();
+                await discardAnalyzedVideo(videoId, accessToken);
                 setAnalysisActivity((items) => items.filter((item) => item.video_id !== videoId));
                 setActivityReloadKey((key) => key + 1);
               } catch (error) {

@@ -97,6 +97,24 @@ test('activity recovery policy keeps invalid uploads out of retry flows', () => 
   }), false);
 });
 
+test('native recovery actions refresh backend auth before retry and delete requests', () => {
+  const homeSource = fs.readFileSync(
+    path.join(__dirname, '../src/screens/HomeScreen.tsx'),
+    'utf8'
+  );
+
+  assert.match(
+    homeSource,
+    /const retryFailedAnalysis[\s\S]*?getFreshBackendAccessToken\(\)[\s\S]*?triggerVideoAnalysis\(videoId, accessToken\)/
+  );
+  assert.match(
+    homeSource,
+    /const deleteFailedAnalysis[\s\S]*?getFreshBackendAccessToken\(\)[\s\S]*?discardAnalyzedVideo\(videoId, accessToken\)/
+  );
+  assert.doesNotMatch(homeSource, /triggerVideoAnalysis\(videoId, session\.access_token\)/);
+  assert.doesNotMatch(homeSource, /discardAnalyzedVideo\(videoId, session\.access_token\)/);
+});
+
 test('Netlify web app uses durable video-id routes instead of demo timers', () => {
   const webAppSource = fs.readFileSync(
     path.join(__dirname, '../src/web/web-app.tsx'),
