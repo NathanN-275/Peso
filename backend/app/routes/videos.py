@@ -96,6 +96,7 @@ class AnalysisActivityItemResponse(BaseModel):
   stage_timestamps: dict[str, str] = Field(default_factory=dict)
   last_heartbeat_at: str | None = None
   failure_class: str | None = None
+  recovery_action: Literal["retry", "replace_upload"] | None = None
 
 
 class AnalysisActivityResponse(BaseModel):
@@ -1074,6 +1075,50 @@ def _analysis_activity_stage(video: dict, job: dict) -> str:
   return "downloading"
 
 
+def _public_analysis_failure_class(job: dict) -> str | None:
+  raw_failure = str(job.get("failure_class") or "")
+  normalized_error = str(job.get("last_error") or "").lower()
+  if any(
+    marker in normalized_error
+    for marker in (
+      "unable to open uploaded video",
+      "invalid video",
+      "unsupported video",
+      "valid video stream",
+      "contents do not match the selected video format",
+      "unable to validate uploaded video contents",
+    )
+  ):
+    return "invalid_video"
+
+  allowed_failures = {
+    "analysis_timeout",
+    "analysis_runtime",
+    "invalid_video",
+    "transient_infrastructure",
+    "worker_lease_expired",
+    "worker_process_exit",
+  }
+  if raw_failure in allowed_failures:
+    return raw_failure
+  return "unknown" if raw_failure else None
+
+
+def _analysis_recovery_action(video: dict, job: dict) -> str | None:
+  if _analysis_activity_status(video, job) != "failed":
+    return None
+
+  retryable_failures = {
+    "analysis_timeout",
+    "transient_infrastructure",
+    "worker_lease_expired",
+    "worker_process_exit",
+  }
+  if _public_analysis_failure_class(job) in retryable_failures:
+    return "retry"
+  return "replace_upload"
+
+
 @router.get("/videos/analysis-activity", response_model=AnalysisActivityResponse)
 def get_analysis_activity(
   user_id: str = Depends(get_current_user_id),
@@ -1140,7 +1185,8 @@ def get_analysis_activity(
         last_heartbeat_at=(
           str(job["last_heartbeat_at"]) if job.get("last_heartbeat_at") else None
         ),
-        failure_class=(str(job["failure_class"]) if job.get("failure_class") else None),
+        failure_class=_public_analysis_failure_class(job),
+        recovery_action=_analysis_recovery_action(video, job),
       )
     )
 
@@ -1478,8 +1524,18 @@ def discard_video(
 ) -> DiscardVideoResponse:
   # Discard removes storage objects and keeps a discarded metadata row.
   repository = VideoRepository()
+  jobs = AnalysisJobRepository()
   storage = StorageService()
   video = repository.require_owned_video(str(video_id), user_id)
+
+  try:
+    jobs.cancel_for_video(str(video_id))
+  except Exception as error:
+    logger.exception("Unable to cancel analysis job before discarding video %s.", video_id)
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Unable to stop analysis safely. Please try again.",
+    ) from error
 
   paths = [
     str(video.get("storage_path") or ""),

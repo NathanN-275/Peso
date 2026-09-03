@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted for the current hosted backend; Azure Student is a non-production
+replacement candidate under ADR 0012
 
 ## Decision
 
@@ -33,3 +34,5 @@ without changing client code.
   the public Turnstile site key, and `EXPO_PUBLIC_PRODUCTION_BACKEND_URL`.
 - Production CORS lists only the exact Netlify production and approved preview
   origins. Authenticated API responses are never cached.
+- Render remains authoritative while the Azure Student environment is tested.
+  Any paid Azure production cutover requires separate approval and a new ADR.

@@ -1,6 +1,6 @@
 # Peso Production Readiness Review
 
-**Status:** Beta readiness checklist | **Updated:** 2026-08-25
+**Status:** Beta readiness checklist | **Updated:** 2026-08-30
 
 This review is the release gate for the focused web beta. It is not a claim that every exercise, camera view, or future coaching feature is production-ready.
 
@@ -32,11 +32,13 @@ This review is the release gate for the focused web beta. It is not a claim that
 - [ ] Run `npm run dashboard:typecheck` and `npm run dashboard:build`.
 - [ ] Run backend tests with production-like required environment variables.
 - [ ] Apply and verify all Supabase migrations, RLS policies, storage buckets, and indexes.
-- [ ] Confirm Render API and worker deployments use the same model/configuration version.
+- [ ] Confirm the Azure Student deployment uses an immutable GHCR digest and
+      the fixed 0.25 vCPU/0.5 GiB worker passes the longest clip twice.
 
 ### Security and privacy
 
-- [ ] Set `BACKEND_ENV=production` and explicit production CORS origins.
+- [ ] Set `BACKEND_ENV=production` for hardened behavior and one exact Student
+      test CORS origin; do not add the production website origin.
 - [ ] Set non-placeholder service, JWT, cleanup, and storage configuration secrets.
 - [ ] Verify signed URL expiration, upload limits, per-user quotas, and cleanup jobs.
 - [ ] Confirm logs do not expose tokens, raw media, or unnecessary personal data.

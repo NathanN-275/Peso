@@ -11,6 +11,7 @@ export default defineConfig({
   outputDir: 'artifacts/playwright-results',
   use: {
     baseURL: process.env.PESO_E2E_WEB_BASE_URL,
+    permissions: ['camera'],
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -18,7 +19,12 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        launchOptions: {
+          args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'],
+        },
+      },
     },
   ],
 });

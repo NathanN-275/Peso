@@ -30,6 +30,7 @@ export const supabase =
           autoRefreshToken: true,
           persistSession: true,
           detectSessionInUrl: Platform.OS === 'web',
+          flowType: 'pkce',
           lock: Platform.OS === 'web' ? undefined : processLock,
         },
       })

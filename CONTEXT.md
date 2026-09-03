@@ -27,6 +27,18 @@ visual language, Peso Accounts, and Saved Lift Library as mobile while retaining
 browser-specific submission rules. The authenticated Web App uses the same
 durable analysis queue as native clients.
 
+## Production Backend
+
+The current hosted API and analysis worker on Render. Render remains
+authoritative for production, and the production frontend backend URL does not
+change as part of Student environment testing.
+
+## Student Environment
+
+The single non-production Azure Container Apps environment defined by ADR 0012.
+It is an isolated test backend for the stable private Netlify `main` branch
+deploy and is never a synonym for production or a production cutover.
+
 ## Peso Account
 
 The user identity shared across Peso web and mobile. An authenticated Peso
@@ -54,6 +66,13 @@ The owner-scoped list of Analysis Jobs that are queued, processing, ready for
 review, or failed. It is the user's resumable path back to an unsaved Analysis
 Run and is not part of the Saved Lift Library. The client refreshes it on app
 or browser resume and polls only while foregrounded work is active.
+
+## Analysis Recovery Action
+
+The user-safe next step for a failed Analysis Job. It is either retrying a
+transient or interrupted job with the same source video, or deleting an
+unreadable/problematic upload before submitting a replacement. It is distinct
+from tracking Recovery, which reacquires a physical tracking identity.
 
 ## Retired Demo Analysis
 

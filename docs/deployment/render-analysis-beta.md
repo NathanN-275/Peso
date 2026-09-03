@@ -1,13 +1,16 @@
 # Production Render analysis beta release
 
+Render remains the current hosted backend while the isolated Azure Student
+environment is tested. ADR 0012 does not authorize a paid Azure production
+cutover or a Netlify backend change.
+
 `render.yaml` defines a Starter API and a Standard worker without requiring a
 Render Pro workspace. Both use the root Docker image and the same backend code.
 This runbook applies only to production under ADR 0010.
 
-Do not clone these Render services for staging. Isolated staging analysis is
-governed by ADR 0011 and `docs/deployment/azure-staging-release.md`. Never point
-an Azure staging worker at the production queue, and never apply the Azure
-runbook to either production Render service.
+Do not clone these Render services for staging. Isolated Student analysis is
+governed by ADR 0012 and `docs/deployment/azure-student-setup.md`. Never apply
+the Azure runbook to either production Render service.
 
 ## Required secrets
 
@@ -46,7 +49,7 @@ becoming healthy.
 
 ## Worker sizing gate
 
-Run the sizing benchmark in the isolated Azure staging environment first. A
+Run the sizing benchmark in the isolated Azure Student environment first. A
 later, separately approved Render sizing check may use representative side-view
 squat recordings, including the longest beta-allowed clip, while capturing
 Render's peak memory and processing duration. Repeat the set at least twice to
@@ -61,7 +64,7 @@ sizing from an idle worker or a synthetic clip.
 
 ## Rollback
 
-Set `ANALYSIS_PROFILE_MODE=legacy` if a candidate profile was enabled. Roll the
-API and worker back to the last healthy image together. Do not reverse an
-additive queue migration while jobs reference its columns. Netlify can publish
-the last known-good deploy independently.
+If Student testing interferes with the shared queue, pause the Student worker
+and verify one current hosted job completes on Render. Do not change the
+Netlify production backend, delete Azure resources, or reverse an additive
+queue migration while jobs reference it.

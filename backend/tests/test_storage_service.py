@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -21,6 +24,7 @@ fake_fastapi.status = SimpleNamespace(
   HTTP_400_BAD_REQUEST=400,
   HTTP_404_NOT_FOUND=404,
   HTTP_413_CONTENT_TOO_LARGE=413,
+  HTTP_500_INTERNAL_SERVER_ERROR=500,
   HTTP_502_BAD_GATEWAY=502,
 )
 sys.modules.setdefault("fastapi", fake_fastapi)
@@ -37,7 +41,11 @@ sys.modules.setdefault("supabase", fake_supabase)
 
 from fastapi import HTTPException
 
-from app.services.storage_service import StorageService, _has_expected_video_signature
+from app.services.storage_service import (
+  StorageService,
+  _has_expected_video_signature,
+  _validate_video_stream,
+)
 
 
 class StorageServiceTest(unittest.TestCase):
@@ -68,6 +76,74 @@ class StorageServiceTest(unittest.TestCase):
   def test_video_signature_accepts_webm_and_ios_compatible_containers(self) -> None:
     self.assertTrue(_has_expected_video_signature("user/uploads/recording.webm", b"\x1a\x45\xdf\xa3\x93B\x82\x84webm"))
     self.assertTrue(_has_expected_video_signature("user/uploads/recording.mov", b"\x00\x00\x00\x18ftypqt  \x00\x00\x00\x00"))
+
+  def test_video_stream_validation_uses_devnull_without_ffprobe_nostdin_option(self) -> None:
+    with (
+      patch("app.services.storage_service.shutil.which", return_value="/usr/bin/ffprobe"),
+      patch(
+        "app.services.storage_service.subprocess.run",
+        return_value=SimpleNamespace(returncode=0, stdout="video\n", stderr=""),
+      ) as run,
+    ):
+      _validate_video_stream(Path("/tmp/recording.mov"), 30)
+
+    command = run.call_args.args[0]
+    self.assertNotIn("-nostdin", command)
+    self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
+    self.assertEqual(command[command.index("-protocol_whitelist") + 1], "file,pipe")
+
+  @unittest.skipUnless(
+    shutil.which("ffmpeg") and shutil.which("ffprobe"),
+    "ffmpeg and ffprobe are required for media validation",
+  )
+  def test_video_stream_validation_accepts_generated_mov_fixture(self) -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+      fixture = Path(temp_dir) / "regression.MOV"
+      subprocess.run(
+        [
+          shutil.which("ffmpeg"),
+          "-v",
+          "error",
+          "-f",
+          "lavfi",
+          "-i",
+          "color=c=black:s=16x16:d=0.1",
+          "-c:v",
+          "mpeg4",
+          "-an",
+          str(fixture),
+        ],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+      )
+
+      self.assertGreater(fixture.stat().st_size, 0)
+      _validate_video_stream(fixture, 30)
+
+  def test_video_stream_validation_reports_backend_failures(self) -> None:
+    with patch("app.services.storage_service.shutil.which", return_value=None):
+      with self.assertRaises(HTTPException) as missing:
+        _validate_video_stream(Path("/tmp/recording.mov"), 30)
+
+    self.assertEqual(missing.exception.status_code, 500)
+
+    for failure in (
+      OSError("unable to start ffprobe"),
+      subprocess.TimeoutExpired(["ffprobe"], 30),
+    ):
+      with self.subTest(failure=type(failure).__name__):
+        with (
+          patch("app.services.storage_service.shutil.which", return_value="/usr/bin/ffprobe"),
+          patch("app.services.storage_service.subprocess.run", side_effect=failure),
+        ):
+          with self.assertRaises(HTTPException) as raised:
+            _validate_video_stream(Path("/tmp/recording.mov"), 30)
+
+        self.assertEqual(raised.exception.status_code, 500)
+        self.assertIn("temporarily unavailable", raised.exception.detail)
 
   def test_validate_video_object_rejects_invalid_mime_type(self) -> None:
     service = self._service({"metadata": {"mimetype": "text/plain", "size": "1024"}})
@@ -118,7 +194,7 @@ class StorageServiceTest(unittest.TestCase):
       patch("app.services.storage_service.get_pooled_http_client", return_value=http_client),
       patch(
         "app.services.storage_service.subprocess.run",
-        return_value=SimpleNamespace(returncode=0, stdout="video\n"),
+        return_value=SimpleNamespace(returncode=0, stdout="video\n", stderr=""),
       ),
     ):
       temp_path = service.download_to_tempfile("user/uploads/recording.mp4")
@@ -198,7 +274,7 @@ class StorageServiceTest(unittest.TestCase):
       patch("app.services.storage_service.get_pooled_http_client", return_value=http_client),
       patch(
         "app.services.storage_service.subprocess.run",
-        return_value=SimpleNamespace(returncode=1, stdout=""),
+        return_value=SimpleNamespace(returncode=1, stdout="", stderr="Invalid data found"),
       ),
     ):
       with self.assertRaises(HTTPException) as raised:

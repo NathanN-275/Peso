@@ -3,21 +3,20 @@
 This runbook is the source of truth for the side-view squat beta release. It
 does not authorize provider spend, Azure provisioning, public staging
 visibility, or production changes. Follow the cost and approval gates in
-`docs/deployment/azure-staging-release.md` before creating Azure resources.
+`docs/deployment/azure-student-setup.md` before creating Azure resources.
 
-## Staging stack
+## Student test stack
 
 Create isolated resources in this order:
 
-1. A separate Supabase project in the confirmed organization and region. Apply
-   every tracked migration, create the `videos` and avatar buckets, run the RLS
-   audit and Supabase security advisor, and create isolated E2E users.
-2. The Azure Container Apps staging API and event-driven worker defined in
-   `infra/azure/staging`, using only staging Supabase values. Bootstrap them
-   disabled, seed secrets locally, and verify `/health/ready` before allowing
-   worker executions.
-3. A stable Netlify branch deployment wired to the staging API and Supabase
-   project. Its `EXPO_PUBLIC_AUTH_CHALLENGE_URL` must point to its own exact
+1. The existing Supabase project with two dedicated Student E2E users. Preview
+   and review additive migrations, run the RLS audit and Supabase security
+   advisor, and keep all test rows/storage objects owner-scoped to those users.
+2. The single Central US Azure Student Container Apps API and event-triggered
+   worker. Set one exact test Netlify origin in CORS and verify
+   `/health/ready` before testing the worker.
+3. A stable Netlify test deployment wired to the Student API and existing
+   Supabase project. Its `EXPO_PUBLIC_AUTH_CHALLENGE_URL` must point to its exact
    `https://<staging-host>/auth/turnstile/` page.
 4. A real staging-only Turnstile widget restricted to
    `main--peso-webapp.netlify.app`. Put its site key only in the Netlify branch
@@ -46,6 +45,10 @@ The client rejects unknown native schemes, hosts, path suffixes, credentials,
 and ports. Signup confirmation and password recovery are separate destinations;
 auth URL credentials are redacted from logs.
 
+Native callbacks use Supabase PKCE codes only. Before enabling this version,
+expire or reissue any outstanding implicit-flow email links: token-pair callbacks
+are rejected rather than installed as a session.
+
 ## Resend and Supabase Auth
 
 Use a verified auth-only sender domain and configure Resend as Supabase custom
@@ -63,7 +66,7 @@ Install Playwright's Chromium browser once on the release runner, then provide:
 PESO_E2E_ENV=staging
 PESO_E2E_ALLOW_ADMIN_FIXTURES=true
 PESO_E2E_WEB_BASE_URL=https://<stable-staging-host>
-PESO_E2E_SUPABASE_URL=https://<staging-project>.supabase.co
+PESO_E2E_SUPABASE_URL=https://<existing-project>.supabase.co
 PESO_E2E_SUPABASE_SERVICE_ROLE_KEY=<runner-secret>
 PESO_E2E_SIGNUP_EMAIL=<isolated-test-inbox>
 PESO_E2E_SIGNUP_PASSWORD=<isolated-password>

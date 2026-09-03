@@ -27,11 +27,15 @@ import { useAuth } from '../../context/AuthContext';
 import { parseWebAuthRedirect } from '../../lib/auth-redirect';
 import {
   createSavedLiftExport,
+  discardAnalyzedVideo,
   deleteSavedLifts,
   getSavedLiftExport,
   getSavedVideoPlaybackUrl,
   getSavedVideos,
+  triggerVideoAnalysis,
 } from '../../lib/backendApi';
+import { canRetryAnalysis, failureCopy } from '../../lib/analysisRecoveryPolicy';
+import { getFreshBackendAccessToken } from '../../lib/backendAuth';
 import { readSidebarCollapsed, writeSidebarCollapsed } from '../../lib/sidebarPreferencePolicy';
 import {
   normalizeSavedLiftView,
@@ -49,7 +53,9 @@ import {
   WebProcessingRoute,
   WebRecordRoute,
   WebReviewRoute,
+  WebSubmissionChoiceRoute,
   WebUploadRoute,
+  WebVideoSetupRoute,
 } from './web-analysis-routes';
 import AuthChallenge from '../components/auth/AuthChallenge';
 
@@ -518,19 +524,19 @@ function ResetScreen() {
 
 const desktopNavItems = [
   { path: '/', label: 'Home', short: 'H' },
-  { path: '/record', label: 'Record', short: 'R' },
-  { path: '/upload', label: 'Upload Video', short: 'U' },
+  { path: '/setup', label: 'Analyze', short: 'A' },
   { path: '/saved-lifts', label: 'Saved Lifts', short: 'S' },
   { path: '/profile', label: 'Profile', short: 'P' },
 ];
 
-const mobileNavItems = desktopNavItems.filter((item) => item.path !== '/upload');
+const mobileNavItems = desktopNavItems;
 
 const routeTitles: Record<string, string> = {
   '/': 'Home',
+  '/setup': 'Video setup',
+  '/submit': 'Choose video',
   '/record': 'Record video',
   '/upload': 'Upload video',
-  '/setup': 'Video setup',
   '/saved-lifts': 'Saved Lifts',
   '/profile': 'Profile',
   '/settings': 'Settings',
@@ -732,7 +738,10 @@ function CapacityCard() {
 
 function ActivityCard() {
   const navigate = useNavigate();
-  const { items, loading, error, refresh } = useWebAnalysisActivity();
+  const { session } = useAuth();
+  const { items, loading, error, refresh, recordQueued, removeActivity } = useWebAnalysisActivity();
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const activity = items[0] ?? null;
   const copy = activity?.stage === 'queued'
     ? { title: 'Squat set is queued', detail: 'Waiting for an analysis worker.' }
@@ -747,7 +756,7 @@ function ActivityCard() {
             : activity?.stage === 'ready'
               ? { title: 'Analysis ready to review', detail: 'Your real result is ready.' }
               : activity?.stage === 'failed'
-                ? { title: 'Analysis could not finish', detail: 'Try another side-view squat video.' }
+                ? { title: 'Analysis could not finish', detail: failureCopy(activity) }
                 : { title: 'No active analysis', detail: 'Record or upload a side-view squat to start a real analysis.' };
   const toneStyle = activity?.stage === 'ready'
     ? styles.activityDotSuccess
@@ -763,6 +772,45 @@ function ActivityCard() {
       : `/processing/${activity?.video_id}`
   );
 
+  const retryAnalysis = async () => {
+    if (!activity || !session?.access_token || recoveryBusy) return;
+
+    setRecoveryBusy(true);
+    setRecoveryError(null);
+    try {
+      const accessToken = await getFreshBackendAccessToken();
+      const response = await triggerVideoAnalysis(activity.video_id, accessToken);
+      recordQueued({
+        videoId: response.video_id,
+        jobId: response.job_id,
+        status: response.status,
+      });
+    } catch (actionError) {
+      setRecoveryError(actionError instanceof Error ? actionError.message : 'Unable to retry analysis.');
+    } finally {
+      setRecoveryBusy(false);
+    }
+  };
+
+  const deleteVideo = async () => {
+    if (!activity || !session?.access_token || recoveryBusy) return;
+    if (!window.confirm('Delete this failed video? This permanently removes the uploaded video and cannot be undone.')) {
+      return;
+    }
+
+    setRecoveryBusy(true);
+    setRecoveryError(null);
+    try {
+      const accessToken = await getFreshBackendAccessToken();
+      await discardAnalyzedVideo(activity.video_id, accessToken);
+      removeActivity(activity.video_id);
+    } catch (actionError) {
+      setRecoveryError(actionError instanceof Error ? actionError.message : 'Unable to delete this video.');
+    } finally {
+      setRecoveryBusy(false);
+    }
+  };
+
   return (
     <View style={styles.activityCard}>
       <View style={[styles.activityDot, toneStyle]} />
@@ -770,8 +818,16 @@ function ActivityCard() {
         <Text selectable style={styles.activityTitle}>{copy.title}</Text>
         <Text selectable style={styles.activityDetail}>{loading && !activity ? 'Refreshing activity…' : copy.detail}</Text>
         {error ? <Text selectable style={styles.formError}>{error}</Text> : null}
+        {recoveryError ? <Text selectable style={styles.formError}>{recoveryError}</Text> : null}
       </View>
-      {hasAction && <ActionButton label={actionLabel} variant="secondary" compact onPress={onAction} />}
+      {activity?.stage === 'failed' ? (
+        <View style={styles.activityActions}>
+          {canRetryAnalysis(activity) ? (
+            <ActionButton label={recoveryBusy ? 'Retrying…' : 'Try analysis again'} compact disabled={recoveryBusy} onPress={() => void retryAnalysis()} />
+          ) : null}
+          <ActionButton label={recoveryBusy ? 'Deleting…' : 'Delete video'} variant="danger" compact disabled={recoveryBusy} onPress={() => void deleteVideo()} />
+        </View>
+      ) : hasAction && <ActionButton label={actionLabel} variant="secondary" compact onPress={onAction} />}
       {error && <ActionButton label="Retry" variant="quiet" compact onPress={() => void refresh()} />}
     </View>
   );
@@ -912,8 +968,7 @@ function HomeScreen() {
       </View>
       <View style={styles.homeGrid}>
         <View style={styles.quickActionsColumn}>
-          <QuickAction title="Record Video" description="Use this device’s camera" symbol="●" disabled={blocked} onPress={() => navigate('/record')} />
-          <QuickAction title="Upload Video" description="Choose a video from this device" symbol="↑" disabled={blocked} onPress={() => navigate('/upload')} />
+          <QuickAction title="Analyze a squat" description="Set up, then upload or record" symbol="●" disabled={blocked} onPress={() => navigate('/setup')} />
         </View>
         <CapacityCard />
       </View>
@@ -1233,7 +1288,7 @@ function SavedLiftsScreen() {
         </View>
         <View style={styles.buttonRow}>
           <ActionButton label={selectionMode ? 'Cancel selection' : 'Select lifts'} variant="secondary" compact onPress={toggleSelectionMode} />
-          <ActionButton label="Analyze a squat" compact onPress={() => navigate('/upload')} />
+          <ActionButton label="Analyze a squat" compact onPress={() => navigate('/setup')} />
         </View>
       </View>
 
@@ -1474,9 +1529,10 @@ export default function WebApp() {
         <Route path="/reset" element={<ResetScreen />} />
         <Route element={<AccountRoute />}>
           <Route index element={<HomeScreen />} />
+          <Route path="/setup" element={<WebVideoSetupRoute />} />
+          <Route path="/submit" element={<WebSubmissionChoiceRoute />} />
           <Route path="/record" element={<WebRecordRoute />} />
           <Route path="/upload" element={<WebUploadRoute />} />
-          <Route path="/setup" element={<Navigate to="/upload" replace />} />
           <Route path="/processing/:videoId" element={<WebProcessingRoute />} />
           <Route path="/review/:videoId" element={<WebReviewRoute onLibraryChanged={invalidateSavedLiftLibraryCache} />} />
           <Route path="/saved-lifts" element={<SavedLiftsScreen />} />
@@ -1616,6 +1672,7 @@ const styles = StyleSheet.create({
   activityDotInfo: { backgroundColor: colors.brand },
   activityDotSuccess: { backgroundColor: colors.green },
   activityCopy: { flex: 1, minWidth: 120 },
+  activityActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8 },
   activityTitle: { color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 13 },
   activityDetail: { marginTop: 5, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 11, lineHeight: 17 },
   pendingReviewBanner: { padding: 18, borderWidth: 1, borderColor: '#2D579A', borderRadius: 14, backgroundColor: '#0D1B34', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 15 },

@@ -59,8 +59,6 @@ def analysis_timeout_seconds(
 
 def classify_analysis_failure(error_type: str, message: str) -> tuple[str, bool]:
   normalized = f"{error_type} {message}".lower()
-  if "timeout" in normalized or "timed out" in normalized:
-    return "analysis_timeout", False
   if any(
     marker in normalized
     for marker in (
@@ -70,9 +68,14 @@ def classify_analysis_failure(error_type: str, message: str) -> tuple[str, bool]
       "unsupported video",
       "video duration",
       "was not found",
+      "valid video stream",
+      "contents do not match the selected video format",
+      "unable to validate uploaded video contents",
     )
   ):
     return "invalid_video", False
+  if "timeout" in normalized or "timed out" in normalized:
+    return "analysis_timeout", False
   if any(
     marker in normalized
     for marker in (
