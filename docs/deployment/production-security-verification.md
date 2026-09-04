@@ -19,3 +19,10 @@ This is local implementation evidence, not production acceptance. No cloud resou
 - All real-Azure acceptance cases in [the staging gate](production-security.md) remain outstanding, including SAS replay/expiry enforcement, cross-owner blob access, alert-to-shutdown delivery, cleanup, resource limits, cost, migration/rollback, deletion verification, and restore drills.
 - Supabase authentication controls, privileged-operator MFA, GitHub required checks/environment reviewers, alert recipients, and Key Vault secrets require operator verification. No credentials were added to app environment files.
 - Upload reservations remain disabled by default. Do not release the reservation client until the matching backend, migration, storage, and rollback gates pass. Paid-subscription approval remains required before uncapped public growth.
+
+## Container scanner follow-up — 2026-09-03
+
+- PR #41's first container-security job failed while installing the action's default Trivy v0.65.0; the image scan never ran. The upstream release/checksum download returns 404, and the installer failure was reproduced locally.
+- Both container gates now explicitly select Trivy v0.74.0 and use the verified v0.36.0 action commit. The replacement installer passed checksum verification, its Linux archive is downloadable, and all 173 repository policy tests passed. The HIGH/CRITICAL threshold, failure exit code, and inclusion of unfixed findings are unchanged.
+- A local scan of `peso-backend:production-security` (image ID `daa10cb8b0a9`) completed and failed the vulnerability gate: 257 Debian package findings (246 HIGH, 11 CRITICAL, none with a listed fixed version) and five HIGH Python findings. These are package findings, not 262 distinct CVEs. The Python findings affect jaraco.context, msgpack, protobuf, setuptools, and wheel. The existing pip-audit protobuf exception does not waive the container gate.
+- Container/dependency remediation and a successful scan of the exact PR/release image remain required. Successful scanner installation is not container acceptance.

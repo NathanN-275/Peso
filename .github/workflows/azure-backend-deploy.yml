@@ -122,11 +122,12 @@ jobs:
           NODE
 
       - name: Scan the exact candidate image before preview or deployment
-        uses: aquasecurity/trivy-action@f9424c10c36e288d5fa79bd3dfd1aeb2d6eae808 # v0.33.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
           TRIVY_USERNAME: ${{ vars.GHCR_USERNAME }}
           TRIVY_PASSWORD: ${{ secrets.GHCR_READ_TOKEN }}
         with:
+          version: v0.74.0
           image-ref: ${{ inputs.image_reference }}
           format: table
           exit-code: "1"

@@ -65,3 +65,19 @@ test('database tests and container scanning are mandatory CI jobs', () => {
   assert.match(ignore, /^!backend\/app\/\*\*$/m);
   assert.doesNotMatch(ignore, /^!(?:\.env|backend\/test_videos)/m);
 });
+
+test('PR and deployment scans explicitly select the same Trivy release and blocking policy', () => {
+  const scans = ['.github/workflows/security.yml', '.github/workflows/azure-backend-deploy.yml'].map((name) => {
+    const workflow = read(name);
+    const start = workflow.indexOf('uses: aquasecurity/trivy-action@');
+    assert.notEqual(start, -1, `${name}: missing container scanner`);
+    const scan = workflow.slice(start).split('\n      - ')[0];
+    const version = scan.match(/^\s+version: (v\d+\.\d+\.\d+)\s*$/m)?.[1];
+    assert.ok(version, `${name}: explicitly pin Trivy instead of inheriting the action's release default`);
+    assert.match(scan, /exit-code: "1"/);
+    assert.match(scan, /severity: HIGH,CRITICAL/);
+    assert.match(scan, /ignore-unfixed: false/);
+    return { version, action: scan.match(/trivy-action@([a-f0-9]{40})/)[1] };
+  });
+  assert.deepEqual(scans[0], scans[1], 'PR and deployment gates must use the same scanner');
+});
