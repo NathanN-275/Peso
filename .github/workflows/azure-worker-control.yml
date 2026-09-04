@@ -32,7 +32,7 @@ jobs:
       ACTION: ${{ inputs.action }}
     steps:
       - name: Sign in to Azure with student OIDC identity
-        uses: azure/login@v3
+        uses: azure/login@4c03e4685fe81df2c50d5714c7d93cf39d8deb7f # v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}

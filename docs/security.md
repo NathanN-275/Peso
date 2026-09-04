@@ -1,5 +1,10 @@
 # Security Operations
 
+For the reserved Azure source-upload path, use the
+[production-security staging gate](deployment/production-security.md) and
+[incident, retention, and restore runbook](operations/production-security-runbook.md).
+Production client cutover and provider settings are not implied by merging code.
+
 ## GitHub Secret Scanning
 
 Enable these repository settings before merging production deployments:

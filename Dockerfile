@@ -17,6 +17,11 @@ RUN python -m pip install --upgrade pip \
 
 COPY backend/app ./app
 
+# Untrusted media parsing must not run as root. Model caches use this writable
+# home directory; source code and installed dependencies remain read-only.
+RUN useradd --system --uid 10001 --create-home peso
+USER 10001:10001
+
 EXPOSE 10000
 
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "10000"]

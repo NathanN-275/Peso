@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import re
+import math
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -39,6 +41,13 @@ DEFAULT_THUMBNAIL_STORAGE_ALLOWANCE_BYTES = 1024 * 1024
 DEFAULT_MAX_USER_IN_PROGRESS_VIDEOS = 3
 DEFAULT_MAX_USER_UPLOADS_PER_HOUR = 20
 DEFAULT_MAX_VIDEO_DURATION_MS = 5 * 60 * 1000
+DEFAULT_MAX_VIDEO_WIDTH = 1920
+DEFAULT_MAX_VIDEO_HEIGHT = 1080
+DEFAULT_MAX_VIDEO_FPS = 60.0
+DEFAULT_UPLOAD_RESERVATION_TTL_SECONDS = 10 * 60
+DEFAULT_MAX_USER_ACTIVE_UPLOAD_RESERVATIONS = 3
+DEFAULT_MAX_USER_RESERVED_BYTES = 150 * 1024 * 1024
+DEFAULT_MAX_GLOBAL_ACTIVE_UPLOAD_RESERVATIONS = 20
 DEFAULT_SIGNED_URL_TTL_SECONDS = 300
 DEFAULT_STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS = 120
 DEFAULT_SUPABASE_HTTP_MAX_CONNECTIONS = 20
@@ -85,6 +94,18 @@ class Settings:
   max_user_in_progress_videos: int = DEFAULT_MAX_USER_IN_PROGRESS_VIDEOS
   max_user_uploads_per_hour: int = DEFAULT_MAX_USER_UPLOADS_PER_HOUR
   max_video_duration_ms: int = DEFAULT_MAX_VIDEO_DURATION_MS
+  max_video_width: int = DEFAULT_MAX_VIDEO_WIDTH
+  max_video_height: int = DEFAULT_MAX_VIDEO_HEIGHT
+  max_video_fps: float = DEFAULT_MAX_VIDEO_FPS
+  upload_reservations_enabled: bool = False
+  upload_reservation_ttl_seconds: int = DEFAULT_UPLOAD_RESERVATION_TTL_SECONDS
+  max_user_active_upload_reservations: int = DEFAULT_MAX_USER_ACTIVE_UPLOAD_RESERVATIONS
+  max_user_reserved_bytes: int = DEFAULT_MAX_USER_RESERVED_BYTES
+  max_global_active_upload_reservations: int = DEFAULT_MAX_GLOBAL_ACTIVE_UPLOAD_RESERVATIONS
+  azure_blob_account_url: str = ""
+  azure_blob_source_container: str = "source-videos"
+  azure_managed_identity_client_id: str | None = None
+  budget_shutdown_token: str = ""
   signed_url_ttl_seconds: int = DEFAULT_SIGNED_URL_TTL_SECONDS
   storage_download_signed_url_ttl_seconds: int = DEFAULT_STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS
   supabase_http_max_connections: int = DEFAULT_SUPABASE_HTTP_MAX_CONNECTIONS
@@ -132,7 +153,7 @@ def _parse_positive_float_env(name: str, default: float) -> float:
   except ValueError as error:
     raise RuntimeError(f"{name} must be a positive number.") from error
 
-  if parsed_value <= 0:
+  if not math.isfinite(parsed_value) or parsed_value <= 0:
     raise RuntimeError(f"{name} must be a positive number.")
 
   return parsed_value
@@ -188,7 +209,7 @@ def get_settings() -> Settings:
   backend_env_raw = os.getenv("BACKEND_ENV", "").strip().lower()
   deployed_environment = any(
     os.getenv(name, "").strip()
-    for name in ("RENDER", "RAILWAY_ENVIRONMENT", "FLY_APP_NAME", "VERCEL", "NETLIFY", "AWS_REGION")
+    for name in ("RENDER", "RAILWAY_ENVIRONMENT", "FLY_APP_NAME", "VERCEL", "NETLIFY", "AWS_REGION", "CONTAINER_APP_NAME")
   )
 
   if not backend_env_raw and deployed_environment:
@@ -265,6 +286,42 @@ def get_settings() -> Settings:
     "MAX_VIDEO_DURATION_MS",
     DEFAULT_MAX_VIDEO_DURATION_MS,
   )
+  max_video_width = _parse_positive_int_env("MAX_VIDEO_WIDTH", DEFAULT_MAX_VIDEO_WIDTH)
+  max_video_height = _parse_positive_int_env("MAX_VIDEO_HEIGHT", DEFAULT_MAX_VIDEO_HEIGHT)
+  max_video_fps = _parse_positive_float_env("MAX_VIDEO_FPS", DEFAULT_MAX_VIDEO_FPS)
+  upload_reservations_enabled = _parse_bool_env("UPLOAD_RESERVATIONS_ENABLED", False)
+  upload_reservation_ttl_seconds = _parse_positive_int_env(
+    "UPLOAD_RESERVATION_TTL_SECONDS",
+    DEFAULT_UPLOAD_RESERVATION_TTL_SECONDS,
+  )
+  max_user_active_upload_reservations = _parse_positive_int_env(
+    "MAX_USER_ACTIVE_UPLOAD_RESERVATIONS",
+    DEFAULT_MAX_USER_ACTIVE_UPLOAD_RESERVATIONS,
+  )
+  max_user_reserved_bytes = _parse_positive_int_env(
+    "MAX_USER_RESERVED_BYTES",
+    DEFAULT_MAX_USER_RESERVED_BYTES,
+  )
+  max_global_active_upload_reservations = _parse_positive_int_env(
+    "MAX_GLOBAL_ACTIVE_UPLOAD_RESERVATIONS",
+    DEFAULT_MAX_GLOBAL_ACTIVE_UPLOAD_RESERVATIONS,
+  )
+  azure_blob_account_url = os.getenv("AZURE_BLOB_ACCOUNT_URL", "").strip().rstrip("/")
+  azure_blob_source_container = (
+    os.getenv("AZURE_BLOB_SOURCE_CONTAINER", "source-videos").strip() or "source-videos"
+  )
+  azure_managed_identity_client_id = (
+    os.getenv("AZURE_CLIENT_ID", "").strip()
+    or os.getenv("AZURE_MANAGED_IDENTITY_CLIENT_ID", "").strip()
+    or None
+  )
+  budget_shutdown_token = os.getenv("BUDGET_SHUTDOWN_TOKEN", "").strip()
+  if azure_blob_account_url and not re.fullmatch(
+    r"https://[a-z0-9]{3,24}\.blob\.core\.windows\.net", azure_blob_account_url,
+  ):
+    raise RuntimeError("AZURE_BLOB_ACCOUNT_URL must be an HTTPS Azure Blob account URL without credentials or query parameters.")
+  if upload_reservation_ttl_seconds > 900:
+    raise RuntimeError("UPLOAD_RESERVATION_TTL_SECONDS must not exceed 900 seconds.")
   signed_url_ttl_seconds = _parse_positive_int_env(
     "SIGNED_URL_TTL_SECONDS",
     DEFAULT_SIGNED_URL_TTL_SECONDS,
@@ -378,6 +435,13 @@ def get_settings() -> Settings:
     if analysis_trace_enabled:
       raise RuntimeError("ANALYSIS_TRACE_ENABLED must not be enabled in production.")
 
+    if upload_reservations_enabled and not azure_blob_account_url:
+      raise RuntimeError(
+        "AZURE_BLOB_ACCOUNT_URL must be configured when upload reservations are enabled in production."
+      )
+    if upload_reservations_enabled and len(budget_shutdown_token) < 32:
+      raise RuntimeError("BUDGET_SHUTDOWN_TOKEN must contain at least 32 characters when production uploads are enabled.")
+
   if cleanup_job_token is None and not (
     backend_env in {"development", "dev", "local", "test"} and allow_unauthenticated_dev_cleanup
   ):
@@ -426,6 +490,18 @@ def get_settings() -> Settings:
     max_user_in_progress_videos=max_user_in_progress_videos,
     max_user_uploads_per_hour=max_user_uploads_per_hour,
     max_video_duration_ms=max_video_duration_ms,
+    max_video_width=max_video_width,
+    max_video_height=max_video_height,
+    max_video_fps=max_video_fps,
+    upload_reservations_enabled=upload_reservations_enabled,
+    upload_reservation_ttl_seconds=upload_reservation_ttl_seconds,
+    max_user_active_upload_reservations=max_user_active_upload_reservations,
+    max_user_reserved_bytes=max_user_reserved_bytes,
+    max_global_active_upload_reservations=max_global_active_upload_reservations,
+    azure_blob_account_url=azure_blob_account_url,
+    azure_blob_source_container=azure_blob_source_container,
+    azure_managed_identity_client_id=azure_managed_identity_client_id,
+    budget_shutdown_token=budget_shutdown_token,
     signed_url_ttl_seconds=signed_url_ttl_seconds,
     storage_download_signed_url_ttl_seconds=storage_download_signed_url_ttl_seconds,
     supabase_http_max_connections=supabase_http_max_connections,

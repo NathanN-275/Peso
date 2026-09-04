@@ -32,11 +32,12 @@ test('Student compute is Consumption-only, scale-to-zero, and strictly bounded',
   assert.match(studentBicep, /minReplicas: 0[\s\S]*maxReplicas: 1/);
   assert.match(studentBicep, /triggerType: 'Event'/);
   assert.match(studentBicep, /replicaTimeout: 900/);
-  assert.match(studentBicep, /minExecutions: 0[\s\S]*maxExecutions: 1/);
+  assert.match(studentBicep, /@allowed\(\[1, 2\]\)[\s\S]*param maxAnalysisExecutions int = 1/);
+  assert.match(studentBicep, /minExecutions: 0[\s\S]*maxExecutions: maxAnalysisExecutions/);
   assert.match(studentBicep, /parallelism: 1/);
   assert.match(studentBicep, /cpu: json\('0\.25'\)[\s\S]*memory: '0\.5Gi'/);
-  assert.equal((studentBicep.match(/cpu: json\('0\.25'\)/g) ?? []).length, 2);
-  assert.equal((studentBicep.match(/memory: '0\.5Gi'/g) ?? []).length, 2);
+  assert.equal((studentBicep.match(/cpu: json\('0\.25'\)/g) ?? []).length, 3);
+  assert.equal((studentBicep.match(/memory: '0\.5Gi'/g) ?? []).length, 3);
   assert.match(studentBicep, /'--once'/);
   assert.match(studentBicep, /SELECT azure_scaler\.analysis_queue_depth\(\)/);
   assert.match(studentBicep, /dailyQuotaGb: json\('0\.25'\)/);

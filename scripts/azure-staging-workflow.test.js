@@ -23,7 +23,7 @@ test('Azure staging workflow verifies main before publishing the root image', ()
 
 test('published backend image receives full-SHA and main tags', () => {
   assert.match(workflowSource, /packages: write/);
-  assert.match(workflowSource, /docker\/build-push-action@v6/);
+  assert.match(workflowSource, /docker\/build-push-action@[a-f0-9]{40} # v6/);
   assert.match(workflowSource, /push: true/);
   assert.match(workflowSource, /:sha-\$\{\{ github\.sha \}\}/);
   assert.match(workflowSource, /:\s*main|\}\}:main/);
@@ -37,7 +37,7 @@ test('published backend image receives full-SHA and main tags', () => {
 test('Azure deployment uses OIDC and remains fail-closed behind the staging gate', () => {
   assert.match(workflowSource, /vars\.AZURE_STAGING_DEPLOY_ENABLED == 'true'/);
   assert.match(workflowSource, /id-token: write/);
-  assert.match(workflowSource, /uses: azure\/login@v2/);
+  assert.match(workflowSource, /uses: azure\/login@[a-f0-9]{40} # v2/);
   assert.match(workflowSource, /client-id: \$\{\{ vars\.AZURE_STAGING_CLIENT_ID \}\}/);
   assert.match(workflowSource, /tenant-id: \$\{\{ vars\.AZURE_TENANT_ID \}\}/);
   assert.match(workflowSource, /subscription-id: \$\{\{ vars\.AZURE_SUBSCRIPTION_ID \}\}/);
