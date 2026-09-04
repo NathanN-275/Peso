@@ -13,7 +13,12 @@ WORKDIR /app
 
 COPY backend/requirements.txt ./requirements.txt
 RUN python -m pip install --upgrade pip \
-    && python -m pip install --requirement requirements.txt
+    && python -m pip install --requirement requirements.txt \
+    && python -m pip check \
+    # Installation tools and ensurepip's bundled wheels are not runtime dependencies.
+    # Remove their vulnerable vendored libraries from the shipped image.
+    && python -m pip uninstall --yes pip setuptools wheel \
+    && rm -rf /usr/local/lib/python3.11/ensurepip
 
 COPY backend/app ./app
 
