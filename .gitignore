@@ -49,12 +49,15 @@ __pycache__/
 *.pyc
 
 # Local media
+backend/app/analysis/models/*.task
+backend/app/analysis/models/*.tmp
 *.mov
 *.MOV
 *.mp4
 
 # Local analysis observability artifacts
 backend/.peso/
+/.peso/
 /artifacts/
 
 supabase/.temp/

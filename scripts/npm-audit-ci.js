@@ -1,5 +1,6 @@
 const { readFileSync } = require('node:fs');
 const { spawnSync } = require('node:child_process');
+const { setTimeout: delay } = require('node:timers/promises');
 
 const AUDIT_LEVEL = 'high';
 const SEVERITY_RANK = {
@@ -142,37 +143,58 @@ function findBlockingVulnerabilities(report, lockfile, auditLevel = AUDIT_LEVEL)
     }));
 }
 
-function runAudit() {
+async function readAuditReport() {
   const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const result = spawnSync(
-    npmCommand,
-    ['audit', '--json', `--audit-level=${AUDIT_LEVEL}`],
-    { encoding: 'utf8' },
-  );
+  const maxAttempts = 3;
+  const transientErrors = new Set([
+    'E429', 'E500', 'E502', 'E503', 'E504',
+    'ETIMEDOUT', 'ECONNRESET', 'EAI_AGAIN',
+  ]);
 
-  if (result.error) {
-    throw result.error;
-  }
-
-  let report;
-  try {
-    report = JSON.parse(result.stdout);
-  } catch {
-    throw new Error(
-      `npm audit did not return valid JSON.\n${result.stderr || result.stdout}`,
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const result = spawnSync(
+      npmCommand,
+      [
+        'audit', '--json', `--audit-level=${AUDIT_LEVEL}`,
+        '--fetch-retries=0', '--fetch-timeout=20000',
+      ],
+      { encoding: 'utf8', timeout: 45000 },
     );
-  }
 
-  if (
-    report.auditReportVersion !== 2 ||
-    typeof report.vulnerabilities !== 'object' ||
-    report.vulnerabilities === null
-  ) {
-    throw new Error(
-      `npm audit did not return a usable vulnerability report.\n${result.stderr || result.stdout}`,
+    let report;
+    try {
+      report = JSON.parse(result.stdout);
+    } catch {
+      // Classify subprocess timeouts below; all other invalid output fails closed.
+    }
+
+    const usable = report?.auditReportVersion === 2 &&
+      typeof report.vulnerabilities === 'object' &&
+      report.vulnerabilities !== null &&
+      !Array.isArray(report.vulnerabilities);
+    const transient = transientErrors.has(
+      result.error?.code ?? report?.error?.code,
     );
-  }
+    if (!usable && transient && attempt < maxAttempts) {
+      const waitMs = 1000 * 2 ** (attempt - 1);
+      console.warn(`npm audit service unavailable (attempt ${attempt}/${maxAttempts}); retrying in ${waitMs}ms.`);
+      await delay(waitMs);
+      continue;
+    }
 
+    if (result.error) throw result.error;
+    if (!report) {
+      throw new Error(`npm audit did not return valid JSON.\n${result.stderr || result.stdout}`);
+    }
+    if (!usable || report.error || ![0, 1].includes(result.status)) {
+      throw new Error(`npm audit did not return a usable vulnerability report.\n${result.stderr || result.stdout}`);
+    }
+    return report;
+  }
+}
+
+async function runAudit() {
+  const report = await readAuditReport();
   const lockfile = JSON.parse(readFileSync('package-lock.json', 'utf8'));
   const blockers = findBlockingVulnerabilities(report, lockfile);
 
@@ -196,12 +218,12 @@ function runAudit() {
 }
 
 if (require.main === module) {
-  try {
-    process.exitCode = runAudit();
-  } catch (error) {
+  runAudit().then((exitCode) => {
+    process.exitCode = exitCode;
+  }).catch((error) => {
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;
-  }
+  });
 }
 
 module.exports = {

@@ -34,7 +34,13 @@ deployment is not accepted while any required item remains `TBD`.
 
 | Evidence | Value |
 | --- | --- |
-| Migration dry-run and reviewer | TBD |
+| Permanent project | peso-staging (`iseqgaewjpjcxrndibep`) |
+| Production exclusion | PesoDatabase (`jfgiydtrskpqxyorvvbc`) never receives Student writes |
+| Remote vs repository migration history comparison | TBD |
+| Every migration dry-run and reviewer | TBD |
+| Existing staging data preserved | TBD |
+| Student URL, public key, runtime key and scaler identity verified | TBD |
+| Auth redirect and private storage configuration | TBD |
 | Applied migration list | TBD |
 | Security advisor/RLS review | TBD |
 | Test user A ID and cleanup result | TBD |
@@ -45,6 +51,11 @@ deployment is not accepted while any required item remains `TBD`.
 
 | Evidence | Value |
 | --- | --- |
+| Full application Trivy scan: zero HIGH/CRITICAL, unfixed included | TBD |
+| Offline UID 10001 inference, imports, media and export checks | TBD |
+| Published image security artifact (digest + raw Trivy JSON) | TBD |
+| Reviewed real squat old/new comparison (not synthetic fixtures) | TBD |
+| Branch main Netlify configuration and production unchanged | TBD |
 | `/health/ready` response | TBD |
 | Signup-through-deletion test, user A | TBD |
 | Signup-through-deletion test, user B | TBD |

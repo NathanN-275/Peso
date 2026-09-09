@@ -5,10 +5,11 @@ import type { VideoCompressorType } from 'react-native-compressor';
 import { CameraAngle, ExerciseOption } from '../src/constants/videoSetup';
 import type { TrackingSetup } from '../src/types/trackingSetup';
 import {
-  fetchStorageUsage,
+  cancelUploadReservation,
+  completeUploadReservation,
+  createUploadReservation,
   fetchVideoCapabilities,
   markVideoUploadFailed,
-  registerUploadedVideo,
 } from './backendApi';
 import { getFreshBackendAccessToken } from './backendAuth';
 import {
@@ -21,10 +22,7 @@ import {
   QUALITY_PREFLIGHT_THRESHOLD_VERSION,
   requiresQualityPreflight,
 } from './qualityPreflightPolicy';
-import {
-  getStorageUploadErrorMessage,
-  normalizeVideoUploadFileName,
-} from './videoUploadPolicy';
+import { normalizeVideoUploadFileName } from './videoUploadPolicy';
 
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = resolveFrontendMaxUploadBytes();
@@ -89,13 +87,6 @@ type PreparedVideoForUpload = {
   wasVeryLarge: boolean;
 };
 
-type SupabaseLikeError = {
-  code?: string;
-  details?: string;
-  hint?: string;
-  message?: string;
-};
-
 type CleanupUploadedVideoForAnalysisArgs = {
   videoId: string;
   storagePath: string;
@@ -145,17 +136,6 @@ function normalizeExerciseType(exercise: ExerciseOption) {
 function normalizeViewType(angle: CameraAngle) {
   // Camera angles use the same normalization as exercises.
   return angle.trim().toLowerCase();
-}
-
-function sanitizeFilename(filename: string) {
-  // Keep storage paths free of unsafe filename characters.
-  return filename.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-+/g, '-');
-}
-
-function buildStoragePath(userId: string, filename: string) {
-  // Add a unique token so repeated uploads do not collide.
-  const uploadToken = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  return `${userId}/${uploadToken}-${sanitizeFilename(filename)}`;
 }
 
 function inferFileName(asset: UploadableVideoAsset) {
@@ -497,26 +477,8 @@ async function prepareVideoForUpload(
   };
 }
 
-function formatSupabaseError(error: unknown) {
-  // Reduce Supabase responses to a single readable message.
-  const typedError = (error ?? {}) as SupabaseLikeError;
-  const segments = [
-    typedError.message,
-    typedError.code ? `code=${typedError.code}` : null,
-    typedError.details ? `details=${typedError.details}` : null,
-    typedError.hint ? `hint=${typedError.hint}` : null,
-  ].filter(Boolean);
-
-  return segments.join(' | ') || 'Unknown Supabase error';
-}
-
-function formatStorageUploadError(error: unknown) {
-  const detail = formatSupabaseError(error);
-  return getStorageUploadErrorMessage(detail);
-}
-
 async function resolveUploadSource(asset: UploadableVideoAsset): Promise<UploadSource> {
-  // Convert the selected asset into the blob or file Supabase expects.
+  // Convert the selected asset into the blob or file used by the reserved PUT.
   const webAsset = asset as UploadableVideoAsset & WebImagePickerAsset;
   const inferredFileName = inferFileName(asset);
   validateInitialVideoMetadata(asset);
@@ -564,7 +526,6 @@ async function resolveUploadSource(asset: UploadableVideoAsset): Promise<UploadS
 
 export async function cleanupUploadedVideoForAnalysis({
   videoId,
-  storagePath,
 }: CleanupUploadedVideoForAnalysisArgs): Promise<void> {
   // Remove partially processed uploads when analysis setup fails.
   if (!supabase) {
@@ -582,35 +543,8 @@ export async function cleanupUploadedVideoForAnalysis({
     });
   }
 
-  const {
-    data: { user },
-    error: getUserError,
-  } = await supabase.auth.getUser();
-  const ownsStoragePath = Boolean(user?.id && storagePath.startsWith(`${user.id}/`));
-
-  if (getUserError) {
-    logVideoUploadWarning('Failed to verify current user before upload cleanup.', {
-      videoId,
-      storagePath,
-      error: formatSupabaseError(getUserError),
-    });
-  } else if (!ownsStoragePath) {
-    logVideoUploadWarning('Skipped storage cleanup because the path is outside the current user folder.', {
-      videoId,
-      storagePath,
-      userId: user?.id ?? null,
-    });
-  } else {
-    const { error: removeError } = await supabase.storage.from('videos').remove([storagePath]);
-
-    if (removeError) {
-      logVideoUploadWarning('Failed to remove uploaded video from storage during cleanup.', {
-        videoId,
-        storagePath,
-        error: formatSupabaseError(removeError),
-      });
-    }
-  }
+  // Cleanup is server-owned; expiry cleanup retries if this request cannot reach
+  // the API. Clients never get storage deletion privileges.
 }
 
 export async function uploadVideoForAnalysis({
@@ -621,7 +555,6 @@ export async function uploadVideoForAnalysis({
   trackingSetup,
   durationMs,
   onStatusChange,
-  onQuotaWarning,
 }: UploadVideoForAnalysisArgs): Promise<UploadVideoForAnalysisResult> {
   // Upload the video and create the DB row that analysis consumes.
   if (!supabase) {
@@ -710,44 +643,8 @@ export async function uploadVideoForAnalysis({
     uploadedFileSizeBytes: uploadSource.sizeBytes,
     wasCompressed: preparedVideo.wasCompressed,
   });
-  onStatusChange?.('Checking storage capacity...');
+  onStatusChange?.('Reserving upload capacity...');
   accessToken ??= await getFreshBackendAccessToken();
-  const storageUsage = await fetchStorageUsage(uploadSource.sizeBytes, accessToken);
-
-  if (storageUsage.blocked || storageUsage.status === 'blocked') {
-    throw new Error(storageUsage.message);
-  }
-
-  if (storageUsage.status === 'warning') {
-    onQuotaWarning?.(storageUsage.message);
-  }
-
-  onStatusChange?.('Uploading video...');
-  const storagePath = buildStoragePath(user.id, uploadSource.fileName);
-
-  logVideoUploadDebug('Sending video to Storage.', {
-    storagePath,
-    fileName: uploadSource.fileName,
-    contentType: uploadSource.contentType,
-    sizeBytes: uploadSource.sizeBytes,
-  });
-
-  const { error: uploadError } = await supabase.storage.from('videos').upload(storagePath, uploadSource.body, {
-    cacheControl: '3600',
-    contentType: uploadSource.contentType,
-    upsert: false,
-  });
-
-  if (uploadError) {
-    logVideoUploadWarning('Storage rejected video upload.', {
-      storagePath,
-      fileName: uploadSource.fileName,
-      contentType: uploadSource.contentType,
-      sizeBytes: uploadSource.sizeBytes,
-      error: formatSupabaseError(uploadError),
-    });
-    throw new Error(formatStorageUploadError(uploadError));
-  }
 
   const resolvedDurationMs =
     normalizePositiveDurationMs(durationMs)
@@ -755,17 +652,43 @@ export async function uploadVideoForAnalysis({
   const normalizedExerciseType = normalizeExerciseType(exercise);
   const normalizedViewType = normalizeViewType(angle);
 
-  const registerPayload = {
-    storage_path: storagePath,
+  const reservation = await createUploadReservation({
+    file_name: uploadSource.fileName,
+    content_type: uploadSource.contentType,
+    size_bytes: uploadSource.sizeBytes,
     source_type: sourceType,
     exercise_type: normalizedExerciseType,
     view_type: normalizedViewType,
     duration_ms: resolvedDurationMs,
     ...(trackingSetup ? { tracking_setup: trackingSetup } : {}),
-  };
+  }, accessToken);
 
   try {
-    const registeredVideo = await registerUploadedVideo(registerPayload, accessToken);
+    onStatusChange?.('Uploading video...');
+    // One exact-blob, create-only SAS: no read/list/delete or overwrite access.
+    // Do not log this URL or a fetch error object, which may contain its token.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 180_000);
+    let uploadResponse: Response;
+    try {
+      uploadResponse = await fetch(reservation.upload_url, {
+        method: 'PUT',
+        headers: reservation.upload_headers,
+        body: uploadSource.body,
+        signal: controller.signal,
+        credentials: 'omit',
+        redirect: 'error',
+      });
+    } catch {
+      throw new Error('Private video upload could not complete. Check your connection and try again.');
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (!uploadResponse.ok) {
+      throw new Error('Private video upload failed or expired. Please try again.');
+    }
+    onStatusChange?.('Verifying video limits...');
+    const registeredVideo = await completeUploadReservation(reservation.reservation_id, accessToken);
     logVideoUploadDebug('Video upload registration completed.', {
       videoId: registeredVideo.video_id,
       storagePath: registeredVideo.storage_path,
@@ -779,15 +702,12 @@ export async function uploadVideoForAnalysis({
       wasCompressed: preparedVideo.wasCompressed,
     };
   } catch (error) {
-    console.error('[VideoUpload] uploadVideoForAnalysis registration failed', {
-      authUserId: user.id,
-      insertedUserId: user.id,
-      storagePath,
-      exerciseType: normalizedExerciseType,
-      viewType: normalizedViewType,
-      error,
-    });
-    await supabase.storage.from('videos').remove([storagePath]);
+    try {
+      await cancelUploadReservation(reservation.reservation_id, accessToken);
+    } catch {
+      // A completed reservation is idempotent; expired unverified uploads are
+      // removed by the scheduled cleanup job if cancellation cannot complete.
+    }
     throw error;
   }
 }

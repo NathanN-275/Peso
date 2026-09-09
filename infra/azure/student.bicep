@@ -15,9 +15,20 @@ param ghcrUsername string
 @description('Exact HTTPS origin of the staging/test Netlify deploy. No wildcard or production origin is accepted by policy.')
 param netlifyTestOrigin string
 
+@description('Keep new reservations disabled until migration, rollback, and real-Azure validation pass.')
+param enableUploadReservations bool = false
+
+@allowed([1, 2])
+param maxAnalysisExecutions int = 1
+
 var keyVaultName = take('peso-student-${uniqueString(subscription().id, resourceGroup().id)}', 24)
 var runtimeIdentityName = 'peso-student-runtime'
+var sourceStorageName = take('pesosource${uniqueString(subscription().id, resourceGroup().id)}', 24)
 var commonEnvironmentVariables = [
+  {
+    name: 'PESO_DEPLOYMENT_ENVIRONMENT'
+    value: 'student'
+  }
   {
     name: 'BACKEND_ENV'
     value: 'production'
@@ -29,6 +40,38 @@ var commonEnvironmentVariables = [
   {
     name: 'BACKEND_CORS_ALLOW_PRIVATE_NETWORK'
     value: 'false'
+  }
+  {
+    name: 'AZURE_BLOB_ACCOUNT_URL'
+    value: 'https://${sourceStorageName}.blob.${environment().suffixes.storage}'
+  }
+  {
+    name: 'AZURE_CLIENT_ID'
+    value: runtimeIdentity.properties.clientId
+  }
+  {
+    name: 'UPLOAD_RESERVATIONS_ENABLED'
+    value: string(enableUploadReservations)
+  }
+  {
+    name: 'MAX_VIDEO_UPLOAD_BYTES'
+    value: '52428800'
+  }
+  {
+    name: 'MAX_VIDEO_DURATION_MS'
+    value: '300000'
+  }
+  {
+    name: 'MAX_VIDEO_WIDTH'
+    value: '1920'
+  }
+  {
+    name: 'MAX_VIDEO_HEIGHT'
+    value: '1080'
+  }
+  {
+    name: 'MAX_VIDEO_FPS'
+    value: '60'
   }
   {
     name: 'SUPABASE_URL'
@@ -174,6 +217,11 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
           keyVaultUrl: '${keyVault.properties.vaultUri}secrets/cleanup-job-token'
           identity: runtimeIdentity.id
         }
+        {
+          name: 'budget-shutdown-token'
+          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/budget-shutdown-token'
+          identity: runtimeIdentity.id
+        }
       ]
     }
     template: {
@@ -181,7 +229,12 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
         {
           name: 'api'
           image: imageReference
-          env: commonEnvironmentVariables
+          env: concat(commonEnvironmentVariables, [
+            {
+              name: 'BUDGET_SHUTDOWN_TOKEN'
+              secretRef: 'budget-shutdown-token'
+            }
+          ])
           probes: [
             {
               type: 'Liveness'
@@ -259,7 +312,7 @@ resource worker 'Microsoft.App/jobs@2024-03-01' = {
         replicaCompletionCount: 1
         scale: {
           minExecutions: 0
-          maxExecutions: 1
+          maxExecutions: maxAnalysisExecutions
           pollingInterval: 30
           rules: [
             {
@@ -364,6 +417,56 @@ resource worker 'Microsoft.App/jobs@2024-03-01' = {
   }
 }
 
+resource reservationCleanup 'Microsoft.App/jobs@2024-03-01' = if (enableUploadReservations) {
+  name: 'peso-student-upload-cleanup'
+  location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${runtimeIdentity.id}': {}
+    }
+  }
+  properties: {
+    environmentId: containerAppsEnvironment.id
+    configuration: {
+      triggerType: 'Schedule'
+      replicaRetryLimit: 1
+      replicaTimeout: 120
+      scheduleTriggerConfig: {
+        cronExpression: '*/5 * * * *'
+        parallelism: 1
+        replicaCompletionCount: 1
+      }
+      registries: [
+        {
+          passwordSecretRef: 'ghcr-token'
+          server: 'ghcr.io'
+          username: ghcrUsername
+        }
+      ]
+      secrets: [for secretName in ['ghcr-token', 'supabase-url', 'supabase-service-role-key', 'supabase-jwt-secret', 'cleanup-job-token']: {
+        name: secretName
+        keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${secretName}'
+        identity: runtimeIdentity.id
+      }]
+    }
+    template: {
+      containers: [
+        {
+          name: 'upload-cleanup'
+          image: imageReference
+          command: ['python', '-m', 'app.jobs.upload_reservation_cleanup']
+          env: commonEnvironmentVariables
+          resources: {
+            cpu: json('0.25')
+            memory: '0.5Gi'
+          }
+        }
+      ]
+    }
+  }
+}
+
 output apiHostname string = api.properties.configuration.ingress.fqdn
 output apiUrl string = 'https://${api.properties.configuration.ingress.fqdn}'
 output apiResourceId string = api.id
@@ -373,3 +476,4 @@ output containerAppsEnvironmentResourceId string = containerAppsEnvironment.id
 output logAnalyticsResourceId string = logs.id
 output runtimeIdentityResourceId string = runtimeIdentity.id
 output keyVaultResourceId string = keyVault.id
+output sourceStorageAccountName string = sourceStorageName

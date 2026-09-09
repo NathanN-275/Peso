@@ -50,7 +50,7 @@ class AnalysisJobRepositoryTest(unittest.TestCase):
 
     client.rpc.assert_called_once_with(
       "enqueue_video_analysis_job",
-      {"p_video_id": VIDEO_ID, "p_allow_completed": False},
+      {"p_video_id": VIDEO_ID, "p_allow_completed": False, "p_max_user_jobs": 3, "p_max_global_jobs": 20},
     )
     self.assertEqual(job["id"], JOB_ID)
 

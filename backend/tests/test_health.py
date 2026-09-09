@@ -27,6 +27,13 @@ class HealthRoutesTest(unittest.TestCase):
   def tearDown(self) -> None:
     self.client.close()
 
+  def test_api_responses_have_restrictive_security_headers(self) -> None:
+    response = self.client.get("/health")
+    self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+    self.assertEqual(response.headers["referrer-policy"], "no-referrer")
+    self.assertIn("frame-ancestors 'none'", response.headers["content-security-policy"])
+    self.assertEqual(response.headers["x-frame-options"], "DENY")
+
   @patch("app.main.AnalysisJobRepository")
   def test_readiness_succeeds_when_queue_schema_is_available(self, repository_type) -> None:
     response = self.client.get("/health/ready")

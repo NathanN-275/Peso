@@ -7,6 +7,30 @@ on:
         description: Immutable GHCR image including @sha256 digest
         required: true
         type: string
+      preview_only:
+        description: Leave enabled to review migration previews, Azure what-if and expected costs before provisioning
+        required: true
+        default: true
+        type: boolean
+      pose_comparison_approved:
+        description: Confirm reviewed real squat comparisons and local runtime acceptance pass for this exact image
+        required: true
+        default: false
+        type: boolean
+      pose_comparison_image_reference:
+        description: Immutable image digest recorded in the approved pose comparison evidence
+        required: false
+        type: string
+      reservation_migration_approved:
+        description: Confirm peso-staging migration history and every dry run were reviewed and rollback is approved
+        required: true
+        default: false
+        type: boolean
+      enable_upload_reservations:
+        description: Enable only after security foundation and real-Azure acceptance evidence are approved
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -22,35 +46,44 @@ env:
 
 jobs:
   validate:
+    if: github.ref == 'refs/heads/main'
     name: Validate student release candidate
     runs-on: ubuntu-latest
     environment: student
     env:
       EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
-      EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
       EXPO_PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.EXPO_PUBLIC_TURNSTILE_SITE_KEY }}
       EXPO_PUBLIC_AUTH_CHALLENGE_URL: ${{ vars.EXPO_PUBLIC_AUTH_CHALLENGE_URL }}
-      EXPO_PUBLIC_PRODUCTION_BACKEND_URL: ${{ vars.CURRENT_NON_AZURE_BACKEND_URL }}
-      PESO_RELEASE_ENV: staging
+      PESO_RELEASE_ENV: student
       SUPABASE_URL: https://example.supabase.co
       SUPABASE_SERVICE_ROLE_KEY: release-test-service-role
       SUPABASE_JWT_SECRET: release-test-jwt-secret
       CLEANUP_JOB_TOKEN: release-test-cleanup-token
       BACKEND_ALLOW_UNAUTHENTICATED_DEV_CLEANUP: "false"
-      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      STUDENT_NETLIFY_ORIGIN: ${{ vars.STUDENT_NETLIFY_ORIGIN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - name: Reject any non-Student database or credential identity
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          RUNTIME_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          RUNTIME_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RUNTIME_SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
+          EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+          SCALER_POSTGRES_CONNECTION: ${{ secrets.AZURE_SCALER_POSTGRES_CONNECTION }}
+        run: node scripts/student-environment.js --verify-keys
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: npm
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
 
-      - uses: supabase/setup-cli@v1
+      - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
           version: ${{ vars.SUPABASE_CLI_VERSION }}
 
@@ -64,6 +97,14 @@ jobs:
         working-directory: backend
         run: python -m pip install --requirement requirements.txt
 
+      - name: Fetch verified pose models
+        run: python scripts/fetch_pose_models.py
+
+      - name: Audit dependencies and migrations
+        run: |
+          npm run audit:ci
+          python scripts/supabase_security_audit.py
+
       - name: Validate policy and types
         run: |
           npm run test:policy
@@ -72,7 +113,7 @@ jobs:
 
       - name: Validate backend behavior
         working-directory: backend
-        run: python -m pytest tests
+        run: python -m unittest discover -s tests
 
       - name: Validate immutable image and exact test origin
         env:
@@ -80,8 +121,8 @@ jobs:
           STUDENT_NETLIFY_ORIGIN: ${{ vars.STUDENT_NETLIFY_ORIGIN }}
           PRODUCTION_NETLIFY_ORIGIN: ${{ vars.PRODUCTION_NETLIFY_ORIGIN }}
         run: |
-          if [[ ! "$IMAGE_REFERENCE" =~ ^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.\/-]+@sha256:[a-f0-9]{64}$ ]]; then
-            echo "image_reference must be an immutable lowercase GHCR sha256 reference." >&2
+          if [[ ! "$IMAGE_REFERENCE" =~ ^ghcr\.io/nathann-275/peso-backend@sha256:[a-f0-9]{64}$ ]]; then
+            echo "image_reference must be an immutable digest from the Peso backend repository." >&2
             exit 1
           fi
 
@@ -102,13 +143,84 @@ jobs:
           }
           NODE
 
+      - name: Verify the exact candidate offline before preview or deployment
+        env:
+          IMAGE_REFERENCE: ${{ inputs.image_reference }}
+          GHCR_USERNAME: ${{ vars.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USERNAME" --password-stdin
+          ./scripts/verify_container_runtime.sh "$IMAGE_REFERENCE"
+
+      - name: Scan the exact candidate image before preview or deployment
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_USERNAME: ${{ vars.GHCR_USERNAME }}
+          TRIVY_PASSWORD: ${{ secrets.GHCR_READ_TOKEN }}
+        with:
+          version: v0.74.0
+          image-ref: ${{ inputs.image_reference }}
+          format: json
+          output: student-deploy-trivy-results.json
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+
+      - name: Record pre-deployment image security evidence
+        env:
+          IMAGE_REFERENCE: ${{ inputs.image_reference }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-evidence
+          jq --arg reference "${IMAGE_REFERENCE}" '
+              {
+                image_reference: $reference,
+                offline_uid_10001_runtime_check: "passed",
+                trivy: {
+                  version: "v0.74.0",
+                  severity: ["HIGH", "CRITICAL"],
+                  ignore_unfixed: false,
+                  finding_count: ([((.Results // [])[]?.Vulnerabilities // [])[]?] | length),
+                  result: "passed"
+                }
+              }
+            ' student-deploy-trivy-results.json > release-evidence/pre-deployment-image-security.json
+          test "$(jq -r '.trivy.finding_count' release-evidence/pre-deployment-image-security.json)" = "0"
+
+      - name: Upload pre-deployment image security evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: student-deploy-image-security-${{ github.run_id }}
+          path: |
+            release-evidence/pre-deployment-image-security.json
+            student-deploy-trivy-results.json
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Build student Bicep templates
         run: |
           az bicep build --file infra/azure/bootstrap.bicep
           az bicep build --file infra/azure/student.bicep
+          az bicep build --file infra/azure/security-foundation.bicep
 
-      - name: Preview reviewed additive Supabase migrations
-        run: supabase db push --db-url "$SUPABASE_DB_URL" --dry-run
+      - name: Compare migration history and preview every pending migration
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-evidence/migrations
+          node scripts/student-environment.js --database-only
+          NO_COLOR=1 supabase migration list --db-url "$SUPABASE_DB_URL" 2>&1 | tee release-evidence/migrations/list.txt
+          NO_COLOR=1 supabase db push --db-url "$SUPABASE_DB_URL" --dry-run 2>&1 | tee release-evidence/migrations/plan.txt
+          (cd release-evidence/migrations && sha256sum list.txt plan.txt > SHA256SUMS)
+
+      - name: Upload reviewed migration evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: student-migration-plan-${{ github.run_id }}
+          path: release-evidence/migrations
+          if-no-files-found: error
+          retention-days: 30
 
   preview:
     name: Preview fixed student resource group
@@ -122,11 +234,12 @@ jobs:
       IMAGE_REFERENCE: ${{ inputs.image_reference }}
       STUDENT_NETLIFY_ORIGIN: ${{ vars.STUDENT_NETLIFY_ORIGIN }}
       GHCR_USERNAME: ${{ vars.GHCR_USERNAME }}
+      ENABLE_UPLOAD_RESERVATIONS: ${{ inputs.enable_upload_reservations }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Sign in to Azure with student OIDC identity
-        uses: azure/login@v3
+        uses: azure/login@4c03e4685fe81df2c50d5714c7d93cf39d8deb7f # v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -150,11 +263,12 @@ jobs:
             --parameters imageReference="$IMAGE_REFERENCE" \
               ghcrUsername="$GHCR_USERNAME" \
               netlifyTestOrigin="$STUDENT_NETLIFY_ORIGIN" \
+              enableUploadReservations="$ENABLE_UPLOAD_RESERVATIONS" \
             --result-format FullResourcePayloads \
             --no-pretty-print > azure-student-what-if.json
 
       - name: Upload what-if for deployment approval
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: azure-student-what-if-${{ github.run_id }}
           path: azure-student-what-if.json
@@ -162,6 +276,7 @@ jobs:
           retention-days: 30
 
   deploy:
+    if: inputs.preview_only == false && inputs.pose_comparison_approved == true
     name: Approve, deploy, and verify student backend
     needs: preview
     runs-on: ubuntu-latest
@@ -171,26 +286,35 @@ jobs:
       id-token: write
     env:
       IMAGE_REFERENCE: ${{ inputs.image_reference }}
+      POSE_COMPARISON_IMAGE_REFERENCE: ${{ inputs.pose_comparison_image_reference }}
       STUDENT_NETLIFY_ORIGIN: ${{ vars.STUDENT_NETLIFY_ORIGIN }}
       GHCR_USERNAME: ${{ vars.GHCR_USERNAME }}
-      GHCR_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
       AZURE_SCALER_POSTGRES_ROLE: peso_azure_scaler_student
-      AZURE_SCALER_POSTGRES_PASSWORD: ${{ secrets.AZURE_SCALER_POSTGRES_PASSWORD }}
-      RUNTIME_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      RUNTIME_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-      RUNTIME_SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
-      RUNTIME_CLEANUP_JOB_TOKEN: ${{ secrets.CLEANUP_JOB_TOKEN }}
-      SCALER_POSTGRES_CONNECTION: ${{ secrets.AZURE_SCALER_POSTGRES_CONNECTION }}
+      ENABLE_UPLOAD_RESERVATIONS: ${{ inputs.enable_upload_reservations }}
+      EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: supabase/setup-cli@v1
+      - name: Bind human pose approval and migration approval to this deployment
+        env:
+          MIGRATION_APPROVED: ${{ inputs.reservation_migration_approved }}
+        run: |
+          set -euo pipefail
+          if [ "$MIGRATION_APPROVED" != "true" ]; then
+            echo "The enqueue contract change requires a drained queue and an approved peso-staging rollback plan." >&2
+            exit 1
+          fi
+          if [ "$POSE_COMPARISON_IMAGE_REFERENCE" != "$IMAGE_REFERENCE" ]; then
+            echo "Pose comparison evidence must name the exact image selected for deployment." >&2
+            exit 1
+          fi
+
+      - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
           version: ${{ vars.SUPABASE_CLI_VERSION }}
 
       - name: Sign in to Azure with student OIDC identity
-        uses: azure/login@v3
+        uses: azure/login@4c03e4685fe81df2c50d5714c7d93cf39d8deb7f # v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -205,27 +329,66 @@ jobs:
             exit 1
           fi
 
-      - name: Apply reviewed additive Supabase migrations
+      - name: Revalidate permanent database isolation before writes
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          RUNTIME_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          RUNTIME_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RUNTIME_SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
+          EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+          SCALER_POSTGRES_CONNECTION: ${{ secrets.AZURE_SCALER_POSTGRES_CONNECTION }}
+        run: node scripts/student-environment.js --verify-keys
+
+      - name: Download the migration plan reviewed for this run
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: student-migration-plan-${{ github.run_id }}
+          path: reviewed-migrations
+
+      - name: Refuse migration drift, then apply the reviewed plan
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
+          set -euo pipefail
+          (cd reviewed-migrations && sha256sum --check SHA256SUMS)
+          mkdir -p current-migrations
+          node scripts/student-environment.js --database-only
+          NO_COLOR=1 supabase migration list --db-url "$SUPABASE_DB_URL" > current-migrations/list.txt 2>&1
+          NO_COLOR=1 supabase db push --db-url "$SUPABASE_DB_URL" --dry-run > current-migrations/plan.txt 2>&1
+          cmp --silent reviewed-migrations/list.txt current-migrations/list.txt
+          cmp --silent reviewed-migrations/plan.txt current-migrations/plan.txt
           supabase db push --db-url "$SUPABASE_DB_URL"
           supabase migration list --db-url "$SUPABASE_DB_URL"
 
       - name: Configure least-privileged student scaler login
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          AZURE_SCALER_POSTGRES_PASSWORD: ${{ secrets.AZURE_SCALER_POSTGRES_PASSWORD }}
         run: ./scripts/configure_azure_scaler_role.sh
 
       - name: Store runtime and GHCR credentials in Key Vault
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+          RUNTIME_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          RUNTIME_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RUNTIME_SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
+          RUNTIME_CLEANUP_JOB_TOKEN: ${{ secrets.CLEANUP_JOB_TOKEN }}
+          RUNTIME_BUDGET_SHUTDOWN_TOKEN: ${{ secrets.BUDGET_SHUTDOWN_TOKEN }}
+          SCALER_POSTGRES_CONNECTION: ${{ secrets.AZURE_SCALER_POSTGRES_CONNECTION }}
         run: |
           key_vault_name="$(az keyvault list \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --query "[?tags.environment=='student'].name | [0]" \
             --output tsv)"
           : "${key_vault_name:?Student Key Vault was not found. Run the bootstrap first.}"
+          : "${RUNTIME_BUDGET_SHUTDOWN_TOKEN:?The budget shutdown token must be configured in the protected environment.}"
 
           az keyvault secret set --vault-name "$key_vault_name" --name ghcr-token --value "$GHCR_TOKEN" --output none
           az keyvault secret set --vault-name "$key_vault_name" --name supabase-url --value "$RUNTIME_SUPABASE_URL" --output none
           az keyvault secret set --vault-name "$key_vault_name" --name supabase-service-role-key --value "$RUNTIME_SUPABASE_SERVICE_ROLE_KEY" --output none
           az keyvault secret set --vault-name "$key_vault_name" --name supabase-jwt-secret --value "$RUNTIME_SUPABASE_JWT_SECRET" --output none
           az keyvault secret set --vault-name "$key_vault_name" --name cleanup-job-token --value "$RUNTIME_CLEANUP_JOB_TOKEN" --output none
+          az keyvault secret set --vault-name "$key_vault_name" --name budget-shutdown-token --value "$RUNTIME_BUDGET_SHUTDOWN_TOKEN" --output none
           az keyvault secret set --vault-name "$key_vault_name" --name scaler-postgres-connection --value "$SCALER_POSTGRES_CONNECTION" --output none
 
       - name: Deploy student infrastructure
@@ -237,6 +400,7 @@ jobs:
             --parameters imageReference="$IMAGE_REFERENCE" \
               ghcrUsername="$GHCR_USERNAME" \
               netlifyTestOrigin="$STUDENT_NETLIFY_ORIGIN" \
+              enableUploadReservations="$ENABLE_UPLOAD_RESERVATIONS" \
             --query properties.outputs \
             --output json > azure-student-deployment-outputs.json
 
@@ -248,10 +412,49 @@ jobs:
       - name: Verify budget amount and three alerts
         run: ./scripts/verify_azure_student_budget.sh
 
-      - name: Upload exact deployed resource IDs
-        uses: actions/upload-artifact@v4
+      - name: Generate the reviewed frontend API release binding
+        run: |
+          set -euo pipefail
+          mkdir -p release-evidence
+          api_url="$(node -e "const o=require('./azure-student-deployment-outputs.json'); process.stdout.write(o.apiUrl.value)")"
+          outputs_sha256="$(sha256sum azure-student-deployment-outputs.json | cut -d ' ' -f 1)"
+          jq -n \
+            --arg api_url "$api_url" \
+            --arg image_reference "$IMAGE_REFERENCE" \
+            --arg outputs_sha256 "$outputs_sha256" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            '{
+              schema_version: 1,
+              status: "accepted",
+              api_url: $api_url,
+              image_reference: $image_reference,
+              azure_deployment_outputs_sha256: $outputs_sha256,
+              source_workflow_run_id: $run_id
+            }' > release-evidence/student-api-release-binding.json
+
+      - name: Upload exact deployment and frontend binding evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: azure-student-resource-ids-${{ github.run_id }}
-          path: azure-student-deployment-outputs.json
+          name: azure-student-release-evidence-${{ github.run_id }}
+          path: |
+            azure-student-deployment-outputs.json
+            release-evidence/student-api-release-binding.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
+
+      - name: Keep Student unavailable after a failed deployment or acceptance check
+        if: failure()
+        run: |
+          pause_failed=0
+          worker_id="$(az containerapp job show --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WORKER_NAME" --query id --output tsv)" || pause_failed=1
+          if [ -n "$worker_id" ]; then
+            az resource update --ids "$worker_id" --api-version 2024-03-01 \
+              --set 'properties.configuration.eventTriggerConfig.scale.rules[0].metadata.query=SELECT 0' \
+              --output none || pause_failed=1
+            az containerapp job stop --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_WORKER_NAME" --output none || pause_failed=1
+          fi
+          az containerapp ingress disable --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_API_NAME" --output none || pause_failed=1
+          exit "$pause_failed"

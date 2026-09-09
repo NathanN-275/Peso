@@ -3,6 +3,13 @@
   ignore = "node scripts/netlify-ignore-build.js"
   publish = "dist"
 
+# Only the stable main branch test deploy uses the isolated Student backend.
+# Its public API URL and key are configured in Netlify's branch-specific values.
+# The build also requires that URL to match the reviewed tracked release binding.
+[context.main.environment]
+  PESO_RELEASE_ENV = "student"
+  EXPO_PUBLIC_SUPABASE_URL = "https://iseqgaewjpjcxrndibep.supabase.co"
+
 [[redirects]]
   from = "/demo/peso-demo-video.gif"
   to = "/demo/peso-pose-overlay.jpg"
@@ -48,5 +55,5 @@
     X-Frame-Options = "DENY"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
-    Permissions-Policy = "camera=(self), microphone=()"
+    Permissions-Policy = "camera=(self), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()"
     Strict-Transport-Security = "max-age=31536000; includeSubDomains"

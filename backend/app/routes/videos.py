@@ -809,6 +809,11 @@ def register_video(
 
   settings = get_settings()
   _validate_video_duration(request.duration_ms, settings)
+  if settings.backend_env in {"production", "prod"} or settings.upload_reservations_enabled is True:
+    raise HTTPException(
+      status_code=status.HTTP_410_GONE,
+      detail="Direct upload registration is retired. Update the app to use upload reservations.",
+    )
 
   repository = VideoRepository()
   storage = StorageService()
@@ -1024,6 +1029,12 @@ def queue_analysis(
     jobs = AnalysisJobRepository()
     job = jobs.enqueue(video_id_str, allow_completed=allow_completed)
   except Exception as error:
+    if str(getattr(error, "code", "")) == "P0001":
+      message = str(error).lower()
+      if "capacity" in message:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Analysis queue capacity is currently full.") from error
+      if "verified" in message:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This video must be uploaded and verified before analysis.") from error
     logger.exception("Durable analysis queue is unavailable for video %s.", video_id_str)
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

@@ -144,6 +144,16 @@ def audit_supabase_security() -> list[str]:
   if not video_upload_policies or "storage.extension(name)" not in video_upload_policies[-1].group(0):
     errors.append("videos storage upload policy does not restrict object extensions.")
 
+  for table in ("upload_reservations", "upload_admission_control"):
+    if not re.search(rf"revoke\s+all\s+on\s+table\s+public\.{table}\s+from\s+public\s*,\s*anon\s*,\s*authenticated", sql):
+      errors.append(f"public.{table} is not restricted to backend access.")
+  for function in (
+    "reserve_video_upload", "mark_video_upload_received", "verify_video_upload",
+    "reject_video_upload", "expire_video_upload_reservations", "disable_video_upload_admission",
+  ):
+    if not re.search(rf"revoke\s+execute\s+on\s+function\s+public\.{function}\([^)]*\)\s+from\s+public\s*,\s*anon\s*,\s*authenticated", sql):
+      errors.append(f"public.{function} is callable by client roles.")
+
   return errors
 
 

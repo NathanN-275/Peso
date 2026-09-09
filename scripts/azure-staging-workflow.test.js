@@ -2,55 +2,41 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const source = fs.readFileSync(path.join(__dirname, '../.github/workflows/azure-staging.yml'), 'utf8');
 
-const workflowSource = fs.readFileSync(
-  path.join(__dirname, '../.github/workflows/azure-staging.yml'),
-  'utf8'
-);
-
-test('Azure staging workflow verifies main before publishing the root image', () => {
-  assert.match(workflowSource, /push:[\s\S]*branches:[\s\S]*- main/);
-  assert.match(workflowSource, /workflow_dispatch:/);
-  assert.match(workflowSource, /npm run test:policy/);
-  assert.match(workflowSource, /npm run typecheck/);
-  assert.match(workflowSource, /node-version: "22"/);
-  assert.match(workflowSource, /sudo apt-get install --yes ffmpeg/);
-  assert.match(workflowSource, /python -m unittest discover -s tests/);
-  assert.match(workflowSource, /az bicep build --file infra\/azure\/staging\/main\.bicep/);
-  assert.match(workflowSource, /file: \.\/Dockerfile/);
-  assert.match(workflowSource, /IMAGE_REPOSITORY: ghcr\.io\/nathann-275\/peso-backend/);
+test('Student publication verifies main and builds without publishing', () => {
+  assert.match(source, /github.ref == 'refs\/heads\/main'/);
+  assert.match(source, /npm run audit:ci/);
+  assert.match(source, /npm run test:policy/);
+  assert.match(source, /npm run typecheck/);
+  assert.match(source, /python -m unittest discover -s tests/);
+  assert.match(source, /push: false/);
+  assert.match(source, /pull: true/);
+  assert.match(source, /load: true/);
 });
 
-test('published backend image receives full-SHA and main tags', () => {
-  assert.match(workflowSource, /packages: write/);
-  assert.match(workflowSource, /docker\/build-push-action@v6/);
-  assert.match(workflowSource, /push: true/);
-  assert.match(workflowSource, /:sha-\$\{\{ github\.sha \}\}/);
-  assert.match(workflowSource, /:\s*main|\}\}:main/);
-  assert.match(workflowSource, /org\.opencontainers\.image\.source=https:\/\/github\.com\/\$\{\{ github\.repository \}\}/);
-  assert.match(workflowSource, /docker buildx imagetools inspect/);
-  assert.match(workflowSource, /digest: \$\{\{ steps\.registry\.outputs\.digest \}\}/);
-  assert.match(workflowSource, /docker logout ghcr\.io/);
-  assert.match(workflowSource, /PUBLIC_DIGEST/);
+test('Only the exact locally tested and scanned image is published', () => {
+  const runtime = source.indexOf('run: ./scripts/verify_container_runtime.sh');
+  const scan = source.indexOf('uses: aquasecurity/trivy-action@');
+  const drift = source.indexOf('Refuse candidate tag drift after verification');
+  const publish = source.indexOf('docker push "${IMAGE_TAG}"');
+  const evidence = source.indexOf('release-evidence/image-security.json');
+  assert.ok(runtime > 0 && scan > runtime && drift > scan && publish > drift && evidence > publish);
+  assert.match(source, /severity: HIGH,CRITICAL/);
+  assert.match(source, /exit-code: "1"/);
+  assert.match(source, /ignore-unfixed: false/);
+  assert.match(source, /output: trivy-results\.json/);
+  assert.match(source, /offline_uid_10001_runtime_check: "passed"/);
+  assert.match(source, /finding_count:/);
+  assert.match(source, /docker push "\$\{IMAGE_TAG\}" 2>&1 \| tee docker-push\.txt/);
+  assert.match(source, /REGISTRY_DIGEST=.*docker-push\.txt/);
+  assert.match(source, /IMMUTABLE_REFERENCE="\$\{IMAGE_REPOSITORY\}@\$\{REGISTRY_DIGEST\}"/);
+  assert.match(source, /docker pull "\$\{IMMUTABLE_REFERENCE\}"/);
+  assert.match(source, /docker image inspect[\s\S]*"\$\{IMMUTABLE_REFERENCE\}"[\s\S]*"\$\{EXPECTED_IMAGE_ID\}"/);
+  assert.match(source, /IMAGE_DIGEST: \$\{\{ steps.registry.outputs.digest \}\}/);
+  assert.doesNotMatch(source, /push: true|:main\s|docker logout|PUBLIC_DIGEST|imagetools inspect/);
 });
 
-test('Azure deployment uses OIDC and remains fail-closed behind the staging gate', () => {
-  assert.match(workflowSource, /vars\.AZURE_STAGING_DEPLOY_ENABLED == 'true'/);
-  assert.match(workflowSource, /id-token: write/);
-  assert.match(workflowSource, /uses: azure\/login@v2/);
-  assert.match(workflowSource, /client-id: \$\{\{ vars\.AZURE_STAGING_CLIENT_ID \}\}/);
-  assert.match(workflowSource, /tenant-id: \$\{\{ vars\.AZURE_TENANT_ID \}\}/);
-  assert.match(workflowSource, /subscription-id: \$\{\{ vars\.AZURE_SUBSCRIPTION_ID \}\}/);
-  assert.doesNotMatch(workflowSource, /AZURE_CLIENT_SECRET|client-secret/i);
-});
-
-test('deploy job updates only immutable image fields on the two staging resources', () => {
-  assert.match(workflowSource, /DEPLOY_IMAGE="\$\{IMAGE_REPOSITORY\}@\$\{IMAGE_DIGEST\}"/);
-  assert.match(workflowSource, /Microsoft\.App\/containerApps\/\$\{AZURE_API_NAME\}/);
-  assert.match(workflowSource, /Microsoft\.App\/jobs\/\$\{AZURE_WORKER_JOB_NAME\}/);
-  assert.equal(
-    (workflowSource.match(/--set "properties\.template\.containers\[0\]\.image=\$\{DEPLOY_IMAGE\}"/g) || []).length,
-    2
-  );
-  assert.doesNotMatch(workflowSource, /secret set|listsecrets|role assignment|group create/i);
+test('Retired West US deployment cannot run when main changes', () => {
+  assert.doesNotMatch(source, /AZURE_STAGING_DEPLOY_ENABLED|rg-peso-staging-westus2|az resource update|azure\/login|id-token: write/);
 });

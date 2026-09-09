@@ -3,6 +3,15 @@ const test = require('node:test');
 
 const { validateReleaseEnv } = require('./release-env');
 
+const approvedBinding = (apiUrl) => ({
+  schema_version: 1,
+  status: 'accepted',
+  api_url: apiUrl,
+  image_reference: `ghcr.io/nathann-275/peso-backend@sha256:${'a'.repeat(64)}`,
+  azure_deployment_outputs_sha256: 'b'.repeat(64),
+  source_workflow_run_id: '123456789',
+});
+
 test('release auth configuration rejects a missing Turnstile site key', () => {
   const result = validateReleaseEnv({
     EXPO_PUBLIC_SUPABASE_URL: 'https://example.supabase.co',
@@ -95,4 +104,30 @@ test('release auth challenge URL rejects the wrong document or embedded paramete
   assert.deepEqual(result.errors, [
     'EXPO_PUBLIC_AUTH_CHALLENGE_URL must point to /auth/turnstile/ without credentials, query, or fragment.',
   ]);
+});
+
+test('Student builds require the isolated database, Student API and exact challenge site', () => {
+  const apiUrl = 'https://peso-student-api.test.centralus.azurecontainerapps.io';
+  const env = {
+    PESO_RELEASE_ENV: 'student',
+    EXPO_PUBLIC_SUPABASE_URL: 'https://iseqgaewjpjcxrndibep.supabase.co',
+    EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test',
+    EXPO_PUBLIC_TURNSTILE_SITE_KEY: 'test-site-key',
+    EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/',
+    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: apiUrl,
+  };
+  const options = {studentApiBinding: approvedBinding(apiUrl)};
+  assert.deepEqual(validateReleaseEnv(env, options).errors, []);
+  assert.ok(validateReleaseEnv(env).errors.length, 'the tracked pending binding must block Student builds');
+  for (const [name, value] of Object.entries({
+    EXPO_PUBLIC_SUPABASE_URL: 'https://jfgiydtrskpqxyorvvbc.supabase.co',
+    EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://peso-webapp.netlify.app/auth/turnstile/',
+    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://production.example.com',
+  })) assert.ok(validateReleaseEnv({...env, [name]: value}, options).errors.length, name);
+  assert.ok(validateReleaseEnv({
+    ...env,
+    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://peso-student-api.attacker.centralus.azurecontainerapps.io',
+    PESO_STUDENT_API_URL: 'https://peso-student-api.attacker.centralus.azurecontainerapps.io',
+  }, options).errors.length);
+  assert.ok(validateReleaseEnv(env, {studentApiBinding: {status: 'pending'}}).errors.length);
 });
