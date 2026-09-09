@@ -69,14 +69,7 @@ const releaseChecks = [
   {
     name: 'Python dependency audit',
     command: 'backend/.venv/bin/python',
-    args: [
-      '-m',
-      'pip_audit',
-      '-r',
-      'backend/requirements.txt',
-      '--ignore-vuln',
-      'PYSEC-2026-1805',
-    ],
+    args: ['-m', 'pip_audit', '-r', 'backend/requirements.txt'],
   },
   {
     name: 'Secret scan',

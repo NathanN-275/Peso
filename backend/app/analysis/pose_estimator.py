@@ -285,27 +285,26 @@ def _person_center(keypoints: Any, scores: Any) -> tuple[float, float] | None:
 
 
 class MediaPipePoseBackend:
-  landmark_model = "mediapipe_pose_33"
+  landmark_model = "mediapipe_pose_landmarker_33_v1"
 
   def __init__(self, config: PoseEstimatorConfig) -> None:
-    import mediapipe as mp
+    from .pose_landmarker import PoseLandmarkerSession
 
-    self._pose = mp.solutions.pose.Pose(
-      static_image_mode=False,
-      model_complexity=config.model_complexity,
-      smooth_landmarks=True,
-      min_detection_confidence=config.min_detection_confidence,
-      min_tracking_confidence=config.min_tracking_confidence,
+    self._pose = PoseLandmarkerSession(
+      complexity=config.model_complexity,
+      video=True,
+      detection_confidence=config.min_detection_confidence,
+      tracking_confidence=config.min_tracking_confidence,
     )
 
   def process(self, frame: Any, timestamp_ms: int) -> dict[str, dict[str, float]] | None:
     import cv2
 
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    results = self._pose.process(rgb_frame)
-    if not results.pose_landmarks:
+    landmarks = self._pose.process_rgb(rgb_frame, timestamp_ms)
+    if landmarks is None:
       return None
-    return landmarks_from_mediapipe(results.pose_landmarks)
+    return landmarks_from_mediapipe(landmarks)
 
   def close(self) -> None:
     self._pose.close()

@@ -16,6 +16,10 @@ const TURNSTILE_TEST_SITE_KEYS = new Set([
   '2x00000000000000000000BB',
   '3x00000000000000000000FF',
 ]);
+const STUDENT_API_BINDING_PATH = require('node:path').resolve(
+  __dirname,
+  '../config/student-api-release-binding.json'
+);
 
 function clean(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -44,7 +48,30 @@ function isExactAuthChallengeUrl(value) {
   }
 }
 
-function validateReleaseEnv(environment) {
+function loadStudentApiBinding() {
+  try {
+    return JSON.parse(require('node:fs').readFileSync(STUDENT_API_BINDING_PATH, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function approvedStudentApi(binding) {
+  if (!binding || binding.schema_version !== 1 || binding.status !== 'accepted' ||
+      !/^ghcr\.io\/nathann-275\/peso-backend@sha256:[a-f0-9]{64}$/.test(binding.image_reference ?? '') ||
+      !/^[a-f0-9]{64}$/.test(binding.azure_deployment_outputs_sha256 ?? '') ||
+      !/^[1-9][0-9]*$/.test(binding.source_workflow_run_id ?? '')) return '';
+  try {
+    const api = new URL(binding.api_url);
+    const hostname = /^peso-student-api\.[a-z0-9-]+\.centralus\.azurecontainerapps\.io$/;
+    return api.protocol === 'https:' && !api.port && api.origin === binding.api_url &&
+      hostname.test(api.hostname) ? api.origin : '';
+  } catch {
+    return '';
+  }
+}
+
+function validateReleaseEnv(environment, { studentApiBinding = loadStudentApiBinding() } = {}) {
   const errors = REQUIRED_PUBLIC_VARIABLES
     .filter((name) => !clean(environment[name]))
     .map((name) => `Missing ${name}.`);
@@ -68,6 +95,25 @@ function validateReleaseEnv(environment) {
   const releaseEnvironment = clean(
     environment.PESO_RELEASE_ENV || environment.EAS_BUILD_PROFILE || environment.CONTEXT
   );
+
+  if (releaseEnvironment === 'student') {
+    const { STUDENT_SUPABASE_URL, STUDENT_ORIGIN } = require('./student-environment');
+    const expectedStudentApi = approvedStudentApi(studentApiBinding);
+    if (clean(environment.EXPO_PUBLIC_SUPABASE_URL) !== STUDENT_SUPABASE_URL) {
+      errors.push('Student website must use the permanent peso-staging Supabase project.');
+    }
+    try {
+      const api = new URL(clean(environment.EXPO_PUBLIC_PRODUCTION_BACKEND_URL));
+      const challenge = new URL(challengeUrl);
+      if (!expectedStudentApi || api.origin !== expectedStudentApi ||
+          api.origin !== clean(environment.EXPO_PUBLIC_PRODUCTION_BACKEND_URL) || api.protocol !== 'https:' ||
+          api.port || challenge.origin !== STUDENT_ORIGIN) {
+        throw new Error('invalid Student endpoint');
+      }
+    } catch {
+      errors.push('Student website must use the exact approved Student API and test-site challenge origin.');
+    }
+  }
 
   if (
     releaseEnvironment === 'production' &&
@@ -114,5 +160,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  approvedStudentApi,
+  loadStudentApiBinding,
   validateReleaseEnv,
 };

@@ -117,3 +117,48 @@ test('Supabase scaler change is additive and exposes only aggregate queue depth'
   assert.match(scalerMigration, /revoke all privileges[\s\S]*from public, anon, authenticated, service_role/);
   assert.doesNotMatch(scalerMigration, /\b(?:drop|truncate|delete|alter table)\b/i);
 });
+
+test('Student database identity is validated before migration or credential writes', () => {
+  const checks = [...deploymentWorkflow.matchAll(/run: node scripts\/student-environment.js --verify-keys/g)];
+  assert.equal(checks.length, 2);
+  assert.ok(checks[0].index < deploymentWorkflow.indexOf('supabase migration list'));
+  assert.ok(checks[1].index < deploymentWorkflow.indexOf('az keyvault secret set'));
+  assert.match(deploymentWorkflow, /if: github.ref == 'refs\/heads\/main'/);
+  assert.match(deploymentWorkflow, /verify_container_runtime.sh "\$IMAGE_REFERENCE"/);
+  assert.match(deploymentWorkflow, /\^ghcr\\\.io\/nathann-275\/peso-backend@sha256:\[a-f0-9\]\{64\}\$/);
+  assert.match(deploymentWorkflow, /POSE_COMPARISON_IMAGE_REFERENCE: \$\{\{ inputs\.pose_comparison_image_reference \}\}/);
+  assert.match(deploymentWorkflow, /"\$POSE_COMPARISON_IMAGE_REFERENCE" != "\$IMAGE_REFERENCE"/);
+  const previewStart = deploymentWorkflow.indexOf('  preview:');
+  const deployStart = deploymentWorkflow.indexOf('  deploy:');
+  const approvalStart = deploymentWorkflow.indexOf('Bind human pose approval and migration approval');
+  assert.ok(previewStart < deployStart);
+  assert.ok(deployStart < approvalStart, 'human approvals must happen only after preview artifacts exist');
+  assert.match(studentBicep, /name: 'PESO_DEPLOYMENT_ENVIRONMENT'[\s\S]*value: 'student'/);
+  assert.match(read('docs/adr/0012-define-student-environment.md'), /iseqgaewjpjcxrndibep/);
+  assert.match(read('netlify.toml'), /\[context.main.environment\][\s\S]*PESO_RELEASE_ENV = "student"/);
+});
+
+test('Student release binds credentials, API origin, and migrations to independently verified evidence', () => {
+  assert.doesNotMatch(
+    deploymentWorkflow.match(/jobs:\n  validate:[\s\S]*?\n    steps:/)?.[0] ?? '',
+    /secrets\./,
+    'validation secrets must be scoped to the step that consumes them'
+  );
+  assert.match(deploymentWorkflow, /RUNTIME_SUPABASE_JWT_SECRET: \$\{\{ secrets\.SUPABASE_JWT_SECRET \}\}/);
+  assert.match(deploymentWorkflow, /api_url=.*azure-student-deployment-outputs\.json/);
+  assert.match(deploymentWorkflow, /student-api-release-binding\.json/);
+  assert.match(deploymentWorkflow, /azure_deployment_outputs_sha256: \$outputs_sha256/);
+  assert.match(deploymentWorkflow, /image_reference: \$image_reference/);
+  assert.match(deploymentWorkflow, /source_workflow_run_id: \$run_id/);
+  assert.doesNotMatch(deploymentWorkflow, /vars\.(?:STUDENT_API_URL|VERIFIED_STUDENT_API_URL)/);
+  assert.match(read('scripts/release-env.js'), /config\/student-api-release-binding\.json/);
+
+  const preview = deploymentWorkflow.indexOf('NO_COLOR=1 supabase db push --db-url "$SUPABASE_DB_URL" --dry-run 2>&1 | tee');
+  const checksums = deploymentWorkflow.indexOf('sha256sum list.txt plan.txt > SHA256SUMS');
+  const download = deploymentWorkflow.indexOf('actions/download-artifact@');
+  const verifyChecksum = deploymentWorkflow.indexOf('sha256sum --check SHA256SUMS');
+  const comparePlan = deploymentWorkflow.indexOf('cmp --silent reviewed-migrations/plan.txt current-migrations/plan.txt');
+  const apply = deploymentWorkflow.lastIndexOf('supabase db push --db-url "$SUPABASE_DB_URL"');
+  assert.ok(preview > 0 && checksums > preview && download > checksums && verifyChecksum > download);
+  assert.ok(comparePlan > verifyChecksum && apply > comparePlan, 'only the revalidated migration plan may be applied');
+});

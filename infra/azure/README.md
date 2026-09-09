@@ -7,7 +7,9 @@ before enabling `enableUploadReservations`; it defaults to false. Routine CI
 does not receive permission to create the foundation's role assignments.
 
 This directory defines one isolated, non-production Azure environment:
-`peso-student-centralus-rg` in Central US. It deliberately contains no
+`peso-student-centralus-rg` in Central US, permanently backed by the existing
+`peso-staging` Supabase project (`iseqgaewjpjcxrndibep`). Production PesoDatabase
+(`jfgiydtrskpqxyorvvbc`) is rejected by deployment and runtime validation. It deliberately contains no
 production environment, dedicated Container Apps workload profile, VNet,
 registry, website hosting, or resource reference to `peso-rg`.
 

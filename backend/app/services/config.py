@@ -25,7 +25,7 @@ LOCAL_DEV_CORS_ORIGIN_REGEX = (
   r"192\.168\.\d+\.\d+):\d+$"
 )
 DEFAULT_MAX_VIDEO_UPLOAD_BYTES = 50 * 1024 * 1024
-DEFAULT_MODEL_VERSION = "mediapipe-rtmpose-v3-pin-assisted"
+DEFAULT_MODEL_VERSION = "mediapipe-landmarker-rtmpose-v4-pin-assisted"
 DEFAULT_SAVED_VIDEO_STORAGE_TTL_HOURS = 24
 DEFAULT_EXPORT_CACHE_TTL_HOURS = 6
 DEFAULT_EXPORT_STORAGE_TTL_HOURS = DEFAULT_EXPORT_CACHE_TTL_HOURS
@@ -217,6 +217,8 @@ def get_settings() -> Settings:
 
   backend_env = backend_env_raw or "development"
   supabase_url = os.getenv("SUPABASE_URL", "").strip()
+  if os.getenv("PESO_DEPLOYMENT_ENVIRONMENT") == "student" and supabase_url != "https://iseqgaewjpjcxrndibep.supabase.co":
+    raise RuntimeError("Student services require the isolated peso-staging Supabase project.")
   supabase_service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
   supabase_jwt_secret = os.getenv("SUPABASE_JWT_SECRET", "").strip()
   cleanup_job_token = (

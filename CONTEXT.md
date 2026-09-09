@@ -37,7 +37,9 @@ change as part of Student environment testing.
 
 The single non-production Azure Container Apps environment defined by ADR 0012.
 It is an isolated test backend for the stable private Netlify `main` branch
-deploy and is never a synonym for production or a production cutover.
+deploy and is never a synonym for production or a production cutover. Its
+permanent database is the isolated peso-staging Supabase project
+(`iseqgaewjpjcxrndibep`); production PesoDatabase is outside this boundary.
 
 ## Peso Account
 

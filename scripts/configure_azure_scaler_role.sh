@@ -5,6 +5,8 @@ set -euo pipefail
 : "${AZURE_SCALER_POSTGRES_PASSWORD:?Set AZURE_SCALER_POSTGRES_PASSWORD.}"
 : "${AZURE_SCALER_POSTGRES_ROLE:?Set AZURE_SCALER_POSTGRES_ROLE to peso_azure_scaler_student.}"
 
+node "$(dirname "$0")/student-environment.js" --database-only
+
 case "$AZURE_SCALER_POSTGRES_ROLE" in
   peso_azure_scaler_student) ;;
   *)

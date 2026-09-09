@@ -26,11 +26,17 @@ execution, 0.25 vCPU, 0.5 GiB, and a 900-second execution timeout. Runtime,
 scaler, and GHCR credentials live in Key Vault. GitHub uses OIDC and stores no
 long-lived Azure credential.
 
-The existing Supabase project remains authoritative. Student tests use two
-dedicated test users whose owner-scoped rows and storage objects are cleaned up
-after the run. Database changes must be additive, reviewed, previewed, and
-verified; Student does not authorize a second Supabase project or destructive
-migration.
+The permanent Student database is the existing isolated `peso-staging` project
+(`iseqgaewjpjcxrndibep`). Production `PesoDatabase`
+(`jfgiydtrskpqxyorvvbc`) is never a Student target. Student runtime, public
+frontend, migration owner, scaler, authentication, and storage credentials must
+all belong to peso-staging. Dedicated test users and owner-scoped RLS remain
+required within this separate project.
+
+Compare remote migration history with the repository before any write. Preview
+every pending migration, review its SQL and rollback, and apply only to
+peso-staging. Preserve existing staging data. No production identifier or
+credential may be copied into the Student environment.
 
 The resource-group budget is $10/month with actual-cost email alerts at $5, $8,
 and $10. Budget alerts do not stop Azure resources. A daily workflow records
@@ -38,8 +44,9 @@ month-to-date and projected spend, worker executions and failures, API
 readiness, and restart count. It pauses the worker at $8 and disables the
 student API ingress as well at $10, then fails for investigation.
 
-Netlify remains the website host. Student deployment automation must not
-publish, reconfigure, or cut over the website. A paid production environment
+Netlify remains the website host. Only branch-specific settings for `main--peso-webapp.netlify.app` may connect
+the test site to Student and peso-staging after acceptance. Production Netlify
+settings and production hosting remain unchanged. A paid production environment
 requires explicit subscription approval and a separate ADR.
 
 ## Consequences

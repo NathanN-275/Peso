@@ -29,26 +29,28 @@ dashboard typechecks/tests/builds, the production web export and budget,
 staging web auth E2E, the complete backend suite with production-like values,
 the migration/RLS audit, dependency audits, Gitleaks, and `git diff --check`.
 
-Run Python dependency auditing when `pip-audit` is available. The protobuf advisory is currently ignored because `mediapipe==0.10.21` requires `protobuf<5`, while the available advisory fix starts at `5.29.6`; revisit this ignore when MediaPipe publishes a compatible release.
+Run Python dependency auditing when `pip-audit` is available. No Python
+advisory is ignored; the MediaPipe Tasks migration permits the patched protobuf
+release used by the backend.
 
 ```sh
-pip-audit -r backend/requirements.txt --ignore-vuln PYSEC-2026-1805
+pip-audit -r backend/requirements.txt
 ```
 
 ## Dependency Review Checklist
 
 Use this checklist for every Python or Node package update:
 
-- Audit result: run `npm audit --audit-level=high` for Node and `pip-audit -r backend/requirements.txt --ignore-vuln PYSEC-2026-1805` for Python when `pip-audit` is available.
+- Audit result: run `npm audit --audit-level=high` for Node and `pip-audit -r backend/requirements.txt` for Python when `pip-audit` is available.
 - Lockfile diff: review new packages, removed packages, install scripts, native modules, and transitive dependency changes.
 - Runtime risk: identify whether the dependency runs in the Expo client, FastAPI backend request path, build tooling, CI only, or local development only.
 - Production exposure: note whether the package handles auth, storage paths, media files, request parsing, subprocess execution, or network calls.
 - Advisory handling: document any ignored advisory with the package constraint, affected runtime, exploitability in this app, and revisit trigger.
 
-Current tracked advisory exceptions:
-
-- Python: `PYSEC-2026-1805` for protobuf remains ignored only because `mediapipe==0.10.21` requires `protobuf<5` while the available fix starts at `5.29.6`.
-- Node: Expo transitive moderate advisories are not ignored in CI because CI fails only on high severity and above. Revisit them on each Expo SDK update and document any advisory that becomes high severity or ships in production runtime code.
+No Python advisory exceptions are configured. Expo transitive moderate Node
+advisories are not ignored in CI because CI fails only on high severity and
+above. Revisit them on each Expo SDK update and document any advisory that
+becomes high severity or ships in production runtime code.
 
 ## Request Provenance
 

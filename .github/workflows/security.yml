@@ -45,6 +45,9 @@ jobs:
           pip install -r requirements.txt
           pip install pip-audit
 
+      - name: Fetch verified pose models
+        run: python scripts/fetch_pose_models.py
+
       - name: Run backend tests
         working-directory: backend
         env:
@@ -56,7 +59,7 @@ jobs:
         run: python -m unittest discover -s tests
 
       - name: Audit Python dependencies
-        run: pip-audit -r backend/requirements.txt --ignore-vuln PYSEC-2026-1805
+        run: pip-audit -r backend/requirements.txt
 
       - name: Audit Supabase migrations and RLS
         run: python scripts/supabase_security_audit.py
@@ -128,7 +131,9 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build candidate backend image without publishing it
-        run: docker build --tag peso-backend:security-check .
+        run: docker build --pull --tag peso-backend:security-check .
+      - name: Verify offline non-root runtime
+        run: ./scripts/verify_container_runtime.sh peso-backend:security-check
       - name: Block high and critical container vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:

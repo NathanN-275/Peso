@@ -1,4 +1,4 @@
-name: Publish and deploy Azure staging
+name: Verify and publish Student candidate
 
 on:
   push:
@@ -12,10 +12,6 @@ concurrency:
 
 env:
   IMAGE_REPOSITORY: ghcr.io/nathann-275/peso-backend
-  AZURE_RESOURCE_GROUP: rg-peso-staging-westus2
-  AZURE_API_NAME: peso-backend-staging
-  AZURE_WORKER_JOB_NAME: peso-analysis-worker-staging
-  AZURE_RESOURCE_API_VERSION: 2025-01-01
 
 jobs:
   verify:
@@ -54,6 +50,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Fetch verified pose models
+        run: python scripts/fetch_pose_models.py
+
+      - name: Audit Node dependencies
+        run: npm run audit:ci
+
       - name: Run backend tests
         working-directory: backend
         env:
@@ -67,7 +69,7 @@ jobs:
       - name: Build and lint Azure Bicep
         run: |
           az bicep install --version v0.46.1
-          az bicep build --file infra/azure/staging/main.bicep --stdout > /dev/null
+          az bicep build --file infra/azure/student.bicep --stdout > /dev/null
 
   publish:
     name: Publish immutable backend image
@@ -91,88 +93,104 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and publish backend image
+      - name: Build candidate without publishing
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64
-          push: true
+          push: false
+          load: true
           pull: true
           tags: |
             ${{ env.IMAGE_REPOSITORY }}:sha-${{ github.sha }}
-            ${{ env.IMAGE_REPOSITORY }}:main
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Resolve the pushed registry digest
+      - name: Bind release candidate to its local image identity
+        id: candidate
+        run: |
+          set -euo pipefail
+          IMAGE_ID="$(docker image inspect --format '{{.Id}}' "${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}")"
+          echo "image_id=${IMAGE_ID}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify offline non-root runtime
+        run: ./scripts/verify_container_runtime.sh "${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}"
+
+      - name: Block high and critical findings before publishing
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.74.0
+          image-ref: ${{ env.IMAGE_REPOSITORY }}:sha-${{ github.sha }}
+          format: json
+          output: trivy-results.json
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+
+      - name: Refuse candidate tag drift after verification
+        env:
+          EXPECTED_IMAGE_ID: ${{ steps.candidate.outputs.image_id }}
+        run: test "$(docker image inspect --format '{{.Id}}' "${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}")" = "${EXPECTED_IMAGE_ID}"
+
+      - name: Publish and bind the exact scanned image
         id: registry
         env:
-          IMAGE_TAG: ${{ env.IMAGE_REPOSITORY }}:sha-${{ github.sha }}
+          EXPECTED_IMAGE_ID: ${{ steps.candidate.outputs.image_id }}
         run: |
           set -euo pipefail
-          REGISTRY_DIGEST="$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{json .Manifest}}' | jq -r '.digest')"
+          IMAGE_TAG="${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}"
+          docker push "${IMAGE_TAG}" 2>&1 | tee docker-push.txt
+          REGISTRY_DIGEST="$(sed -nE 's/^.*digest: (sha256:[a-f0-9]{64}).*$/\1/p' docker-push.txt | tail -1)"
           test "${REGISTRY_DIGEST#sha256:}" != "${REGISTRY_DIGEST}"
           test "${#REGISTRY_DIGEST}" -eq 71
+          IMMUTABLE_REFERENCE="${IMAGE_REPOSITORY}@${REGISTRY_DIGEST}"
+          docker pull "${IMMUTABLE_REFERENCE}" >/dev/null
+          test "$(docker image inspect --format '{{.Id}}' "${IMMUTABLE_REFERENCE}")" = "${EXPECTED_IMAGE_ID}"
           echo "digest=${REGISTRY_DIGEST}" >> "${GITHUB_OUTPUT}"
 
-      - name: Require anonymous access to the public image
+      - name: Record exact-image release evidence
         env:
-          IMAGE_TAG: ${{ env.IMAGE_REPOSITORY }}:sha-${{ github.sha }}
-          EXPECTED_DIGEST: ${{ steps.registry.outputs.digest }}
+          IMAGE_DIGEST: ${{ steps.registry.outputs.digest }}
+          IMAGE_ID: ${{ steps.candidate.outputs.image_id }}
         run: |
           set -euo pipefail
-          docker logout ghcr.io
-          PUBLIC_DIGEST="$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{json .Manifest}}' | jq -r '.digest')"
-          test "${PUBLIC_DIGEST}" = "${EXPECTED_DIGEST}"
+          mkdir -p release-evidence
+          jq --arg commit "${GITHUB_SHA}" \
+            --arg repository "${IMAGE_REPOSITORY}" \
+            --arg tag "${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}" \
+            --arg digest "${IMAGE_DIGEST}" \
+            --arg image_id "${IMAGE_ID}" '
+              {
+                source_commit: $commit,
+                image_tag: $tag,
+                image_digest: $digest,
+                immutable_image_reference: ($repository + "@" + $digest),
+                local_image_id: $image_id,
+                offline_uid_10001_runtime_check: "passed",
+                trivy: {
+                  version: "v0.74.0",
+                  severity: ["HIGH", "CRITICAL"],
+                  ignore_unfixed: false,
+                  finding_count: ([((.Results // [])[]?.Vulnerabilities // [])[]?] | length),
+                  result: "passed"
+                }
+              }
+            ' trivy-results.json > release-evidence/image-security.json
+          test "$(jq -r '.trivy.finding_count' release-evidence/image-security.json)" = "0"
+          jq -r '"Exact image `\(.immutable_image_reference)` passed the offline UID-10001 runtime check and strict Trivy HIGH/CRITICAL scan (unfixed included)."' \
+            release-evidence/image-security.json >> "${GITHUB_STEP_SUMMARY}"
 
-  deploy:
-    name: Deploy immutable digest to Azure staging
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      vars.AZURE_STAGING_DEPLOY_ENABLED == 'true'
-    needs: publish
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - name: Sign in to Azure with GitHub OIDC
-        uses: azure/login@8216e11d8cd9b42fe925c852af8e76311ff067ac # v2
+      - name: Upload image security release evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          client-id: ${{ vars.AZURE_STAGING_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Update only the API and worker image references
-        env:
-          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-          IMAGE_DIGEST: ${{ needs.publish.outputs.digest }}
-        run: |
-          set -euo pipefail
-
-          DEPLOY_IMAGE="${IMAGE_REPOSITORY}@${IMAGE_DIGEST}"
-          API_RESOURCE_ID="/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${AZURE_RESOURCE_GROUP}/providers/Microsoft.App/containerApps/${AZURE_API_NAME}"
-          WORKER_RESOURCE_ID="/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${AZURE_RESOURCE_GROUP}/providers/Microsoft.App/jobs/${AZURE_WORKER_JOB_NAME}"
-
-          az resource update \
-            --ids "${WORKER_RESOURCE_ID}" \
-            --api-version "${AZURE_RESOURCE_API_VERSION}" \
-            --set "properties.template.containers[0].image=${DEPLOY_IMAGE}" \
-            --output none
-
-          az resource update \
-            --ids "${API_RESOURCE_ID}" \
-            --api-version "${AZURE_RESOURCE_API_VERSION}" \
-            --set "properties.template.containers[0].image=${DEPLOY_IMAGE}" \
-            --output none
-
-          DEPLOYED_WORKER_IMAGE="$(az resource show --ids "${WORKER_RESOURCE_ID}" --api-version "${AZURE_RESOURCE_API_VERSION}" --query 'properties.template.containers[0].image' --output tsv)"
-          DEPLOYED_API_IMAGE="$(az resource show --ids "${API_RESOURCE_ID}" --api-version "${AZURE_RESOURCE_API_VERSION}" --query 'properties.template.containers[0].image' --output tsv)"
-
-          test "${DEPLOYED_WORKER_IMAGE}" = "${DEPLOY_IMAGE}"
-          test "${DEPLOYED_API_IMAGE}" = "${DEPLOY_IMAGE}"
+          name: student-image-security-${{ github.sha }}
+          path: |
+            release-evidence/image-security.json
+            trivy-results.json
+          if-no-files-found: error
+          retention-days: 90

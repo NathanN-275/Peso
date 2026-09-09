@@ -58,16 +58,22 @@ test('database tests and container scanning are mandatory CI jobs', () => {
   assert.match(workflow, /container-security:/);
   assert.match(workflow, /aquasecurity\/trivy-action@[a-f0-9]{40}/);
   assert.match(workflow, /exit-code: "1"/);
+  assert.doesNotMatch(workflow, /ignore-vuln/);
   assert.match(read('Dockerfile'), /USER 10001:10001/);
   const ignore = read('.dockerignore');
   assert.match(ignore, /^\*\*$/m);
   assert.match(ignore, /^backend\/\*\*$/m);
   assert.match(ignore, /^!backend\/app\/\*\*$/m);
   assert.doesNotMatch(ignore, /^!(?:\.env|backend\/test_videos)/m);
+  assert.equal(fs.existsSync(path.join(root, '.trivyignore')), false);
 });
 
 test('PR and deployment scans explicitly select the same Trivy release and blocking policy', () => {
-  const scans = ['.github/workflows/security.yml', '.github/workflows/azure-backend-deploy.yml'].map((name) => {
+  const scans = [
+    '.github/workflows/security.yml',
+    '.github/workflows/azure-backend-deploy.yml',
+    '.github/workflows/azure-staging.yml',
+  ].map((name) => {
     const workflow = read(name);
     const start = workflow.indexOf('uses: aquasecurity/trivy-action@');
     assert.notEqual(start, -1, `${name}: missing container scanner`);

@@ -26,6 +26,10 @@ var runtimeIdentityName = 'peso-student-runtime'
 var sourceStorageName = take('pesosource${uniqueString(subscription().id, resourceGroup().id)}', 24)
 var commonEnvironmentVariables = [
   {
+    name: 'PESO_DEPLOYMENT_ENVIRONMENT'
+    value: 'student'
+  }
+  {
     name: 'BACKEND_ENV'
     value: 'production'
   }
