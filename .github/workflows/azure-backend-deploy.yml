@@ -144,17 +144,10 @@ jobs:
       - name: Verify the exact candidate offline before preview or deployment
         env:
           IMAGE_REFERENCE: ${{ inputs.image_reference }}
-          GHCR_USERNAME: ${{ vars.GHCR_USERNAME }}
-          GHCR_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-        run: |
-          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USERNAME" --password-stdin
-          ./scripts/verify_container_runtime.sh "$IMAGE_REFERENCE"
+        run: ./scripts/verify_container_runtime.sh "$IMAGE_REFERENCE"
 
       - name: Scan the exact candidate image before preview or deployment
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        env:
-          TRIVY_USERNAME: ${{ vars.GHCR_USERNAME }}
-          TRIVY_PASSWORD: ${{ secrets.GHCR_READ_TOKEN }}
         with:
           version: v0.74.0
           image-ref: ${{ inputs.image_reference }}
@@ -231,7 +224,6 @@ jobs:
     env:
       IMAGE_REFERENCE: ${{ inputs.image_reference }}
       STUDENT_NETLIFY_ORIGIN: ${{ vars.STUDENT_NETLIFY_ORIGIN }}
-      GHCR_USERNAME: ${{ vars.GHCR_USERNAME }}
       ENABLE_UPLOAD_RESERVATIONS: ${{ inputs.enable_upload_reservations }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -259,7 +251,6 @@ jobs:
             --resource-group peso-student-centralus-rg \
             --template-file infra/azure/student.bicep \
             --parameters imageReference="$IMAGE_REFERENCE" \
-              ghcrUsername="$GHCR_USERNAME" \
               netlifyTestOrigin="$STUDENT_NETLIFY_ORIGIN" \
               enableUploadReservations="$ENABLE_UPLOAD_RESERVATIONS" \
             --result-format FullResourcePayloads \
@@ -363,9 +354,8 @@ jobs:
           AZURE_SCALER_POSTGRES_PASSWORD: ${{ secrets.AZURE_SCALER_POSTGRES_PASSWORD }}
         run: ./scripts/configure_azure_scaler_role.sh
 
-      - name: Store runtime and GHCR credentials in Key Vault
+      - name: Store runtime credentials in Key Vault
         env:
-          GHCR_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           RUNTIME_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           RUNTIME_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           RUNTIME_CLEANUP_JOB_TOKEN: ${{ secrets.CLEANUP_JOB_TOKEN }}
@@ -379,7 +369,6 @@ jobs:
           : "${key_vault_name:?Student Key Vault was not found. Run the bootstrap first.}"
           : "${RUNTIME_BUDGET_SHUTDOWN_TOKEN:?The budget shutdown token must be configured in the protected environment.}"
 
-          az keyvault secret set --vault-name "$key_vault_name" --name ghcr-token --value "$GHCR_TOKEN" --output none
           az keyvault secret set --vault-name "$key_vault_name" --name supabase-url --value "$RUNTIME_SUPABASE_URL" --output none
           az keyvault secret set --vault-name "$key_vault_name" --name supabase-service-role-key --value "$RUNTIME_SUPABASE_SERVICE_ROLE_KEY" --output none
           az keyvault secret set --vault-name "$key_vault_name" --name cleanup-job-token --value "$RUNTIME_CLEANUP_JOB_TOKEN" --output none
@@ -393,7 +382,6 @@ jobs:
             --resource-group peso-student-centralus-rg \
             --template-file infra/azure/student.bicep \
             --parameters imageReference="$IMAGE_REFERENCE" \
-              ghcrUsername="$GHCR_USERNAME" \
               netlifyTestOrigin="$STUDENT_NETLIFY_ORIGIN" \
               enableUploadReservations="$ENABLE_UPLOAD_RESERVATIONS" \
             --query properties.outputs \

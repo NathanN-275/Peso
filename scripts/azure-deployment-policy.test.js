@@ -49,7 +49,8 @@ test('Runtime and deployment identities use Key Vault and resource-group-scoped 
   assert.match(studentBootstrapBicep, /resource deploymentContributor/);
   assert.match(studentBootstrapBicep, /resource deploymentSecretsAccess/);
   assert.match(studentBootstrapBicep, /resource runtimeSecretsAccess/);
-  assert.match(studentBicep, /keyVaultUrl: '\$\{keyVault\.properties\.vaultUri\}secrets\/ghcr-token'/);
+  assert.doesNotMatch(studentBicep, /ghcr-token|ghcrUsername|registries:/);
+  assert.doesNotMatch(deploymentWorkflow, /GHCR_READ_TOKEN|GHCR_TOKEN|TRIVY_PASSWORD|docker login/);
   assert.match(studentBicep, /keyVaultUrl: '\$\{keyVault\.properties\.vaultUri\}secrets\/supabase-service-role-key'/);
   assert.doesNotMatch(deploymentWorkflow, /AZURE_CREDENTIALS|client-secret|client_secret/);
 });
