@@ -155,7 +155,6 @@ Backend variables include:
 ```bash
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
-SUPABASE_JWT_SECRET=
 CLEANUP_JOB_TOKEN=replace-with-random-cleanup-secret
 ```
 

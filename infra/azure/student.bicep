@@ -9,9 +9,6 @@ param location string = 'centralus'
 @description('Immutable GHCR image reference including @sha256:<64 lowercase hex characters>.')
 param imageReference string
 
-@description('GHCR username that can read the image package.')
-param ghcrUsername string
-
 @description('Exact HTTPS origin of the staging/test Netlify deploy. No wildcard or production origin is accepted by policy.')
 param netlifyTestOrigin string
 
@@ -80,10 +77,6 @@ var commonEnvironmentVariables = [
   {
     name: 'SUPABASE_SERVICE_ROLE_KEY'
     secretRef: 'supabase-service-role-key'
-  }
-  {
-    name: 'SUPABASE_JWT_SECRET'
-    secretRef: 'supabase-jwt-secret'
   }
   {
     name: 'CLEANUP_JOB_TOKEN'
@@ -184,19 +177,7 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
         targetPort: 10000
         transport: 'http'
       }
-      registries: [
-        {
-          passwordSecretRef: 'ghcr-token'
-          server: 'ghcr.io'
-          username: ghcrUsername
-        }
-      ]
       secrets: [
-        {
-          name: 'ghcr-token'
-          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/ghcr-token'
-          identity: runtimeIdentity.id
-        }
         {
           name: 'supabase-url'
           keyVaultUrl: '${keyVault.properties.vaultUri}secrets/supabase-url'
@@ -205,11 +186,6 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
         {
           name: 'supabase-service-role-key'
           keyVaultUrl: '${keyVault.properties.vaultUri}secrets/supabase-service-role-key'
-          identity: runtimeIdentity.id
-        }
-        {
-          name: 'supabase-jwt-secret'
-          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/supabase-jwt-secret'
           identity: runtimeIdentity.id
         }
         {
@@ -328,19 +304,7 @@ resource worker 'Microsoft.App/jobs@2024-03-01' = {
           ]
         }
       }
-      registries: [
-        {
-          passwordSecretRef: 'ghcr-token'
-          server: 'ghcr.io'
-          username: ghcrUsername
-        }
-      ]
       secrets: [
-        {
-          name: 'ghcr-token'
-          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/ghcr-token'
-          identity: runtimeIdentity.id
-        }
         {
           name: 'supabase-url'
           keyVaultUrl: '${keyVault.properties.vaultUri}secrets/supabase-url'
@@ -349,11 +313,6 @@ resource worker 'Microsoft.App/jobs@2024-03-01' = {
         {
           name: 'supabase-service-role-key'
           keyVaultUrl: '${keyVault.properties.vaultUri}secrets/supabase-service-role-key'
-          identity: runtimeIdentity.id
-        }
-        {
-          name: 'supabase-jwt-secret'
-          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/supabase-jwt-secret'
           identity: runtimeIdentity.id
         }
         {
@@ -437,14 +396,7 @@ resource reservationCleanup 'Microsoft.App/jobs@2024-03-01' = if (enableUploadRe
         parallelism: 1
         replicaCompletionCount: 1
       }
-      registries: [
-        {
-          passwordSecretRef: 'ghcr-token'
-          server: 'ghcr.io'
-          username: ghcrUsername
-        }
-      ]
-      secrets: [for secretName in ['ghcr-token', 'supabase-url', 'supabase-service-role-key', 'supabase-jwt-secret', 'cleanup-job-token']: {
+      secrets: [for secretName in ['supabase-url', 'supabase-service-role-key', 'cleanup-job-token']: {
         name: secretName
         keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${secretName}'
         identity: runtimeIdentity.id

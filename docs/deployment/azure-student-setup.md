@@ -44,7 +44,7 @@ what-if and expected costs before the deployment job. Configure identifiers
 as variables, not credentials:
 
 - `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
-- `GHCR_USERNAME`, `SUPABASE_CLI_VERSION`
+- `SUPABASE_CLI_VERSION`
 - `STUDENT_NETLIFY_ORIGIN`: `https://main--peso-webapp.netlify.app`
 - `PRODUCTION_NETLIFY_ORIGIN`: the exact current production origin, used only
   to prove the Student origin is different
@@ -53,9 +53,7 @@ as variables, not credentials:
 
 Configure these environment secrets:
 
-- `GHCR_READ_TOKEN`
-- `SUPABASE_DB_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
-  `SUPABASE_JWT_SECRET`
+- `SUPABASE_DB_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
 - `CLEANUP_JOB_TOKEN`, `BUDGET_SHUTDOWN_TOKEN`
 - `AZURE_SCALER_POSTGRES_PASSWORD` and
   `AZURE_SCALER_POSTGRES_CONNECTION`
@@ -64,6 +62,17 @@ The scaler connection uses the dedicated `peso_azure_scaler_student` login and
 `sslmode=require`; it must not use the database owner or Supabase service-role
 credential. Do not create `AZURE_CREDENTIALS`, an Azure client secret, or a
 production GitHub environment for this path.
+
+The accepted backend digest is a public GHCR package. GitHub permits anonymous
+pulls for public Container registry packages, so the Student workflow and Azure
+runtime must not store a GHCR personal access token. The offline runtime check
+and Trivy scan pull the exact digest anonymously and fail closed if its
+visibility or availability changes.
+
+Do not store Supabase's legacy JWT signing secret. Student bearer tokens are
+validated by the backend through the allowlisted peso-staging Auth service,
+which supports the project's current asymmetric signing key without exposing
+its private key.
 
 ## 3. Permanent peso-staging database and test users
 

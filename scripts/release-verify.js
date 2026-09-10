@@ -5,7 +5,6 @@ const path = require('node:path');
 const productionLikeBackendEnvironment = {
   SUPABASE_URL: 'https://example.supabase.co',
   SUPABASE_SERVICE_ROLE_KEY: 'release-test-service-role',
-  SUPABASE_JWT_SECRET: 'release-test-jwt-secret',
   CLEANUP_JOB_TOKEN: 'release-test-cleanup-token',
   BACKEND_ALLOW_UNAUTHENTICATED_DEV_CLEANUP: 'false',
   PYTHONPYCACHEPREFIX: path.join(os.tmpdir(), 'peso-release-pycache'),
