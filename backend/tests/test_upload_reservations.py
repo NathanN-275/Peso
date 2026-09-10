@@ -35,7 +35,7 @@ RESERVATION_ID = UUID("11111111-1111-1111-1111-111111111111")
 VIDEO_ID = "22222222-2222-2222-2222-222222222222"
 SETTINGS = Settings(
   backend_env="test", supabase_url="https://example.supabase.co",
-  supabase_service_role_key="test", supabase_jwt_secret="test",
+  supabase_service_role_key="test",
   upload_reservations_enabled=True,
 )
 VALID_METADATA = VideoMetadata(1000, 1920, 1080, 60, 60, "h264", "mov,mp4,m4a,3gp,3g2,mj2")

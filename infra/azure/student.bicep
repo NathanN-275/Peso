@@ -82,10 +82,6 @@ var commonEnvironmentVariables = [
     secretRef: 'supabase-service-role-key'
   }
   {
-    name: 'SUPABASE_JWT_SECRET'
-    secretRef: 'supabase-jwt-secret'
-  }
-  {
     name: 'CLEANUP_JOB_TOKEN'
     secretRef: 'cleanup-job-token'
   }
@@ -205,11 +201,6 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
         {
           name: 'supabase-service-role-key'
           keyVaultUrl: '${keyVault.properties.vaultUri}secrets/supabase-service-role-key'
-          identity: runtimeIdentity.id
-        }
-        {
-          name: 'supabase-jwt-secret'
-          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/supabase-jwt-secret'
           identity: runtimeIdentity.id
         }
         {
@@ -352,11 +343,6 @@ resource worker 'Microsoft.App/jobs@2024-03-01' = {
           identity: runtimeIdentity.id
         }
         {
-          name: 'supabase-jwt-secret'
-          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/supabase-jwt-secret'
-          identity: runtimeIdentity.id
-        }
-        {
           name: 'cleanup-job-token'
           keyVaultUrl: '${keyVault.properties.vaultUri}secrets/cleanup-job-token'
           identity: runtimeIdentity.id
@@ -444,7 +430,7 @@ resource reservationCleanup 'Microsoft.App/jobs@2024-03-01' = if (enableUploadRe
           username: ghcrUsername
         }
       ]
-      secrets: [for secretName in ['ghcr-token', 'supabase-url', 'supabase-service-role-key', 'supabase-jwt-secret', 'cleanup-job-token']: {
+      secrets: [for secretName in ['ghcr-token', 'supabase-url', 'supabase-service-role-key', 'cleanup-job-token']: {
         name: secretName
         keyVaultUrl: '${keyVault.properties.vaultUri}secrets/${secretName}'
         identity: runtimeIdentity.id

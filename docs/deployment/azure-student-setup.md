@@ -54,8 +54,7 @@ as variables, not credentials:
 Configure these environment secrets:
 
 - `GHCR_READ_TOKEN`
-- `SUPABASE_DB_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
-  `SUPABASE_JWT_SECRET`
+- `SUPABASE_DB_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
 - `CLEANUP_JOB_TOKEN`, `BUDGET_SHUTDOWN_TOKEN`
 - `AZURE_SCALER_POSTGRES_PASSWORD` and
   `AZURE_SCALER_POSTGRES_CONNECTION`
@@ -64,6 +63,11 @@ The scaler connection uses the dedicated `peso_azure_scaler_student` login and
 `sslmode=require`; it must not use the database owner or Supabase service-role
 credential. Do not create `AZURE_CREDENTIALS`, an Azure client secret, or a
 production GitHub environment for this path.
+
+Do not store Supabase's legacy JWT signing secret. Student bearer tokens are
+validated by the backend through the allowlisted peso-staging Auth service,
+which supports the project's current asymmetric signing key without exposing
+its private key.
 
 ## 3. Permanent peso-staging database and test users
 

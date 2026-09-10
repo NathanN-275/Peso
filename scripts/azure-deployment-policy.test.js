@@ -144,7 +144,7 @@ test('Student release binds credentials, API origin, and migrations to independe
     /secrets\./,
     'validation secrets must be scoped to the step that consumes them'
   );
-  assert.match(deploymentWorkflow, /RUNTIME_SUPABASE_JWT_SECRET: \$\{\{ secrets\.SUPABASE_JWT_SECRET \}\}/);
+  assert.doesNotMatch(deploymentWorkflow, /SUPABASE_JWT_SECRET|supabase-jwt-secret/);
   assert.match(deploymentWorkflow, /api_url=.*azure-student-deployment-outputs\.json/);
   assert.match(deploymentWorkflow, /student-api-release-binding\.json/);
   assert.match(deploymentWorkflow, /azure_deployment_outputs_sha256: \$outputs_sha256/);

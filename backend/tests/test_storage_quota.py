@@ -16,7 +16,6 @@ def settings(**overrides: object) -> Settings:
     "backend_env": "test",
     "supabase_url": "https://example.supabase.co",
     "supabase_service_role_key": "service-role-key",
-    "supabase_jwt_secret": "jwt-secret",
     "object_storage_limit_bytes": GIB,
     "database_limit_bytes": GIB // 2,
     "monthly_egress_limit_bytes": 5 * GIB,

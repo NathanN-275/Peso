@@ -18,6 +18,6 @@ class StudentRuntimeBoundaryTest(unittest.TestCase):
   def test_student_accepts_the_permanent_project(self):
     with patch.dict(os.environ, {'BACKEND_ENV': 'development', 'PESO_DEPLOYMENT_ENVIRONMENT': 'student',
       'SUPABASE_URL': 'https://iseqgaewjpjcxrndibep.supabase.co', 'SUPABASE_SERVICE_ROLE_KEY': 'test',
-      'SUPABASE_JWT_SECRET': 'test', 'CLEANUP_JOB_TOKEN': 'test'}, clear=True):
+      'CLEANUP_JOB_TOKEN': 'test'}, clear=True):
       get_settings.cache_clear()
       self.assertEqual(get_settings().supabase_url, 'https://iseqgaewjpjcxrndibep.supabase.co')

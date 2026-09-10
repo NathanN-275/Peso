@@ -68,7 +68,6 @@ class Settings:
   backend_env: str
   supabase_url: str
   supabase_service_role_key: str
-  supabase_jwt_secret: str
   cleanup_job_token: str | None = None
   storage_cleanup_token: str = ""
   video_bucket: str = "videos"
@@ -220,7 +219,6 @@ def get_settings() -> Settings:
   if os.getenv("PESO_DEPLOYMENT_ENVIRONMENT") == "student" and supabase_url != "https://iseqgaewjpjcxrndibep.supabase.co":
     raise RuntimeError("Student services require the isolated peso-staging Supabase project.")
   supabase_service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
-  supabase_jwt_secret = os.getenv("SUPABASE_JWT_SECRET", "").strip()
   cleanup_job_token = (
     os.getenv("STORAGE_CLEANUP_TOKEN", "").strip()
     or os.getenv("CLEANUP_JOB_TOKEN", "").strip()
@@ -454,7 +452,6 @@ def get_settings() -> Settings:
     for name, value in (
       ("SUPABASE_URL", supabase_url),
       ("SUPABASE_SERVICE_ROLE_KEY", supabase_service_role_key),
-      ("SUPABASE_JWT_SECRET", supabase_jwt_secret),
     )
     if not value
   ]
@@ -466,7 +463,6 @@ def get_settings() -> Settings:
     backend_env=backend_env,
     supabase_url=supabase_url,
     supabase_service_role_key=supabase_service_role_key,
-    supabase_jwt_secret=supabase_jwt_secret,
     cleanup_job_token=cleanup_job_token,
     storage_cleanup_token=cleanup_job_token or "",
     video_bucket=video_bucket,

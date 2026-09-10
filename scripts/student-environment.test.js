@@ -1,5 +1,4 @@
 const assert = require('node:assert/strict');
-const crypto = require('node:crypto');
 const test = require('node:test');
 const { validateDatabaseUrl, validateStudentEnvironment, STUDENT_PROJECT, PRODUCTION_PROJECT,
   STUDENT_SUPABASE_URL, STUDENT_ORIGIN, verifyStudentKeys } = require('./student-environment');
@@ -14,7 +13,6 @@ const environment = () => ({
   EXPO_PUBLIC_SUPABASE_URL: STUDENT_SUPABASE_URL,
   STUDENT_NETLIFY_ORIGIN: STUDENT_ORIGIN,
   RUNTIME_SUPABASE_SERVICE_ROLE_KEY: jwt(STUDENT_PROJECT, 'service_role'),
-  RUNTIME_SUPABASE_JWT_SECRET: 'student-jwt-secret',
   EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: jwt(STUDENT_PROJECT, 'anon'),
 });
 
@@ -39,7 +37,6 @@ test('Student rejects production URLs, JWTs, wrong roles and unrelated origins',
     RUNTIME_SUPABASE_URL: `https://${PRODUCTION_PROJECT}.supabase.co`,
     EXPO_PUBLIC_SUPABASE_URL: `https://${PRODUCTION_PROJECT}.supabase.co`,
     RUNTIME_SUPABASE_SERVICE_ROLE_KEY: jwt(PRODUCTION_PROJECT, 'service_role'),
-    RUNTIME_SUPABASE_JWT_SECRET: '',
     EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: jwt(STUDENT_PROJECT, 'service_role'),
     STUDENT_NETLIFY_ORIGIN: 'https://peso-webapp.netlify.app',
   })) assert.ok(validateStudentEnvironment({...environment(), [name]: value}).length, name);
@@ -52,29 +49,22 @@ test('Missing connections and malformed keys fail without exposing credentials',
   assert.doesNotMatch(errors.join('\n'), /eyJ-secret/);
 });
 
-test('online verification proves the JWT secret against only peso-staging', async (context) => {
+test('online verification proves both runtime keys against only peso-staging', async (context) => {
   const calls = [];
   context.mock.method(global, 'fetch', async (url, options) => {
     calls.push({url, options});
     return {ok: true, body: {cancel: async () => {}}};
   });
-  const env = environment();
-  await verifyStudentKeys(env);
-  assert.equal(calls.length, 3);
+  await verifyStudentKeys(environment());
+  assert.equal(calls.length, 2);
   assert.ok(calls.every(({url}) => url.startsWith(STUDENT_SUPABASE_URL + '/')));
-  const token = calls[2].options.headers.Authorization.replace('Bearer ', '');
-  const [header, payload, signature] = token.split('.');
-  const expected = crypto.createHmac('sha256', env.RUNTIME_SUPABASE_JWT_SECRET)
-    .update(`${header}.${payload}`).digest('base64url');
-  assert.equal(signature, expected);
-  assert.equal(JSON.parse(Buffer.from(payload, 'base64url')).ref, STUDENT_PROJECT);
 });
 
-test('online verification fails closed when peso-staging rejects the JWT secret', async (context) => {
+test('online verification fails closed when peso-staging rejects a runtime key', async (context) => {
   let call = 0;
   context.mock.method(global, 'fetch', async () => ({
-    ok: ++call < 3,
+    ok: ++call < 2,
     body: {cancel: async () => {}},
   }));
-  await assert.rejects(verifyStudentKeys(environment()), /JWT_SECRET was rejected/);
+  await assert.rejects(verifyStudentKeys(environment()), /SERVICE_ROLE_KEY was rejected/);
 });

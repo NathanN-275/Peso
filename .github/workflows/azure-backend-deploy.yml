@@ -57,7 +57,6 @@ jobs:
       PESO_RELEASE_ENV: student
       SUPABASE_URL: https://example.supabase.co
       SUPABASE_SERVICE_ROLE_KEY: release-test-service-role
-      SUPABASE_JWT_SECRET: release-test-jwt-secret
       CLEANUP_JOB_TOKEN: release-test-cleanup-token
       BACKEND_ALLOW_UNAUTHENTICATED_DEV_CLEANUP: "false"
       STUDENT_NETLIFY_ORIGIN: ${{ vars.STUDENT_NETLIFY_ORIGIN }}
@@ -69,7 +68,6 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           RUNTIME_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           RUNTIME_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          RUNTIME_SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
           EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
           SCALER_POSTGRES_CONNECTION: ${{ secrets.AZURE_SCALER_POSTGRES_CONNECTION }}
         run: node scripts/student-environment.js --verify-keys
@@ -334,7 +332,6 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           RUNTIME_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           RUNTIME_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          RUNTIME_SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
           EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
           SCALER_POSTGRES_CONNECTION: ${{ secrets.AZURE_SCALER_POSTGRES_CONNECTION }}
         run: node scripts/student-environment.js --verify-keys
@@ -371,7 +368,6 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           RUNTIME_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           RUNTIME_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          RUNTIME_SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
           RUNTIME_CLEANUP_JOB_TOKEN: ${{ secrets.CLEANUP_JOB_TOKEN }}
           RUNTIME_BUDGET_SHUTDOWN_TOKEN: ${{ secrets.BUDGET_SHUTDOWN_TOKEN }}
           SCALER_POSTGRES_CONNECTION: ${{ secrets.AZURE_SCALER_POSTGRES_CONNECTION }}
@@ -386,7 +382,6 @@ jobs:
           az keyvault secret set --vault-name "$key_vault_name" --name ghcr-token --value "$GHCR_TOKEN" --output none
           az keyvault secret set --vault-name "$key_vault_name" --name supabase-url --value "$RUNTIME_SUPABASE_URL" --output none
           az keyvault secret set --vault-name "$key_vault_name" --name supabase-service-role-key --value "$RUNTIME_SUPABASE_SERVICE_ROLE_KEY" --output none
-          az keyvault secret set --vault-name "$key_vault_name" --name supabase-jwt-secret --value "$RUNTIME_SUPABASE_JWT_SECRET" --output none
           az keyvault secret set --vault-name "$key_vault_name" --name cleanup-job-token --value "$RUNTIME_CLEANUP_JOB_TOKEN" --output none
           az keyvault secret set --vault-name "$key_vault_name" --name budget-shutdown-token --value "$RUNTIME_BUDGET_SHUTDOWN_TOKEN" --output none
           az keyvault secret set --vault-name "$key_vault_name" --name scaler-postgres-connection --value "$SCALER_POSTGRES_CONNECTION" --output none

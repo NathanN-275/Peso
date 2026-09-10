@@ -20,7 +20,7 @@ docker run --rm --platform linux/amd64 --network none --read-only \
   --tmpfs /tmp:rw,nosuid,nodev,size=256m --tmpfs /home/peso:rw,nosuid,nodev,size=32m,uid=10001,gid=10001 \
   -e BACKEND_ENV=development -e SUPABASE_URL=https://example.supabase.co \
   -e SUPABASE_SERVICE_ROLE_KEY=offline-test-service-role \
-  -e SUPABASE_JWT_SECRET=offline-test-jwt-secret -e CLEANUP_JOB_TOKEN=offline-test-cleanup \
+  -e CLEANUP_JOB_TOKEN=offline-test-cleanup \
   -e OPENBLAS_NUM_THREADS=1 -e OMP_NUM_THREADS=1 \
   -v "$root/scripts/container_runtime_check.py:/checks/runtime.py:ro" \
   -v "$fixture_dir/pose.jpg:/checks/pose.jpg:ro" \

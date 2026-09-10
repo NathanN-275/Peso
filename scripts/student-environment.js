@@ -3,7 +3,6 @@ const STUDENT_PROJECT = 'iseqgaewjpjcxrndibep';
 const PRODUCTION_PROJECT = 'jfgiydtrskpqxyorvvbc';
 const STUDENT_SUPABASE_URL = `https://${STUDENT_PROJECT}.supabase.co`;
 const STUDENT_ORIGIN = 'https://main--peso-webapp.netlify.app';
-const crypto = require('node:crypto');
 
 function validateDatabaseUrl(value, { scaler = false } = {}) {
   try {
@@ -39,9 +38,6 @@ function validateStudentEnvironment(env, { databaseOnly = false } = {}) {
   if (env.STUDENT_NETLIFY_ORIGIN !== STUDENT_ORIGIN) {
     errors.push('STUDENT_NETLIFY_ORIGIN must be the exact main branch test site.');
   }
-  if (!env.RUNTIME_SUPABASE_JWT_SECRET) {
-    errors.push('Missing RUNTIME_SUPABASE_JWT_SECRET.');
-  }
   // Legacy Supabase JWTs carry a project ref. Never log their contents.
   for (const name of ['RUNTIME_SUPABASE_SERVICE_ROLE_KEY', 'EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY']) {
     const key = env[name];
@@ -74,28 +70,6 @@ async function verifyStudentKeys(env) {
     await response.body?.cancel();
     if (!response.ok) throw new Error(`${name} was rejected by peso-staging.`);
   }
-
-  // A JWT secret has no project identifier. Prove it belongs to peso-staging by
-  // signing a short-lived service token and asking only the allowlisted project
-  // to verify it. Never print the secret or generated token.
-  const now = Math.floor(Date.now() / 1000);
-  const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
-  const unsigned = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({
-    aud: 'authenticated', exp: now + 60, iat: now, iss: 'supabase',
-    ref: STUDENT_PROJECT, role: 'service_role', sub: 'peso-student-release-check',
-  })}`;
-  const signature = crypto.createHmac('sha256', env.RUNTIME_SUPABASE_JWT_SECRET)
-    .update(unsigned).digest('base64url');
-  const token = `${unsigned}.${signature}`;
-  const jwtResponse = await fetch(`${STUDENT_SUPABASE_URL}/rest/v1/`, {
-    headers: {
-      apikey: env.RUNTIME_SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${token}`,
-    },
-    signal: AbortSignal.timeout(20000),
-  });
-  await jwtResponse.body?.cancel();
-  if (!jwtResponse.ok) throw new Error('RUNTIME_SUPABASE_JWT_SECRET was rejected by peso-staging.');
 }
 
 if (require.main === module) {
