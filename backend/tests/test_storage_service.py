@@ -192,6 +192,7 @@ class StorageServiceTest(unittest.TestCase):
 
     with (
       patch("app.services.storage_service.get_pooled_http_client", return_value=http_client),
+      patch("app.services.storage_service.shutil.which", return_value="/usr/bin/ffprobe"),
       patch(
         "app.services.storage_service.subprocess.run",
         return_value=SimpleNamespace(returncode=0, stdout="video\n", stderr=""),
@@ -272,6 +273,7 @@ class StorageServiceTest(unittest.TestCase):
 
     with (
       patch("app.services.storage_service.get_pooled_http_client", return_value=http_client),
+      patch("app.services.storage_service.shutil.which", return_value="/usr/bin/ffprobe"),
       patch(
         "app.services.storage_service.subprocess.run",
         return_value=SimpleNamespace(returncode=1, stdout="", stderr="Invalid data found"),

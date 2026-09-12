@@ -84,6 +84,23 @@ test('Student deployment validates before a fixed-scope what-if and never publis
   assert.doesNotMatch(deploymentWorkflow, /(?:actions|checks|contents|deployments|packages|pull-requests|security-events): write/);
 });
 
+test('Student validation installs and checks both media tools before backend tests', () => {
+  const validate = deploymentWorkflow.slice(
+    deploymentWorkflow.indexOf('\n  validate:'),
+    deploymentWorkflow.indexOf('\n  preview:')
+  );
+  const mediaStep = validate.match(/      - name: Install and verify backend media tools\n(?:(?!      - ).*\n)*/)?.[0];
+  assert.ok(mediaStep, 'validation must explicitly install its media dependencies');
+  assert.match(mediaStep, /shell: bash/);
+  assert.match(mediaStep, /run: \|\n          set -euo pipefail\n          sudo apt-get update\n          sudo apt-get install --yes ffmpeg\n          ffmpeg -version\n          ffprobe -version\n/);
+  assert.doesNotMatch(mediaStep, /continue-on-error:|\bif:/);
+
+  const media = validate.indexOf(mediaStep);
+  const backendTests = validate.indexOf('      - name: Validate backend behavior');
+  assert.ok(media >= 0 && backendTests > media, 'media tools must be ready before backend tests');
+  assert.match(validate.slice(backendTests), /run: python -m unittest discover -s tests/);
+});
+
 test('Daily cost check records required signals and enforces $8 and $10 controls', () => {
   assert.match(costWorkflow, /cron: "17 12 \* \* \*"/);
   assert.match(costWorkflow, /environment: student/);
