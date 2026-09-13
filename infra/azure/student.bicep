@@ -1,10 +1,10 @@
 targetScope = 'resourceGroup'
 
-@description('The only Azure region approved for the Student environment.')
+@description('The only Azure region approved for Student workload resources. The containing resource-group name and location are legacy bootstrap metadata.')
 @allowed([
-  'centralus'
+  'westus3'
 ])
-param location string = 'centralus'
+param location string = 'westus3'
 
 @description('Immutable GHCR image reference including @sha256:<64 lowercase hex characters>.')
 param imageReference string
@@ -132,7 +132,7 @@ resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
 
 // No dedicated profile is declared, so this remains a Consumption-only environment.
 resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: 'peso-student-centralus-cae'
+  name: 'peso-student-westus3-cae'
   location: location
   tags: {
     application: 'peso'

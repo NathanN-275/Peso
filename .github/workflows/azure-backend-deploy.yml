@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       preview_only:
-        description: Leave enabled to review migration previews, Azure what-if and expected costs before provisioning
+        description: Review West US 3 workloads in the fixed legacy-named Student group before provisioning
         required: true
         default: true
         type: boolean
@@ -41,6 +41,7 @@ concurrency:
 
 env:
   AZURE_RESOURCE_GROUP: peso-student-centralus-rg
+  AZURE_WORKLOAD_REGION: westus3
   AZURE_API_NAME: peso-student-api
   AZURE_WORKER_NAME: peso-student-analysis-worker
 
@@ -223,7 +224,7 @@ jobs:
           retention-days: 30
 
   preview:
-    name: Preview fixed student resource group
+    name: Preview West US 3 workloads in fixed student group
     needs: validate
     runs-on: ubuntu-latest
     environment: student
@@ -244,6 +245,16 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Verify West US 3 is allowed for this subscription
+        run: |
+          allowed_location="$(az account list-locations \
+            --query "[?name=='$AZURE_WORKLOAD_REGION'].name | [0]" \
+            --output tsv)"
+          if [[ "$allowed_location" != "$AZURE_WORKLOAD_REGION" ]]; then
+            echo "Refusing deployment: $AZURE_WORKLOAD_REGION is not in this subscription's allowed locations." >&2
+            exit 1
+          fi
+
       - name: Verify fixed student scope
         run: |
           actual_id="$(az group show --name "$AZURE_RESOURCE_GROUP" --query id --output tsv)"
@@ -253,13 +264,14 @@ jobs:
             exit 1
           fi
 
-      - name: Preview only the student resource group
+      - name: Preview only West US 3 workloads in the student resource group
         run: |
           az deployment group what-if \
             --name "peso-student-${GITHUB_RUN_ID}" \
             --resource-group peso-student-centralus-rg \
             --template-file infra/azure/student.bicep \
-            --parameters imageReference="$IMAGE_REFERENCE" \
+            --parameters location="$AZURE_WORKLOAD_REGION" \
+              imageReference="$IMAGE_REFERENCE" \
               netlifyTestOrigin="$STUDENT_NETLIFY_ORIGIN" \
               enableUploadReservations="$ENABLE_UPLOAD_RESERVATIONS" \
             --result-format FullResourcePayloads \
@@ -275,7 +287,7 @@ jobs:
 
   deploy:
     if: inputs.preview_only == false && inputs.pose_comparison_approved == true
-    name: Approve, deploy, and verify student backend
+    name: Approve, deploy, and verify West US 3 student backend
     needs: preview
     runs-on: ubuntu-latest
     environment: student
@@ -317,6 +329,16 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Reconfirm West US 3 is allowed for this subscription
+        run: |
+          allowed_location="$(az account list-locations \
+            --query "[?name=='$AZURE_WORKLOAD_REGION'].name | [0]" \
+            --output tsv)"
+          if [[ "$allowed_location" != "$AZURE_WORKLOAD_REGION" ]]; then
+            echo "Refusing deployment: $AZURE_WORKLOAD_REGION is not in this subscription's allowed locations." >&2
+            exit 1
+          fi
 
       - name: Reconfirm fixed student scope
         run: |
@@ -390,11 +412,46 @@ jobs:
             --name "peso-student-${GITHUB_RUN_ID}" \
             --resource-group peso-student-centralus-rg \
             --template-file infra/azure/student.bicep \
-            --parameters imageReference="$IMAGE_REFERENCE" \
+            --parameters location="$AZURE_WORKLOAD_REGION" \
+              imageReference="$IMAGE_REFERENCE" \
               netlifyTestOrigin="$STUDENT_NETLIFY_ORIGIN" \
               enableUploadReservations="$ENABLE_UPLOAD_RESERVATIONS" \
             --query properties.outputs \
             --output json > azure-student-deployment-outputs.json
+
+      - name: Verify West US 3 environment and Student worker trigger
+        run: |
+          environment_location="$(az containerapp env show \
+            --name peso-student-westus3-cae \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query location --output tsv)"
+          api_location="$(az containerapp show \
+            --name "$AZURE_API_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query location --output tsv)"
+          worker_location="$(az containerapp job show \
+            --name "$AZURE_WORKER_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query location --output tsv)"
+          worker_trigger="$(az containerapp job show \
+            --name "$AZURE_WORKER_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query properties.configuration.triggerType --output tsv)"
+          worker_query="$(az containerapp job show \
+            --name "$AZURE_WORKER_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query 'properties.configuration.eventTriggerConfig.scale.rules[0].metadata.query' \
+            --output tsv)"
+          for actual_location in "$environment_location" "$api_location" "$worker_location"; do
+            if [[ "${actual_location,,}" != "$AZURE_WORKLOAD_REGION" ]]; then
+              echo "Expected West US 3 Student workload; resolved $actual_location." >&2
+              exit 1
+            fi
+          done
+          if [[ "$worker_trigger" != "Event" || "$worker_query" != "SELECT azure_scaler.analysis_queue_depth()" ]]; then
+            echo "Student worker Event trigger is absent or disabled." >&2
+            exit 1
+          fi
 
       - name: Verify health and exact CORS
         run: |
@@ -409,6 +466,7 @@ jobs:
           set -euo pipefail
           mkdir -p release-evidence
           api_url="$(node -e "const o=require('./azure-student-deployment-outputs.json'); process.stdout.write(o.apiUrl.value)")"
+          node -e "const u=new URL(process.argv[1]); if (!/^peso-student-api\\.[a-z0-9-]+\\.westus3\\.azurecontainerapps\\.io$/.test(u.hostname)) process.exit(1)" "$api_url"
           outputs_sha256="$(sha256sum azure-student-deployment-outputs.json | cut -d ' ' -f 1)"
           jq -n \
             --arg api_url "$api_url" \

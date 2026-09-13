@@ -107,7 +107,7 @@ test('release auth challenge URL rejects the wrong document or embedded paramete
 });
 
 test('Student builds require the isolated database, Student API and exact challenge site', () => {
-  const apiUrl = 'https://peso-student-api.test.centralus.azurecontainerapps.io';
+  const apiUrl = 'https://peso-student-api.test.westus3.azurecontainerapps.io';
   const env = {
     PESO_RELEASE_ENV: 'student',
     EXPO_PUBLIC_SUPABASE_URL: 'https://iseqgaewjpjcxrndibep.supabase.co',
@@ -126,8 +126,13 @@ test('Student builds require the isolated database, Student API and exact challe
   })) assert.ok(validateReleaseEnv({...env, [name]: value}, options).errors.length, name);
   assert.ok(validateReleaseEnv({
     ...env,
-    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://peso-student-api.attacker.centralus.azurecontainerapps.io',
-    PESO_STUDENT_API_URL: 'https://peso-student-api.attacker.centralus.azurecontainerapps.io',
+    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://peso-student-api.attacker.westus3.azurecontainerapps.io',
+    PESO_STUDENT_API_URL: 'https://peso-student-api.attacker.westus3.azurecontainerapps.io',
   }, options).errors.length);
+  const centralUsApi = 'https://peso-student-api.test.centralus.azurecontainerapps.io';
+  assert.ok(validateReleaseEnv({
+    ...env,
+    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: centralUsApi,
+  }, {studentApiBinding: approvedBinding(centralUsApi)}).errors.length);
   assert.ok(validateReleaseEnv(env, {studentApiBinding: {status: 'pending'}}).errors.length);
 });

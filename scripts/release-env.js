@@ -63,7 +63,7 @@ function approvedStudentApi(binding) {
       !/^[1-9][0-9]*$/.test(binding.source_workflow_run_id ?? '')) return '';
   try {
     const api = new URL(binding.api_url);
-    const hostname = /^peso-student-api\.[a-z0-9-]+\.centralus\.azurecontainerapps\.io$/;
+    const hostname = /^peso-student-api\.[a-z0-9-]+\.westus3\.azurecontainerapps\.io$/;
     return api.protocol === 'https:' && !api.port && api.origin === binding.api_url &&
       hostname.test(api.hostname) ? api.origin : '';
   } catch {

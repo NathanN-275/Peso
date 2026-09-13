@@ -6,12 +6,15 @@ The production-security reservation path adds a separate operator-provisioned
 before enabling `enableUploadReservations`; it defaults to false. Routine CI
 does not receive permission to create the foundation's role assignments.
 
-This directory defines one isolated, non-production Azure environment:
-`peso-student-centralus-rg` in Central US, permanently backed by the existing
-`peso-staging` Supabase project (`iseqgaewjpjcxrndibep`). Production PesoDatabase
-(`jfgiydtrskpqxyorvvbc`) is rejected by deployment and runtime validation. It deliberately contains no
-production environment, dedicated Container Apps workload profile, VNet,
-registry, website hosting, or resource reference to `peso-rg`.
+This directory defines one isolated, non-production Azure environment. The
+bootstrap resource group remains `peso-student-centralus-rg`; its name and
+Central US location are legacy metadata for the already-created group. Student
+workload resources are deployed in West US 3 and are permanently backed by the
+existing `peso-staging` Supabase project (`iseqgaewjpjcxrndibep`). Production
+PesoDatabase (`jfgiydtrskpqxyorvvbc`) is rejected by deployment and runtime
+validation. It deliberately contains no production environment, dedicated
+Container Apps workload profile, VNet, registry, website hosting, or resource
+reference to `peso-rg`.
 
 `bootstrap.bicep` is a one-time subscription-scope deployment. It creates the
 student resource group, a runtime identity, a GitHub deployment identity with a
@@ -20,9 +23,10 @@ resource-group-scoped roles, and the $10 monthly budget. Run it from an Azure
 owner session because creating role assignments is intentionally outside the
 GitHub deployment identity's authority.
 
-`student.bicep` is the repeatable resource-group deployment. It creates the
-Consumption-only Container Apps environment, Log Analytics workspace, public
-scale-to-zero API, and event-triggered worker job. The worker is fixed at 0.25
+`student.bicep` is the repeatable resource-group deployment. In West US 3 it
+creates the Student-owned `peso-student-westus3-cae` Consumption-only Container
+Apps environment, Log Analytics workspace, public scale-to-zero API, and
+event-triggered worker job. The worker is fixed at 0.25
 vCPU/0.5 GiB, permits zero idle and one concurrent execution, and times out at
 900 seconds.
 
@@ -31,6 +35,7 @@ Build locally without deploying:
 ```bash
 az bicep build --file infra/azure/bootstrap.bicep
 az bicep build --file infra/azure/student.bicep
+az bicep build --file infra/azure/security-foundation.bicep
 npm run test:policy
 ```
 

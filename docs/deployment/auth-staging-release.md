@@ -12,8 +12,9 @@ Create isolated resources in this order:
 1. The existing Supabase project with two dedicated Student E2E users. Preview
    and review additive migrations, run the RLS audit and Supabase security
    advisor, and keep all test rows/storage objects owner-scoped to those users.
-2. The single Central US Azure Student Container Apps API and event-triggered
-   worker. Set one exact test Netlify origin in CORS and verify
+2. The single West US 3 Azure Student Container Apps API and event-triggered
+   worker in the legacy-named `peso-student-centralus-rg`. Set one exact test
+   Netlify origin in CORS and verify
    `/health/ready` before testing the worker.
 3. A stable Netlify test deployment wired to the Student API and existing
    Supabase project. Its `EXPO_PUBLIC_AUTH_CHALLENGE_URL` must point to its exact

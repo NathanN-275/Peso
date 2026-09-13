@@ -1,8 +1,11 @@
 # Azure Student environment setup and acceptance
 
-This runbook creates one non-production backend environment in Central US. It
-changes only the test branch website configuration, never production Azure resources or
-modify/delete anything in `peso-rg`.
+This runbook deploys one non-production backend workload set in West US 3. It
+uses the existing `peso-student-centralus-rg`; that resource-group name and its
+Central US location are retained legacy bootstrap metadata. The existing
+identities, Key Vault, OIDC identity, and budget remain in place. This process
+changes only the test branch website configuration, never production Azure
+resources, and never modifies or deletes anything in `peso-rg`.
 
 ## 1. One-time bootstrap
 
@@ -27,6 +30,8 @@ az deployment sub create \
 
 Confirm the output resource group is exactly
 `/subscriptions/<subscription-id>/resourceGroups/peso-student-centralus-rg`.
+Do not rename, move, recreate, or delete this group. Its Central US location
+does not constrain the region of resources deployed inside it.
 The deployment identity receives Contributor, Cost Management Reader, and Log
 Analytics Reader only at that group, plus Key Vault Secrets Officer only at the
 student vault. The runtime identity receives Key Vault Secrets User only at the
@@ -115,11 +120,17 @@ what-if, migration preview and expected costs, rerun the same candidate with
 reviewed real-clip comparison and local acceptance pass. Supply the same digest
 as `pose_comparison_image_reference`; deployment rejects evidence for any other
 image. Its validation job runs policy tests, type checks, backend tests,
-both Bicep builds, and the Supabase migration dry-run before Azure
+all three Bicep builds, and the Supabase migration dry-run before Azure
 authentication. The preview job then:
 
-1. verifies the fixed resource-group ID;
-2. records a group-scope `what-if` artifact.
+1. confirms `westus3` appears in the authenticated subscription's allowed
+   locations;
+2. verifies the fixed resource-group ID;
+3. records a group-scope `what-if` artifact for West US 3 resources.
+
+The what-if must create `peso-student-westus3-cae`, place the API, jobs, and Log
+Analytics workspace in `westus3`, and contain no reference to `peso-rg`. Stop if
+it proposes any modification or deletion outside the fixed Student group.
 
 Inspect both previews before approving the protected deploy job. That job:
 
@@ -134,7 +145,9 @@ Inspect both previews before approving the protected deploy job. That job:
 
 Review the what-if before accepting the run. Every resource ID must begin with
 `/subscriptions/<id>/resourceGroups/peso-student-centralus-rg/`. The backend
-workflow does not publish Netlify. Only after acceptance, download
+workflow does not publish Netlify. The group's legacy name is not evidence of a
+Central US workload: confirm the deployment outputs and Azure inventory report
+West US 3. Only after acceptance, download
 `azure-student-release-evidence-<run-id>` and verify its deployment output hash.
 In a reviewed PR, replace `config/student-api-release-binding.json` with the
 generated `student-api-release-binding.json` unchanged. A pending or malformed
@@ -148,16 +161,23 @@ Use only the two isolated users:
    absence of long-lived Azure credentials in GitHub.
 2. Verify `/health/ready`, the exact approved origin, and rejection of an
    unknown origin without `Access-Control-Allow-Origin`.
-3. Run signup, confirmation, login, upload, processing, review, save, ownership
+3. Confirm `peso-student-analysis-worker` exists in
+   `peso-student-centralus-rg`, uses `triggerType=Event`, and its scaler query is
+   `SELECT azure_scaler.analysis_queue_depth()`. The similarly named
+   `peso-analysis-worker` in `peso-rg` is an unrelated legacy workload and does
+   not satisfy this check.
+4. Run signup, confirmation, login, upload, processing, review, save, ownership
    isolation, discard/delete, logout, and user deletion for both users.
-4. Process the longest accepted test clip twice. Each run must start within 60
+5. Process the longest accepted test clip twice. Each run must start within 60
    seconds, finish under 600 seconds, remain below 400 MiB peak memory, and have
    zero restarts. The fixed small worker is not automatically upsized on failure.
-5. After idle time, query the API revision replicas and worker executions and
+6. After idle time, query the API revision replicas and worker executions and
    confirm both are zero.
-6. Run **Azure Student Daily Cost Check** manually once and retain its report.
-7. Query the budget and confirm amount `10`, Monthly grain, and enabled actual
+7. Run **Azure Student Daily Cost Check** manually once and retain its report.
+8. Query the budget and confirm amount `10`, Monthly grain, and enabled actual
    thresholds `50`, `80`, and `100`.
+9. Exercise **Azure Student Compute Control** with `pause-worker` and
+   `resume-worker`, then verify the event trigger query is restored.
 
 ## 6. Cost response and rollback
 
@@ -178,6 +198,12 @@ additive migration while queued rows depend on it.
 
 ## 7. Separate legacy deletion approval
 
+The quota-driven regional move does not authorize cleanup in `peso-rg`.
+`peso-analysis-worker` in that group remains explicitly out of scope. The
+intended `peso-student-analysis-worker` is currently absent until the first
+successful Student deployment and must be verified afterward as described in
+the acceptance suite.
+
 Only after the full acceptance suite passes, query exact `peso-rg` resource IDs
 using the command in `azure-release-evidence.md`. Present the complete list with
 replacement and rollback evidence. Delete nothing until Nathan separately
@@ -191,7 +217,9 @@ Set these remaining values **only for branch `main`** in peso-webapp:
 - `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`: peso-staging public key; remove any
   inherited production anon-key fallback from this branch.
 - `EXPO_PUBLIC_PRODUCTION_BACKEND_URL`: the accepted Student API HTTPS origin
-  from the generated binding. The build requires an exact match with the
+  from the generated binding. Its hostname must match only
+  `peso-student-api.*.westus3.azurecontainerapps.io`. The build requires an
+  exact match with the
   reviewed file tracked in `config/student-api-release-binding.json`; two
   matching Netlify variables cannot override it.
 - `EXPO_PUBLIC_AUTH_CHALLENGE_URL`: `https://main--peso-webapp.netlify.app/auth/turnstile/`.

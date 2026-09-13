@@ -4,8 +4,10 @@
 
 Superseded by ADR 0012
 
-The West US 2 staging design was reconciled into the single Central US Student
-environment. Retain this record for history; do not provision or deploy it.
+This staging design was reconciled into the single Student environment by ADR
+0012. ADR 0014 later moved that environment's workloads to West US 3 without
+reviving the resource names or provisioning flow in this record. Retain this
+record for history; do not provision or deploy it.
 
 ## Context
 

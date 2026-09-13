@@ -8,17 +8,20 @@ Accepted
 
 Azure Students is the only approved Azure subscription. Peso needs a cheap,
 isolated backend proving ground without implying a production cutover or moving
-the Netlify website. Central US (`centralus`) is selected because the Azure
-Students subscription has Container Apps Consumption quota there; the older
-West US 2 staging design in ADR 0011 is superseded.
+the Netlify website. The initial decision selected Central US for all Student
+resources. ADR 0014 amends the regional placement after a live quota check found
+no usable managed-environment slot there and confirmed one available slot in
+West US 3.
 
 ## Decision
 
 “Student environment” means exactly one non-production Azure environment in
-`peso-student-centralus-rg`. It contains a Consumption-only Container Apps
-environment, a public test API, an event-triggered analysis job, Key Vault, Log
-Analytics, one runtime managed identity, and one GitHub OIDC deployment
-identity scoped to that resource group.
+`peso-student-centralus-rg`. The group name and Central US location are retained
+legacy bootstrap metadata. Its existing Key Vault, runtime managed identity,
+GitHub OIDC deployment identity, and budget remain in Central US and scoped to
+that group. The Student-owned Consumption-only Container Apps environment,
+public test API, event-triggered analysis job, Log Analytics workspace, and
+future security-foundation resources are deployed in West US 3.
 
 The API accepts only the exact staging/test Netlify HTTPS origin and scales from
 zero to one replica. The worker has zero idle executions, at most one concurrent
@@ -62,3 +65,8 @@ requires explicit subscription approval and a separate ADR.
   operator must review current spend before deployment after an automatic
   pause.
 - `peso-rg` is not a deployment or deletion target in this path.
+- The unrelated `peso-analysis-worker` in `peso-rg` is not the Student worker;
+  acceptance requires a newly deployed `peso-student-analysis-worker` in the
+  fixed Student group.
+- The existing Central US managed environment is not shared because a managed
+  environment is a network and logging boundary for its contained apps.

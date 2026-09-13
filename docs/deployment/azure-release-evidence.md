@@ -11,6 +11,9 @@ deployment is not accepted while any required item remains `TBD`.
 | Immutable GHCR digest | TBD |
 | Subscription ID (Azure Students only) | TBD |
 | Resource group ID (`peso-student-centralus-rg`) | TBD |
+| Legacy group name/location retained; no bootstrap recreation or deletion | TBD |
+| Workload region is West US 3 (`westus3`) | TBD |
+| Subscription location check confirms `westus3` is allowed | TBD |
 | GitHub run and protected `student` environment | TBD |
 | OIDC federated subject | TBD |
 | Deployment role assignments scoped to Student RG/Key Vault | TBD |
@@ -24,6 +27,8 @@ deployment is not accepted while any required item remains `TBD`.
 | Policy-test output | TBD |
 | Resource-group what-if artifact | TBD |
 | What-if contains only `peso-student-centralus-rg` IDs | TBD |
+| What-if creates `peso-student-westus3-cae` as a Student-owned environment | TBD |
+| What-if contains no `peso-rg` reference, modification, or deletion | TBD |
 | Key Vault RBAC query | TBD |
 | Exact non-production Netlify CORS origin | TBD |
 | Unknown-origin CORS rejection | TBD |
@@ -57,6 +62,10 @@ deployment is not accepted while any required item remains `TBD`.
 | Reviewed real squat old/new comparison (not synthetic fixtures) | TBD |
 | Branch main Netlify configuration and production unchanged | TBD |
 | `/health/ready` response | TBD |
+| API hostname matches `peso-student-api.*.westus3.azurecontainerapps.io` | TBD |
+| `peso-student-analysis-worker` exists in the Student group with Event trigger enabled | TBD |
+| Pause/resume worker control restores the event scaler query | TBD |
+| `peso-analysis-worker` in `peso-rg` remains unchanged and out of scope | TBD |
 | Signup-through-deletion test, user A | TBD |
 | Signup-through-deletion test, user B | TBD |
 | Longest accepted clip run 1: start latency/duration/peak memory/restarts | TBD |
@@ -69,6 +78,10 @@ Both long-clip runs require start within 60 seconds, completion under 600
 seconds, peak memory below 400 MiB (80% of 0.5 GiB), and zero restarts.
 
 ## Legacy resource deletion gate
+
+`peso-analysis-worker` in `peso-rg` is out of scope for the regional move. It is
+not the Student worker and must not be used as evidence that
+`peso-student-analysis-worker` was deployed successfully.
 
 Do not fill this section until every acceptance item above passes. Inventory the
 old group without deleting anything:

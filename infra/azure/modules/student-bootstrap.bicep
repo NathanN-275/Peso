@@ -1,5 +1,6 @@
 targetScope = 'resourceGroup'
 
+@description('The legacy region retained for Student identities and Key Vault.')
 @allowed([
   'centralus'
 ])

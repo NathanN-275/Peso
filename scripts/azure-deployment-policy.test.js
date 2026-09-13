@@ -8,6 +8,7 @@ const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'u
 
 const bootstrapBicep = read('infra/azure/bootstrap.bicep');
 const studentBicep = read('infra/azure/student.bicep');
+const securityFoundationBicep = read('infra/azure/security-foundation.bicep');
 const studentBootstrapBicep = read('infra/azure/modules/student-bootstrap.bicep');
 const deploymentWorkflow = read('.github/workflows/azure-backend-deploy.yml');
 const workerControlWorkflow = read('.github/workflows/azure-worker-control.yml');
@@ -15,7 +16,7 @@ const costWorkflow = read('.github/workflows/azure-student-daily-cost.yml');
 const costScript = read('scripts/check_azure_student_cost.sh');
 const scalerMigration = read('supabase/migrations/202608300001_azure_analysis_queue_scaler.sql');
 
-test('Azure bootstrap creates only the fixed Central US student resource group', () => {
+test('Azure bootstrap retains the fixed legacy Central US student resource group', () => {
   assert.match(bootstrapBicep, /param location string = 'centralus'/);
   assert.match(bootstrapBicep, /var resourceGroupName = 'peso-student-centralus-rg'/);
   assert.match(bootstrapBicep, /environment: 'student'/);
@@ -23,9 +24,11 @@ test('Azure bootstrap creates only the fixed Central US student resource group',
   assert.doesNotMatch(bootstrapBicep, /stagingResourceGroup|productionResourceGroup|westus3/);
 });
 
-test('Student compute is Consumption-only, scale-to-zero, and strictly bounded', () => {
-  assert.match(studentBicep, /param location string = 'centralus'/);
-  assert.match(studentBicep, /name: 'peso-student-centralus-cae'/);
+test('Student workloads are West US 3, Consumption-only, scale-to-zero, and strictly bounded', () => {
+  assert.match(studentBicep, /@allowed\(\[\s*'westus3'\s*\]\)[\s\S]*param location string = 'westus3'/);
+  assert.match(studentBicep, /name: 'peso-student-westus3-cae'/);
+  assert.doesNotMatch(studentBicep, /peso-student-centralus-cae/);
+  assert.doesNotMatch(studentBicep, /\bpeso-rg\b/);
   assert.doesNotMatch(studentBicep, /workloadProfiles/);
   assert.match(studentBicep, /name: 'peso-student-api'[\s\S]*external: true/);
   assert.match(studentBicep, /name: 'BACKEND_CORS_ORIGINS'[\s\S]*value: netlifyTestOrigin/);
@@ -42,6 +45,15 @@ test('Student compute is Consumption-only, scale-to-zero, and strictly bounded',
   assert.match(studentBicep, /SELECT azure_scaler\.analysis_queue_depth\(\)/);
   assert.match(studentBicep, /dailyQuotaGb: json\('0\.25'\)/);
   assert.match(studentBicep, /retentionInDays: 30/);
+});
+
+test('Future Student security-foundation resources are pinned to West US 3', () => {
+  assert.match(
+    securityFoundationBicep,
+    /@allowed\(\['westus3'\]\)[\s\S]*param location string = 'westus3'/
+  );
+  assert.doesNotMatch(securityFoundationBicep, /centralus/);
+  assert.doesNotMatch(securityFoundationBicep, /\bpeso-rg\b/);
 });
 
 test('Runtime and deployment identities use Key Vault and resource-group-scoped OIDC', () => {
@@ -70,6 +82,12 @@ test('Student deployment validates before a fixed-scope what-if and never publis
   assert.match(deploymentWorkflow, /environment: student/);
   assert.match(deploymentWorkflow, /id-token: write/);
   assert.match(deploymentWorkflow, /az deployment group what-if/);
+  assert.match(deploymentWorkflow, /AZURE_WORKLOAD_REGION: westus3/);
+  assert.equal((deploymentWorkflow.match(/az account list-locations/g) ?? []).length, 2);
+  assert.equal((deploymentWorkflow.match(/is not in this subscription's allowed locations/g) ?? []).length, 2);
+  assert.equal((deploymentWorkflow.match(/--parameters location="\$AZURE_WORKLOAD_REGION"/g) ?? []).length, 2);
+  assert.match(deploymentWorkflow, /preview_only:[\s\S]*default: true/);
+  assert.match(deploymentWorkflow, /enable_upload_reservations:[\s\S]*default: false/);
   assert.match(deploymentWorkflow, /--resource-group peso-student-centralus-rg/);
   assert.match(deploymentWorkflow, /--template-file infra\/azure\/student\.bicep/);
   assert.match(deploymentWorkflow, /supabase db push --db-url "\$SUPABASE_DB_URL" --dry-run/);
@@ -79,9 +97,28 @@ test('Student deployment validates before a fixed-scope what-if and never publis
   assert.match(deploymentWorkflow, /url\.hostname\.endsWith\('\.netlify\.app'\)/);
   assert.match(deploymentWorkflow, /origin === productionOrigin/);
   assert.match(deploymentWorkflow, /needs: preview/);
+  assert.match(deploymentWorkflow, /Verify West US 3 environment and Student worker trigger/);
+  assert.match(deploymentWorkflow, /--name peso-student-westus3-cae/);
+  assert.match(deploymentWorkflow, /worker_trigger[\s\S]*"Event"/);
+  assert.match(deploymentWorkflow, /worker_query[\s\S]*SELECT azure_scaler\.analysis_queue_depth\(\)/);
   assert.doesNotMatch(deploymentWorkflow, /netlify deploy|deploy-production|environment: production/);
   assert.doesNotMatch(deploymentWorkflow, /\bpeso-rg\b/);
   assert.doesNotMatch(deploymentWorkflow, /(?:actions|checks|contents|deployments|packages|pull-requests|security-events): write/);
+});
+
+test('Student release accepts only the West US 3 Container Apps API hostname', () => {
+  const releaseEnv = read('scripts/release-env.js');
+  assert.match(releaseEnv, /peso-student-api\\\.\[a-z0-9-\]\+\\\.westus3\\\.azurecontainerapps\\\.io/);
+  assert.doesNotMatch(releaseEnv, /centralus\\\.azurecontainerapps/);
+});
+
+test('Student regional ADR preserves the bootstrap group and excludes legacy workloads', () => {
+  const regionalAdr = read('docs/adr/0014-move-student-workloads-to-west-us-3.md');
+  assert.match(regionalAdr, /peso-student-centralus-rg/);
+  assert.match(regionalAdr, /peso-student-westus3-cae/);
+  assert.match(regionalAdr, /peso-student-analysis-worker/);
+  assert.match(regionalAdr, /peso-analysis-worker[\s\S]*out of scope/);
+  assert.match(regionalAdr, /Do not reuse, modify, or delete `peso-rg`/);
 });
 
 test('Student validation installs and checks both media tools before backend tests', () => {

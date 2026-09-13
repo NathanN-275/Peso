@@ -1,6 +1,6 @@
 targetScope = 'subscription'
 
-@description('The only Azure region approved for the Student environment.')
+@description('The legacy region retained for the existing Student bootstrap resource group and bootstrap resources.')
 @allowed([
   'centralus'
 ])

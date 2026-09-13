@@ -62,7 +62,7 @@ Launching the web beta does not replace the mobile app. The Expo app remains in 
 
 ### Validate the Azure Student backend candidate
 
-Current infrastructure work is focused on an isolated, non-production Azure Student environment in Central US. Azure Container Apps provides a scale-to-zero API and event-triggered analysis worker, with runtime secrets in Key Vault and GitHub deployments authenticated through short-lived OIDC. The existing Netlify website, Render backend, Supabase project, and production resources remain unchanged while the candidate goes through its deployment, cost, security, and long-clip acceptance checks.
+Current infrastructure work is focused on isolated, non-production Azure Student workloads in West US 3. They remain in the legacy-named `peso-student-centralus-rg`, which also retains the existing Central US bootstrap identities, Key Vault, OIDC identity, and budget. Azure Container Apps provides a scale-to-zero API and event-triggered analysis worker, with runtime secrets in Key Vault and GitHub deployments authenticated through short-lived OIDC. The existing Netlify website, Render backend, Supabase project, and production resources remain unchanged while the candidate goes through its deployment, cost, security, and long-clip acceptance checks.
 
 ## Tech stack
 
@@ -336,9 +336,9 @@ Library, deletion, and export jobs use the authenticated backend.
 
 The website stays on Netlify and continues using the current non-Azure backend.
 Supabase remains responsible for auth, database records, and private video
-storage. The Azure Students work is an isolated Central US test backend
-candidate only; it is not production and does not replace the current hosted
-backend until its acceptance gate passes. See
+storage. The Azure Students work is an isolated West US 3 test backend candidate
+in the legacy-named `peso-student-centralus-rg`; it is not production and does
+not replace the current hosted backend until its acceptance gate passes. See
 `docs/deployment/azure-student-setup.md` for its scope and acceptance gate.
 
 ## Backend API overview

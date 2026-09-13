@@ -2,7 +2,9 @@
 
 | Term | Meaning in Peso |
 | --- | --- |
-| Student environment | The single non-production Azure environment in `peso-student-centralus-rg`; never a synonym for production. |
+| Student environment | The single non-production Azure environment whose West US 3 workloads live in the legacy-named `peso-student-centralus-rg`; never a synonym for production. |
+| Student bootstrap | The retained Central US resource group, identities, Key Vault, OIDC identity, and budget. The group name/location are legacy metadata and do not define the workload region. |
+| Student workload region | West US 3 (`westus3`), including the Student-owned Container Apps environment, API, jobs, logs, and future security-foundation resources. |
 | Consumption-only | Azure Container Apps serverless consumption capacity with no dedicated workload profile. |
 | Scale to zero | The API may have zero replicas and the job zero executions while idle; the next request or queue event can cold-start compute. |
 | Container App | The public FastAPI test service. |

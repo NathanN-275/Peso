@@ -1,7 +1,8 @@
 targetScope = 'resourceGroup'
 
-@allowed(['centralus'])
-param location string = 'centralus'
+@description('The only Azure region approved for future Student security-foundation resources.')
+@allowed(['westus3'])
+param location string = 'westus3'
 param netlifyTestOrigin string
 @minLength(1)
 param budgetContactEmails array
