@@ -18,8 +18,9 @@ esac
 psql "$SUPABASE_DB_URL" \
   --no-psqlrc \
   --set=ON_ERROR_STOP=1 \
-  --set=scaler_role="$AZURE_SCALER_POSTGRES_ROLE" \
-  --set=scaler_password="$AZURE_SCALER_POSTGRES_PASSWORD" <<'SQL'
+  --set=scaler_role="$AZURE_SCALER_POSTGRES_ROLE" <<'SQL'
+\getenv scaler_password AZURE_SCALER_POSTGRES_PASSWORD
+
 select format(
   'create role %I login password %L nosuperuser nocreatedb nocreaterole noinherit noreplication',
   :'scaler_role',

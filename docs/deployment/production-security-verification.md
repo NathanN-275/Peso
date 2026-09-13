@@ -1,6 +1,16 @@
 # Local production-security verification — 2026-09-03
 
-This is local implementation evidence, not production acceptance. No cloud resources, remote database migrations, provider settings, or deployed clients were changed.
+The 2026-09-03 evidence below is local implementation evidence, not production acceptance. The 2026-09-13 follow-up explicitly identifies any later provider-side changes.
+
+## GitGuardian remediation follow-up — 2026-09-13
+
+- The Azure scaler role script now imports its password from the `psql` process environment instead of placing it in process arguments. A fake-`psql` regression test passed with quotes, spaces, backslashes, and shell metacharacters and confirmed that the password appeared in neither argv nor SQL input. The script syntax check and all 193 repository policy tests passed.
+- A disposable PostgreSQL 17 integration run exercised the real script twice over authenticated TCP. The first test password failed after rotation, the second test password succeeded, the queue-depth function remained callable, public table reads and writes remained denied, and the role retained its `5s` statement timeout and read-only default. Test credentials were local-only and are not recorded here.
+- `npm run release:verify` passed release configuration with non-secret verification values, app and dashboard typechecks, all policy and dashboard tests, both production builds, and the web bundle budget. It then stopped at the staging browser suite because the required staging fixture authorization was not present; the remaining release checks did not run.
+- A redacted full-history Gitleaks baseline reproduced one finding in the historical `backend/newrelic.ini`. A verified, minimal `git filter-repo` candidate in a fresh mirror removes that file from only the three affected commits, preserves the parent immediately before the exposure, passes Git object validation, and passes a redacted Gitleaks scan of all 195 commits reachable from the rewritten branch. A complete pre-rewrite bundle was verified before filtering. After removing only the stale local remote-tracking ref for the already-deleted branch, a redacted full-history scan of the current checkout also passed across all 214 reachable commits.
+- The affected `tracking-rework-v3` branch had already been deleted from GitHub. Closed pull request #38 still retains a read-only head ref and cached diff, so no force-push was attempted: pushing the prepared ref would recreate the deleted branch without removing the pull-request copy. Permanent removal requires revoking the key and asking GitHub Support to purge the pull-request ref and cached views.
+- The exposed, unused New Relic license key was deleted in New Relic without creating a replacement. The provider confirmed deletion and the account key count decreased by one; the key value is not recorded here.
+- Production credential work remains outstanding. The Student scaler password has not been rotated, GitHub and Key Vault connection secrets have not been updated, the deployed worker has not been verified with the rotated credential, GitHub Support has not purged the pull-request copy, and GitGuardian has not been rerun. Do not mark either finding fixed until those provider-side checks pass.
 
 ## Verified locally
 
