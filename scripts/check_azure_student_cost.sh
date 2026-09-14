@@ -38,10 +38,15 @@ process.stdout.write((spend / elapsedDays * daysInMonth).toFixed(4));
 NODE
 )"
 
+worker_id="$(az containerapp job show \
+  --name "$worker_name" \
+  --resource-group "$resource_group" \
+  --query id --output tsv 2>/dev/null || true)"
+worker_present="$([[ -n "$worker_id" ]] && echo true || echo false)"
 execution_json="$(az containerapp job execution list \
   --name "$worker_name" \
   --resource-group "$resource_group" \
-  --output json)"
+  --output json 2>/dev/null || echo '[]')"
 execution_values="$(EXECUTION_JSON="$execution_json" node <<'NODE'
 const executions = JSON.parse(process.env.EXECUTION_JSON);
 const now = new Date();
@@ -56,11 +61,45 @@ NODE
 )"
 IFS=$'\t' read -r worker_executions worker_failures <<< "$execution_values"
 
-api_fqdn="$(az containerapp show \
+active_worker_executions="$(EXECUTION_JSON="$execution_json" node <<'NODE'
+const executions = JSON.parse(process.env.EXECUTION_JSON);
+process.stdout.write(String(executions.filter((execution) => execution.properties?.status === 'Running').length));
+NODE
+)"
+
+worker_query="$(az containerapp job show \
+  --name "$worker_name" \
+  --resource-group "$resource_group" \
+  --query 'properties.configuration.eventTriggerConfig.scale.rules[0].metadata.query' \
+  --output tsv 2>/dev/null || echo 'resource absent')"
+
+api_id="$(az containerapp show \
+  --name "$api_name" \
+  --resource-group "$resource_group" \
+  --query id --output tsv 2>/dev/null || true)"
+api_present="$([[ -n "$api_id" ]] && echo true || echo false)"
+api_ingress_fqdn="$(az containerapp show \
   --name "$api_name" \
   --resource-group "$resource_group" \
   --query properties.configuration.ingress.fqdn \
   --output tsv 2>/dev/null || true)"
+api_replicas=0
+while IFS= read -r revision; do
+  [[ -z "$revision" ]] && continue
+  revision_replicas="$(az containerapp replica list \
+    --name "$api_name" \
+    --resource-group "$resource_group" \
+    --revision "$revision" \
+    --query 'length(@)' \
+    --output tsv)"
+  api_replicas=$((api_replicas + revision_replicas))
+done < <(az containerapp revision list \
+  --name "$api_name" \
+  --resource-group "$resource_group" \
+  --query '[?properties.active].name' \
+  --output tsv 2>/dev/null || true)
+
+api_fqdn="$api_ingress_fqdn"
 if [[ -n "$api_fqdn" ]]; then
   api_readiness="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
     --max-time 75 "https://${api_fqdn}/health/ready" || true)"
@@ -94,11 +133,7 @@ action="none"
 at_least_eight="$(node -e 'process.stdout.write(Number(process.argv[1]) >= 8 ? "true" : "false")' "$month_to_date")"
 at_least_ten="$(node -e 'process.stdout.write(Number(process.argv[1]) >= 10 ? "true" : "false")' "$month_to_date")"
 
-if [[ "$at_least_eight" == "true" ]]; then
-  worker_id="$(az containerapp job show \
-    --name "$worker_name" \
-    --resource-group "$resource_group" \
-    --query id --output tsv)"
+if [[ "$at_least_eight" == "true" && "$worker_present" == "true" ]]; then
   az resource update \
     --ids "$worker_id" \
     --api-version 2024-03-01 \
@@ -111,7 +146,7 @@ if [[ "$at_least_eight" == "true" ]]; then
   action="worker paused"
 fi
 
-if [[ "$at_least_ten" == "true" ]]; then
+if [[ "$at_least_ten" == "true" && "$api_present" == "true" ]]; then
   az containerapp ingress disable \
     --name "$api_name" \
     --resource-group "$resource_group" \
@@ -127,6 +162,12 @@ report="$(printf '%s\n' \
   "- Projected monthly spend: ${projection} ${currency}" \
   "- Worker executions this month: ${worker_executions}" \
   "- Worker failures this month: ${worker_failures}" \
+  "- Worker resource present: ${worker_present}" \
+  "- Worker active executions: ${active_worker_executions}" \
+  "- Worker scaler query: \`${worker_query}\`" \
+  "- API resource present: ${api_present}" \
+  "- API ingress configured: $([[ -n "$api_ingress_fqdn" ]] && echo yes || echo no)" \
+  "- API replicas: ${api_replicas}" \
   "- API readiness: ${api_readiness}" \
   "- Compute restart count this month: ${restart_count}" \
   "- Automatic action: ${action}")"

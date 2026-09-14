@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { validateReleaseEnv } = require('./release-env');
+const { approvedRenderBetaApi, validateReleaseEnv } = require('./release-env');
 
 const approvedBinding = (apiUrl) => ({
   schema_version: 1,
@@ -10,6 +10,16 @@ const approvedBinding = (apiUrl) => ({
   image_reference: `ghcr.io/nathann-275/peso-backend@sha256:${'a'.repeat(64)}`,
   azure_deployment_outputs_sha256: 'b'.repeat(64),
   source_workflow_run_id: '123456789',
+});
+
+const acceptedRenderBetaBinding = (apiUrl = 'https://peso-beta-api.onrender.com') => ({
+  schema_version: 1,
+  status: 'accepted',
+  api_url: apiUrl,
+  blueprint_sha256: 'c'.repeat(64),
+  source_commit: 'd'.repeat(40),
+  api_service_id: 'srv-betaapi123',
+  worker_service_id: 'srv-betaworker456',
 });
 
 test('release auth configuration rejects a missing Turnstile site key', () => {
@@ -135,4 +145,37 @@ test('Student builds require the isolated database, Student API and exact challe
     EXPO_PUBLIC_PRODUCTION_BACKEND_URL: centralUsApi,
   }, {studentApiBinding: approvedBinding(centralUsApi)}).errors.length);
   assert.ok(validateReleaseEnv(env, {studentApiBinding: {status: 'pending'}}).errors.length);
+});
+
+test('Render beta builds require peso-staging, the exact beta API, and the private main site', () => {
+  const env = {
+    PESO_RELEASE_ENV: 'render-beta',
+    EXPO_PUBLIC_SUPABASE_URL: 'https://iseqgaewjpjcxrndibep.supabase.co',
+    EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test',
+    EXPO_PUBLIC_TURNSTILE_SITE_KEY: 'test-site-key',
+    EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/',
+    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://peso-beta-api.onrender.com',
+  };
+  const options = { renderBetaBinding: acceptedRenderBetaBinding() };
+
+  assert.deepEqual(validateReleaseEnv(env, options).errors, []);
+  assert.ok(validateReleaseEnv(env).errors.length, 'the tracked pending binding must block beta builds');
+  for (const [name, value] of Object.entries({
+    EXPO_PUBLIC_SUPABASE_URL: 'https://jfgiydtrskpqxyorvvbc.supabase.co',
+    EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://peso-webapp.netlify.app/auth/turnstile/',
+    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://peso-beta-api-attacker.onrender.com',
+  })) assert.ok(validateReleaseEnv({...env, [name]: value}, options).errors.length, name);
+});
+
+test('Render beta binding fails closed on pending, malformed, or non-beta evidence', () => {
+  assert.equal(approvedRenderBetaApi({ status: 'pending' }), '');
+  assert.equal(approvedRenderBetaApi(acceptedRenderBetaBinding('https://peso-beta-api.onrender.com/path')), '');
+  assert.equal(approvedRenderBetaApi({
+    ...acceptedRenderBetaBinding(),
+    blueprint_sha256: 'not-a-digest',
+  }), '');
+  assert.equal(
+    approvedRenderBetaApi(acceptedRenderBetaBinding()),
+    'https://peso-beta-api.onrender.com',
+  );
 });

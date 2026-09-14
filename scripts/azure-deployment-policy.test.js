@@ -12,6 +12,7 @@ const securityFoundationBicep = read('infra/azure/security-foundation.bicep');
 const studentBootstrapBicep = read('infra/azure/modules/student-bootstrap.bicep');
 const deploymentWorkflow = read('.github/workflows/azure-backend-deploy.yml');
 const workerControlWorkflow = read('.github/workflows/azure-worker-control.yml');
+const workerControlScript = read('scripts/control_azure_student_compute.sh');
 const costWorkflow = read('.github/workflows/azure-student-daily-cost.yml');
 const costScript = read('scripts/check_azure_student_cost.sh');
 const scalerMigration = read('supabase/migrations/202608300001_azure_analysis_queue_scaler.sql');
@@ -145,6 +146,13 @@ test('Daily cost check records required signals and enforces $8 and $10 controls
   assert.match(costScript, /Projected monthly spend/);
   assert.match(costScript, /Worker executions this month/);
   assert.match(costScript, /Worker failures this month/);
+  assert.match(costScript, /Worker active executions/);
+  assert.match(costScript, /Worker scaler query/);
+  assert.match(costScript, /API ingress configured/);
+  assert.match(costScript, /API replicas/);
+  assert.match(costScript, /resource absent/);
+  assert.match(costScript, /Worker resource present/);
+  assert.match(costScript, /API resource present/);
   assert.match(costScript, /API readiness/);
   assert.match(costScript, /Compute restart count this month/);
   assert.match(costScript, /Number\(process\.argv\[1\]\) >= 8/);
@@ -155,13 +163,23 @@ test('Daily cost check records required signals and enforces $8 and $10 controls
 
 test('Manual controls pause and resume without deleting student resources', () => {
   assert.match(workerControlWorkflow, /environment: student/);
+  assert.match(workerControlWorkflow, /actions\/checkout@11d5960a326750d5838078e36cf38b85af677262/);
   assert.match(workerControlWorkflow, /pause-worker/);
   assert.match(workerControlWorkflow, /pause-all/);
-  assert.match(workerControlWorkflow, /SELECT 0/);
-  assert.match(workerControlWorkflow, /SELECT azure_scaler\.analysis_queue_depth\(\)/);
-  assert.match(workerControlWorkflow, /az containerapp job stop/);
-  assert.match(workerControlWorkflow, /az containerapp ingress disable/);
-  assert.doesNotMatch(workerControlWorkflow, /az (?:containerapp|group|resource) delete/);
+  assert.match(workerControlWorkflow, /\.\/scripts\/control_azure_student_compute\.sh "\$ACTION"/);
+  assert.match(workerControlScript, /SELECT 0/);
+  assert.match(workerControlScript, /SELECT azure_scaler\.analysis_queue_depth\(\)/);
+  assert.match(workerControlScript, /az containerapp job stop/);
+  assert.match(workerControlScript, /az containerapp ingress disable/);
+  assert.match(workerControlScript, /az containerapp replica list/);
+  assert.match(workerControlScript, /properties\.status=='Running'/);
+  assert.match(workerControlScript, /Student API still has/);
+  assert.match(workerControlScript, /Student worker still has/);
+  assert.match(workerControlScript, /Cannot resume absent Student worker/);
+  assert.match(workerControlScript, /Cannot resume absent Student API/);
+  assert.match(workerControlScript, /resource absent/);
+  assert.match(workerControlScript, /GITHUB_STEP_SUMMARY/);
+  assert.doesNotMatch(workerControlScript, /az (?:containerapp|group|resource) delete/);
 });
 
 test('Supabase scaler change is additive and exposes only aggregate queue depth', () => {
@@ -190,7 +208,7 @@ test('Student database identity is validated before migration or credential writ
   assert.ok(deployStart < approvalStart, 'human approvals must happen only after preview artifacts exist');
   assert.match(studentBicep, /name: 'PESO_DEPLOYMENT_ENVIRONMENT'[\s\S]*value: 'student'/);
   assert.match(read('docs/adr/0012-define-student-environment.md'), /iseqgaewjpjcxrndibep/);
-  assert.match(read('netlify.toml'), /\[context.main.environment\][\s\S]*PESO_RELEASE_ENV = "student"/);
+  assert.match(read('netlify.toml'), /\[context.main.environment\][\s\S]*PESO_RELEASE_ENV = "render-beta"/);
 });
 
 test('Student release binds credentials, API origin, and migrations to independently verified evidence', () => {

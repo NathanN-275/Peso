@@ -62,7 +62,7 @@ Launching the web beta does not replace the mobile app. The Expo app remains in 
 
 ### Validate the Azure Student backend candidate
 
-Current infrastructure work is focused on isolated, non-production Azure Student workloads in West US 3. They remain in the legacy-named `peso-student-centralus-rg`, which also retains the existing Central US bootstrap identities, Key Vault, OIDC identity, and budget. Azure Container Apps provides a scale-to-zero API and event-triggered analysis worker, with runtime secrets in Key Vault and GitHub deployments authenticated through short-lived OIDC. The existing Netlify website, Render backend, Supabase project, and production resources remain unchanged while the candidate goes through its deployment, cost, security, and long-clip acceptance checks.
+Current infrastructure work defines an isolated, non-production Render beta backed only by `peso-staging` and the private Netlify `main` branch. Azure Student compute is paused; absent Student workloads count as verified zero compute, and every existing supporting resource remains provisioned. Production Render, production Netlify, the production Supabase project, and `peso-rg` remain unchanged.
 
 ## Tech stack
 

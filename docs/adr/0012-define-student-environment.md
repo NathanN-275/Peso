@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted for the retained Azure foundation; ADR 0015 pauses Student compute and
+supersedes its active Netlify `main` binding with the isolated Render beta.
 
 ## Context
 
