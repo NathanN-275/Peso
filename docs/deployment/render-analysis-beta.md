@@ -70,17 +70,25 @@ The Blueprint fixes `BACKEND_ENV=production`,
 `AZURE_BLOB_ACCOUNT_URL`, `AZURE_BLOB_SOURCE_CONTAINER`, an Azure identity, or
 a budget-shutdown token inherited from an environment group.
 
-## 4. Manual deploy and release binding
+## 4. Deploy both services and prepare the release binding
 
-Deploy the API manually from the reviewed commit. Do not deploy the worker
-until the migration list matches the reviewed evidence and API readiness is
-`200`. Verify readiness has `Cache-Control: no-store`; an allowed preflight
-echoes only the exact private-main origin; an unknown origin is denied without
-`Access-Control-Allow-Origin`.
+After the migration list matches the reviewed evidence, confirm the Blueprint
+preview still names only the two new beta services and enter all four staging
+secrets on both services. Click **Deploy Blueprint** once. The initial
+Blueprint deployment creates and deploys the API and worker together from the
+same reviewed commit; do not introduce a separate API-first or worker-later
+deployment sequence.
 
-Deploy the worker manually from the same commit. Record the two Render service
-IDs, exact source commit, and SHA-256 of `render-beta.yaml`. Update
-`config/render-beta-release-binding.json` in a reviewed commit:
+Immediately set Blueprint Auto Sync to **No** and confirm each service still
+shows `autoDeployTrigger: off`. Record the Blueprint ID, both Render service
+IDs, exact source commit, SHA-256 of `render-beta.yaml`, and API URL. Once the
+API is ready, verify readiness has `Cache-Control: no-store`; an allowed
+preflight echoes only the exact private-main origin; an unknown origin is
+denied without `Access-Control-Allow-Origin`.
+
+Do not update the release binding until all acceptance checks in section 5
+pass. After acceptance, update `config/render-beta-release-binding.json` in a
+reviewed commit:
 
 ```json
 {
