@@ -109,7 +109,9 @@ copy the beta URL into production Netlify configuration.
 
 ## 5. Acceptance and owner isolation
 
-With the accepted binding deployed to the private `main` client:
+Keep the release binding pending while running acceptance. Authenticate two
+dedicated `peso-staging` users against the beta API directly; the private `main`
+client is tested only after the API, worker, and owner-isolation gates pass.
 
 1. Sign in as dedicated staging user A; upload the longest accepted clip and
    confirm queueing, worker claim, completion, review, and save.
@@ -122,12 +124,15 @@ With the accepted binding deployed to the private `main` client:
    start/finish times, peak memory, restarts, deploy ID, job ID, and user UUID.
 
 Starter passes only if both runs finish with no OOM, no restart, and peak
-memory strictly below 400 MB. Otherwise change only the beta worker plan to
-Standard, manually redeploy it, and repeat both runs. Never infer sizing from
-idle memory or a shorter synthetic clip.
+memory strictly below 400 MB. If either run fails this sizing gate, suspend
+both beta services, leave the binding pending, and seek separate approval
+before changing the beta worker to a more expensive plan. Never infer sizing
+from idle memory or a shorter synthetic clip.
 
-After acceptance, remove both dedicated users through the admin harness and
-verify their rows and storage objects are gone.
+After API, worker, and two-user acceptance, commit the reviewed accepted
+binding described in section 4. Run a separate smoke test of the private
+`main` client against that exact beta API URL. Then remove both dedicated users
+through the admin harness and verify their rows and storage objects are gone.
 
 ## 6. Rollback
 
