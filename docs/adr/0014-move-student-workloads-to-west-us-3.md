@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted as the placement rule for any future Student compute resume. ADR 0015
+pauses those workloads and supersedes their active frontend binding.
 
 ## Context
 

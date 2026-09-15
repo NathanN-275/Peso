@@ -192,6 +192,17 @@ worker executions and failures, API readiness, and API restart count.
 Use **Azure Student Compute Control** for a reviewed manual pause or resume.
 Re-running Bicep can undo an automatic pause, so check current spend first.
 
+A `pause-all` run is the canonical **Student compute pause**. It must leave API
+ingress disabled, the worker scaler query at `SELECT 0`, no active worker
+executions, and no API replicas. Run **Azure Student Daily Cost Check**
+afterward so the retained evidence records those four signals. This is a
+reversible compute suspension, not a teardown: keep the resource group,
+identities, Key Vault, Log Analytics, budget, and storage intact. It can stop
+meaningful compute usage without guaranteeing a literal $0 Azure bill.
+If a Student workload was never deployed, the control and cost evidence must
+record it as absent with zero replicas or executions; absence is not replaced
+with fabricated scaler evidence, and resume must fail closed.
+
 If acceptance fails, pause Student compute and keep the existing website,
 production backend, PesoDatabase, and `peso-rg` resources unchanged. Do not reverse an
 additive migration while queued rows depend on it.
@@ -211,27 +222,12 @@ approves those exact IDs.
 
 ## 8. Test website configuration
 
-Netlify `context.main` fixes the public Supabase URL and `PESO_RELEASE_ENV=student`.
-Set these remaining values **only for branch `main`** in peso-webapp:
-
-- `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`: peso-staging public key; remove any
-  inherited production anon-key fallback from this branch.
-- `EXPO_PUBLIC_PRODUCTION_BACKEND_URL`: the accepted Student API HTTPS origin
-  from the generated binding. Its hostname must match only
-  `peso-student-api.*.westus3.azurecontainerapps.io`. The build requires an
-  exact match with the
-  reviewed file tracked in `config/student-api-release-binding.json`; two
-  matching Netlify variables cannot override it.
-- `EXPO_PUBLIC_AUTH_CHALLENGE_URL`: `https://main--peso-webapp.netlify.app/auth/turnstile/`.
-- `EXPO_PUBLIC_TURNSTILE_SITE_KEY`: the test site's approved challenge key.
-
-Despite its legacy variable name, this branch's backend URL is Student. The
-release validator rejects a pending binding, production database, unrelated
-API, or challenge hosted outside the exact test site.
-Configure peso-staging auth site URL and exact redirects for
-`https://main--peso-webapp.netlify.app/app` and the application's auth callback
-paths. Verify both test users can authenticate before testing storage RLS.
-Do not edit global Netlify values, production context, or production hosting.
+ADR 0015 supersedes the active website binding in this section. While Student
+compute is paused, do not bind Netlify `main` to an Azure endpoint or accept a
+Student API release binding. The private `main` branch now uses
+`PESO_RELEASE_ENV=render-beta` and the fail-closed Render beta binding described
+in [the Render beta runbook](render-analysis-beta.md). This historical Azure
+binding path may be reconsidered only in a reviewed Student compute resume.
 
 ## 9. Runtime release gate
 

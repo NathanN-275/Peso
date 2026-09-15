@@ -3,6 +3,8 @@
 | Term | Meaning in Peso |
 | --- | --- |
 | Student environment | The single non-production Azure environment whose West US 3 workloads live in the legacy-named `peso-student-centralus-rg`; never a synonym for production. |
+| Student compute pause | Reversible suspension of only the Student API and worker: API ingress disabled, worker scaler set to `SELECT 0`, active worker executions stopped, and compute verified at zero. It retains Azure infrastructure and does not guarantee a literal $0 bill. |
+| Render beta | The isolated non-production pair `peso-beta-api` and `peso-beta-analysis-worker`, backed only by `peso-staging` and the private Netlify `main` branch; never a synonym for the production Render services. |
 | Student bootstrap | The retained Central US resource group, identities, Key Vault, OIDC identity, and budget. The group name/location are legacy metadata and do not define the workload region. |
 | Student workload region | West US 3 (`westus3`), including the Student-owned Container Apps environment, API, jobs, logs, and future security-foundation resources. |
 | Consumption-only | Azure Container Apps serverless consumption capacity with no dedicated workload profile. |

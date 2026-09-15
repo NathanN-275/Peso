@@ -20,6 +20,11 @@ const STUDENT_API_BINDING_PATH = require('node:path').resolve(
   __dirname,
   '../config/student-api-release-binding.json'
 );
+const RENDER_BETA_BINDING_PATH = require('node:path').resolve(
+  __dirname,
+  '../config/render-beta-release-binding.json'
+);
+const RENDER_BETA_ORIGIN = 'https://peso-beta-api.onrender.com';
 
 function clean(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -56,6 +61,14 @@ function loadStudentApiBinding() {
   }
 }
 
+function loadRenderBetaBinding() {
+  try {
+    return JSON.parse(require('node:fs').readFileSync(RENDER_BETA_BINDING_PATH, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 function approvedStudentApi(binding) {
   if (!binding || binding.schema_version !== 1 || binding.status !== 'accepted' ||
       !/^ghcr\.io\/nathann-275\/peso-backend@sha256:[a-f0-9]{64}$/.test(binding.image_reference ?? '') ||
@@ -71,7 +84,26 @@ function approvedStudentApi(binding) {
   }
 }
 
-function validateReleaseEnv(environment, { studentApiBinding = loadStudentApiBinding() } = {}) {
+function approvedRenderBetaApi(binding) {
+  if (!binding || binding.schema_version !== 1 || binding.status !== 'accepted' ||
+      !/^[a-f0-9]{64}$/.test(binding.blueprint_sha256 ?? '') ||
+      !/^[a-f0-9]{40}$/.test(binding.source_commit ?? '') ||
+      !/^srv-[a-z0-9]+$/.test(binding.api_service_id ?? '') ||
+      !/^srv-[a-z0-9]+$/.test(binding.worker_service_id ?? '')) return '';
+  try {
+    const api = new URL(binding.api_url);
+    return api.origin === RENDER_BETA_ORIGIN && api.href === `${RENDER_BETA_ORIGIN}/`
+      ? api.origin
+      : '';
+  } catch {
+    return '';
+  }
+}
+
+function validateReleaseEnv(environment, {
+  studentApiBinding = loadStudentApiBinding(),
+  renderBetaBinding = loadRenderBetaBinding(),
+} = {}) {
   const errors = REQUIRED_PUBLIC_VARIABLES
     .filter((name) => !clean(environment[name]))
     .map((name) => `Missing ${name}.`);
@@ -112,6 +144,25 @@ function validateReleaseEnv(environment, { studentApiBinding = loadStudentApiBin
       }
     } catch {
       errors.push('Student website must use the exact approved Student API and test-site challenge origin.');
+    }
+  }
+
+  if (releaseEnvironment === 'render-beta') {
+    const { STUDENT_SUPABASE_URL, STUDENT_ORIGIN } = require('./student-environment');
+    const expectedRenderBetaApi = approvedRenderBetaApi(renderBetaBinding);
+    if (clean(environment.EXPO_PUBLIC_SUPABASE_URL) !== STUDENT_SUPABASE_URL) {
+      errors.push('Render beta website must use the permanent peso-staging Supabase project.');
+    }
+    try {
+      const api = new URL(clean(environment.EXPO_PUBLIC_PRODUCTION_BACKEND_URL));
+      const challenge = new URL(challengeUrl);
+      if (!expectedRenderBetaApi || api.origin !== expectedRenderBetaApi ||
+          api.origin !== clean(environment.EXPO_PUBLIC_PRODUCTION_BACKEND_URL) || api.protocol !== 'https:' ||
+          api.port || challenge.origin !== STUDENT_ORIGIN) {
+        throw new Error('invalid Render beta endpoint');
+      }
+    } catch {
+      errors.push('Render beta website must use the exact accepted Render beta API and test-site challenge origin.');
     }
   }
 
@@ -160,7 +211,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  approvedRenderBetaApi,
   approvedStudentApi,
+  loadRenderBetaBinding,
   loadStudentApiBinding,
   validateReleaseEnv,
 };

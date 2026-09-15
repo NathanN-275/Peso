@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "status": "pending",
+  "api_url": null,
+  "blueprint_sha256": null,
+  "source_commit": null,
+  "api_service_id": null,
+  "worker_service_id": null
+}

@@ -3,12 +3,13 @@
   ignore = "node scripts/netlify-ignore-build.js"
   publish = "dist"
 
-# Only the stable main branch test deploy uses the isolated Student backend.
-# Its public API URL and key are configured in Netlify's branch-specific values.
-# The build also requires that URL to match the reviewed tracked release binding.
+# Only the private main branch test deploy uses the isolated Render beta.
+# Its public Supabase key remains branch-specific in Netlify. The backend URL is
+# fixed here and must also match the reviewed tracked release binding.
 [context.main.environment]
-  PESO_RELEASE_ENV = "student"
+  PESO_RELEASE_ENV = "render-beta"
   EXPO_PUBLIC_SUPABASE_URL = "https://iseqgaewjpjcxrndibep.supabase.co"
+  EXPO_PUBLIC_PRODUCTION_BACKEND_URL = "https://peso-beta-api.onrender.com"
 
 [[redirects]]
   from = "/demo/peso-demo-video.gif"

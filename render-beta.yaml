@@ -1,0 +1,85 @@
+services:
+  - type: web
+    name: peso-beta-api
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health/ready
+    autoDeployTrigger: "off"
+    envVars:
+      - key: BACKEND_ENV
+        value: production
+      - key: PESO_DEPLOYMENT_ENVIRONMENT
+        value: student
+      - key: BACKEND_CORS_ORIGINS
+        value: https://main--peso-webapp.netlify.app
+      - key: BACKEND_CORS_ALLOW_PRIVATE_NETWORK
+        value: "false"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: CLEANUP_JOB_TOKEN
+        sync: false
+      - key: VIDEO_BUCKET
+        value: videos
+      - key: UPLOAD_RESERVATIONS_ENABLED
+        value: "false"
+      - key: MAX_USER_IN_PROGRESS_VIDEOS
+        value: "3"
+      - key: ANALYSIS_PROFILE_MODE
+        value: legacy
+      - key: ANALYSIS_TRACE_ENABLED
+        value: "false"
+
+  - type: worker
+    name: peso-beta-analysis-worker
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: python -m app.jobs.analysis_worker
+    autoDeployTrigger: "off"
+    maxShutdownDelaySeconds: 300
+    envVars:
+      - key: BACKEND_ENV
+        value: production
+      - key: PESO_DEPLOYMENT_ENVIRONMENT
+        value: student
+      - key: BACKEND_CORS_ORIGINS
+        value: https://main--peso-webapp.netlify.app
+      - key: BACKEND_CORS_ALLOW_PRIVATE_NETWORK
+        value: "false"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: CLEANUP_JOB_TOKEN
+        sync: false
+      - key: VIDEO_BUCKET
+        value: videos
+      - key: UPLOAD_RESERVATIONS_ENABLED
+        value: "false"
+      - key: MAX_USER_IN_PROGRESS_VIDEOS
+        value: "3"
+      - key: ANALYSIS_PROFILE_MODE
+        value: legacy
+      - key: ANALYSIS_TRACE_ENABLED
+        value: "false"
+      - key: ANALYSIS_WORKER_LEASE_SECONDS
+        value: "3600"
+      - key: ANALYSIS_WORKER_POLL_SECONDS
+        value: "2"
+      - key: ANALYSIS_WORKER_RECOVERY_SECONDS
+        value: "60"
+      - key: ANALYSIS_NORMAL_TIMEOUT_SECONDS
+        value: "180"
+      - key: ANALYSIS_MAX_TIMEOUT_SECONDS
+        value: "600"
+      - key: ANALYSIS_LONG_CLIP_TIMEOUT_MULTIPLIER
+        value: "3"
