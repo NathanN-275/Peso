@@ -65,8 +65,10 @@ services in Render. Do not put them in Netlify, GitHub, or the repository:
 - `CLEANUP_JOB_TOKEN`: dedicated beta cleanup token.
 
 The Blueprint fixes `BACKEND_ENV=production`,
-`PESO_DEPLOYMENT_ENVIRONMENT=student`, exact CORS, and
-`UPLOAD_RESERVATIONS_ENABLED=false`. Confirm neither service has
+`PESO_DEPLOYMENT_ENVIRONMENT=student`, exact CORS,
+`UPLOAD_RESERVATIONS_ENABLED=true`, and
+`UPLOAD_STORAGE_PROVIDER=supabase`. Reserved upload bytes stream through the
+authenticated API to private `peso-staging` Storage. Confirm neither service has
 `AZURE_BLOB_ACCOUNT_URL`, `AZURE_BLOB_SOURCE_CONTAINER`, an Azure identity, or
 a budget-shutdown token inherited from an environment group.
 

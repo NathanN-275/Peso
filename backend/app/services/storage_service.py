@@ -153,14 +153,18 @@ class StorageService:
   def __init__(self, bucket: str | None = None) -> None:
     settings = get_settings()
     self.bucket = bucket or settings.video_bucket
+    self.upload_storage_provider = settings.upload_storage_provider
     self.max_video_upload_bytes = settings.max_video_upload_bytes
     self.download_signed_url_ttl_seconds = settings.storage_download_signed_url_ttl_seconds
     self.download_timeout_seconds = settings.supabase_storage_timeout_seconds
     self.ffprobe_timeout_seconds = min(settings.ffmpeg_timeout_seconds, 30)
     self.client = get_supabase_admin_client()
 
+  def _is_azure_path(self, storage_path: str) -> bool:
+    return getattr(self, "upload_storage_provider", "azure") == "azure" and is_azure_source_path(storage_path)
+
   def get_object_info(self, storage_path: str) -> dict[str, Any]:
-    if is_azure_source_path(storage_path):
+    if self._is_azure_path(storage_path):
       return get_azure_blob_storage().get_object_info(storage_path)
     try:
       response = self.client.storage.from_(self.bucket).info(storage_path)
@@ -228,7 +232,7 @@ class StorageService:
     self.validate_video_object(storage_path)
     suffix = Path(storage_path).suffix or ".mp4"
     signed_url = (
-      None if is_azure_source_path(storage_path)
+      None if self._is_azure_path(storage_path)
       else self.create_signed_url(storage_path, expires_in=self.download_signed_url_ttl_seconds)
     )
     temp_path: Path | None = None
@@ -237,7 +241,7 @@ class StorageService:
     try:
       with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
         temp_path = Path(temp_file.name)
-      if is_azure_source_path(storage_path):
+      if self._is_azure_path(storage_path):
         downloaded_bytes = get_azure_blob_storage().download_to_path(
           storage_path, temp_path, max_bytes=self.max_video_upload_bytes,
         )
@@ -313,7 +317,7 @@ class StorageService:
     if not storage_path:
       return
 
-    if is_azure_source_path(storage_path):
+    if self._is_azure_path(storage_path):
       from .upload_reservations import UploadReservationRepository
 
       get_azure_blob_storage().delete(storage_path)
@@ -358,7 +362,7 @@ class StorageService:
 
     walk(normalized_folder, 0)
     settings = get_settings()
-    if self.bucket == settings.video_bucket and settings.azure_blob_account_url:
+    if self.bucket == settings.video_bucket and self.upload_storage_provider == "azure" and settings.azure_blob_account_url:
       storage_objects.extend(get_azure_blob_storage().list_objects(normalized_folder))
     return storage_objects
 
@@ -396,7 +400,7 @@ class StorageService:
       self.delete_storage_path(path)
 
   def storage_path_exists(self, storage_path: str) -> bool:
-    if is_azure_source_path(storage_path):
+    if self._is_azure_path(storage_path):
       try:
         return bool(get_azure_blob_storage().get_object_info(storage_path))
       except HTTPException:
@@ -431,9 +435,26 @@ class StorageService:
       },
     )
 
+  def create_file(
+    self,
+    storage_path: str,
+    local_path: Path,
+    content_type: str,
+    cache_control: str = DEFAULT_CACHE_CONTROL_SECONDS,
+  ) -> None:
+    self.client.storage.from_(self.bucket).upload(
+      storage_path,
+      local_path,
+      {
+        "content-type": content_type,
+        "cache-control": cache_control,
+        "upsert": "false",
+      },
+    )
+
   def create_signed_url(self, storage_path: str, expires_in: int = 3600) -> str:
     expires_in = min(expires_in, get_settings().signed_url_ttl_seconds)
-    if is_azure_source_path(storage_path):
+    if self._is_azure_path(storage_path):
       return get_azure_blob_storage().create_read_sas(storage_path, expires_in=expires_in)
     response = self.client.storage.from_(self.bucket).create_signed_url(
       storage_path,
@@ -448,3 +469,37 @@ class StorageService:
       )
 
     return signed_url
+
+  def download_to_path(self, storage_path: str, destination: Path, *, max_bytes: int) -> int:
+    signed_url = self.create_signed_url(storage_path, expires_in=self.download_signed_url_ttl_seconds)
+    downloaded_bytes = 0
+    try:
+      with get_pooled_http_client().stream(
+        "GET",
+        signed_url,
+        timeout=self.download_timeout_seconds,
+        follow_redirects=True,
+      ) as response:
+        response.raise_for_status()
+        with destination.open("wb") as target:
+          for chunk in response.iter_bytes():
+            if not chunk:
+              continue
+            downloaded_bytes += len(chunk)
+            if downloaded_bytes > max_bytes:
+              raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail="Downloaded video exceeds the configured analysis limit.",
+              )
+            target.write(chunk)
+    except HTTPException:
+      raise
+    except Exception as error:
+      raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="Unable to download uploaded video from storage.",
+      ) from error
+    return downloaded_bytes
+
+  def delete(self, storage_path: str) -> None:
+    self.delete_storage_path(storage_path)

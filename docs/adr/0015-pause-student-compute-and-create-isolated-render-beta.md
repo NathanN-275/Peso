@@ -36,8 +36,11 @@ Create an isolated **Render beta** from `render-beta.yaml` with
 `PESO_DEPLOYMENT_ENVIRONMENT=student` so the backend refuses any Supabase
 project except `peso-staging`. Render alone stores the staging service-role
 key, staging JWT secret, and beta cleanup token. The only browser origin is
-`https://main--peso-webapp.netlify.app`. Upload reservations remain disabled
-and no Azure Blob settings are configured.
+`https://main--peso-webapp.netlify.app`. Upload reservations are enabled with
+the Render-beta-only Supabase provider. Authenticated upload requests stream
+through the API to owner-scoped private `peso-staging` Storage objects with
+overwrite disabled; no Supabase signed upload token or Azure Blob setting is
+configured.
 
 The private Netlify `main` branch changes from the paused Azure Student API to
 the accepted Render beta API. A tracked, fail-closed release binding must match
@@ -61,6 +64,9 @@ memory value is below 400 MB. Any failure upgrades only
   re-enable only the Student API and Student worker scaler.
 - Render beta has its own paid compute and secrets. Its staging queue must not
   be consumed concurrently by a resumed Azure Student worker.
+- Render beta upload traffic passes through the API so its ten-minute
+  reservation, cancellation, and cleanup guarantees remain enforceable without
+  adding a storage credential or database migration.
 - Migration history comparison and a dry run are required before any beta
   deploy; applying migrations remains a separate reviewed write.
 - The pending release binding intentionally blocks the private branch until

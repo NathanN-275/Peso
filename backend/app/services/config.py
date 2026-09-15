@@ -97,6 +97,7 @@ class Settings:
   max_video_height: int = DEFAULT_MAX_VIDEO_HEIGHT
   max_video_fps: float = DEFAULT_MAX_VIDEO_FPS
   upload_reservations_enabled: bool = False
+  upload_storage_provider: str = "azure"
   upload_reservation_ttl_seconds: int = DEFAULT_UPLOAD_RESERVATION_TTL_SECONDS
   max_user_active_upload_reservations: int = DEFAULT_MAX_USER_ACTIVE_UPLOAD_RESERVATIONS
   max_user_reserved_bytes: int = DEFAULT_MAX_USER_RESERVED_BYTES
@@ -290,6 +291,9 @@ def get_settings() -> Settings:
   max_video_height = _parse_positive_int_env("MAX_VIDEO_HEIGHT", DEFAULT_MAX_VIDEO_HEIGHT)
   max_video_fps = _parse_positive_float_env("MAX_VIDEO_FPS", DEFAULT_MAX_VIDEO_FPS)
   upload_reservations_enabled = _parse_bool_env("UPLOAD_RESERVATIONS_ENABLED", False)
+  upload_storage_provider = os.getenv("UPLOAD_STORAGE_PROVIDER", "azure").strip().lower() or "azure"
+  if upload_storage_provider not in {"azure", "supabase"}:
+    raise RuntimeError("UPLOAD_STORAGE_PROVIDER must be either azure or supabase.")
   upload_reservation_ttl_seconds = _parse_positive_int_env(
     "UPLOAD_RESERVATION_TTL_SECONDS",
     DEFAULT_UPLOAD_RESERVATION_TTL_SECONDS,
@@ -435,12 +439,14 @@ def get_settings() -> Settings:
     if analysis_trace_enabled:
       raise RuntimeError("ANALYSIS_TRACE_ENABLED must not be enabled in production.")
 
-    if upload_reservations_enabled and not azure_blob_account_url:
+    if upload_reservations_enabled and upload_storage_provider == "azure" and not azure_blob_account_url:
       raise RuntimeError(
         "AZURE_BLOB_ACCOUNT_URL must be configured when upload reservations are enabled in production."
       )
-    if upload_reservations_enabled and len(budget_shutdown_token) < 32:
+    if upload_reservations_enabled and upload_storage_provider == "azure" and len(budget_shutdown_token) < 32:
       raise RuntimeError("BUDGET_SHUTDOWN_TOKEN must contain at least 32 characters when production uploads are enabled.")
+    if upload_reservations_enabled and upload_storage_provider == "supabase" and os.getenv("PESO_DEPLOYMENT_ENVIRONMENT") != "student":
+      raise RuntimeError("Supabase upload reservations are restricted to the Student environment.")
 
   if cleanup_job_token is None and not (
     backend_env in {"development", "dev", "local", "test"} and allow_unauthenticated_dev_cleanup
@@ -492,6 +498,7 @@ def get_settings() -> Settings:
     max_video_height=max_video_height,
     max_video_fps=max_video_fps,
     upload_reservations_enabled=upload_reservations_enabled,
+    upload_storage_provider=upload_storage_provider,
     upload_reservation_ttl_seconds=upload_reservation_ttl_seconds,
     max_user_active_upload_reservations=max_user_active_upload_reservations,
     max_user_reserved_bytes=max_user_reserved_bytes,

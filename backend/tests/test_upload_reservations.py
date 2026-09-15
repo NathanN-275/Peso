@@ -12,14 +12,19 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import UUID
 
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
+from app.jobs.upload_reservation_cleanup import cleanup_upload_reservations
 from app.routes.budget_admission import disable_budget_admission
 from app.routes.upload_reservations import (
   CreateUploadReservationRequest,
+  cancel_upload_reservation,
   complete_upload_reservation,
   create_upload_reservation,
+  router as upload_reservation_router,
 )
+from app.services.auth import get_current_user_id
 from app.services.config import Settings
 from app.services.media_metadata import (
   MediaValidationError,
@@ -139,6 +144,27 @@ class UploadReservationRoutesTest(unittest.TestCase):
     self.assertEqual(response.upload_headers["If-None-Match"], "*")
     self.assertEqual(repository.reserve.call_args.args[0]["requested_bytes"], 100)
 
+  def test_supabase_provider_issues_an_owner_scoped_api_upload_contract(self) -> None:
+    settings = replace(SETTINGS, upload_storage_provider="supabase")
+    repository, supabase = MagicMock(), MagicMock()
+    repository.reserve.return_value = {}
+    bucket = supabase.storage.from_.return_value
+
+    with patch("app.routes.upload_reservations.get_settings", return_value=settings), patch(
+      "app.routes.upload_reservations.UploadReservationRepository", return_value=repository,
+    ), patch("app.services.storage_service.get_settings", return_value=settings), patch(
+      "app.services.storage_service.get_supabase_admin_client", return_value=supabase,
+    ):
+      response = create_upload_reservation(self.request(), USER_ID)
+
+    self.assertTrue(response.blob_path.startswith(f"{USER_ID}/source/"))
+    self.assertEqual(response.upload_url, f"/upload-reservations/{response.reservation_id}/content")
+    self.assertEqual(response.upload_method, "PUT")
+    self.assertEqual(response.upload_body_format, "raw")
+    self.assertEqual(response.upload_authentication, "bearer")
+    self.assertEqual(response.upload_headers, {"Content-Type": "video/mp4", "If-None-Match": "*"})
+    bucket.create_signed_upload_url.assert_not_called()
+
   def test_expired_reservation_cannot_be_completed(self) -> None:
     repository, storage = MagicMock(), MagicMock()
     repository.require_owned.return_value = self.reservation(expires_at="2000-01-01T00:00:00+00:00")
@@ -180,6 +206,139 @@ class UploadReservationRoutesTest(unittest.TestCase):
       response = complete_upload_reservation(RESERVATION_ID, USER_ID)
     self.assertEqual(response.state, "verified")
     self.assertEqual(repository.verify_and_create_video.call_args.kwargs["metadata"]["duration_ms"], 1000)
+
+  def test_supabase_provider_completes_a_verified_upload(self) -> None:
+    settings = replace(SETTINGS, upload_storage_provider="supabase")
+    repository, supabase, http = MagicMock(), MagicMock(), MagicMock()
+    repository.require_owned.return_value = self.reservation()
+    repository.verify_and_create_video.return_value = {"video_id": VIDEO_ID}
+    data = b"\x00\x00\x00\x18ftypisom" + b"\x00" * 88
+    bucket = supabase.storage.from_.return_value
+    bucket.info.return_value = {"size": len(data), "mimetype": "video/mp4"}
+    bucket.create_signed_url.return_value = {"signedUrl": "https://example.supabase.co/storage/v1/object/sign/videos/source"}
+    response_stream = MagicMock()
+    response_stream.iter_bytes.return_value = [data]
+    http.stream.return_value.__enter__.return_value = response_stream
+
+    with patch("app.routes.upload_reservations.get_settings", return_value=settings), patch(
+      "app.routes.upload_reservations.UploadReservationRepository", return_value=repository,
+    ), patch("app.services.storage_service.get_settings", return_value=settings), patch(
+      "app.services.storage_service.get_supabase_admin_client", return_value=supabase,
+    ), patch("app.services.storage_service.get_pooled_http_client", return_value=http), patch(
+      "app.routes.upload_reservations.probe_video_metadata", return_value=VALID_METADATA,
+    ):
+      response = complete_upload_reservation(RESERVATION_ID, USER_ID)
+
+    self.assertEqual(response.state, "verified")
+    self.assertEqual(response.uploaded_size_bytes, len(data))
+    self.assertEqual(response.storage_path, self.reservation()["blob_path"])
+
+  def test_owner_can_stream_reserved_content_to_supabase_without_overwrite(self) -> None:
+    settings = replace(SETTINGS, upload_storage_provider="supabase")
+    repository, supabase = MagicMock(), MagicMock()
+    data = b"\x00\x00\x00\x18ftypisom" + b"\x00" * 88
+    repository.require_owned.return_value = self.reservation(requested_bytes=len(data))
+    bucket = supabase.storage.from_.return_value
+    app = FastAPI()
+    app.include_router(upload_reservation_router)
+    app.dependency_overrides[get_current_user_id] = lambda: USER_ID
+
+    with patch("app.routes.upload_reservations.get_settings", return_value=settings), patch(
+      "app.routes.upload_reservations.UploadReservationRepository", return_value=repository,
+    ), patch("app.services.storage_service.get_settings", return_value=settings), patch(
+      "app.services.storage_service.get_supabase_admin_client", return_value=supabase,
+    ):
+      response = TestClient(app).put(
+        f"/upload-reservations/{RESERVATION_ID}/content",
+        content=data,
+        headers={"Content-Type": "video/mp4", "If-None-Match": "*"},
+      )
+
+    self.assertEqual(response.status_code, 204)
+    upload_options = bucket.upload.call_args.args[2]
+    self.assertEqual(upload_options["content-type"], "video/mp4")
+    self.assertEqual(upload_options["upsert"], "false")
+
+  def test_reserved_content_rejects_an_oversized_body_before_storage(self) -> None:
+    settings = replace(SETTINGS, upload_storage_provider="supabase")
+    repository, supabase = MagicMock(), MagicMock()
+    repository.require_owned.return_value = self.reservation(requested_bytes=10)
+    app = FastAPI()
+    app.include_router(upload_reservation_router)
+    app.dependency_overrides[get_current_user_id] = lambda: USER_ID
+
+    with patch("app.routes.upload_reservations.get_settings", return_value=settings), patch(
+      "app.routes.upload_reservations.UploadReservationRepository", return_value=repository,
+    ), patch("app.services.storage_service.get_settings", return_value=settings), patch(
+      "app.services.storage_service.get_supabase_admin_client", return_value=supabase,
+    ):
+      response = TestClient(app).put(
+        f"/upload-reservations/{RESERVATION_ID}/content",
+        content=b"more-than-ten-bytes",
+        headers={"Content-Type": "video/mp4", "If-None-Match": "*"},
+      )
+
+    self.assertEqual(response.status_code, 413)
+    supabase.storage.from_.return_value.upload.assert_not_called()
+
+  def test_reserved_content_rejects_a_storage_path_owned_by_another_user(self) -> None:
+    settings = replace(SETTINGS, upload_storage_provider="supabase")
+    repository, supabase = MagicMock(), MagicMock()
+    repository.require_owned.return_value = self.reservation(
+      blob_path=f"44444444-4444-4444-4444-444444444444/source/{RESERVATION_ID}.mp4",
+    )
+    app = FastAPI()
+    app.include_router(upload_reservation_router)
+    app.dependency_overrides[get_current_user_id] = lambda: USER_ID
+
+    with patch("app.routes.upload_reservations.get_settings", return_value=settings), patch(
+      "app.routes.upload_reservations.UploadReservationRepository", return_value=repository,
+    ), patch("app.services.storage_service.get_settings", return_value=settings), patch(
+      "app.services.storage_service.get_supabase_admin_client", return_value=supabase,
+    ):
+      response = TestClient(app).put(
+        f"/upload-reservations/{RESERVATION_ID}/content",
+        content=b"video",
+        headers={"Content-Type": "video/mp4", "If-None-Match": "*"},
+      )
+
+    self.assertEqual(response.status_code, 404)
+    supabase.storage.from_.return_value.upload.assert_not_called()
+
+  def test_supabase_provider_cancels_and_deletes_an_abandoned_upload(self) -> None:
+    settings = replace(SETTINGS, upload_storage_provider="supabase")
+    repository, supabase = MagicMock(), MagicMock()
+    repository.require_owned.return_value = self.reservation()
+    bucket = supabase.storage.from_.return_value
+
+    with patch("app.routes.upload_reservations.get_settings", return_value=settings), patch(
+      "app.routes.upload_reservations.UploadReservationRepository", return_value=repository,
+    ), patch("app.services.storage_service.get_settings", return_value=settings), patch(
+      "app.services.storage_service.get_supabase_admin_client", return_value=supabase,
+    ):
+      response = cancel_upload_reservation(RESERVATION_ID, USER_ID)
+
+    self.assertEqual(response, {"cancelled": True})
+    bucket.remove.assert_called_once_with([self.reservation()["blob_path"]])
+
+  def test_supabase_provider_cleanup_deletes_an_expired_upload(self) -> None:
+    settings = replace(SETTINGS, upload_storage_provider="supabase")
+    repository, supabase = MagicMock(), MagicMock()
+    repository.expire_due.return_value = [self.reservation()]
+    bucket = supabase.storage.from_.return_value
+
+    with patch(
+      "app.jobs.upload_reservation_cleanup.UploadReservationRepository", return_value=repository,
+    ), patch("app.jobs.upload_reservation_cleanup.get_settings", return_value=settings, create=True), patch(
+      "app.services.storage_service.get_settings", return_value=settings,
+    ), patch("app.services.storage_service.get_supabase_admin_client", return_value=supabase):
+      deleted = cleanup_upload_reservations()
+
+    self.assertEqual(deleted, 1)
+    bucket.remove.assert_called_once_with([self.reservation()["blob_path"]])
+    repository.mark_blob_deleted.assert_called_once_with(
+      self.reservation()["blob_path"], confirmed_after_expiry=True,
+    )
 
   def test_budget_webhook_rejects_wrong_secret_and_persists_disable(self) -> None:
     settings = replace(SETTINGS, budget_shutdown_token="test-budget-token")

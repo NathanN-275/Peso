@@ -404,6 +404,9 @@ export async function createUploadReservation(payload: CreateUploadReservationRe
     state: 'issued';
     blob_path: string;
     upload_url: string;
+    upload_method: 'PUT';
+    upload_body_format: 'raw';
+    upload_authentication: 'none' | 'bearer';
     upload_headers: Record<string, string>;
     expires_at: string;
   }>('/upload-reservations', accessToken, {

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..analysis.manual_tracking import validate_tracking_setup
@@ -15,7 +15,14 @@ from ..services.auth import get_current_user_id
 from ..services.azure_blob_storage import AzureBlobConfigurationError, get_azure_blob_storage
 from ..services.config import get_settings
 from ..services.media_metadata import MediaValidationError, enforce_video_limits, probe_video_metadata
-from ..services.storage_service import ALLOWED_VIDEO_EXTENSIONS, ALLOWED_VIDEO_MIME_TYPES, _has_expected_video_signature
+from ..services.storage_service import (
+  ALLOWED_VIDEO_EXTENSIONS,
+  ALLOWED_VIDEO_MIME_TYPES,
+  StorageService,
+  _has_expected_video_signature,
+  _metadata_value,
+  _parse_size_bytes,
+)
 from ..services.upload_reservations import UploadReservationRepository
 
 
@@ -49,6 +56,9 @@ class UploadReservationResponse(BaseModel):
   state: Literal["issued"]
   blob_path: str
   upload_url: str
+  upload_method: Literal["PUT"]
+  upload_body_format: Literal["raw"]
+  upload_authentication: Literal["none", "bearer"]
   upload_headers: dict[str, str]
   expires_at: str
 
@@ -90,6 +100,15 @@ def _validate_request(request: CreateUploadReservationRequest) -> tuple[str, str
   return extension, content_type, exercise_type, view_type
 
 
+def _get_upload_storage(settings):
+  if settings.upload_storage_provider == "supabase":
+    return StorageService()
+  try:
+    return get_azure_blob_storage()
+  except AzureBlobConfigurationError as error:
+    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Private upload storage is not configured.") from error
+
+
 @router.post("", response_model=UploadReservationResponse, status_code=status.HTTP_201_CREATED)
 def create_upload_reservation(
   request: CreateUploadReservationRequest,
@@ -116,10 +135,7 @@ def create_upload_reservation(
   reservation_id = uuid4()
   expires_at = datetime.now(timezone.utc) + timedelta(seconds=settings.upload_reservation_ttl_seconds)
   blob_path = f"{user_id}/source/{reservation_id}{extension}"
-  try:
-    storage = get_azure_blob_storage()
-  except AzureBlobConfigurationError as error:
-    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Private upload storage is not configured.") from error
+  storage = _get_upload_storage(settings) if settings.upload_storage_provider == "azure" else None
   repository = UploadReservationRepository()
   try:
     row = repository.reserve(
@@ -155,9 +171,18 @@ def create_upload_reservation(
     raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Upload reservation service is unavailable.") from error
 
   try:
-    upload_url = storage.create_write_sas(blob_path, expires_at=expires_at)
+    if settings.upload_storage_provider == "supabase":
+      upload_url = f"/upload-reservations/{reservation_id}/content"
+      upload_body_format = "raw"
+      upload_authentication = "bearer"
+      upload_headers = {"Content-Type": content_type, "If-None-Match": "*"}
+    else:
+      upload_url = storage.create_write_sas(blob_path, expires_at=expires_at)
+      upload_body_format = "raw"
+      upload_authentication = "none"
+      upload_headers = {"x-ms-blob-type": "BlockBlob", "Content-Type": content_type, "If-None-Match": "*"}
   except Exception:
-    logger.warning("Upload SAS issuance failed event=reservation_issuance_failure reservation_id=%s", reservation_id)
+    logger.warning("Upload contract issuance failed event=reservation_issuance_failure reservation_id=%s", reservation_id)
     repository.reject(str(reservation_id), user_id, "sas_issuance_failed")
     raise
   logger.info(
@@ -171,9 +196,76 @@ def create_upload_reservation(
     state="issued",
     blob_path=blob_path,
     upload_url=upload_url,
-    upload_headers={"x-ms-blob-type": "BlockBlob", "Content-Type": content_type, "If-None-Match": "*"},
+    upload_method="PUT",
+    upload_body_format=upload_body_format,
+    upload_authentication=upload_authentication,
+    upload_headers=upload_headers,
     expires_at=str(row.get("expires_at") or expires_at.isoformat()),
   )
+
+
+@router.put("/{reservation_id}/content", status_code=status.HTTP_204_NO_CONTENT)
+async def upload_reserved_content(
+  reservation_id: UUID,
+  request: Request,
+  user_id: str = Depends(get_current_user_id),
+) -> Response:
+  settings = get_settings()
+  if not settings.upload_reservations_enabled or settings.upload_storage_provider != "supabase":
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload endpoint not found.")
+
+  repository = UploadReservationRepository()
+  reservation = repository.require_owned(str(reservation_id), user_id)
+  try:
+    expires_at = datetime.fromisoformat(str(reservation["expires_at"]).replace("Z", "+00:00"))
+  except (KeyError, ValueError) as error:
+    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Upload reservation is invalid.") from error
+  if expires_at <= datetime.now(timezone.utc) or reservation.get("state") != "issued":
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail="Upload reservation has expired or is unavailable.")
+
+  blob_path = str(reservation.get("blob_path") or "")
+  if not blob_path.startswith(f"{user_id}/source/"):
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload reservation not found.")
+  content_type = _normalize_content_type(request.headers.get("content-type", ""))
+  if content_type != str(reservation.get("content_type") or ""):
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Upload content type does not match the reservation.")
+  if request.headers.get("if-none-match") != "*":
+    raise HTTPException(status_code=status.HTTP_428_PRECONDITION_REQUIRED, detail="Upload must be create-only.")
+
+  requested_bytes = min(int(reservation["requested_bytes"]), settings.max_video_upload_bytes)
+  content_length = request.headers.get("content-length")
+  if content_length and (not content_length.isdigit() or int(content_length) > requested_bytes):
+    raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Uploaded bytes exceed the reservation.")
+
+  temp_path: Path | None = None
+  uploaded_bytes = 0
+  try:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(blob_path).suffix) as temporary:
+      temp_path = Path(temporary.name)
+      async for chunk in request.stream():
+        if not chunk:
+          continue
+        uploaded_bytes += len(chunk)
+        if uploaded_bytes > requested_bytes:
+          raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Uploaded bytes exceed the reservation.")
+        temporary.write(chunk)
+    if uploaded_bytes <= 0:
+      raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Upload body is empty.")
+    StorageService().create_file(blob_path, temp_path, content_type)
+  except HTTPException:
+    raise
+  except Exception as error:
+    logger.warning(
+      "Reserved content upload failed event=reserved_content_upload_failure reservation_id=%s error_type=%s",
+      reservation_id,
+      type(error).__name__,
+    )
+    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Private video upload is temporarily unavailable.") from error
+  finally:
+    if temp_path is not None:
+      temp_path.unlink(missing_ok=True)
+
+  return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{reservation_id}/complete", response_model=CompleteUploadReservationResponse)
@@ -203,7 +295,7 @@ def complete_upload_reservation(
     raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Upload reservation is invalid.") from error
   if expires_at <= datetime.now(timezone.utc):
     repository.reject(str(reservation_id), user_id, "reservation_expired")
-    get_azure_blob_storage().delete(str(reservation["blob_path"]))
+    _get_upload_storage(settings).delete(str(reservation["blob_path"]))
     raise HTTPException(status_code=status.HTTP_410_GONE, detail="Upload reservation has expired.")
   if reservation.get("state") not in {"issued", "uploaded"}:
     raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Upload reservation cannot be completed.")
@@ -215,13 +307,17 @@ def complete_upload_reservation(
     raise
   except Exception as error:
     raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Media verification is busy. Try again shortly.") from error
-  storage = get_azure_blob_storage()
+  storage = _get_upload_storage(settings)
   blob_path = str(reservation["blob_path"])
   temp_path: Path | None = None
   try:
     object_info = storage.get_object_info(blob_path)
-    actual_bytes = int(object_info.get("size") or 0)
-    actual_content_type = _normalize_content_type(str(object_info.get("contentType") or ""))
+    actual_bytes = _parse_size_bytes(
+      _metadata_value(object_info, "size", "contentLength", "content_length")
+    ) or 0
+    actual_content_type = _normalize_content_type(str(
+      _metadata_value(object_info, "mimetype", "mimeType", "contentType", "content_type") or ""
+    ))
     if actual_bytes <= 0 or actual_bytes > int(reservation["requested_bytes"]) or actual_bytes > settings.max_video_upload_bytes:
       raise MediaValidationError("byte_limit", "Uploaded bytes do not match the reservation.")
     if actual_content_type != str(reservation["content_type"]):
@@ -294,10 +390,11 @@ def cancel_upload_reservation(
   reservation_id: UUID,
   user_id: str = Depends(get_current_user_id),
 ) -> dict[str, bool]:
+  settings = get_settings()
   repository = UploadReservationRepository()
   reservation = repository.require_owned(str(reservation_id), user_id)
   if reservation.get("state") in {"verified", "consumed"}:
     raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This reservation already created a video.")
   repository.reject(str(reservation_id), user_id, "client_cancelled")
-  get_azure_blob_storage().delete(str(reservation["blob_path"]))
+  _get_upload_storage(settings).delete(str(reservation["blob_path"]))
   return {"cancelled": True}

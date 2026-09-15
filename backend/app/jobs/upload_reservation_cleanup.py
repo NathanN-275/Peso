@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 
 from ..services.azure_blob_storage import get_azure_blob_storage
+from ..services.config import get_settings
+from ..services.storage_service import StorageService
 from ..services.upload_reservations import UploadReservationRepository
 
 
@@ -11,7 +13,12 @@ logger = logging.getLogger(__name__)
 
 def cleanup_upload_reservations() -> int:
   repository = UploadReservationRepository()
-  storage = get_azure_blob_storage()
+  settings = get_settings()
+  storage = (
+    StorageService()
+    if settings.upload_storage_provider == "supabase"
+    else get_azure_blob_storage()
+  )
   deleted = 0
   for reservation in repository.expire_due(limit=1000):
     blob_path = str(reservation["blob_path"])

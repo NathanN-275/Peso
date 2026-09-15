@@ -6,6 +6,14 @@ status: accepted
 
 Peso will keep Supabase Auth and Postgres while moving new source videos to private Azure Blob Storage. A server-owned Upload Reservation atomically allocates user/global capacity before issuing an exact-blob, HTTPS-only, create-only user-delegation SAS; completion establishes a Verified Upload from actual media metadata before a Container Apps Analysis Job may be queued. This replaces direct client writes to the Supabase video bucket because storage ownership alone did not enforce capacity or actual media limits before work was admitted.
 
+The isolated Render beta authorized by ADR 0015 is the bounded exception. It
+keeps the same server-owned Upload Reservation and Verified Upload lifecycle,
+but an authenticated, owner-checked API endpoint streams each reserved request
+to a bounded temporary file before creating the exact object in private
+`peso-staging` Supabase Storage with overwrite disabled. The client never
+receives the service-role key or direct Storage mutation privileges. Production
+and Azure Student source uploads remain Azure-backed.
+
 ## Consequences
 
 - The Student environment remains a controlled, non-production proving ground; this decision does not switch the production frontend or authorize uncapped growth. A paid subscription and separate production acceptance remain required.
@@ -15,5 +23,9 @@ Peso will keep Supabase Auth and Postgres while moving new source videos to priv
 - Existing private playback derivatives and exports remain in Supabase; all video URLs still go through owner-checked backend routes. Legacy source paths remain readable for migration/rollback, but unverified legacy videos cannot start a new analysis after the new enqueue migration is applied.
 - One-time storage/delegation and budget-workflow RBAC is provisioned by a privileged operator, separately from routine image deployment. Neither runtime nor deployment requires Azure account keys.
 - Budget admission shutdown is latched in Postgres. Redeploying or restarting the API does not re-enable it; resumption requires an explicit operator review and database change.
+- Render beta upload bytes traverse its API and temporary filesystem. The API
+  enforces the reservation expiry, declared content type, create-only
+  precondition, and byte ceiling while streaming; completion still validates
+  stored metadata, media signatures, and ffprobe results before queueing.
 
 Azure documents [create versus overwrite permissions](https://learn.microsoft.com/en-us/rest/api/storageservices/put-blob) and [user-delegation SAS authorization](https://learn.microsoft.com/en-us/rest/api/storageservices/create-user-delegation-sas). See the [staging acceptance and rollback gate](../deployment/production-security.md).

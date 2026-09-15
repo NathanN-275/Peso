@@ -9,6 +9,7 @@ import {
   completeUploadReservation,
   createUploadReservation,
   fetchVideoCapabilities,
+  getBackendApiUrl,
   markVideoUploadFailed,
 } from './backendApi';
 import { getFreshBackendAccessToken } from './backendAuth';
@@ -22,7 +23,11 @@ import {
   QUALITY_PREFLIGHT_THRESHOLD_VERSION,
   requiresQualityPreflight,
 } from './qualityPreflightPolicy';
-import { normalizeVideoUploadFileName } from './videoUploadPolicy';
+import {
+  buildReservedUploadRequest,
+  normalizeVideoUploadFileName,
+  resolveReservedUploadUrl,
+} from './videoUploadPolicy';
 
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = resolveFrontendMaxUploadBytes();
@@ -671,10 +676,18 @@ export async function uploadVideoForAnalysis({
     const timeout = setTimeout(() => controller.abort(), 180_000);
     let uploadResponse: Response;
     try {
-      uploadResponse = await fetch(reservation.upload_url, {
-        method: 'PUT',
-        headers: reservation.upload_headers,
-        body: uploadSource.body,
+      const uploadRequest = buildReservedUploadRequest(
+        uploadSource.body,
+        reservation,
+        accessToken
+      );
+      const uploadUrl = resolveReservedUploadUrl(
+        reservation.upload_url,
+        getBackendApiUrl(),
+        reservation.upload_authentication
+      );
+      uploadResponse = await fetch(uploadUrl, {
+        ...uploadRequest,
         signal: controller.signal,
         credentials: 'omit',
         redirect: 'error',

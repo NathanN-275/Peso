@@ -37,7 +37,8 @@ test('both beta services use the root Dockerfile and manual deploys', () => {
     assert.match(block, /PESO_DEPLOYMENT_ENVIRONMENT\n\s+value: student/);
     assert.match(block, /BACKEND_ENV\n\s+value: production/);
     assert.match(block, /BACKEND_CORS_ORIGINS\n\s+value: https:\/\/main--peso-webapp\.netlify\.app/);
-    assert.match(block, /UPLOAD_RESERVATIONS_ENABLED\n\s+value: "false"/);
+    assert.match(block, /UPLOAD_RESERVATIONS_ENABLED\n\s+value: "true"/);
+    assert.match(block, /UPLOAD_STORAGE_PROVIDER\n\s+value: supabase/);
     assert.doesNotMatch(block, /AZURE_BLOB|BUDGET_SHUTDOWN/);
     for (const key of [
       'SUPABASE_URL',
