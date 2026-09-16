@@ -1116,6 +1116,7 @@ class BarbellTracker:
     manual_barbell_priors: dict[int, dict[str, float]] | None = None,
     debug_output_path: str | None = None,
     target_fps: float | None = None,
+    retain_decoded_frames: bool = False,
   ) -> dict[str, Any]:
     import cv2
 
@@ -1223,7 +1224,7 @@ class BarbellTracker:
         selected_side=normalized_selected_side,
         rep_windows=normalized_rep_windows,
         target_fps=effective_target_fps,
-        frame_observer=retain_decoded_frame,
+        frame_observer=retain_decoded_frame if retain_decoded_frames else None,
       )
       if not normalized_manual_priors
       and normalized_rep_windows

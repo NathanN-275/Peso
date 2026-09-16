@@ -42,6 +42,7 @@ class PoseLandmarkerSession:
     self._mp = mp
     self._video = video
     self._last_timestamp = -1
+    self._closed = False
     self._landmarker = vision.PoseLandmarker.create_from_options(
       vision.PoseLandmarkerOptions(
         base_options=python.BaseOptions(
@@ -78,6 +79,9 @@ class PoseLandmarkerSession:
     return SimpleNamespace(landmark=landmarks)
 
   def close(self) -> None:
+    if getattr(self, "_closed", False):
+      return
+    self._closed = True
     self._landmarker.close()
 
   def __enter__(self) -> PoseLandmarkerSession:

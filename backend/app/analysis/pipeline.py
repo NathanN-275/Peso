@@ -268,6 +268,8 @@ def _run_yolo_tracking_prepass(
 def _apply_pose_repair(
   estimation: dict[str, Any],
   video: dict[str, Any] | None = None,
+  *,
+  preserve_raw_frames: bool = True,
 ) -> dict[str, Any]:
   raw_frames = estimation.get("frames") or []
   assistance = estimation.get("tracking_assistance") or {}
@@ -277,7 +279,10 @@ def _apply_pose_repair(
     else None
   )
   repaired_estimation = dict(estimation)
-  repaired_estimation["raw_pose_frames"] = raw_frames
+  if preserve_raw_frames:
+    # Raw frames exist only for local trace snapshots. Production analysis
+    # keeps the repaired frames but does not retain a second full pose graph.
+    repaired_estimation["raw_pose_frames"] = raw_frames
   if (
     video
     and _is_squat_variation(video.get("exercise_type") or "")
@@ -1048,6 +1053,7 @@ def _attach_barbell_tracking(
   video: dict[str, Any],
   file_path: str,
   estimation: dict[str, Any],
+  trace_enabled: bool = False,
 ) -> None:
   if _is_supported_pressing_view(video):
     path, tracking_diagnostics = _pressing_barbell_path_from_pose(
@@ -1187,6 +1193,7 @@ def _attach_barbell_tracking(
       rep_windows=[] if is_front_squat else rep_windows,
       manual_barbell_priors=barbell_track_priors(estimation.get("manual_tracking") or {}),
       target_fps=float(estimation.get("target_fps") or 18.0),
+      retain_decoded_frames=trace_enabled,
     )
     if is_front_squat:
       tracking = _gate_front_visible_collar_tracking(tracking)
@@ -1448,13 +1455,15 @@ def analyze_video(
     raise RuntimeError(f"Video {video_id} was not found.")
 
   try:
-    trace = get_analysis_trace_service().start(
-      video_id=video_id,
-      user_id=str(video.get("user_id") or ""),
-      exercise_type=str(video.get("exercise_type") or "unknown"),
-      view_type=str(video.get("view_type") or "unknown"),
-      model_version=settings.model_version,
-    )
+    trace_service = get_analysis_trace_service()
+    if trace_service.enabled:
+      trace = trace_service.start(
+        video_id=video_id,
+        user_id=str(video.get("user_id") or ""),
+        exercise_type=str(video.get("exercise_type") or "unknown"),
+        view_type=str(video.get("view_type") or "unknown"),
+        model_version=settings.model_version,
+      )
     trace_call("event", "video_loaded", {"status": video.get("status")})
     if isinstance(video.get("quality_preflight"), dict):
       trace_call(
@@ -1544,7 +1553,11 @@ def analyze_video(
       detector_frames=estimation.get("yolo_detection_frames") or [],
     )
     stage_started = time.perf_counter()
-    estimation = _apply_pose_repair(estimation, video)
+    estimation = _apply_pose_repair(
+      estimation,
+      video,
+      preserve_raw_frames=trace is not None,
+    )
     record_stage_timing("pose_repair", stage_started)
     trace_call(
       "snapshot",
@@ -1634,7 +1647,11 @@ def analyze_video(
         )
         record_stage_timing("detector_prepass_fallback", stage_started)
         stage_started = time.perf_counter()
-        fallback_estimation = _apply_pose_repair(fallback_estimation, video)
+        fallback_estimation = _apply_pose_repair(
+          fallback_estimation,
+          video,
+          preserve_raw_frames=trace is not None,
+        )
         record_stage_timing("pose_repair_fallback", stage_started)
         trace_call(
           "snapshot",
@@ -1765,7 +1782,11 @@ def analyze_video(
           video=video,
           estimation=shadow_estimation,
         )
-        shadow_estimation = _apply_pose_repair(shadow_estimation, video)
+        shadow_estimation = _apply_pose_repair(
+          shadow_estimation,
+          video,
+          preserve_raw_frames=trace is not None,
+        )
         shadow_result = _analyze_squat_result(
           video_id=video_id,
           video=video,
@@ -1802,6 +1823,7 @@ def analyze_video(
       video=video,
       file_path=str(temp_file),
       estimation=estimation,
+      trace_enabled=trace is not None,
     )
     if shadow_estimation is not None and shadow_result is not None and shadow_diagnostics is not None:
       shadow_barbell_started = time.perf_counter()
@@ -1811,6 +1833,7 @@ def analyze_video(
           video=video,
           file_path=str(temp_file),
           estimation=shadow_estimation,
+          trace_enabled=trace is not None,
         )
         shadow_diagnostics["barbell_tracking_ms"] = record_stage_timing(
           "shadow_barbell_tracking",

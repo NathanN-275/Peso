@@ -307,7 +307,11 @@ class MediaPipePoseBackend:
     return landmarks_from_mediapipe(landmarks)
 
   def close(self) -> None:
-    self._pose.close()
+    pose = getattr(self, "_pose", None)
+    if pose is None:
+      return
+    self._pose = None
+    pose.close()
 
 
 class RTMPoseBackend:
@@ -383,7 +387,10 @@ class RTMPoseBackend:
     )
 
   def close(self) -> None:
-    return None
+    # ONNX Runtime owns native arenas through the tracker. Dropping the final
+    # reference between pose and barbell stages lets the runtime release them.
+    self._tracker = None
+    self._last_center = None
 
 
 def _create_pose_backend(name: str, config: PoseEstimatorConfig) -> MediaPipePoseBackend | RTMPoseBackend:

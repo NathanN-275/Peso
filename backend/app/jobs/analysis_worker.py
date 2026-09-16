@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import multiprocessing
 import os
@@ -15,8 +16,8 @@ from types import FrameType
 from typing import Any, Protocol
 from uuid import uuid4
 
-from ..analysis.pipeline import analyze_video
 from ..services.analysis_job_repository import AnalysisJobRepository
+from .process_memory import ProcessMemoryPeaks, process_tree_rss_bytes
 
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ DEFAULT_RECOVERY_SECONDS = 60.0
 DEFAULT_NORMAL_TIMEOUT_SECONDS = 180
 DEFAULT_MAX_TIMEOUT_SECONDS = 600
 DEFAULT_LONG_CLIP_TIMEOUT_MULTIPLIER = 3.0
+MEMORY_SAMPLE_SECONDS = 0.1
 PUBLIC_ANALYSIS_STAGES = {"downloading", "pose", "barbell_tracking", "saving"}
 
 
@@ -99,6 +101,10 @@ class AnalysisRunOutcome:
   error: str | None = None
   failure_class: str | None = None
   retryable: bool = False
+  peak_rss_bytes: int = 0
+  stage_peak_rss_bytes: dict[str, int] | None = None
+  peak_rss_mb: float = 0.0
+  stage_peak_rss_mb: dict[str, float] | None = None
 
 
 class AnalysisRunner(Protocol):
@@ -106,6 +112,7 @@ class AnalysisRunner(Protocol):
     self,
     video_id: str,
     *,
+    job_id: str,
     timeout_seconds: int,
     on_stage: Callable[[str], None],
   ) -> AnalysisRunOutcome: ...
@@ -121,10 +128,11 @@ class InlineAnalysisRunner:
     self,
     video_id: str,
     *,
+    job_id: str,
     timeout_seconds: int,
     on_stage: Callable[[str], None],
   ) -> AnalysisRunOutcome:
-    del timeout_seconds, on_stage
+    del job_id, timeout_seconds, on_stage
     try:
       self.analyzer(video_id)
     except Exception as error:
@@ -133,35 +141,48 @@ class InlineAnalysisRunner:
     return AnalysisRunOutcome(True)
 
 
-def _run_analysis_child(video_id: str, messages: Any) -> None:
+def _run_analysis_child(video_id: str, job_id: str, messages: Any) -> None:
   from ..services.security_logging import configure_security_logging
   configure_security_logging()
+  # Keep the worker supervisor small: import native analysis dependencies only
+  # after the isolated child has started and a durable job has been claimed.
+  from ..analysis.pipeline import analyze_video
 
   def report_stage(stage: str) -> None:
-    messages.put({"type": "stage", "stage": stage})
+    messages.put({"type": "stage", "stage": stage, "job_id": job_id})
 
   try:
     analyze_video(video_id, progress_callback=report_stage)
   except BaseException as error:
     messages.put({
       "type": "failed",
+      "job_id": job_id,
       "error_type": type(error).__name__,
       "error": str(error),
     })
   else:
-    messages.put({"type": "completed"})
+    messages.put({"type": "completed", "job_id": job_id})
 
 
 class InterruptibleAnalysisRunner:
   """Run one analysis in a process that can be terminated at its hard deadline."""
 
-  def __init__(self, *, poll_seconds: float = 0.25) -> None:
+  def __init__(
+    self,
+    *,
+    poll_seconds: float = 0.25,
+    memory_sample_seconds: float = MEMORY_SAMPLE_SECONDS,
+    rss_reader: Callable[[int], int] = process_tree_rss_bytes,
+  ) -> None:
     self.poll_seconds = max(0.05, poll_seconds)
+    self.memory_sample_seconds = max(0.01, memory_sample_seconds)
+    self.rss_reader = rss_reader
 
   def run(
     self,
     video_id: str,
     *,
+    job_id: str,
     timeout_seconds: int,
     on_stage: Callable[[str], None],
   ) -> AnalysisRunOutcome:
@@ -169,15 +190,39 @@ class InterruptibleAnalysisRunner:
     messages = context.Queue()
     process = context.Process(
       target=_run_analysis_child,
-      args=(video_id, messages),
+      args=(video_id, job_id, messages),
       name=f"analysis-{video_id}",
     )
     process.start()
     deadline = time.monotonic() + timeout_seconds
+    next_memory_sample_at = time.monotonic()
     outcome: AnalysisRunOutcome | None = None
+    current_stage = "starting"
+    memory_peaks = ProcessMemoryPeaks()
+
+    def sample_memory() -> None:
+      rss_bytes = max(0, int(self.rss_reader(process.pid or 0)))
+      memory_peaks.record(current_stage, rss_bytes)
+
+    def with_memory(result: AnalysisRunOutcome) -> AnalysisRunOutcome:
+      peak_rss_mb, stage_peak_rss_mb = memory_peaks.as_megabytes()
+      return AnalysisRunOutcome(
+        succeeded=result.succeeded,
+        error=result.error,
+        failure_class=result.failure_class,
+        retryable=result.retryable,
+        peak_rss_bytes=memory_peaks.peak_rss_bytes,
+        stage_peak_rss_bytes=dict(memory_peaks.stage_peak_rss_bytes),
+        peak_rss_mb=peak_rss_mb,
+        stage_peak_rss_mb=stage_peak_rss_mb,
+      )
 
     try:
       while process.is_alive() and outcome is None:
+        now = time.monotonic()
+        if now >= next_memory_sample_at:
+          sample_memory()
+          next_memory_sample_at = now + self.memory_sample_seconds
         remaining = deadline - time.monotonic()
         if remaining <= 0:
           process.terminate()
@@ -185,18 +230,24 @@ class InterruptibleAnalysisRunner:
           if process.is_alive():
             process.kill()
             process.join(timeout=2.0)
-          return AnalysisRunOutcome(
+          return with_memory(AnalysisRunOutcome(
             False,
             f"Analysis exceeded its {timeout_seconds}-second deadline.",
             "analysis_timeout",
             False,
-          )
+          ))
         try:
-          message = messages.get(timeout=min(self.poll_seconds, remaining))
+          until_memory_sample = max(0.0, next_memory_sample_at - time.monotonic())
+          message = messages.get(
+            timeout=min(self.poll_seconds, remaining, until_memory_sample or self.memory_sample_seconds)
+          )
         except queue.Empty:
           continue
+        if message.get("type") == "stage":
+          current_stage = str(message.get("stage") or current_stage)
         outcome = self._handle_message(message, on_stage)
 
+      sample_memory()
       process.join(timeout=2.0)
       while outcome is None:
         try:
@@ -205,13 +256,13 @@ class InterruptibleAnalysisRunner:
           break
         outcome = self._handle_message(message, on_stage)
       if outcome is not None:
-        return outcome
-      return AnalysisRunOutcome(
+        return with_memory(outcome)
+      return with_memory(AnalysisRunOutcome(
         False,
         f"Analysis process exited with code {process.exitcode} without a completion result.",
         "worker_process_exit",
         True,
-      )
+      ))
     finally:
       if process.is_alive():
         process.terminate()
@@ -353,8 +404,22 @@ class AnalysisWorker:
       report_stage("downloading")
       outcome = self.runner.run(
         video_id,
+        job_id=job_id,
         timeout_seconds=timeout_seconds,
         on_stage=report_stage,
+      )
+      logger.info(
+        "Analysis process memory event=analysis_process_memory job_id=%s video_id=%s "
+        "sample_interval_ms=%s peak_rss_bytes=%s peak_rss_mb=%.2f "
+        "stage_peak_rss_bytes=%s stage_peak_rss_mb=%s "
+        "authority=render_metrics_and_events",
+        job_id,
+        video_id,
+        int(MEMORY_SAMPLE_SECONDS * 1000),
+        outcome.peak_rss_bytes,
+        outcome.peak_rss_mb,
+        json.dumps(outcome.stage_peak_rss_bytes or {}, sort_keys=True, separators=(",", ":")),
+        json.dumps(outcome.stage_peak_rss_mb or {}, sort_keys=True, separators=(",", ":")),
       )
       if not outcome.succeeded:
         next_status = self.jobs.fail(

@@ -415,6 +415,7 @@ class BarbellTrackerTest(unittest.TestCase):
           selected_side="left",
           rep_windows=[{"rep_index": 1, "start": 0.2, "bottom": 0.55, "end": 0.95}],
           target_fps=12.0,
+          retain_decoded_frames=True,
         )
 
     self.assertTrue(result["barbellPath"]["available"])

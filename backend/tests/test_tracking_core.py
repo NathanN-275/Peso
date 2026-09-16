@@ -5,7 +5,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 
@@ -380,6 +380,26 @@ class TrackingCoreTest(unittest.TestCase):
 
     self.assertEqual(frames, [])
     self.assertEqual(diagnostics["failure_reason"], "detector_error")
+
+  def test_owned_native_detector_is_closed_after_detection(self) -> None:
+    detector = MagicMock()
+    detector.name = "native-test"
+    detector.model_metadata = {}
+    detector.detect.return_value = []
+
+    with patch(
+      "app.analysis.tracking_core.runner._detector_from_config",
+      return_value=detector,
+    ):
+      detect_tracking_objects(
+        video_path="/tmp/source.mov",
+        pose_frames=[{"source_frame_index": 0, "timestamp_ms": 0}],
+        processed_width=200,
+        processed_height=100,
+        config=TrackingCoreConfig(yolo_mode="shadow"),
+      )
+
+    detector.close.assert_called_once_with()
 
   def test_yolo_decoder_maps_custom_class_scores_to_boxes(self) -> None:
     detector = YoloOnnxObjectDetector.__new__(YoloOnnxObjectDetector)

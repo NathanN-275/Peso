@@ -192,7 +192,8 @@ class AnalysisWorkerTest(unittest.TestCase):
     jobs.complete.return_value = True
     runner = MagicMock()
 
-    def run(_video_id, *, timeout_seconds, on_stage):
+    def run(_video_id, *, job_id, timeout_seconds, on_stage):
+      self.assertEqual(job_id, JOB_ID)
       self.assertEqual(timeout_seconds, 360)
       on_stage("pose")
       on_stage("barbell_tracking")

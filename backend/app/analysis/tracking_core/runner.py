@@ -87,13 +87,15 @@ def detect_tracking_objects(
     for frame in pose_frames
     if isinstance(frame.get("source_frame_index"), int)
   }
+  owned_detector = detector is None
+  active_detector: ObjectDetectorBackend | None = detector
   try:
-    detector = detector or _detector_from_config(config)
-    diagnostics["object_detector"] = detector.name
-    model_metadata = getattr(detector, "model_metadata", None)
+    active_detector = active_detector or _detector_from_config(config)
+    diagnostics["object_detector"] = active_detector.name
+    model_metadata = getattr(active_detector, "model_metadata", None)
     if isinstance(model_metadata, dict):
       diagnostics["detector_model"] = dict(model_metadata)
-    detection_frames = detector.detect(
+    detection_frames = active_detector.detect(
       video_path=video_path,
       width=width,
       height=height,
@@ -105,6 +107,9 @@ def detect_tracking_objects(
     diagnostics["error"] = str(error)
     diagnostics["processing_duration_ms"] = int((time.perf_counter() - started) * 1000)
     return [], diagnostics
+  finally:
+    if owned_detector and active_detector is not None:
+      active_detector.close()
 
   diagnostics.update({
     "available": bool(detection_frames),
@@ -143,11 +148,6 @@ def run_apache_v1_tracking(
     return _empty_result(diagnostics, started)
 
   if detection_frames is None:
-    detector = detector or _detector_from_config(config)
-    diagnostics["object_detector"] = detector.name
-    model_metadata = getattr(detector, "model_metadata", None)
-    if isinstance(model_metadata, dict):
-      diagnostics["detector_model"] = dict(model_metadata)
     detection_frames, detector_diagnostics = detect_tracking_objects(
       video_path=video_path,
       pose_frames=pose_frames,
@@ -156,6 +156,9 @@ def run_apache_v1_tracking(
       config=config,
       detector=detector,
     )
+    diagnostics["object_detector"] = detector_diagnostics.get("object_detector")
+    if detector_diagnostics.get("detector_model"):
+      diagnostics["detector_model"] = dict(detector_diagnostics["detector_model"])
     if detector_diagnostics.get("failure_reason"):
       diagnostics["failure_reason"] = detector_diagnostics["failure_reason"]
       diagnostics["detector_error"] = detector_diagnostics.get("error")
