@@ -132,6 +132,15 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: false
 
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trivy-results-${{ github.sha }}
+          path: trivy-results.json
+          if-no-files-found: ignore
+          retention-days: 90
+
       - name: Refuse candidate tag drift after verification
         env:
           EXPECTED_IMAGE_ID: ${{ steps.candidate.outputs.image_id }}

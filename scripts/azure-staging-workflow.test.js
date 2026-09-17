@@ -37,6 +37,19 @@ test('Only the exact locally tested and scanned image is published', () => {
   assert.doesNotMatch(source, /push: true|:main\s|docker logout|PUBLIC_DIGEST|imagetools inspect/);
 });
 
+test('Trivy report is retained when the blocking scan fails', () => {
+  const scan = source.indexOf('uses: aquasecurity/trivy-action@');
+  const upload = source.indexOf('name: Upload Trivy report');
+  const drift = source.indexOf('Refuse candidate tag drift after verification');
+  assert.ok(scan > 0 && upload > scan && drift > upload);
+  const diagnosticStep = source.slice(upload, drift);
+  assert.match(diagnosticStep, /if: always\(\)/);
+  assert.match(diagnosticStep, /name: trivy-results-\$\{\{ github\.sha \}\}/);
+  assert.match(diagnosticStep, /path: trivy-results\.json/);
+  assert.match(diagnosticStep, /if-no-files-found: ignore/);
+  assert.match(diagnosticStep, /retention-days: 90/);
+});
+
 test('Retired West US deployment cannot run when main changes', () => {
   assert.doesNotMatch(source, /AZURE_STAGING_DEPLOY_ENABLED|rg-peso-staging-westus2|az resource update|azure\/login|id-token: write/);
 });
