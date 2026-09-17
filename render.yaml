@@ -10,6 +10,8 @@ services:
     envVars:
       - key: BACKEND_ENV
         value: production
+      - key: PESO_DEPLOYMENT_ENVIRONMENT
+        value: production
       - key: BACKEND_CORS_ORIGINS
         sync: false
       - key: BACKEND_CORS_ALLOW_PRIVATE_NETWORK
@@ -24,6 +26,10 @@ services:
         generateValue: true
       - key: VIDEO_BUCKET
         value: videos
+      - key: UPLOAD_RESERVATIONS_ENABLED
+        value: "true"
+      - key: UPLOAD_STORAGE_PROVIDER
+        value: supabase
       - key: MAX_USER_IN_PROGRESS_VIDEOS
         value: "3"
       - key: ANALYSIS_PROFILE_MODE
@@ -43,6 +49,8 @@ services:
     envVars:
       - key: BACKEND_ENV
         value: production
+      - key: PESO_DEPLOYMENT_ENVIRONMENT
+        value: production
       - key: BACKEND_CORS_ORIGINS
         sync: false
       - key: BACKEND_CORS_ALLOW_PRIVATE_NETWORK
@@ -57,6 +65,10 @@ services:
         sync: false
       - key: VIDEO_BUCKET
         value: videos
+      - key: UPLOAD_RESERVATIONS_ENABLED
+        value: "true"
+      - key: UPLOAD_STORAGE_PROVIDER
+        value: supabase
       - key: MAX_USER_IN_PROGRESS_VIDEOS
         value: "3"
       - key: ANALYSIS_PROFILE_MODE

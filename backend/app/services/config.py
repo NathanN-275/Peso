@@ -61,6 +61,10 @@ DEFAULT_EXPORT_COOLDOWN_SECONDS = 30
 DEFAULT_MAX_SAVED_LIFT_EXPORT_BYTES = 50 * 1024 * 1024
 DEFAULT_ANALYSIS_TRACE_DIR = ".peso/analysis-traces"
 DEFAULT_ANALYSIS_TRACE_MAX_RUNS = 20
+SUPABASE_URL_BY_DEPLOYMENT_ENVIRONMENT = {
+  "student": "https://iseqgaewjpjcxrndibep.supabase.co",
+  "production": "https://jfgiydtrskpqxyorvvbc.supabase.co",
+}
 
 
 @dataclass(frozen=True)
@@ -217,8 +221,15 @@ def get_settings() -> Settings:
 
   backend_env = backend_env_raw or "development"
   supabase_url = os.getenv("SUPABASE_URL", "").strip()
-  if os.getenv("PESO_DEPLOYMENT_ENVIRONMENT") == "student" and supabase_url != "https://iseqgaewjpjcxrndibep.supabase.co":
-    raise RuntimeError("Student services require the isolated peso-staging Supabase project.")
+  deployment_environment = os.getenv("PESO_DEPLOYMENT_ENVIRONMENT", "").strip().lower()
+  if deployment_environment:
+    expected_supabase_url = SUPABASE_URL_BY_DEPLOYMENT_ENVIRONMENT.get(deployment_environment)
+    if expected_supabase_url is None:
+      raise RuntimeError("PESO_DEPLOYMENT_ENVIRONMENT must be either student or production.")
+    if supabase_url != expected_supabase_url:
+      raise RuntimeError(
+        f"{deployment_environment.capitalize()} services require their isolated Supabase project."
+      )
   supabase_service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
   cleanup_job_token = (
     os.getenv("STORAGE_CLEANUP_TOKEN", "").strip()
@@ -445,8 +456,14 @@ def get_settings() -> Settings:
       )
     if upload_reservations_enabled and upload_storage_provider == "azure" and len(budget_shutdown_token) < 32:
       raise RuntimeError("BUDGET_SHUTDOWN_TOKEN must contain at least 32 characters when production uploads are enabled.")
-    if upload_reservations_enabled and upload_storage_provider == "supabase" and os.getenv("PESO_DEPLOYMENT_ENVIRONMENT") != "student":
-      raise RuntimeError("Supabase upload reservations are restricted to the Student environment.")
+    if (
+      upload_reservations_enabled
+      and upload_storage_provider == "supabase"
+      and deployment_environment not in SUPABASE_URL_BY_DEPLOYMENT_ENVIRONMENT
+    ):
+      raise RuntimeError(
+        "Supabase upload reservations require PESO_DEPLOYMENT_ENVIRONMENT to be student or production."
+      )
 
   if cleanup_job_token is None and not (
     backend_env in {"development", "dev", "local", "test"} and allow_unauthenticated_dev_cleanup
