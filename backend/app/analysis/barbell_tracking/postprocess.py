@@ -74,6 +74,51 @@ def _interpolate_missing(
   return points, interpolated_count
 
 
+def _bridge_confirmed_short_coast_gap(
+  points: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+  """Add one low-confidence midpoint across a narrowly missed reacquisition.
+
+  This only extends an existing kinematic coast into a confirmed automatic
+  track, and only for gaps between 0.9 and 1.0 seconds. It does not bridge
+  arbitrary detection failures or longer occlusions.
+  """
+  if len(points) < 2:
+    return points, 0
+
+  bridged: list[dict[str, Any]] = [points[0]]
+  bridge_count = 0
+  for following in points[1:]:
+    previous = bridged[-1]
+    gap_seconds = float(following["time"]) - float(previous["time"])
+    should_bridge = (
+      0.9 < gap_seconds <= 1.0
+      and previous.get("trackingState") == "estimated"
+      and previous.get("estimatedSource") == "kinematic_coast"
+      and following.get("trackingState") == "automatic"
+    )
+    if should_bridge:
+      bridged.append({
+        "time": (float(previous["time"]) + float(following["time"])) / 2.0,
+        "x": (float(previous["x"]) + float(following["x"])) / 2.0,
+        "y": (float(previous["y"]) + float(following["y"])) / 2.0,
+        "confidence": round(
+          min(
+            float(previous.get("confidence") or 0.0),
+            float(following.get("confidence") or 0.0),
+            0.24,
+          ),
+          3,
+        ),
+        "trackingState": "estimated",
+        "estimatedSource": "confirmed_short_coast_gap",
+      })
+      bridge_count += 1
+    bridged.append(following)
+
+  return bridged, bridge_count
+
+
 def _remove_motion_outliers(points: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
   if len(points) < 3:
     return points, 0

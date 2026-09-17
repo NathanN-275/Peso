@@ -39,8 +39,9 @@ from .geometry import (
 )
 from .local_tracker import _make_tracking_lock, _track_local_patch
 from .pin_tracker import build_pin_assisted_barbell_result
-from .pose import _pose_bounds, _side_wrist_points
+from .pose import _pose_bounds, _pose_has_three_quarter_horizontal_offset, _side_wrist_points
 from .postprocess import (
+  _bridge_confirmed_short_coast_gap,
   _bridge_isolated_motion_outliers,
   _interpolate_missing,
   _remove_motion_outliers,
@@ -1340,6 +1341,7 @@ class BarbellTracker:
     pending_plate: dict[str, float] | None = None
     pending_confirmation_count = 0
     pending_miss_count = 0
+    pending_tracklet_points: list[dict[str, Any]] = []
     previous_gray = None
     detected_count = 0
     rejected_candidate_count = 0
@@ -1589,6 +1591,7 @@ class BarbellTracker:
           pending_plate = None
           pending_confirmation_count = 0
           pending_miss_count = 0
+          pending_tracklet_points = []
           previous_gray = None
           consecutive_local_failures = 0
           frame_index += 1
@@ -2455,6 +2458,7 @@ class BarbellTracker:
           pending_plate = None
           pending_confirmation_count = 0
           pending_miss_count = 0
+          pending_tracklet_points = []
           bootstrap_pose_relative_displacements = []
           bootstrap_rejection_reason_counts = {}
 
@@ -2635,6 +2639,7 @@ class BarbellTracker:
             pending_plate = None
             pending_confirmation_count = 0
             pending_miss_count = 0
+            pending_tracklet_points = []
 
         selected_descriptor = (
           max(
@@ -2775,7 +2780,7 @@ class BarbellTracker:
           if bootstrap_consistency_reason == "stationary_hardware_like":
             stationary_hardware_rejection_count += 1
 
-        if (
+        extends_pending_tracklet = bool(
           pending_plate
           and bootstrap_consistency_reason is None
           and (
@@ -2788,12 +2793,31 @@ class BarbellTracker:
               height=height,
             )
           )
-        ):
+        )
+        emitted_pending_bar_point = choose_automatic_emit_point(
+          final_point=selected_final_bar_point,
+          target_point=selected_descriptor["target_point"],
+        )
+        pending_tracklet_point = {
+          "sample_index": len(samples),
+          "rep_index": current_rep_index,
+          "plate_point": (selected_plate.x, selected_plate.y),
+          "point": {
+            "time": timestamp,
+            "x": emitted_pending_bar_point[0] / width,
+            "y": emitted_pending_bar_point[1] / height,
+            "confidence": float(selected_descriptor["final_bar_confidence"]),
+            "trackingState": "automatic",
+          },
+        }
+        if extends_pending_tracklet:
           pending_confirmation_count += 1
+          pending_tracklet_points.append(pending_tracklet_point)
           if pose_relative_displacement is not None:
             bootstrap_pose_relative_displacements.append(round(pose_relative_displacement, 3))
         else:
           pending_confirmation_count = 1
+          pending_tracklet_points = [pending_tracklet_point]
           bootstrap_pose_relative_displacements = [0.0]
         pending_plate = next_pending
         if pending_confirmation_count < INIT_CONFIRMATION_FRAMES:
@@ -2923,6 +2947,47 @@ class BarbellTracker:
           frame_index += 1
           continue
 
+        confirmed_target_offset = (
+          emitted_pending_bar_point[0] - selected_plate.x,
+          emitted_pending_bar_point[1] - selected_plate.y,
+        )
+        should_backfill_confirmed_tracklet = (
+          has_ever_locked
+          and _pose_has_three_quarter_horizontal_offset(
+            pose_frame,
+            width=width,
+            height=height,
+            selected_side=normalized_selected_side,
+          )
+        )
+        confirmed_prior_points = (
+          pending_tracklet_points[:-1]
+          if should_backfill_confirmed_tracklet
+          else []
+        )
+        for confirmed in confirmed_prior_points:
+          sample_index = int(confirmed["sample_index"])
+          if sample_index >= len(samples) or samples[sample_index] is not None:
+            continue
+          confirmed_plate_point = confirmed["plate_point"]
+          confirmed_pixel_point = (
+            confirmed_plate_point[0] + confirmed_target_offset[0],
+            confirmed_plate_point[1] + confirmed_target_offset[1],
+          )
+          confirmed_point = {
+            **confirmed["point"],
+            "x": confirmed_pixel_point[0] / width,
+            "y": confirmed_pixel_point[1] / height,
+          }
+          samples[sample_index] = confirmed_point
+          accepted_points_px.append(confirmed_pixel_point)
+          detected_count += 1
+          real_hub_detection_count += 1
+          confirmed_rep_index = confirmed["rep_index"]
+          if confirmed_rep_index is not None:
+            rep_detected_counts[confirmed_rep_index] = rep_detected_counts.get(confirmed_rep_index, 0) + 1
+          last_accepted_timestamp = float(confirmed_point["time"])
+
         tracklet_confirmation_count = max(tracklet_confirmation_count, pending_confirmation_count)
         confidence = final_bar_confidence
         point = {
@@ -3014,6 +3079,7 @@ class BarbellTracker:
         )
         samples.append(point)
         detected_count += 1
+        pending_tracklet_points = []
         previous_gray = gray
         if debug_writer:
           write_debug_frame(
@@ -3123,6 +3189,8 @@ class BarbellTracker:
       height=height,
     )
     points, outlier_removed_count = _remove_motion_outliers(points)
+    points, short_coast_gap_bridge_count = _bridge_confirmed_short_coast_gap(points)
+    interpolated_count += short_coast_gap_bridge_count
     manual_lane_points = (
       list((pin_lane_result.get("barbellPath") or {}).get("points") or [])
       if pin_lane_result

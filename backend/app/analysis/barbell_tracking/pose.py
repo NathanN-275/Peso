@@ -131,7 +131,21 @@ def _pose_bounds(
   torso_height = max(torso_height, height * 0.16)
 
   if shoulder:
-    x_margin = max(torso_height * 0.9, width * 0.25)
+    # In three-quarter footage the visible near plate can sit well outside the
+    # athlete's shoulder as they descend. Keep that plate inside the detector
+    # crop; the downstream collar, path, and motion checks still reject rack
+    # hardware admitted by the wider horizontal window.
+    minimum_width_ratio = (
+      0.36
+      if _pose_has_three_quarter_horizontal_offset(
+        pose_frame,
+        width=width,
+        height=height,
+        selected_side=selected_side,
+      )
+      else 0.25
+    )
+    x_margin = max(torso_height * 0.9, width * minimum_width_ratio)
     y_min = shoulder[1] - max(torso_height * 0.72, height * 0.16)
     y_max = shoulder[1] + max(torso_height * 0.42, height * 0.11)
     min_x = shoulder[0] - x_margin
@@ -150,3 +164,18 @@ def _pose_bounds(
     min(y_max, float(height)),
     shoulder,
   )
+
+
+def _pose_has_three_quarter_horizontal_offset(
+  pose_frame: dict[str, Any] | None,
+  *,
+  width: int,
+  height: int,
+  selected_side: str | None,
+) -> bool:
+  landmarks = _visible_landmarks(pose_frame)
+  shoulder = _side_point(landmarks, selected_side, "shoulder", width=width, height=height)
+  hip = _side_point(landmarks, selected_side, "hip", width=width, height=height)
+  if shoulder is None or hip is None:
+    return False
+  return abs(hip[0] - shoulder[0]) >= width * 0.03

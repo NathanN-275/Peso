@@ -20,7 +20,7 @@ PROFILE_SETTINGS = {
   "balanced_15fps_640px": (15.0, 640),
   "fast_12fps_640px": (12.0, 640),
 }
-MODEL_COMPLEXITIES = {"lite": 0, "full": 1}
+MODEL_COMPLEXITIES = {"lite": 0, "full": 1, "heavy": 2}
 TRACKER_POSE_MODES = {
   "fresh",
   "fixture",
@@ -220,7 +220,9 @@ def _required_label_gate(
   )
   failures: list[str] = []
   required_hits = 0
+  required_count = sum(not label.get("allowed_missing") for label in fixture["labels"])
   errors_px: list[float] = []
+  label_diagnostics: list[dict[str, Any]] = []
   for label in fixture["labels"]:
     if label.get("allowed_missing"):
       continue
@@ -228,6 +230,10 @@ def _required_label_gate(
     nearby = [point for point in points if abs(float(point["time"]) - label_time) <= 0.07]
     if not nearby:
       failures.append(f"missing point near frame {label['source_frame_index']}")
+      label_diagnostics.append({
+        "source_frame_index": int(label["source_frame_index"]),
+        "matched": False,
+      })
       continue
     closest = min(nearby, key=lambda point: abs(float(point["time"]) - label_time))
     target_x = float(label["target"][0]) / fixture_width * processed_width
@@ -236,6 +242,17 @@ def _required_label_gate(
       (float(closest["x"]) * processed_width) - target_x,
       (float(closest["y"]) * processed_height) - target_y,
     )
+    label_diagnostics.append({
+      "source_frame_index": int(label["source_frame_index"]),
+      "matched": True,
+      "matched_source_frame": round(float(closest["time"]) * float(fixture["fps"]), 2),
+      "point_px": [
+        round(float(closest["x"]) * processed_width, 2),
+        round(float(closest["y"]) * processed_height, 2),
+      ],
+      "target_px": [round(target_x, 2), round(target_y, 2)],
+      "error_px": round(error_px, 2),
+    })
     errors_px.append(error_px)
     if error_px > tolerance:
       failures.append(
@@ -246,18 +263,43 @@ def _required_label_gate(
 
   diagnostics = tracking.get("diagnostics") or {}
   max_point_gap_seconds = diagnostics.get("max_point_gap_seconds")
+  rep_windows = fixture.get("rep_windows") or [{"start": float("-inf"), "end": float("inf")}]
+  point_gaps = [
+    (
+      float(points[index]["time"]) - float(points[index - 1]["time"]),
+      float(points[index - 1]["time"]),
+      float(points[index]["time"]),
+    )
+    for index in range(1, len(points))
+    if any(
+      float(window["start"]) <= float(points[index - 1]["time"])
+      and float(points[index]["time"]) <= float(window["end"])
+      for window in rep_windows
+    )
+  ]
+  largest_point_gap = max(point_gaps, default=None)
   if not (tracking.get("barbellPath") or {}).get("available"):
     failures.append("barbell path unavailable")
-  if required_hits != 9:
-    failures.append(f"required label hits {required_hits}/9")
+  if required_hits != required_count:
+    failures.append(f"required label hits {required_hits}/{required_count}")
   if not isinstance(max_point_gap_seconds, (int, float)) or float(max_point_gap_seconds) > 0.9:
     failures.append("maximum visible point gap exceeds 0.9 seconds")
   return {
     "passed": not failures,
     "required_label_hits": required_hits,
-    "required_label_count": 9,
+    "required_label_count": required_count,
     "max_error_px": round(max(errors_px), 2) if errors_px else None,
     "tolerance_px": round(tolerance, 2),
+    "label_diagnostics": label_diagnostics,
+    "largest_point_gap": (
+      {
+        "seconds": round(largest_point_gap[0], 4),
+        "start_source_frame": round(largest_point_gap[1] * float(fixture["fps"]), 2),
+        "end_source_frame": round(largest_point_gap[2] * float(fixture["fps"]), 2),
+      }
+      if largest_point_gap
+      else None
+    ),
     "failures": failures,
   }
 
@@ -268,6 +310,8 @@ def _run_candidate_child(
   profile_id: str,
   model_variant: str,
   tracker_pose_mode: str,
+  pose_cache_path: str | None,
+  rep_index: int | None,
   messages: Any,
 ) -> None:
   from app.analysis.barbell_tracker import BarbellTracker
@@ -276,17 +320,32 @@ def _run_candidate_child(
   try:
     target_fps, max_dimension = PROFILE_SETTINGS[profile_id]
     fixture = json.loads(Path(fixture_path).read_text(encoding="utf-8"))
+    if rep_index is not None:
+      fixture["labels"] = [
+        label for label in fixture["labels"]
+        if int(label["rep_index"]) == rep_index
+      ]
+      fixture["rep_windows"] = [
+        window for window in fixture["rep_windows"]
+        if int(window["rep_index"]) == rep_index
+      ]
     messages.put({"type": "stage", "stage": "pose"})
     started = time.perf_counter()
-    estimation = PoseEstimator(config=PoseEstimatorConfig(
-      target_fps=target_fps,
-      max_frame_dimension=max_dimension,
-      model_complexity=MODEL_COMPLEXITIES[model_variant],
-      pose_backend="mediapipe",
-      pose_fallback_enabled=False,
-      analysis_profile_id=profile_id,
-      analysis_profile_mode="benchmark",
-    )).run(video_path)
+    pose_cache = Path(pose_cache_path) if pose_cache_path else None
+    if pose_cache is not None and pose_cache.exists():
+      estimation = json.loads(pose_cache.read_text(encoding="utf-8"))
+    else:
+      estimation = PoseEstimator(config=PoseEstimatorConfig(
+        target_fps=target_fps,
+        max_frame_dimension=max_dimension,
+        model_complexity=MODEL_COMPLEXITIES[model_variant],
+        pose_backend="mediapipe",
+        pose_fallback_enabled=False,
+        analysis_profile_id=profile_id,
+        analysis_profile_mode="benchmark",
+      )).run(video_path)
+      if pose_cache is not None:
+        pose_cache.write_text(json.dumps(estimation), encoding="utf-8")
     pose_ms = int((time.perf_counter() - started) * 1000)
     pose_comparison = _pose_fixture_comparison(estimation, fixture)
     tracker_pose_frames = _pose_frames_for_tracker(
@@ -315,6 +374,7 @@ def _run_candidate_child(
       processed_width=int(estimation["processed_frame_width"]),
       processed_height=int(estimation["processed_frame_height"]),
     )
+    diagnostics = tracking.get("diagnostics") or {}
     messages.put({
       "type": "result",
       "result": {
@@ -331,6 +391,22 @@ def _run_candidate_child(
         "pose_fixture_comparison": pose_comparison,
         "barbell_tracking_ms": tracking_ms,
         "benchmark_gates": gate,
+        "tracking_diagnostics": {
+          key: diagnostics.get(key)
+          for key in (
+            "detected_point_count",
+            "interpolated_point_count",
+            "max_point_gap_seconds",
+            "per_rep_coverage",
+            "reacquisition_count",
+            "reacquisition_success_count",
+            "path_reset_count",
+            "stale_prior_expiration_count",
+            "skipped_no_pose_frame_count",
+            "rejection_reason_counts",
+            "bad_candidate_rejection_counts",
+          )
+        },
       },
     })
   except BaseException as error:
@@ -348,6 +424,8 @@ def run_candidate(
   profile_id: str,
   model_variant: str,
   tracker_pose_mode: str = "fresh",
+  pose_cache_path: Path | None = None,
+  rep_index: int | None = None,
   timeout_seconds: int,
 ) -> dict[str, Any]:
   context = multiprocessing.get_context("spawn")
@@ -360,6 +438,8 @@ def run_candidate(
       profile_id,
       model_variant,
       tracker_pose_mode,
+      str(pose_cache_path) if pose_cache_path else None,
+      rep_index,
       messages,
     ),
   )
@@ -447,6 +527,8 @@ def main() -> int:
     choices=tuple(sorted(TRACKER_POSE_MODES)),
     default="fresh",
   )
+  parser.add_argument("--pose-cache", type=Path)
+  parser.add_argument("--rep-index", type=int, choices=(1, 2, 3))
   parser.add_argument("--timeout-seconds", type=int, default=600)
   args = parser.parse_args()
   report = run_candidate(
@@ -455,6 +537,8 @@ def main() -> int:
     profile_id=args.profile,
     model_variant=args.model,
     tracker_pose_mode=args.tracker_pose_mode,
+    pose_cache_path=args.pose_cache,
+    rep_index=args.rep_index,
     timeout_seconds=max(1, args.timeout_seconds),
   )
   print(json.dumps(report, indent=2, sort_keys=True))
