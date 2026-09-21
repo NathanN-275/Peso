@@ -1,6 +1,6 @@
 # Peso Product Requirements Document
 
-**Status:** Beta scope | **Updated:** 2026-08-25
+**Status:** Public web beta launch goal | **Updated:** 2026-09-21
 
 ## Product summary
 
@@ -73,4 +73,4 @@ Lifters can record a set, but reviewing it frame by frame is slow and subjective
 
 ## Source of truth
 
-This document describes product intent. The [technical design](TDD.md), [readiness review](PRR.md), `CONTEXT.md`, backend README, ADRs, and tests describe implementation and evidence.
+This document describes product intent. The dated [public web beta launch plan](../deployment/public-beta-launch-plan.md) is the current release goal and approval policy. The [technical design](TDD.md), [readiness review](PRR.md), `CONTEXT.md`, backend README, ADRs, and tests describe implementation and evidence.
