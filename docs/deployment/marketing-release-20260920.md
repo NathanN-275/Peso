@@ -135,3 +135,33 @@ an eventual release.
 - Repository policy suite: 213 passed; added dedicated marketing config test passed.
 - Production Blueprint API and worker both set `autoDeployTrigger: off`.
 - ADR 0017 records separate hosting; all full-beta blockers remain open.
+
+## Hosting and protection implementation — September 21, 02:24 UTC
+
+- Created `peso-marketing`, project ID `19cbad85-dd2d-4d3b-a24a-242de78d30af`.
+  Production and Deploy Preview visibility verified Private; deploy logs private.
+  Repository NathanN-275/Peso, production branch `production`, package `web`,
+  base `/`, output `dist`, branch deploys None, PR previews enabled.
+- Creation produced an initial private marketing deploy from `main` at
+  `8c2b3e91258691d97c9c220899135f23f04c82f5`, deploy `6ab092fd426764843e174cb0`,
+  before production branch configuration was saved. It used the project-ID-gated
+  marketing dispatcher. This is a bootstrap deploy, not the accepted release.
+- Protected release PR: https://github.com/NathanN-275/Peso/pull/46.
+  Active ruleset `22210122` retains every existing requirement and no bypasses;
+  added container-security, reservation-database-security, marketing-build,
+  and the observed exact `netlify/peso-marketing/deploy-preview` check.
+- Private marketing preview `6ab09376bd8bb800090f3fb6` passed the exact Netlify
+  check, with four pages, five redirects, three header rules, 26 total files
+  and 1.8 MB. Hosted inspection remains in progress.
+- Anonymous HEAD requests to the marketing preview and historical app permalink
+  `6a9234045e436787ff1076ed--peso-webapp.netlify.app` both returned HTTP 401.
+- GitGuardian incident `37243448` flagged literal `?Set` within the Bash
+  required-variable guard on line 5 of `scripts/configure_azure_scaler_role.sh`
+  in historical commit `99548d6`. Source and dashboard occurrence confirm this
+  is diagnostic text, not a password. Classified the exact incident as
+  “Not a secret (false positive)”; scanning remains enabled. No credentials
+  changed and no history rewrite or broad exclusion was used. A new commit
+  requests fresh PR scanning because the check rerequest API returned 404.
+- Local TypeScript check passed. Existing main workflow published a candidate
+  container image only; no backend runtime deployment was requested.
+- No domains moved and no public visibility enabled. Full-beta blockers remain open.
