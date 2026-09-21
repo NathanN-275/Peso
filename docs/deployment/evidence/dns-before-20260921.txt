@@ -1,0 +1,19 @@
+usepeso.com.		77	IN	A	75.2.60.5
+usepeso.com.		77	IN	A	99.83.231.61
+www.usepeso.com.	300	IN	CNAME	peso-webapp.netlify.app.
+peso-webapp.netlify.app. 120	IN	A	18.208.88.157
+peso-webapp.netlify.app. 120	IN	A	98.84.224.111
+www.usepeso.com.	300	IN	CNAME	peso-webapp.netlify.app.
+peso-webapp.netlify.app. 311	IN	AAAA	2600:1f18:16e:df01::259
+peso-webapp.netlify.app. 311	IN	AAAA	2600:1f18:16e:df01::258
+www.usepeso.com.	300	IN	CNAME	peso-webapp.netlify.app.
+usepeso.com.		300	IN	MX	8 route1.mx.cloudflare.net.
+usepeso.com.		300	IN	MX	39 route3.mx.cloudflare.net.
+usepeso.com.		300	IN	MX	62 route2.mx.cloudflare.net.
+www.usepeso.com.	300	IN	CNAME	peso-webapp.netlify.app.
+usepeso.com.		300	IN	TXT	"v=spf1 include:_spf.mx.cloudflare.net ~all"
+www.usepeso.com.	300	IN	CNAME	peso-webapp.netlify.app.
+usepeso.com.		86400	IN	NS	crystal.ns.cloudflare.com.
+usepeso.com.		86400	IN	NS	dean.ns.cloudflare.com.
+www.usepeso.com.	300	IN	CNAME	peso-webapp.netlify.app.
+www.usepeso.com.	300	IN	CNAME	peso-webapp.netlify.app.

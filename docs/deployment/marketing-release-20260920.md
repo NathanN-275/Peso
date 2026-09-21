@@ -13,8 +13,8 @@ The team default is verified Private for new projects; team ID
 `6a7264bb5030ed5c1b4a1fa3`, slug `nathann-275`, plan Free. GitHub authentication
 works with network access; the earlier invalid-token observation was caused
 by restricted network access. Production ruleset `22210122` is active with
-no bypass actors. Marketing project creation, hosted acceptance, exact preview
-check, DNS/TLS cutover, and action-time public confirmation remain pending.
+no bypass actors. Marketing project creation and exact preview checks are complete. Hosted acceptance,
+DNS/TLS cutover, and action-time public confirmation remain pending.
 This does not approve the public beta; all full-beta blockers in the
 [PRR](../product/PRR.md) and [beta evidence](public-beta-release-20260920.md)
 remain open.
@@ -171,3 +171,53 @@ Hosted QA then found that Astro's inline demo loader conflicts with `script-src
 'self'`. The loader is now an external fingerprinted asset; CSP remains strict,
 and the marketing verifier rejects executable inline scripts. Policy suite and
 marketing build were rerun before pushing this correction.
+
+
+## Hosted acceptance update — September 21
+
+- Release head `a024a9f02b933aa282f21c92dee61b7c08c45157`: all required
+  checks passed; GitGuardian passed. PR 46 remains open, unmerged, with clean
+  merge state and no protection bypass. Preview deploy is
+  `6ab096ecf37b7f000812b2ea` (27 files, 1.8 MB).
+- Desktop navigation, four pages, legal-page refresh, and external demo-video
+  playback passed. Browser navigation of `/app`, `/app/`, `/app/signup`,
+  `/app/_expo/static/js/web/old-bundle.js`, `/auth`, `/auth/`,
+  `/auth/turnstile/`, and `/auth/old.js` reached `/beta/`.
+  Netlify processed five redirect rules and three header rules successfully.
+  Authenticated raw response headers/status and a full network capture remain
+  pending; browser navigation alone does not establish the 302 status.
+- Observed page assets were marketing assets plus Netlify-injected private-site
+  tools. No signup, upload, analysis or email forms were present. Repository
+  artifact checks passed; this is not a substitute for a complete hosted
+  network inspection.
+- Nathan supplied a phone screenshot and is checking mobile navigation/legal
+  pages. Automated hosted viewport override did not take effect (actual viewport
+  remained 1280px), so hosted mobile acceptance is not yet recorded as passed.
+- With Nathan's explicit approval, disabled only the marketing Netlify Drawer.
+  Settings readback shows Drawer Disabled and heads-up display Disabled. A fresh
+  preview has no collaboration iframe; Netlify's private-site `nl-hud-frame`
+  remains. The white browser toolbar area in the phone screenshot is not proven
+  to have the same cause as the removed collaboration iframe.
+- Marketing environment-variable UI explicitly states no variables are set.
+  Form detection is disabled. No backend variables or authentication origins
+  were changed.
+- App production and Deploy Preview visibility were rechecked as Private.
+  Anonymous URL inventory is in `evidence/app-deploy-privacy-20260921.json`:
+  40 responses were 401, 12 were 404, and three were 500. Netlify UI identifies
+  the three 500 URLs as canceled/failed builds with deployment skipped:
+  `6ab095daf5ba6800088c7297` canceled;
+  `6ab095d8e56cba00081134fa` and `6ab092eb1b0a150008b1b6b3` failed.
+  No app content was returned; 500 itself is not evidence of authentication.
+- Render was rechecked: live deploy `dep-daaed1qjnfac738a8cig`, commit
+  `6a9a07180cd3306df4d92c3cf7d8849d3d890288`, Auto-Deploy selector text `Off`.
+  No backend deployment or service resumption was performed.
+- DNS snapshot is in `evidence/dns-before-20260921.txt`. Apex is assigned to
+  peso-webapp with www redirect; www CNAME points to peso-webapp.netlify.app.
+  Cloudflare nameservers, MX routing and SPF records must be preserved. Full
+  DNS-zone inventory and domain/TLS cutover remain pending.
+- Usage after private bootstrap, September 20 around 22:33 EDT: Free plan,
+  17.7/300 credits consumed, 282.3 remaining; production deploy 15 credits,
+  11,809 requests (2.4 credits), bandwidth 0.3, compute/AI zero. Refresh before
+  launch. No paid upgrade was purchased.
+- Marketing stays Private. Domain moves and public exposure have not occurred.
+  All full-beta blockers remain open.
