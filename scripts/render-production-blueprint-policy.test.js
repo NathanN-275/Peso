@@ -18,6 +18,8 @@ test('production Render services use isolated production Supabase reservations',
   const worker = serviceBlock('peso-analysis-worker');
 
   for (const block of [api, worker]) {
+    assert.match(block, /autoDeployTrigger: off/);
+    assert.doesNotMatch(block, /autoDeployTrigger: (?:commit|checksPass)/);
     assert.match(block, /PESO_DEPLOYMENT_ENVIRONMENT\n\s+value: production/);
     assert.match(block, /UPLOAD_RESERVATIONS_ENABLED\n\s+value: "true"/);
     assert.match(block, /UPLOAD_STORAGE_PROVIDER\n\s+value: supabase/);

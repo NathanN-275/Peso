@@ -5,7 +5,54 @@ deploys cost 15 credits each, while Deploy Previews and branch deploys do not
 consume production-deploy credits. Bandwidth and web requests still consume
 credits in every deploy context.
 
-## One-time configuration
+## Public marketing release (current launch)
+
+The public marketing launch is information-only and does not clear public-beta
+blockers. `npm run web:build:marketing` cleans `dist`, builds Astro, removes
+all authentication output, generates forced temporary app/auth redirects, and
+verifies the final artifact. It needs no app/backend credentials. The dedicated `peso-marketing` project uses `web/netlify.toml` in every context.
+Set its package directory to `web` in Netlify UI, base to repository root,
+publish directory to `dist`, production branch to `production`, branch deploys
+to none, and Deploy Previews to enabled/private. Do not copy app environment
+variables, auth configuration, functions, forms, snippets, or app rewrites.
+The separate configuration preserves marketing cache/security headers and
+blocks browser connections and form submissions with CSP.
+
+The shared dispatcher selects `web:build:release` only for app project
+`230da8eb-f00e-45d4-ba54-95f2e26f21c4`, `CONTEXT=branch-deploy`, and `BRANCH=main`.
+All other selections fail closed to marketing, including previews from `main`.
+The app project's ignore command skips production builds for this release;
+private branch/preview builds retain change filtering. Generated `_redirects`
+force temporary 302 redirects from `/app`, `/app/*`, `/auth`, and `/auth/*` to
+`/beta`, including historical bundle paths.
+
+Follow the [marketing checklist](../product/PRR.md#public-marketing-launch-checklist)
+and [dated evidence](marketing-release-20260920.md). Before pushing or merging,
+verify live backend deployment triggers: the historical `main` → `production`
+diff includes backend changes, so file filtering alone is not proof of safety.
+Disable the live production backend auto-deploy trigger and verify it before a
+release merge; retain the recorded live backend version. Editing a Blueprint
+alone does not change an existing service's live settings.
+
+Keep both projects private during preparation. Keep the app project private permanently for this launch.
+A private-preview setting does not prove old production permalinks remain
+protected when production is made public. Inventory and verify every old
+app-containing deploy URL. If isolation cannot be established, stop the release.
+Do not change visibility to experiment with protection. Obtain action-time
+confirmation only after all gates pass and the marketing deploy is published
+privately. On isolation failure, restore Private immediately; while public,
+rollback is allowed only to a verified marketing-only artifact.
+
+Capture the new deploy ID, commit, URL, timestamp, backend identity, billing
+cycle, and production/bandwidth/request/compute/total credits. The historical
+baseline below is not a current launch baseline.
+
+## Private/public beta configuration (future launch)
+
+The following app-specific configuration and acceptance applies to the beta,
+not the information-only marketing launch.
+
+### One-time configuration
 
 Before changing any branch setting, record the live state in the baseline table
 below and locate the Git commit attached to the currently published deploy.
@@ -38,7 +85,7 @@ If the current published commit is not an ancestor of `main`, review the first
 `main` to `production` release carefully because it reconciles the live and
 integration histories.
 
-## Release workflow
+## Public beta release workflow (future launch)
 
 Normal feature and fix pull requests target `main`. Netlify provides a Deploy
 Preview for review and maintains a stable branch-deploy version of `main`, but
@@ -57,14 +104,14 @@ Batch non-urgent changes and target no more than five production deploys per
 month. An urgent security, authentication, or availability fix can be released
 immediately through the same pull-request path.
 
-For a faulty release, use **Netlify > Deploys > Publish deploy** to restore the
+For a faulty beta release after beta approval, use **Netlify > Deploys > Publish deploy** to restore the
 last known-good production deploy. A rollback republishes an existing deploy and
 does not consume production-deploy credits. Follow with a corrective change on
 `main` so the next release does not reintroduce the fault.
 
 ## Build filtering
 
-`scripts/netlify-ignore-build.js` stops a build only when every changed path is
+After its unconditional app-production skip, `scripts/netlify-ignore-build.js` stops a build when every changed path is
 in a known non-web area: backend, dashboard, docs, Supabase migrations, GitHub
 workflow metadata, or root Markdown documentation. Any web, shared application,
 asset, dependency, configuration, mixed, empty, or unresolved change continues
@@ -100,6 +147,9 @@ should report a Netlify cache hit. Never cache authenticated backend responses,
 including the isolated Render beta API.
 
 ## Usage baseline and monitoring
+
+For the marketing launch, remain on the existing Free plan. The future-beta
+upgrade guidance below is not authorization to purchase an upgrade.
 
 Capture **Usage & billing** values immediately before the optimized release.
 

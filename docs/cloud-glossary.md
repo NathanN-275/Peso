@@ -2,6 +2,11 @@
 
 | Term | Meaning in Peso |
 | --- | --- |
+| Public marketing launch | Information-only public website at `/`, `/beta`, `/privacy`, and `/terms`; no signup, uploads, analysis, or email collection. It does not approve the public beta. |
+| Marketing hosting project | Dedicated `peso-marketing` Netlify project for marketing-only artifacts; production may become public after acceptance, while previews remain private. |
+| Private app hosting project | Existing `peso-webapp` Netlify project, including staging, previews, and historical deploys; stays private with production builds skipped until a separate beta release. |
+| Production backend freeze | Live Render auto-deploy off, with its deploy ID and commit retained; no backend deployment, migration, credential change, or service resumption during marketing launch. |
+| Public beta launch | Separate release enabling authenticated side-view squat analysis only after every full-beta operational and acceptance gate passes. |
 | Student environment | The single non-production Azure environment whose West US 3 workloads live in the legacy-named `peso-student-centralus-rg`; never a synonym for production. |
 | Student compute pause | Reversible suspension of only the Student API and worker: API ingress disabled, worker scaler set to `SELECT 0`, active worker executions stopped, and compute verified at zero. It retains Azure infrastructure and does not guarantee a literal $0 bill. |
 | Render beta | The isolated non-production pair `peso-beta-api` and `peso-beta-analysis-worker`, backed only by `peso-staging` and the private Netlify `main` branch; never a synonym for the production Render services. |

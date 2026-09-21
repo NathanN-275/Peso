@@ -16,9 +16,9 @@ The release gate for a defined scope. It records evidence, known limits, require
 
 ## Marketing Site
 
-The public, statically generated Peso website at `/`, `/privacy`, and `/terms`.
-It explains the US web beta and links into the Web App, but it does not share a
-client bundle, routing runtime, or authenticated state with the Web App.
+The information-only Peso website at `/`, `/beta`, `/privacy`, and `/terms`.
+It explains the future US web beta without signup, uploads, analysis, email
+collection, or authenticated state. Publishing it does not launch the Web App.
 
 ## Web App
 
