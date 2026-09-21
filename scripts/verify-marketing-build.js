@@ -15,6 +15,10 @@ function verifyMarketingBuild(dist) {
       if (file.endsWith('.html')) pages.push(path.relative(dist, file));
       if (!/\.(html|js|css|json)$/.test(file)) continue;
       const content = readFileSync(file, 'utf8');
+      if (file.endsWith('.html')) {
+        assert.doesNotMatch(content, /<script\b(?![^>]*\bsrc=)[^>]*>\s*\S/i,
+          `Inline script blocked by marketing CSP in ${file}`);
+      }
       assert.doesNotMatch(content, /supabase|onrender\.com|turnstile|EXPO_PUBLIC_|_expo|XMLHttpRequest|WebSocket|sendBeacon|\bfetch\s*\(/i, `App/backend code in ${file}`);
       assert.doesNotMatch(content, /(?:href|src|action)=["']\/(?:app|auth)(?:[\/"'?#])|<form\b|<input\b/i, `App entry or collection form in ${file}`);
     }

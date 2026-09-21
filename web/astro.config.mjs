@@ -9,6 +9,7 @@ export default defineConfig({
   vite: {
     build: {
       cssMinify: 'lightningcss',
+      assetsInlineLimit: 0,
     },
   },
 });

@@ -42,3 +42,9 @@ test('marketing gate rejects missing forced redirects and extra HTML pages', (t)
   writeFileSync(path.join(root, '_redirects'), '/app/* /app/index.html 200\n');
   assert.throws(() => verifyMarketingBuild(root));
 });
+
+test('marketing gate rejects inline scripts blocked by the hosted CSP', (t) => {
+  const root = fixture(t);
+  writeFileSync(path.join(root, 'index.html'), '<script type="module">document.querySelector("video")</script>');
+  assert.throws(() => verifyMarketingBuild(root), /Inline script blocked/);
+});

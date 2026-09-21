@@ -165,3 +165,9 @@ an eventual release.
 - Local TypeScript check passed. Existing main workflow published a candidate
   container image only; no backend runtime deployment was requested.
 - No domains moved and no public visibility enabled. Full-beta blockers remain open.
+
+GitGuardian's fresh check on `7355f84` passed after exact false-positive triage.
+Hosted QA then found that Astro's inline demo loader conflicts with `script-src
+'self'`. The loader is now an external fingerprinted asset; CSP remains strict,
+and the marketing verifier rejects executable inline scripts. Policy suite and
+marketing build were rerun before pushing this correction.

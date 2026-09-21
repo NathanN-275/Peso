@@ -15,6 +15,8 @@ test('marketing home defers the optimized demo video and preserves accessible co
   const homePage = await readFile(homePagePath, 'utf8');
   const globalStyles = await readFile(globalStylesPath, 'utf8');
   const demoVideoStats = await stat(demoVideoPath);
+  const demoScript = await readFile(path.join(projectRoot, 'web/src/scripts/demo-video.js'), 'utf8');
+  assert.match(homePage, /src=\{demoScriptUrl\}/);
 
   assert.match(homePage, /src="\/demo\/peso-demo-thumbnail\.jpg"/);
   assert.match(homePage, /peso-pose-overlay\.mp4\?url/);
@@ -26,9 +28,9 @@ test('marketing home defers the optimized demo video and preserves accessible co
   assert.match(homePage, /\bplaysinline\b/);
   assert.match(homePage, /preload="none"/);
   assert.match(homePage, /kind="descriptions"/);
-  assert.match(homePage, /IntersectionObserver/);
-  assert.match(homePage, /intersectionRatio >= 0\.25/);
-  assert.match(homePage, /prefers-reduced-motion: reduce/);
+  assert.match(demoScript, /IntersectionObserver/);
+  assert.match(demoScript, /intersectionRatio >= 0\.25/);
+  assert.match(demoScript, /prefers-reduced-motion: reduce/);
   assert.doesNotMatch(homePage, /peso-demo-video\.gif/);
   assert.match(homePage, /class="product-outline"/);
   assert.match(homePage, /class="demo-outline"/);
