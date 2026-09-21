@@ -301,3 +301,23 @@ and successful prior tests were retained; no repeat deploy was triggered.
   domain move and post-cutover TLS must finish first. Then ask Nathan immediately
   before making only marketing production public, keeping previews and app private.
   All full-beta blockers remain open.
+
+
+## Cloudflare zone inventory continuation — September 21
+
+- Signed-in Cloudflare DNS UI now accessible; zone ID
+  `19ca8408385bfaa58c66b3beb9de4582`. Captured all 12 records (UI confirms
+  1–12 of 12) in `evidence/cloudflare-zone-pre-cutover-20260921.json`.
+- Apex is actually a DNS-only CNAME to `apex-loadbalancer.netlify.com` with
+  Auto TTL; prior public A answers are flattened results, not two configured
+  A records. Preserve this CNAME during cutover unless Netlify explicitly
+  requires another target. WWW is DNS-only CNAME `peso-webapp.netlify.app`,
+  Auto TTL. All ten unrelated MX/TXT records must remain byte-for-byte intact.
+- No DNS, domain, visibility, backend, credential or authentication changes.
+  Marketing production/previews were rechecked Private before this inventory.
+- Supported browser inspection lacks authenticated raw response/network export.
+  Nathan selected guided DevTools capture as fallback and was given steps to
+  export a sanitized HAR excluding cookies and authorization headers. Capture
+  remains pending; do not substitute asset inventory for this required gate.
+- Cutover and public confirmation remain pending; rollback not invoked because
+  assignments remain unchanged. Every full-beta blocker remains open.
