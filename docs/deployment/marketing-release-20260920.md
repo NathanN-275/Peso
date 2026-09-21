@@ -2,7 +2,8 @@
 
 ## Decision
 
-**Separate-project implementation in progress; publication remains gated.**
+**Private production published; DNS cutover and public exposure remain gated.**
+See the September 21 continuation below for current state; earlier sections are historical evidence.
 Existing local marketing work is preserved. On September 21 at 02:10 UTC,
 Render live auto-deploy was changed to Off and verified through its API
 (`autoDeploy=no`, `autoDeployTrigger=off`). The retained live deploy is still
@@ -220,4 +221,83 @@ marketing build were rerun before pushing this correction.
   11,809 requests (2.4 credits), bandwidth 0.3, compute/AI zero. Refresh before
   launch. No paid upgrade was purchased.
 - Marketing stays Private. Domain moves and public exposure have not occurred.
+  All full-beta blockers remain open.
+
+
+## Private production continuation — September 21, 2026, approximately 18:20 UTC
+
+Nathan confirmed mobile acceptance and instructed continuation after PR 46 merged.
+The working tree was clean at entry (`main`, `3c65cfb`). Existing implementation
+and successful prior tests were retained; no repeat deploy was triggered.
+
+### Release identity and usage
+
+- GitHub confirms PR 46 merged at `2026-09-21T18:15:01Z`, merge commit
+  `d92dfea5334d338cf7af842f0d1b3672ca3d1cc9`; remote production points there.
+- Marketing project `19cbad85-dd2d-4d3b-a24a-242de78d30af` automatically published
+  deploy `6ab17428436e50000838783f` privately from that commit. Build ran
+  14:15:07–14:15:26 EDT; 27 files, 1.8 MB, four generated pages, five redirect
+  rules and three header rules processed without errors.
+- Netlify UI confirms production Private, Deploy Previews Private, logs private,
+  package `web`, root base, `dist`, marketing-only build/verifier, production
+  branch `production`, no branch deploys, PR previews enabled.
+- Usage snapshot: Free plan, September 4–October 3 cycle; two production deploys
+  / 30 credits, 12,445 requests / 2.5 credits, bandwidth 0.4 credits, compute and
+  AI zero; total 32.9/300 credits, 267.1 remaining. No upgrade or extra build.
+
+### Verification completed and remaining
+
+- Authenticated production browser verified `/`, `/beta/`, `/privacy/`, `/terms/`;
+  navigation through privacy, terms and beta passed, terms and beta refresh passed.
+  Every page had zero form/input controls. Observed assets were same-origin
+  marketing assets and Netlify private-owner HUD; no backend assets observed.
+  Asset inventory is not a full network capture and does not prove absence of
+  runtime backend requests. Full authenticated network capture remains pending.
+- Browser navigations `/app`, `/app/`, `/app/signup`,
+  `/app/_expo/static/js/web/old-bundle.js`, `/auth`, `/auth/`,
+  `/auth/turnstile/`, `/auth/old.js` all reached `/beta/`.
+  Authenticated raw 302 responses and actual security-header responses remain
+  pending; source configuration and processed Netlify rules are supporting
+  evidence, not a substitute for those response checks.
+- Deploy file browser contains only beta/privacy/terms page directories,
+  marketing-assets/demo directories and root marketing/configuration files.
+  Four intended HTML pages; no app/auth directory. Mobile acceptance is recorded
+  from Nathan's instruction, not a new automated viewport test.
+- App project `230da8eb-f00e-45d4-ba54-95f2e26f21c4` production and previews remain
+  Private. Main branch deploys and PR previews remain enabled; builds Active.
+  Merge-triggered production deploy `6ab1742831f2590008630728` is canceled;
+  repository ignore command unconditionally skips this app production context.
+  Published app deploy remains `6a9234045e436787ff1076ed`.
+- Fresh anonymous HEAD inventory is in
+  `evidence/private-production-probes-20260921.json`: 45 HTTP 401, 12 HTTP 404,
+  three HTTP 500 and one HTTP 301 across 61 probes. Historical app results are
+  unchanged (40/12/3); the three failed/canceled artifacts remain non-serving,
+  and HTTP 500 is not authentication evidence. Marketing production, its exact
+  permalink, PR 46 alias and recorded preview permalink all return 401.
+- Render dashboard verifies service `srv-d9poevht0dsc73d07d3g`, live deploy
+  `dep-daaed1qjnfac738a8cig`, commit
+  `6a9a07180cd3306df4d92c3cf7d8849d3d890288`, branch production, Auto-Deploy Off.
+  No backend runtime request or deployment, migration, credential change,
+  authentication-origin change, service resumption or protection bypass occurred.
+
+### DNS, TLS, and rollback checkpoint
+
+- `evidence/dns-pre-cutover-20260921.txt` records fresh public DNS: apex A
+  `75.2.60.5` and `99.83.231.61`; www CNAME `peso-webapp.netlify.app`;
+  Cloudflare MX, SPF and nameservers unchanged from prior evidence.
+- Netlify still assigns apex primary and www automatic redirect to peso-webapp.
+  Its Let's Encrypt certificate covers both domains, auto-renews before
+  November 26, and normal certificate-validating curl requests succeed:
+  apex returns 401, www returns 301 to apex. This is pre-cutover TLS evidence.
+- Cloudflare is signed out. Nathan was asked to complete sign-in because its
+  Continue action explicitly accepts subscription terms. Full DNS-zone inventory
+  is unavailable until sign-in; public DNS queries cannot inventory all records.
+- No domain/DNS assignment was changed. Rollback is not invoked; the previous
+  assignment remains intact. Do not move domains until the full zone baseline
+  and remaining private acceptance checks are available. Preserve unrelated
+  records; if cutover fails, retain Private and restore the above assignment.
+- Public action-time confirmation has NOT been requested or granted. It is not
+  yet the final gate: private raw headers/network checks, Cloudflare inventory,
+  domain move and post-cutover TLS must finish first. Then ask Nathan immediately
+  before making only marketing production public, keeping previews and app private.
   All full-beta blockers remain open.
