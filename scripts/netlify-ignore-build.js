@@ -1,4 +1,5 @@
 const { execFileSync } = require('node:child_process');
+const { APP_SITE_ID } = require('./netlify-build');
 
 const NON_WEB_DIRECTORIES = [
   '.github/',
@@ -57,6 +58,11 @@ function listChangedFiles(environment = process.env, runGit = execFileSync) {
 }
 
 function main() {
+  if (process.env.SITE_ID === APP_SITE_ID && process.env.CONTEXT === 'production') {
+    console.log('Skipping app production build until the separately reviewed beta release.');
+    process.exitCode = 0;
+    return;
+  }
   try {
     const changedFiles = listChangedFiles();
     const exitCode = netlifyIgnoreExitCode(changedFiles);

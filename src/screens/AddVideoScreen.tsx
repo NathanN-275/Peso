@@ -25,8 +25,18 @@ export default function AddVideoScreen({
       <View style={styles.container}>
         <View style={styles.content}>
           {/* The record action stays first because it is the primary path. */}
-          <Button label="Record New Video" onPress={onRecordVideoPress} style={styles.actionButton} />
-          <Button label="Upload Video" onPress={onUploadVideoPress} style={styles.actionButton} />
+          <Button
+            label="Record New Video"
+            onPress={onRecordVideoPress}
+            style={styles.actionButton}
+            testID="add-record-video"
+          />
+          <Button
+            label="Upload Video"
+            onPress={onUploadVideoPress}
+            style={styles.actionButton}
+            testID="add-upload-video"
+          />
         </View>
 
         <BottomNav

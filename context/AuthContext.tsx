@@ -1,7 +1,6 @@
 import { ReactNode, createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Session, User } from '@supabase/supabase-js';
-import * as ExpoLinking from 'expo-linking';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { supabase, supabaseConfigError } from '../lib/supabase';
 
 type AuthContextValue = {
@@ -10,26 +9,24 @@ type AuthContextValue = {
   initializing: boolean;
   configError: string | null;
   passwordRecoveryMode: boolean;
-  signInWithEmail: (email: string, password: string, captchaToken?: string) => Promise<void>;
+  signInWithEmail: (email: string, password: string, captchaToken: string) => Promise<void>;
   signUpWithEmail: (
     email: string,
     password: string,
-    profile?: {
+    profile: {
       name?: string;
       username?: string;
       phone?: string;
-    },
-    captchaToken?: string
+    } | undefined,
+    captchaToken: string
   ) => Promise<{
     session: Session | null;
     user: User | null;
     requiresEmailConfirmation: boolean;
   }>;
-  resetPasswordForEmail: (email: string, captchaToken?: string) => Promise<void>;
+  resetPasswordForEmail: (email: string, captchaToken: string) => Promise<void>;
   updatePassword: (password: string) => Promise<void>;
   activatePasswordRecoveryMode: () => void;
-  sendPhoneOtp: (phone: string) => Promise<void>;
-  verifyPhoneOtp: (phone: string, token: string) => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -92,6 +89,14 @@ function getErrorName(error: unknown) {
   return typeof error.name === 'string' ? error.name : null;
 }
 
+function requireCaptchaToken(captchaToken: string) {
+  if (!captchaToken?.trim()) {
+    throw new Error('Complete the security check and try again.');
+  }
+
+  return captchaToken;
+}
+
 function getSignInErrorMessage(error: unknown) {
   const message = getErrorMessage(error);
   const normalizedMessage = message?.toLowerCase() ?? '';
@@ -108,6 +113,10 @@ function getSignInErrorMessage(error: unknown) {
 
   if (name === 'AuthRetryableFetchError' || normalizedMessage.includes('failed to fetch')) {
     return AUTH_SERVICE_UNAVAILABLE_MESSAGE;
+  }
+
+  if (normalizedMessage.includes('captcha') || normalizedMessage.includes('turnstile')) {
+    return 'Security verification failed. Complete the security check and try again.';
   }
 
   return message ?? 'Unable to log in.';
@@ -182,7 +191,7 @@ function getAuthRedirectUrl(route: 'login' | 'reset' = 'reset') {
       : undefined;
   }
 
-  return route === 'reset' ? ExpoLinking.createURL('reset-password') : undefined;
+  return route === 'reset' ? 'pesoapp://reset-password' : 'pesoapp://login';
 }
 
 async function ensureProfile(user: User) {
@@ -325,6 +334,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    const supabaseClient = supabase;
+    if (!supabaseClient || Platform.OS === 'web') {
+      return;
+    }
+
+    const updateRefreshState = (state: string) => {
+      if (state === 'active') {
+        supabaseClient.auth.startAutoRefresh();
+      } else {
+        supabaseClient.auth.stopAutoRefresh();
+      }
+    };
+
+    updateRefreshState(AppState.currentState);
+    const appStateSubscription = AppState.addEventListener('change', updateRefreshState);
+
+    return () => {
+      appStateSubscription.remove();
+      supabaseClient.auth.stopAutoRefresh();
+    };
+  }, []);
+
   const value: AuthContextValue = {
     session,
     user: session?.user ?? null,
@@ -337,10 +369,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
       }
 
+      const verifiedCaptchaToken = requireCaptchaToken(captchaToken);
       const { error } = await supabase.auth.signInWithPassword({
         email,
         password,
-        options: captchaToken ? { captchaToken } : undefined,
+        options: { captchaToken: verifiedCaptchaToken },
       });
 
       if (error) {
@@ -354,6 +387,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
       }
 
+      const verifiedCaptchaToken = requireCaptchaToken(captchaToken);
       const trimmedUsername = profile?.username?.trim();
       const trimmedName = profile?.name?.trim();
       const trimmedPhone = profile?.phone?.trim();
@@ -362,7 +396,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         password,
         options: {
           ...(getAuthRedirectUrl('login') ? { emailRedirectTo: getAuthRedirectUrl('login') } : {}),
-          ...(captchaToken ? { captchaToken } : {}),
+          captchaToken: verifiedCaptchaToken,
           data: {
             ...(trimmedName ? { name: trimmedName } : {}),
             ...(trimmedUsername ? { username: trimmedUsername } : {}),
@@ -388,10 +422,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
       }
 
+      const verifiedCaptchaToken = requireCaptchaToken(captchaToken);
       const redirectTo = getAuthRedirectUrl();
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         ...(redirectTo ? { redirectTo } : {}),
-        ...(captchaToken ? { captchaToken } : {}),
+        captchaToken: verifiedCaptchaToken,
       });
 
       if (error) {
@@ -425,33 +460,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // The app switches into recovery UI as soon as a reset link is detected.
       pendingRecoveryLinkRef.current = true;
       setPasswordRecoveryMode(true);
-    },
-    async sendPhoneOtp(phone) {
-      // Phone verification follows the same auth context boundary.
-      if (!supabase) {
-        throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
-      }
-
-      const { error } = await supabase.auth.signInWithOtp({ phone });
-
-      if (error) {
-        throw error;
-      }
-    },
-    async verifyPhoneOtp(phone, token) {
-      if (!supabase) {
-        throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
-      }
-
-      const { error } = await supabase.auth.verifyOtp({
-        phone,
-        token,
-        type: 'sms',
-      });
-
-      if (error) {
-        throw error;
-      }
     },
     async signOut() {
       if (!supabase) {

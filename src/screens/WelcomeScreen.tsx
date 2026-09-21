@@ -56,13 +56,17 @@ export default function WelcomeScreen({ onLogin, onCreateAccount }: WelcomeScree
             />  
           </View>
             <View className="items-center">
-              <Button label="Log in" onPress={onLogin} />
+              <Button label="Log in" onPress={onLogin} testID="welcome-login" />
             </View>
             <View
               className="items-center"
               style={{ marginTop: tokens.spacing.buttonGap }}
             >
-              <Button label="Create an Account" onPress={onCreateAccount} />
+              <Button
+                label="Create an Account"
+                onPress={onCreateAccount}
+                testID="welcome-signup"
+              />
             </View>
           </View>
         </View>

@@ -16,9 +16,9 @@ The release gate for a defined scope. It records evidence, known limits, require
 
 ## Marketing Site
 
-The public, statically generated Peso website at `/`, `/privacy`, and `/terms`.
-It explains the US web beta and links into the Web App, but it does not share a
-client bundle, routing runtime, or authenticated state with the Web App.
+The information-only Peso website at `/`, `/beta`, `/privacy`, and `/terms`.
+It explains the future US web beta without signup, uploads, analysis, email
+collection, or authenticated state. Publishing it does not launch the Web App.
 
 ## Web App
 
@@ -26,6 +26,20 @@ The browser-only Peso product mounted beneath `/app`. It uses the shared Peso
 visual language, Peso Accounts, and Saved Lift Library as mobile while retaining
 browser-specific submission rules. The authenticated Web App uses the same
 durable analysis queue as native clients.
+
+## Production Backend
+
+The current hosted API and analysis worker on Render. Render remains
+authoritative for production, and the production frontend backend URL does not
+change as part of Student environment testing.
+
+## Student Environment
+
+The single non-production Azure Container Apps environment defined by ADR 0012.
+It is an isolated test backend for the stable private Netlify `main` branch
+deploy and is never a synonym for production or a production cutover. Its
+permanent database is the isolated peso-staging Supabase project
+(`iseqgaewjpjcxrndibep`); production PesoDatabase is outside this boundary.
 
 ## Peso Account
 
@@ -48,12 +62,33 @@ and client restarts. Public stages are Queued, Downloading, Pose, Barbell
 Tracking, Saving, Ready, and Failed. Stage timestamps and the worker heartbeat
 are durable; percentages are not inferred.
 
+## Upload admission
+
+**Upload Reservation**:
+A temporary, owner-bound allocation of capacity for one submitted lift video.
+_Avoid_: Upload permission, upload slot
+
+**Verified Upload**:
+A submitted lift video whose actual contents and media limits have been checked and accepted for analysis.
+_Avoid_: Uploaded video when verification has not finished
+
+**Media Validation Job**:
+A bounded verification pass that determines whether a submitted video qualifies as a Verified Upload; it does not evaluate lifting technique.
+_Avoid_: Recording Quality Advisory, Analysis Job
+
 ## Analysis Activity
 
 The owner-scoped list of Analysis Jobs that are queued, processing, ready for
 review, or failed. It is the user's resumable path back to an unsaved Analysis
 Run and is not part of the Saved Lift Library. The client refreshes it on app
 or browser resume and polls only while foregrounded work is active.
+
+## Analysis Recovery Action
+
+The user-safe next step for a failed Analysis Job. It is either retrying a
+transient or interrupted job with the same source video, or deleting an
+unreadable/problematic upload before submitting a replacement. It is distinct
+from tracking Recovery, which reacquires a physical tracking identity.
 
 ## Retired Demo Analysis
 

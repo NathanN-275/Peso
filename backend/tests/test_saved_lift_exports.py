@@ -27,7 +27,6 @@ def settings(**overrides) -> Settings:
     "backend_env": "test",
     "supabase_url": "https://example.supabase.co",
     "supabase_service_role_key": "service-role",
-    "supabase_jwt_secret": "secret",
     "cleanup_job_token": "cleanup-secret",
     "export_cache_ttl_hours": 6,
     "signed_url_ttl_seconds": 300,

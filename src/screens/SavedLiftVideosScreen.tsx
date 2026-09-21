@@ -427,7 +427,7 @@ export default function SavedLiftVideosScreen({
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} testID="history-screen">
       <View style={styles.container}>
         <View style={styles.topBar}>
           <Pressable accessibilityRole="button" onPress={onBack} style={styles.backButton}>

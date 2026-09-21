@@ -13,6 +13,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import Button from '../components/Button';
 import Input from '../components/Input';
+import AuthChallenge from '../components/auth/AuthChallenge';
 import tokens from '../theme/tokens';
 
 const titleImage = require('../../ResetPassword.png');
@@ -28,6 +29,9 @@ export default function ResetPasswordScreen({ onBack }: ResetPasswordScreenProps
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaError, setCaptchaError] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
 
   const handleSubmit = async () => {
     // Reset links are only accepted for normalized email addresses.
@@ -45,18 +49,26 @@ export default function ResetPasswordScreen({ onBack }: ResetPasswordScreenProps
       return;
     }
 
+    if (!captchaToken) {
+      setInfoMessage(null);
+      setErrorMessage('Complete the security check and try again.');
+      return;
+    }
+
     setSubmitting(true);
     setErrorMessage(null);
     setInfoMessage(null);
 
     try {
       // Success means the email was queued, not that the password has changed yet.
-      await resetPasswordForEmail(normalizedIdentifier);
+      await resetPasswordForEmail(normalizedIdentifier, captchaToken);
       setInfoMessage('Reset email sent. Open the link in your email to choose a new password.');
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to send reset email.');
     } finally {
       setSubmitting(false);
+      setCaptchaToken(null);
+      setCaptchaReset((value) => value + 1);
     }
   };
 
@@ -98,6 +110,7 @@ export default function ResetPasswordScreen({ onBack }: ResetPasswordScreenProps
 
             <Input
               label="Email"
+              testID="auth-email"
               placeholder="name@example.com"
               value={identifier}
               onChangeText={setIdentifier}
@@ -107,12 +120,22 @@ export default function ResetPasswordScreen({ onBack }: ResetPasswordScreenProps
               editable={!submitting}
             />
 
-            {errorMessage ? (
+            <View style={{ marginTop: 20 }}>
+              <Text style={styles.securityTitle}>Security check</Text>
+              <AuthChallenge
+                action="reset_password"
+                resetSignal={captchaReset}
+                onTokenChange={setCaptchaToken}
+                onError={setCaptchaError}
+              />
+            </View>
+
+            {errorMessage || captchaError ? (
               <Text
                 className="text-text-primary"
                 style={{ marginTop: 16, fontSize: 14, lineHeight: 20, color: '#FF8A8A' }}
               >
-                {errorMessage}
+                {errorMessage ?? captchaError}
               </Text>
             ) : null}
 
@@ -128,8 +151,9 @@ export default function ResetPasswordScreen({ onBack }: ResetPasswordScreenProps
             <View style={{ marginTop: 34, gap: 26 }}>
               <Button
                 label={submitting ? 'Sending...' : 'Submit'}
+                testID="auth-submit"
                 onPress={handleSubmit}
-                disabled={submitting}
+                disabled={submitting || !captchaToken}
                 style={{ width: '100%' }}
               />
               <Button
@@ -147,6 +171,12 @@ export default function ResetPasswordScreen({ onBack }: ResetPasswordScreenProps
 }
 
 const styles = StyleSheet.create({
+  securityTitle: {
+    color: '#D0D5DD',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
   titleImage: {
     alignSelf: 'center',
     width: '180%',

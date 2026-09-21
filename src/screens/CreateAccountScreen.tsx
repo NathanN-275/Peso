@@ -5,6 +5,7 @@ import {
   Image,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,6 +14,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import Button from '../components/Button';
 import Input from '../components/Input';
+import AuthChallenge from '../components/auth/AuthChallenge';
 import tokens from '../theme/tokens';
 
 const titleImage = require('../../CreateAccount.png');
@@ -27,6 +29,8 @@ type CreateAccountErrors = {
   phone?: string;
   email?: string;
   password?: string;
+  residency?: string;
+  terms?: string;
   general?: string;
 };
 
@@ -41,6 +45,34 @@ function isValidUsPhoneNumber(phone: string) {
   return /^\d{10}$/.test(digitsOnlyPhone) || /^1\d{10}$/.test(digitsOnlyPhone);
 }
 
+function AgreementRow({
+  checked,
+  label,
+  onPress,
+  testID,
+}: {
+  checked: boolean;
+  label: string;
+  onPress: () => void;
+  testID: string;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked }}
+      accessibilityLabel={label}
+      testID={testID}
+      onPress={onPress}
+      style={styles.agreementRow}
+    >
+      <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
+        {checked ? <Text style={styles.checkboxMark}>✓</Text> : null}
+      </View>
+      <Text style={styles.agreementLabel}>{label}</Text>
+    </Pressable>
+  );
+}
+
 export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps) {
   // Collect profile fields before calling Supabase signup.
   const { signUpWithEmail } = useAuth();
@@ -49,9 +81,14 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
   const [phoneNumber, setPhoneNumber] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [usResident, setUsResident] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<CreateAccountErrors>({});
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaError, setCaptchaError] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
 
   const clearFieldError = (field: keyof CreateAccountErrors) => {
     setErrors((currentErrors) => {
@@ -100,8 +137,20 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
 
     if (!trimmedPassword) {
       nextErrors.password = 'Password is required.';
-    } else if (trimmedPassword.length < 6) {
-      nextErrors.password = 'Password should be at least 6 characters.';
+    } else if (trimmedPassword.length < 8) {
+      nextErrors.password = 'Password should be at least 8 characters.';
+    }
+
+    if (!usResident) {
+      nextErrors.residency = 'Confirm United States residency to join the beta.';
+    }
+
+    if (!termsAccepted) {
+      nextErrors.terms = 'Accept the beta Terms and Privacy Policy to continue.';
+    }
+
+    if (!captchaToken) {
+      nextErrors.general = 'Complete the security check and try again.';
     }
 
     if (Object.keys(nextErrors).length > 0) {
@@ -109,15 +158,24 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
       return;
     }
 
+    if (!captchaToken) {
+      return;
+    }
+
     setSubmitting(true);
 
     try {
       // Signup may return a session immediately or require email confirmation.
-      const result = await signUpWithEmail(normalizedEmail, trimmedPassword, {
-        name: trimmedName,
-        username: trimmedUsername,
-        phone: trimmedPhoneNumber,
-      });
+      const result = await signUpWithEmail(
+        normalizedEmail,
+        trimmedPassword,
+        {
+          name: trimmedName,
+          username: trimmedUsername,
+          phone: trimmedPhoneNumber,
+        },
+        captchaToken
+      );
 
       if (result.session) {
         return;
@@ -144,6 +202,8 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
       });
     } finally {
       setSubmitting(false);
+      setCaptchaToken(null);
+      setCaptchaReset((value) => value + 1);
     }
   };
 
@@ -216,6 +276,7 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
               <View>
                 <Input
                   label="Name"
+                  testID="auth-name"
                   placeholder="Value"
                   value={name}
                   onChangeText={(value) => {
@@ -231,6 +292,7 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
               <View>
                 <Input
                   label="Username"
+                  testID="auth-username"
                   placeholder="Value"
                   value={username}
                   onChangeText={(value) => {
@@ -246,6 +308,7 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
               <View>
                 <Input
                   label="Phone Number"
+                  testID="auth-phone"
                   placeholder="Value"
                   value={phoneNumber}
                   onChangeText={(value) => {
@@ -262,6 +325,7 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
               <View>
                 <Input
                   label="Email"
+                  testID="auth-email"
                   placeholder="Value"
                   value={email}
                   onChangeText={(value) => {
@@ -280,7 +344,8 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
               <View>
                 <Input
                   label="Password"
-                  placeholder="Value"
+                  testID="auth-password"
+                  placeholder="At least 8 characters"
                   value={password}
                   onChangeText={(value) => {
                     setPassword(value);
@@ -296,8 +361,45 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
               </View>
             </View>
 
-            {errors.general ? (
-              <Text style={styles.generalErrorText}>{errors.general}</Text>
+            <View style={styles.agreements}>
+              <AgreementRow
+                checked={usResident}
+                label="I confirm that I reside in the United States."
+                testID="auth-us-resident"
+                onPress={() => {
+                  setUsResident((value) => !value);
+                  clearFieldError('residency');
+                }}
+              />
+              {errors.residency ? (
+                <Text style={styles.fieldErrorText}>{errors.residency}</Text>
+              ) : null}
+              <AgreementRow
+                checked={termsAccepted}
+                label="I agree to the beta Terms and acknowledge the Privacy Policy."
+                testID="auth-terms"
+                onPress={() => {
+                  setTermsAccepted((value) => !value);
+                  clearFieldError('terms');
+                }}
+              />
+              {errors.terms ? (
+                <Text style={styles.fieldErrorText}>{errors.terms}</Text>
+              ) : null}
+            </View>
+
+            <View style={{ marginTop: 20 }}>
+              <Text style={styles.securityTitle}>Security check</Text>
+              <AuthChallenge
+                action="signup"
+                resetSignal={captchaReset}
+                onTokenChange={setCaptchaToken}
+                onError={setCaptchaError}
+              />
+            </View>
+
+            {errors.general || captchaError ? (
+              <Text style={styles.generalErrorText}>{errors.general ?? captchaError}</Text>
             ) : null}
 
             {infoMessage ? (
@@ -312,8 +414,9 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
             <View style={{ marginTop: 24, gap: 12 }}>
               <Button
                 label={submitting ? 'Creating...' : 'Create Account'}
+                testID="auth-submit"
                 onPress={handleCreateAccount}
-                disabled={submitting}
+                disabled={submitting || !captchaToken || !usResident || !termsAccepted}
                 style={{ width: '100%' }}
               />
               <Button label="Back" onPress={onBack} disabled={submitting} style={{ width: '100%' }} />
@@ -326,6 +429,45 @@ export default function CreateAccountScreen({ onBack }: CreateAccountScreenProps
 }
 
 const styles = StyleSheet.create({
+  agreements: {
+    gap: 8,
+    marginTop: 20,
+  },
+  agreementRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  agreementLabel: {
+    color: '#D0D5DD',
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  checkbox: {
+    alignItems: 'center',
+    borderColor: '#667085',
+    borderRadius: 4,
+    borderWidth: 1,
+    height: 22,
+    justifyContent: 'center',
+    width: 22,
+  },
+  checkboxChecked: {
+    backgroundColor: '#2457B2',
+    borderColor: '#82AEFF',
+  },
+  checkboxMark: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  securityTitle: {
+    color: '#D0D5DD',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
   fieldErrorText: {
     marginTop: 6,
     fontSize: 14,

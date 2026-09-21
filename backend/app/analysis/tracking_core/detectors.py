@@ -25,6 +25,9 @@ class ObjectDetectorBackend(Protocol):
   ) -> list[DetectionFrame]:
     raise NotImplementedError
 
+  def close(self) -> None:
+    raise NotImplementedError
+
 
 class NullObjectDetector:
   name = "null_detector"
@@ -39,6 +42,9 @@ class NullObjectDetector:
     timestamps_by_source_index: dict[int, float] | None = None,
   ) -> list[DetectionFrame]:
     return []
+
+  def close(self) -> None:
+    return None
 
 
 class FixtureObjectDetector:
@@ -104,6 +110,9 @@ class FixtureObjectDetector:
         )
       )
     return frames
+
+  def close(self) -> None:
+    return None
 
 
 class YoloOnnxObjectDetector:
@@ -196,6 +205,8 @@ class YoloOnnxObjectDetector:
     return frames
 
   def _detect_image(self, image: np.ndarray) -> list[Detection]:
+    if self._session is None or self._input_name is None:
+      raise RuntimeError("YOLO tracking detector is closed.")
     tensor, scale, pad_x, pad_y = self._preprocess(image)
     outputs = self._session.run(None, {self._input_name: tensor})
     boxes, scores, class_ids = self._decode_output(outputs[0])
@@ -286,6 +297,11 @@ class YoloOnnxObjectDetector:
       scores.append(score)
       class_ids.append(class_id)
     return boxes, scores, class_ids
+
+  def close(self) -> None:
+    self._input = None
+    self._input_name = None
+    self._session = None
 
 
 def _sha256_file(path: Path) -> str:

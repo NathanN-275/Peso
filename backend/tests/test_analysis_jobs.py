@@ -50,7 +50,7 @@ class AnalysisJobRepositoryTest(unittest.TestCase):
 
     client.rpc.assert_called_once_with(
       "enqueue_video_analysis_job",
-      {"p_video_id": VIDEO_ID, "p_allow_completed": False},
+      {"p_video_id": VIDEO_ID, "p_allow_completed": False, "p_max_user_jobs": 3, "p_max_global_jobs": 20},
     )
     self.assertEqual(job["id"], JOB_ID)
 
@@ -96,6 +96,22 @@ class AnalysisJobRepositoryTest(unittest.TestCase):
 
     self.assertEqual(client.rpc.call_args_list[0].args[0], "report_video_analysis_job_progress")
     self.assertEqual(client.rpc.call_args_list[1].args[0], "record_video_analysis_job_failure")
+
+  def test_cancel_for_video_uses_the_durable_cancellation_rpc(self) -> None:
+    client = MagicMock()
+    client.rpc.return_value.execute.return_value.data = 1
+
+    with patch(
+      "app.services.analysis_job_repository.get_supabase_admin_client",
+      return_value=client,
+    ):
+      cancelled = AnalysisJobRepository().cancel_for_video(VIDEO_ID)
+
+    client.rpc.assert_called_once_with(
+      "cancel_video_analysis_jobs",
+      {"p_video_id": VIDEO_ID},
+    )
+    self.assertEqual(cancelled, 1)
 
 
 class AnalysisWorkerTest(unittest.TestCase):
@@ -157,6 +173,17 @@ class AnalysisWorkerTest(unittest.TestCase):
       retryable=False,
     )
 
+  def test_invalid_stream_wins_over_traceback_timeout_text(self) -> None:
+    failure = (
+      "Video analysis failed: 400: Uploaded file contents do not contain a valid video stream.\n"
+      "_validate_video_stream(temp_path, self.ffprobe_timeout_seconds)"
+    )
+
+    self.assertEqual(
+      classify_analysis_failure("RuntimeError", failure),
+      ("invalid_video", False),
+    )
+
   def test_worker_persists_runner_stages_and_uses_scaled_timeout(self) -> None:
     jobs = MagicMock()
     jobs.claim.return_value = {"id": JOB_ID, "video_id": VIDEO_ID, "attempt_count": 1}
@@ -165,7 +192,8 @@ class AnalysisWorkerTest(unittest.TestCase):
     jobs.complete.return_value = True
     runner = MagicMock()
 
-    def run(_video_id, *, timeout_seconds, on_stage):
+    def run(_video_id, *, job_id, timeout_seconds, on_stage):
+      self.assertEqual(job_id, JOB_ID)
       self.assertEqual(timeout_seconds, 360)
       on_stage("pose")
       on_stage("barbell_tracking")

@@ -334,6 +334,42 @@ class PipelineFallbackTest(unittest.TestCase):
     self.assertIsNotNone(analyzer.analyze.call_args.kwargs["pose_validation_override"])
     self.assertTrue(analyzer.analyze.call_args.kwargs["pose_repair_diagnostics"]["enabled"])
 
+  def test_pose_repair_does_not_retain_raw_frames_when_trace_is_disabled(self) -> None:
+    pipeline = self._import_pipeline()
+    estimation = self._estimation()
+
+    with patch(
+      "app.analysis.pipeline.repair_selected_side_pose",
+      return_value=(list(estimation["frames"]), {"enabled": True}),
+    ):
+      repaired = pipeline._apply_pose_repair(
+        estimation,
+        preserve_raw_frames=False,
+      )
+
+    self.assertNotIn("raw_pose_frames", repaired)
+
+  def test_barbell_tracking_disables_decoded_frame_cache_without_trace(self) -> None:
+    pipeline = self._import_pipeline()
+    tracker = MagicMock()
+    tracker.track.return_value = {
+      "barbellPath": {"available": False, "points": []},
+      "diagnostics": {},
+    }
+    result = {"reps": [], "diagnostics": {}}
+    estimation = self._estimation()
+
+    with patch("app.analysis.pipeline.BarbellTracker", return_value=tracker):
+      pipeline._attach_barbell_tracking(
+        result=result,
+        video={"id": "video-1", "exercise_type": "squat", "view_type": "side"},
+        file_path="/tmp/source.mov",
+        estimation=estimation,
+        trace_enabled=False,
+      )
+
+    self.assertFalse(tracker.track.call_args.kwargs["retain_decoded_frames"])
+
   def test_candidate_yolo_detections_reach_pose_repair_before_analysis(self) -> None:
     pipeline = self._import_pipeline()
 

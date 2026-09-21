@@ -41,7 +41,8 @@ function resolveRequestPath(requestUrl) {
   }
 
   if (pathname === '/app' || pathname.startsWith('/app/')) {
-    return path.join(distRoot, 'app', 'index.html');
+    const appIndex = path.join(distRoot, 'app', 'index.html');
+    return fs.existsSync(appIndex) ? appIndex : null;
   }
 
   return null;
@@ -49,6 +50,19 @@ function resolveRequestPath(requestUrl) {
 
 http
   .createServer((request, response) => {
+    const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
+    const redirectsPath = path.join(distRoot, '_redirects');
+    if (fs.existsSync(redirectsPath)) {
+      for (const line of fs.readFileSync(redirectsPath, 'utf8').split('\n')) {
+        const [from, to, status] = line.trim().split(/\s+/);
+        if (status === '302!' && (pathname === from ||
+          (from.endsWith('/*') && pathname.startsWith(from.slice(0, -1))))) {
+          response.writeHead(302, { Location: to, 'Cache-Control': 'no-store' });
+          response.end();
+          return;
+        }
+      }
+    }
     const filePath = resolveRequestPath(request.url ?? '/');
     if (!filePath) {
       response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });

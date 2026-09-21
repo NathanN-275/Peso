@@ -59,7 +59,6 @@ Required variables:
 ```bash
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
-SUPABASE_JWT_SECRET=
 ```
 
 Optional variables:

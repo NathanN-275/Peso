@@ -109,6 +109,7 @@ export default function WorkoutDetailsSheet({
             <Text style={styles.optionalLabel}>(optional)</Text>
           </View>
           <TextInput
+            testID="workout-reps"
             accessibilityLabel="Reps performed"
             value={repsText}
             onChangeText={setRepsText}
@@ -128,6 +129,7 @@ export default function WorkoutDetailsSheet({
           </View>
           <View style={styles.loadRow}>
             <TextInput
+              testID="workout-load"
               accessibilityLabel="Weight lifted"
               value={loadText}
               onChangeText={setLoadText}
@@ -163,6 +165,7 @@ export default function WorkoutDetailsSheet({
             <Text style={styles.optionalLabel}>(optional)</Text>
           </View>
           <TextInput
+            testID="workout-notes"
             accessibilityLabel="Workout notes"
             value={userNotes}
             onChangeText={setUserNotes}
@@ -177,6 +180,7 @@ export default function WorkoutDetailsSheet({
         {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 
         <Pressable
+          testID="workout-save"
           accessibilityRole="button"
           onPress={() => {
             void submit();

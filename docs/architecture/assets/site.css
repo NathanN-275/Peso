@@ -154,6 +154,22 @@ video {
   white-space: nowrap;
 }
 
+.site-nav a.site-nav__beta {
+  margin-left: 5px;
+  border: 1px solid rgba(23, 105, 255, 0.22);
+  background: rgba(23, 105, 255, 0.09);
+  color: var(--blue-dark);
+  box-shadow: 0 5px 16px rgba(23, 105, 255, 0.11);
+}
+
+.site-nav a.site-nav__beta:hover,
+.site-nav a.site-nav__beta[aria-current="page"] {
+  border-color: rgba(23, 105, 255, 0.34);
+  background: rgba(23, 105, 255, 0.16);
+  color: var(--blue-dark);
+  box-shadow: 0 7px 20px rgba(23, 105, 255, 0.16);
+}
+
 .site-nav a::after {
   position: absolute;
   right: 14px;
@@ -206,19 +222,25 @@ h1 {
   margin-bottom: 24px;
   font-size: clamp(48px, 8vw, 104px);
   font-weight: 600;
-  letter-spacing: -0.07em;
-  line-height: 0.92;
+  letter-spacing: -0.045em;
+  line-height: 1;
 }
 
 h2 {
   font-size: clamp(34px, 5vw, 62px);
   font-weight: 600;
-  letter-spacing: -0.055em;
-  line-height: 0.98;
+  letter-spacing: -0.035em;
+  line-height: 1.06;
 }
 
 h3 {
-  letter-spacing: -0.025em;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+}
+
+h4 {
+  letter-spacing: -0.01em;
+  line-height: 1.25;
 }
 
 .eyebrow,
@@ -565,12 +587,14 @@ h3 {
 
 .scribble-note {
   position: absolute;
-  left: 8px;
+  left: -160px;
   bottom: 42px;
   z-index: 2;
   margin: 0;
   color: var(--blue-light);
+  width: 170px;
   font-size: 18px;
+  line-height: 1.05;
   transform: rotate(-4deg);
 }
 
@@ -610,24 +634,14 @@ h3 {
   position: relative;
 }
 
-.hero--compact .shell::after {
-  position: absolute;
-  top: -34px;
-  right: 0;
-  color: rgba(23, 105, 255, 0.12);
-  content: "↘";
-  font-family: "Caveat", cursive;
-  font-size: clamp(90px, 14vw, 170px);
-  line-height: 1;
-  transform: rotate(8deg);
-}
-
 .hero--compact h1 {
-  max-width: 950px;
+  max-width: 780px;
   position: relative;
   z-index: 1;
   margin-bottom: 24px;
-  font-size: clamp(46px, 7vw, 84px);
+  font-size: clamp(44px, 6.2vw, 76px);
+  letter-spacing: -0.04em;
+  line-height: 1.04;
 }
 
 .hero--compact .hero__lead {
@@ -1594,6 +1608,7 @@ h3 {
   position: relative;
   overflow: hidden;
   background: var(--navy);
+  border-radius: calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px) 0 0;
 }
 
 .demo-card--wide .demo-card__media {
@@ -1713,7 +1728,7 @@ h3 {
 .link-card h3 {
   margin: 48px 0 10px;
   font-size: 22px;
-  line-height: 1.08;
+  line-height: 1.16;
 }
 
 .link-card p {

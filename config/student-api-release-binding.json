@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "status": "pending",
+  "api_url": null,
+  "image_reference": null,
+  "azure_deployment_outputs_sha256": null,
+  "source_workflow_run_id": null
+}

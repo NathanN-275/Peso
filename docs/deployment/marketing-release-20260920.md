@@ -1,0 +1,223 @@
+# Public marketing release evidence — 2026-09-20
+
+## Decision
+
+**Separate-project implementation in progress; publication remains gated.**
+Existing local marketing work is preserved. On September 21 at 02:10 UTC,
+Render live auto-deploy was changed to Off and verified through its API
+(`autoDeploy=no`, `autoDeployTrigger=off`). The retained live deploy is still
+`dep-daaed1qjnfac738a8cig`, commit `6a9a07180cd3306df4d92c3cf7d8849d3d890288`.
+No backend deployment, migration, credential change, or service resumption occurred.
+
+The team default is verified Private for new projects; team ID
+`6a7264bb5030ed5c1b4a1fa3`, slug `nathann-275`, plan Free. GitHub authentication
+works with network access; the earlier invalid-token observation was caused
+by restricted network access. Production ruleset `22210122` is active with
+no bypass actors. Marketing project creation and exact preview checks are complete. Hosted acceptance,
+DNS/TLS cutover, and action-time public confirmation remain pending.
+This does not approve the public beta; all full-beta blockers in the
+[PRR](../product/PRR.md) and [beta evidence](public-beta-release-20260920.md)
+remain open.
+
+## Implemented
+
+- `web:build:marketing` cleans `dist`, builds Astro, removes authentication
+  output, emits forced 302 redirects, and validates the final artifact.
+  Failure removes partial output. The final artifact contains exactly `/`,
+  `/beta`, `/privacy`, and `/terms` plus marketing assets.
+- Signup, sign-in, and prototype links now lead to “Beta coming soon.” No
+  forms or email collection were added. Legal pages distinguish the current
+  informational site from the future beta draft; draft legal approval remains
+  a separate beta requirement.
+- Generated `_redirects` sends `/app`, `/app/*`, `/auth`, and `/auth/*` to
+  `/beta` using `302!`. This takes precedence over the retained private-beta
+  rewrite in TOML. The local preview server applies these generated redirects.
+- Netlify's dispatcher requires app project ID `230da8eb-f00e-45d4-ba54-95f2e26f21c4` and selects the private-beta release build only for the
+  stable `branch-deploy` of `main`. Production, release PR previews from
+  `main`, other previews, and unknown contexts default to marketing.
+- `web:build:private-beta` retains the combined Astro/Expo build;
+  `web:build:release` retains its environment validation. Switching builds
+  clears stale output, including marketing redirects.
+- CI's new `marketing-build` job checks a clean marketing build, performs an
+  actual Expo export, and checks another marketing build without app credentials.
+
+## Local verification
+
+| Check | Result |
+| --- | --- |
+| Clean marketing build | Pass; four pages, no retained app/auth output or detected backend call code |
+| Actual Expo export followed by marketing build | Pass; exported app bundles removed |
+| Repository policy suite | 210 passed before dispatcher addition; its additional context-selection test passed separately (211 tests total) |
+| App typecheck | Pass |
+| Whitespace/diff check | Pass |
+| Desktop and mobile browser review | Home reviewed at desktop and 390px mobile; beta notice and privacy page reviewed on mobile; no home horizontal overflow |
+| Navigation and refresh | Beta CTA, legal links, terms refresh, and redirected beta refresh passed locally |
+| Local HTTP smoke | Four public pages returned 200; nine app/auth paths (including stale JS asset paths) returned 302 with Location `/beta` |
+| Security header configuration | Existing policy tests pass; no change to deployed header configuration |
+| Private Netlify release preview | Not created; live redirects, header responses, injected snippets, and runtime request inspection still require hosted acceptance |
+
+Local output is not evidence of Netlify's access-control isolation. The
+loopback preview does not emulate Netlify authentication or security headers.
+
+## Historical observations before separate-project implementation
+
+Netlify UI observed on September 20, 2026 (EDT):
+
+- Project `peso-webapp`, ID `230da8eb-f00e-45d4-ba54-95f2e26f21c4`.
+- Production visibility **Private**; Deploy Preview visibility **Private**.
+- Currently published deploy `6a9234045e436787ff1076ed`, published August 28,
+  production commit `6a9a07180cd3306df4d92c3cf7d8849d3d890288`.
+- Existing production permalink:
+  `https://6a9234045e436787ff1076ed--peso-webapp.netlify.app/`.
+  This is an old app-containing release, not a marketing rollback candidate.
+- [Netlify visibility documentation](https://docs.netlify.com/manage/security/secure-access-to-sites/project-visibility/)
+  separates previews from production but states public visibility exposes
+  production deploys. No verified protection for old app-containing production
+  permalinks was established. **Stop: do not make production public.**
+
+Render monitoring plugin read-only results:
+
+- `Peso-backend`, service `srv-d9poevht0dsc73d07d3g`, tracks `production`.
+- `autoDeploy=yes`, `autoDeployTrigger=commit`; a production merge is not
+  isolated from backend deployment. **Stop before the release merge.**
+- Retained live deploy `dep-daaed1qjnfac738a8cig`, commit
+  `6a9a07180cd3306df4d92c3cf7d8849d3d890288`; native Python Free service,
+  root directory `backend`. No backend mutation was performed.
+- Azure backend deployment is workflow-dispatch-only in repository configuration.
+- GitHub CLI authentication is invalid. No PR/check/protection changes were
+  attempted; the existing beta evidence records missing required checks.
+
+## Netlify baseline
+
+Read from Usage & billing on September 20, 2026 around 22:00 EDT. This is a
+preparation baseline, not a launch measurement; refresh immediately before
+an eventual release.
+
+| Measurement | Observed value |
+| --- | --- |
+| Plan | Free, 300 credits per month |
+| Billing cycle | September 4–October 3, 2026 |
+| Production deploy usage | 0 credits; no usage |
+| Web requests | 11,734 requests; 2.3 credits |
+| Bandwidth | 0.3 credits |
+| Compute | 0 credits |
+| AI inference | 0 credits |
+| Total consumed | 2.6 credits |
+| Remaining | 297.4 credits |
+
+## Separate-project release gates
+
+1. Create `peso-marketing` privately; configure package `web`, base root,
+   `web/netlify.toml`, production branch `production`, no branch deploys, and
+   private Deploy Previews. Every deploy must contain only marketing assets.
+2. Keep app project `230da8eb-f00e-45d4-ba54-95f2e26f21c4` private, including all
+   historic URLs. Skip its production builds while preserving branch/previews.
+3. Require existing checks plus container-security, reservation-database-security,
+   marketing-build, and the exact marketing Netlify preview check on one protected
+   `main` → `production` PR. Merge only after every check passes.
+4. Complete hosted desktop/mobile, navigation, legal, refresh, redirects, headers,
+   and network inspection. Inventory old app deploy URLs and deny anonymous access.
+5. Publish marketing production privately; capture deploy identity and usage.
+6. Record DNS/domain assignments, move apex and www, retain apex primary and
+   www redirect, preserve unrelated records, and verify both TLS certificates.
+   If setup fails, remain private and restore the previous assignments.
+7. Obtain Nathan's action-time confirmation immediately before making marketing
+   production public. Verify all four pages, redirects, preview privacy, historic
+   app privacy, and unchanged backend identity. Restore Private on any failure.
+
+## Current local verification
+
+- Clean marketing build and real Expo export followed by marketing build: pass.
+- Dispatcher matrix: exact app project + main branch-deploy only; all other
+  projects/contexts select marketing, including a main-sourced preview.
+- App production ignore path: pass without commit metadata; preview/branch builds
+  remain buildable.
+- Repository policy suite: 213 passed; added dedicated marketing config test passed.
+- Production Blueprint API and worker both set `autoDeployTrigger: off`.
+- ADR 0017 records separate hosting; all full-beta blockers remain open.
+
+## Hosting and protection implementation — September 21, 02:24 UTC
+
+- Created `peso-marketing`, project ID `19cbad85-dd2d-4d3b-a24a-242de78d30af`.
+  Production and Deploy Preview visibility verified Private; deploy logs private.
+  Repository NathanN-275/Peso, production branch `production`, package `web`,
+  base `/`, output `dist`, branch deploys None, PR previews enabled.
+- Creation produced an initial private marketing deploy from `main` at
+  `8c2b3e91258691d97c9c220899135f23f04c82f5`, deploy `6ab092fd426764843e174cb0`,
+  before production branch configuration was saved. It used the project-ID-gated
+  marketing dispatcher. This is a bootstrap deploy, not the accepted release.
+- Protected release PR: https://github.com/NathanN-275/Peso/pull/46.
+  Active ruleset `22210122` retains every existing requirement and no bypasses;
+  added container-security, reservation-database-security, marketing-build,
+  and the observed exact `netlify/peso-marketing/deploy-preview` check.
+- Private marketing preview `6ab09376bd8bb800090f3fb6` passed the exact Netlify
+  check, with four pages, five redirects, three header rules, 26 total files
+  and 1.8 MB. Hosted inspection remains in progress.
+- Anonymous HEAD requests to the marketing preview and historical app permalink
+  `6a9234045e436787ff1076ed--peso-webapp.netlify.app` both returned HTTP 401.
+- GitGuardian incident `37243448` flagged literal `?Set` within the Bash
+  required-variable guard on line 5 of `scripts/configure_azure_scaler_role.sh`
+  in historical commit `99548d6`. Source and dashboard occurrence confirm this
+  is diagnostic text, not a password. Classified the exact incident as
+  “Not a secret (false positive)”; scanning remains enabled. No credentials
+  changed and no history rewrite or broad exclusion was used. A new commit
+  requests fresh PR scanning because the check rerequest API returned 404.
+- Local TypeScript check passed. Existing main workflow published a candidate
+  container image only; no backend runtime deployment was requested.
+- No domains moved and no public visibility enabled. Full-beta blockers remain open.
+
+GitGuardian's fresh check on `7355f84` passed after exact false-positive triage.
+Hosted QA then found that Astro's inline demo loader conflicts with `script-src
+'self'`. The loader is now an external fingerprinted asset; CSP remains strict,
+and the marketing verifier rejects executable inline scripts. Policy suite and
+marketing build were rerun before pushing this correction.
+
+
+## Hosted acceptance update — September 21
+
+- Release head `a024a9f02b933aa282f21c92dee61b7c08c45157`: all required
+  checks passed; GitGuardian passed. PR 46 remains open, unmerged, with clean
+  merge state and no protection bypass. Preview deploy is
+  `6ab096ecf37b7f000812b2ea` (27 files, 1.8 MB).
+- Desktop navigation, four pages, legal-page refresh, and external demo-video
+  playback passed. Browser navigation of `/app`, `/app/`, `/app/signup`,
+  `/app/_expo/static/js/web/old-bundle.js`, `/auth`, `/auth/`,
+  `/auth/turnstile/`, and `/auth/old.js` reached `/beta/`.
+  Netlify processed five redirect rules and three header rules successfully.
+  Authenticated raw response headers/status and a full network capture remain
+  pending; browser navigation alone does not establish the 302 status.
+- Observed page assets were marketing assets plus Netlify-injected private-site
+  tools. No signup, upload, analysis or email forms were present. Repository
+  artifact checks passed; this is not a substitute for a complete hosted
+  network inspection.
+- Nathan supplied a phone screenshot and is checking mobile navigation/legal
+  pages. Automated hosted viewport override did not take effect (actual viewport
+  remained 1280px), so hosted mobile acceptance is not yet recorded as passed.
+- With Nathan's explicit approval, disabled only the marketing Netlify Drawer.
+  Settings readback shows Drawer Disabled and heads-up display Disabled. A fresh
+  preview has no collaboration iframe; Netlify's private-site `nl-hud-frame`
+  remains. The white browser toolbar area in the phone screenshot is not proven
+  to have the same cause as the removed collaboration iframe.
+- Marketing environment-variable UI explicitly states no variables are set.
+  Form detection is disabled. No backend variables or authentication origins
+  were changed.
+- App production and Deploy Preview visibility were rechecked as Private.
+  Anonymous URL inventory is in `evidence/app-deploy-privacy-20260921.json`:
+  40 responses were 401, 12 were 404, and three were 500. Netlify UI identifies
+  the three 500 URLs as canceled/failed builds with deployment skipped:
+  `6ab095daf5ba6800088c7297` canceled;
+  `6ab095d8e56cba00081134fa` and `6ab092eb1b0a150008b1b6b3` failed.
+  No app content was returned; 500 itself is not evidence of authentication.
+- Render was rechecked: live deploy `dep-daaed1qjnfac738a8cig`, commit
+  `6a9a07180cd3306df4d92c3cf7d8849d3d890288`, Auto-Deploy selector text `Off`.
+  No backend deployment or service resumption was performed.
+- DNS snapshot is in `evidence/dns-before-20260921.txt`. Apex is assigned to
+  peso-webapp with www redirect; www CNAME points to peso-webapp.netlify.app.
+  Cloudflare nameservers, MX routing and SPF records must be preserved. Full
+  DNS-zone inventory and domain/TLS cutover remain pending.
+- Usage after private bootstrap, September 20 around 22:33 EDT: Free plan,
+  17.7/300 credits consumed, 282.3 remaining; production deploy 15 credits,
+  11,809 requests (2.4 credits), bandwidth 0.3, compute/AI zero. Refresh before
+  launch. No paid upgrade was purchased.
+- Marketing stays Private. Domain moves and public exposure have not occurred.
+  All full-beta blockers remain open.

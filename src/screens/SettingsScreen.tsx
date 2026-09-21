@@ -56,15 +56,17 @@ function SettingsAction({
   detail,
   destructive = false,
   onPress,
+  testID,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   detail?: string;
   destructive?: boolean;
   onPress?: () => void;
+  testID?: string;
 }) {
   return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={styles.actionRow}>
+    <Pressable testID={testID} accessibilityRole="button" onPress={onPress} style={styles.actionRow}>
       <View style={[styles.actionIcon, destructive && styles.destructiveIcon]}>
         <Ionicons name={icon} size={22} color={destructive ? '#FFB4B4' : tokens.colors.textPrimary} />
       </View>
@@ -339,8 +341,8 @@ export default function SettingsScreen({
     const trimmedPassword = password.trim();
     const trimmedConfirmPassword = confirmPassword.trim();
 
-    if (trimmedPassword.length < 6) {
-      setErrorMessage('Use a password with at least 6 characters.');
+    if (trimmedPassword.length < 8) {
+      setErrorMessage('Use a password with at least 8 characters.');
       setMessage(null);
       return;
     }
@@ -434,7 +436,7 @@ export default function SettingsScreen({
       </SettingsSection>
 
       <SettingsSection title="Session">
-        <SettingsAction icon="log-out-outline" label="Log Out" onPress={handleLogout} />
+        <SettingsAction icon="log-out-outline" label="Log Out" onPress={handleLogout} testID="settings-logout" />
       </SettingsSection>
     </>
   );

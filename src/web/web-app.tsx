@@ -24,13 +24,18 @@ import {
 } from 'react-router';
 import tokens from '../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
+import { parseWebAuthRedirect } from '../../lib/auth-redirect';
 import {
   createSavedLiftExport,
+  discardAnalyzedVideo,
   deleteSavedLifts,
   getSavedLiftExport,
   getSavedVideoPlaybackUrl,
   getSavedVideos,
+  triggerVideoAnalysis,
 } from '../../lib/backendApi';
+import { canRetryAnalysis, failureCopy } from '../../lib/analysisRecoveryPolicy';
+import { getFreshBackendAccessToken } from '../../lib/backendAuth';
 import { readSidebarCollapsed, writeSidebarCollapsed } from '../../lib/sidebarPreferencePolicy';
 import {
   normalizeSavedLiftView,
@@ -48,8 +53,11 @@ import {
   WebProcessingRoute,
   WebRecordRoute,
   WebReviewRoute,
+  WebSubmissionChoiceRoute,
   WebUploadRoute,
+  WebVideoSetupRoute,
 } from './web-analysis-routes';
+import AuthChallenge from '../components/auth/AuthChallenge';
 
 const colors = {
   ...tokens.colors,
@@ -75,10 +83,21 @@ const fonts = {
   bold: 'Inter_700Bold',
 };
 
+function currentWebAuthLinkError() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  return parseWebAuthRedirect(
+    window.location.pathname,
+    window.location.search,
+    window.location.hash
+  ).errorMessage;
+}
+
 const previewImageAsset = require('../../assets/demo/peso-pose-overlay.jpg') as number;
 const previewImage = previewImageAsset as ImageSourcePropType;
 const logoImage = require('../../assets/peso-logo.png') as ImageSourcePropType;
-const turnstileSiteKey = process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? '';
 const SAVED_LIFT_CACHE_TTL_MS = 60_000;
 
 let savedLiftLibraryCache: {
@@ -96,17 +115,6 @@ function getCachedSavedLifts(userId?: string): SavedVideo[] | null {
   return cache && cache.userId === userId && cache.expiresAt > Date.now()
     ? cache.lifts
     : null;
-}
-
-type TurnstileApi = {
-  render: (container: HTMLElement, options: Record<string, unknown>) => string;
-  remove: (widgetId: string) => void;
-};
-
-declare global {
-  interface Window {
-    turnstile?: TurnstileApi;
-  }
 }
 
 function formatTime(seconds: number | null) {
@@ -302,87 +310,12 @@ function CheckRow({ checked, label, onPress }: { checked: boolean; label: React.
   );
 }
 
-function TurnstileChallenge({
-  action,
-  resetSignal,
-  onTokenChange,
-  onError,
-}: {
-  action: 'login' | 'signup' | 'reset_password';
-  resetSignal: number;
-  onTokenChange: (token: string | null) => void;
-  onError: (message: string | null) => void;
-}) {
-  const containerRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    if (!turnstileSiteKey) {
-      onTokenChange(null);
-      onError('Security verification is unavailable. Try again later.');
-      return;
-    }
-
-    let widgetId: string | null = null;
-    let active = true;
-    const render = () => {
-      if (!active || !containerRef.current || !window.turnstile) return;
-      containerRef.current.replaceChildren();
-      widgetId = window.turnstile.render(containerRef.current, {
-        sitekey: turnstileSiteKey,
-        action,
-        callback: (token: string) => {
-          onError(null);
-          onTokenChange(token);
-        },
-        'expired-callback': () => onTokenChange(null),
-        'error-callback': () => {
-          onTokenChange(null);
-          onError('Security verification failed. Reload the check and try again.');
-        },
-      });
-    };
-
-    const existingScript = document.querySelector<HTMLScriptElement>('script[data-peso-turnstile]');
-    const script = existingScript ?? document.createElement('script');
-    const onLoad = () => render();
-
-    if (window.turnstile) {
-      render();
-    } else if (existingScript) {
-      existingScript.addEventListener('load', onLoad);
-    } else {
-      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-      script.async = true;
-      script.defer = true;
-      script.dataset.pesoTurnstile = 'true';
-      script.addEventListener('load', onLoad, { once: true });
-      script.addEventListener(
-        'error',
-        () => {
-          onTokenChange(null);
-          onError('Security verification is unavailable. Try again later.');
-        },
-        { once: true }
-      );
-      document.head.appendChild(script);
-    }
-
-    return () => {
-      active = false;
-      if (existingScript) existingScript.removeEventListener('load', onLoad);
-      if (widgetId && window.turnstile) window.turnstile.remove(widgetId);
-    };
-  }, [action, onError, onTokenChange, resetSignal]);
-
-  return <View ref={containerRef as never} style={styles.turnstileWidget} />;
-}
-
 function LoginScreen() {
   const navigate = useNavigate();
   const { session, signInWithEmail, configError } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(currentWebAuthLinkError);
   const [submitting, setSubmitting] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [captchaError, setCaptchaError] = useState<string | null>(null);
@@ -393,10 +326,15 @@ function LoginScreen() {
   }, [navigate, session]);
 
   const signIn = async () => {
+    if (!captchaToken) {
+      setError('Complete the security check and try again.');
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
-      await signInWithEmail(email.trim(), password, captchaToken ?? undefined);
+      await signInWithEmail(email.trim(), password, captchaToken);
       navigate('/', { replace: true });
     } catch (signInError) {
       setError(signInError instanceof Error ? signInError.message : 'Unable to sign in.');
@@ -413,7 +351,7 @@ function LoginScreen() {
       <Field label="Password" placeholder="Enter your password" secureTextEntry value={password} onChangeText={setPassword} />
       <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification">
         <Text style={styles.turnstileTitle}>Security check</Text>
-        <TurnstileChallenge action="login" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
+        <AuthChallenge action="login" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
       </View>
       {(error || captchaError || configError) && <Text selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
       <Pressable accessibilityRole="link" onPress={() => navigate('/reset')}>
@@ -444,10 +382,15 @@ function SignupScreen() {
   const [captchaReset, setCaptchaReset] = useState(0);
 
   const signUp = async () => {
+    if (!captchaToken) {
+      setError('Complete the security check and try again.');
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
-      const result = await signUpWithEmail(email.trim(), password, undefined, captchaToken ?? undefined);
+      const result = await signUpWithEmail(email.trim(), password, undefined, captchaToken);
       navigate(result.requiresEmailConfirmation ? '/verify' : '/', { replace: true });
     } catch (signUpError) {
       setError(signUpError instanceof Error ? signUpError.message : 'Unable to create account.');
@@ -466,7 +409,7 @@ function SignupScreen() {
       <CheckRow checked={terms} onPress={() => setTerms(!terms)} label="I agree to the beta Terms and acknowledge the Privacy Policy." />
       <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification">
         <Text style={styles.turnstileTitle}>Security check</Text>
-        <TurnstileChallenge action="signup" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
+        <AuthChallenge action="signup" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
       </View>
       {(error || captchaError || configError) && <Text selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
       <ActionButton label={submitting ? 'Creating account…' : error ? 'Retry account creation' : 'Create account'} disabled={submitting || !email.trim() || password.length < 8 || !usResident || !terms || !captchaToken} onPress={() => void signUp()} />
@@ -500,17 +443,22 @@ function ResetScreen() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(currentWebAuthLinkError);
   const [submitting, setSubmitting] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [captchaError, setCaptchaError] = useState<string | null>(null);
   const [captchaReset, setCaptchaReset] = useState(0);
 
   const reset = async () => {
+    if (!captchaToken) {
+      setError('Complete the security check and try again.');
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
-      await resetPasswordForEmail(email.trim(), captchaToken ?? undefined);
+      await resetPasswordForEmail(email.trim(), captchaToken);
       setMessage('If an account exists for this email, check your inbox for a secure reset link.');
     } catch (resetError) {
       setError(resetError instanceof Error ? resetError.message : 'Unable to send a reset link.');
@@ -564,7 +512,7 @@ function ResetScreen() {
       <Field label="Email" placeholder="you@example.com" value={email} onChangeText={setEmail} />
       <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification">
         <Text style={styles.turnstileTitle}>Security check</Text>
-        <TurnstileChallenge action="reset_password" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
+        <AuthChallenge action="reset_password" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
       </View>
       {(error || captchaError || configError) && <Text selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
       {message && <Text selectable style={styles.formSuccess}>{message}</Text>}
@@ -576,19 +524,19 @@ function ResetScreen() {
 
 const desktopNavItems = [
   { path: '/', label: 'Home', short: 'H' },
-  { path: '/record', label: 'Record', short: 'R' },
-  { path: '/upload', label: 'Upload Video', short: 'U' },
+  { path: '/setup', label: 'Analyze', short: 'A' },
   { path: '/saved-lifts', label: 'Saved Lifts', short: 'S' },
   { path: '/profile', label: 'Profile', short: 'P' },
 ];
 
-const mobileNavItems = desktopNavItems.filter((item) => item.path !== '/upload');
+const mobileNavItems = desktopNavItems;
 
 const routeTitles: Record<string, string> = {
   '/': 'Home',
+  '/setup': 'Video setup',
+  '/submit': 'Choose video',
   '/record': 'Record video',
   '/upload': 'Upload video',
-  '/setup': 'Video setup',
   '/saved-lifts': 'Saved Lifts',
   '/profile': 'Profile',
   '/settings': 'Settings',
@@ -790,7 +738,10 @@ function CapacityCard() {
 
 function ActivityCard() {
   const navigate = useNavigate();
-  const { items, loading, error, refresh } = useWebAnalysisActivity();
+  const { session } = useAuth();
+  const { items, loading, error, refresh, recordQueued, removeActivity } = useWebAnalysisActivity();
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const activity = items[0] ?? null;
   const copy = activity?.stage === 'queued'
     ? { title: 'Squat set is queued', detail: 'Waiting for an analysis worker.' }
@@ -805,7 +756,7 @@ function ActivityCard() {
             : activity?.stage === 'ready'
               ? { title: 'Analysis ready to review', detail: 'Your real result is ready.' }
               : activity?.stage === 'failed'
-                ? { title: 'Analysis could not finish', detail: 'Try another side-view squat video.' }
+                ? { title: 'Analysis could not finish', detail: failureCopy(activity) }
                 : { title: 'No active analysis', detail: 'Record or upload a side-view squat to start a real analysis.' };
   const toneStyle = activity?.stage === 'ready'
     ? styles.activityDotSuccess
@@ -821,6 +772,45 @@ function ActivityCard() {
       : `/processing/${activity?.video_id}`
   );
 
+  const retryAnalysis = async () => {
+    if (!activity || !session?.access_token || recoveryBusy) return;
+
+    setRecoveryBusy(true);
+    setRecoveryError(null);
+    try {
+      const accessToken = await getFreshBackendAccessToken();
+      const response = await triggerVideoAnalysis(activity.video_id, accessToken);
+      recordQueued({
+        videoId: response.video_id,
+        jobId: response.job_id,
+        status: response.status,
+      });
+    } catch (actionError) {
+      setRecoveryError(actionError instanceof Error ? actionError.message : 'Unable to retry analysis.');
+    } finally {
+      setRecoveryBusy(false);
+    }
+  };
+
+  const deleteVideo = async () => {
+    if (!activity || !session?.access_token || recoveryBusy) return;
+    if (!window.confirm('Delete this failed video? This permanently removes the uploaded video and cannot be undone.')) {
+      return;
+    }
+
+    setRecoveryBusy(true);
+    setRecoveryError(null);
+    try {
+      const accessToken = await getFreshBackendAccessToken();
+      await discardAnalyzedVideo(activity.video_id, accessToken);
+      removeActivity(activity.video_id);
+    } catch (actionError) {
+      setRecoveryError(actionError instanceof Error ? actionError.message : 'Unable to delete this video.');
+    } finally {
+      setRecoveryBusy(false);
+    }
+  };
+
   return (
     <View style={styles.activityCard}>
       <View style={[styles.activityDot, toneStyle]} />
@@ -828,8 +818,16 @@ function ActivityCard() {
         <Text selectable style={styles.activityTitle}>{copy.title}</Text>
         <Text selectable style={styles.activityDetail}>{loading && !activity ? 'Refreshing activity…' : copy.detail}</Text>
         {error ? <Text selectable style={styles.formError}>{error}</Text> : null}
+        {recoveryError ? <Text selectable style={styles.formError}>{recoveryError}</Text> : null}
       </View>
-      {hasAction && <ActionButton label={actionLabel} variant="secondary" compact onPress={onAction} />}
+      {activity?.stage === 'failed' ? (
+        <View style={styles.activityActions}>
+          {canRetryAnalysis(activity) ? (
+            <ActionButton label={recoveryBusy ? 'Retrying…' : 'Try analysis again'} compact disabled={recoveryBusy} onPress={() => void retryAnalysis()} />
+          ) : null}
+          <ActionButton label={recoveryBusy ? 'Deleting…' : 'Delete video'} variant="danger" compact disabled={recoveryBusy} onPress={() => void deleteVideo()} />
+        </View>
+      ) : hasAction && <ActionButton label={actionLabel} variant="secondary" compact onPress={onAction} />}
       {error && <ActionButton label="Retry" variant="quiet" compact onPress={() => void refresh()} />}
     </View>
   );
@@ -970,8 +968,7 @@ function HomeScreen() {
       </View>
       <View style={styles.homeGrid}>
         <View style={styles.quickActionsColumn}>
-          <QuickAction title="Record Video" description="Use this device’s camera" symbol="●" disabled={blocked} onPress={() => navigate('/record')} />
-          <QuickAction title="Upload Video" description="Choose a video from this device" symbol="↑" disabled={blocked} onPress={() => navigate('/upload')} />
+          <QuickAction title="Analyze a squat" description="Set up, then upload or record" symbol="●" disabled={blocked} onPress={() => navigate('/setup')} />
         </View>
         <CapacityCard />
       </View>
@@ -1291,7 +1288,7 @@ function SavedLiftsScreen() {
         </View>
         <View style={styles.buttonRow}>
           <ActionButton label={selectionMode ? 'Cancel selection' : 'Select lifts'} variant="secondary" compact onPress={toggleSelectionMode} />
-          <ActionButton label="Analyze a squat" compact onPress={() => navigate('/upload')} />
+          <ActionButton label="Analyze a squat" compact onPress={() => navigate('/setup')} />
         </View>
       </View>
 
@@ -1532,9 +1529,10 @@ export default function WebApp() {
         <Route path="/reset" element={<ResetScreen />} />
         <Route element={<AccountRoute />}>
           <Route index element={<HomeScreen />} />
+          <Route path="/setup" element={<WebVideoSetupRoute />} />
+          <Route path="/submit" element={<WebSubmissionChoiceRoute />} />
           <Route path="/record" element={<WebRecordRoute />} />
           <Route path="/upload" element={<WebUploadRoute />} />
-          <Route path="/setup" element={<Navigate to="/upload" replace />} />
           <Route path="/processing/:videoId" element={<WebProcessingRoute />} />
           <Route path="/review/:videoId" element={<WebReviewRoute onLibraryChanged={invalidateSavedLiftLibraryCache} />} />
           <Route path="/saved-lifts" element={<SavedLiftsScreen />} />
@@ -1674,6 +1672,7 @@ const styles = StyleSheet.create({
   activityDotInfo: { backgroundColor: colors.brand },
   activityDotSuccess: { backgroundColor: colors.green },
   activityCopy: { flex: 1, minWidth: 120 },
+  activityActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8 },
   activityTitle: { color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 13 },
   activityDetail: { marginTop: 5, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 11, lineHeight: 17 },
   pendingReviewBanner: { padding: 18, borderWidth: 1, borderColor: '#2D579A', borderRadius: 14, backgroundColor: '#0D1B34', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 15 },

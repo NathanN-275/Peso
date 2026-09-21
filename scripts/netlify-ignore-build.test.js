@@ -1,6 +1,18 @@
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
+const { APP_SITE_ID } = require('./netlify-build');
+
+test('app production is skipped even without diff metadata; other contexts remain buildable', () => {
+  for (const SITE_ID of [APP_SITE_ID, 'marketing-project']) {
+    for (const CONTEXT of ['production', 'branch-deploy', 'deploy-preview']) {
+      const result = spawnSync(process.execPath, [require.resolve('./netlify-ignore-build')], {
+        encoding: 'utf8', env: { SITE_ID, CONTEXT },
+      });
+      assert.equal(result.status, SITE_ID === APP_SITE_ID && CONTEXT === 'production' ? 0 : 1);
+    }
+  }
+});
 
 const {
   isNonWebPath,

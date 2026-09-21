@@ -29,6 +29,7 @@ export default function BottomNav({
   return (
     <View style={styles.container}>
       <Pressable
+        testID="nav-home"
         accessibilityRole="button"
         accessibilityLabel="Home"
         hitSlop={12}
@@ -39,6 +40,7 @@ export default function BottomNav({
       </Pressable>
 
       <Pressable
+        testID="nav-add-video"
         accessibilityRole="button"
         accessibilityLabel="Add video"
         hitSlop={12}
@@ -53,6 +55,7 @@ export default function BottomNav({
       </Pressable>
 
       <Pressable
+        testID="nav-profile"
         accessibilityRole="button"
         accessibilityLabel="Profile"
         hitSlop={12}

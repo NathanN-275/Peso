@@ -12,7 +12,7 @@ from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
 
-QUALITY_PREFLIGHT_MODEL_VERSION = "mediapipe-pose-full-hog-v1"
+QUALITY_PREFLIGHT_MODEL_VERSION = "mediapipe-pose-landmarker-full-hog-v2"
 QUALITY_PREFLIGHT_THRESHOLD_VERSION = "side-squat-preflight-v1"
 
 _REQUIRED_CHECKS = (
@@ -591,7 +591,7 @@ class SideSquatQualityPreflight:
 
     try:
       import cv2  # type: ignore
-      import mediapipe as mp  # type: ignore
+      from ..pose_landmarker import PoseLandmarkerSession
       import numpy as np  # type: ignore
     except ImportError as error:
       raise RuntimeError("Quality preflight requires OpenCV, NumPy, and MediaPipe.") from error
@@ -629,14 +629,10 @@ class SideSquatQualityPreflight:
     decode_retry_step = max(1, frame_count // max(len(indices) * 8, 1))
 
     try:
-      with mp.solutions.pose.Pose(
-        static_image_mode=True,
-        # Complexity 1 uses MediaPipe's bundled full model. Complexity 0
-        # attempts a runtime download in this dependency version, which is not
-        # acceptable for offline local development or Render workers.
-        model_complexity=1,
-        enable_segmentation=False,
-        min_detection_confidence=0.45,
+      with PoseLandmarkerSession(
+        complexity=1,
+        video=False,
+        detection_confidence=0.45,
       ) as pose:
         for requested_frame_index in indices:
           read_ok = False
@@ -670,7 +666,7 @@ class SideSquatQualityPreflight:
 
           gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
           rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-          pose_result = pose.process(rgb)
+          pose_landmarks = pose.process_rgb(rgb)
           observation: dict[str, Any] = {
             "frameIndex": frame_index,
             "timestampMs": int(round(frame_index / fps * 1000)) if fps > 0 else 0,
@@ -684,9 +680,9 @@ class SideSquatQualityPreflight:
             "luminanceMean": round(float(gray.mean()), 3),
             "luminanceStd": round(float(gray.std()), 3),
           }
-          if pose_result.pose_landmarks is not None:
+          if pose_landmarks is not None:
             observation.update(
-              _pose_observation(pose_result.pose_landmarks, self.thresholds.pose_visibility)
+              _pose_observation(pose_landmarks, self.thresholds.pose_visibility)
             )
 
           # HOG is supporting evidence only. Blocking requires a comparable

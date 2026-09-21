@@ -32,11 +32,13 @@ from app.analysis.barbell_tracking.selection import _best_initial_plate
 from app.analysis.barbell_tracking.sleeve_tracker import track_unloaded_sleeve_end
 from app.analysis.barbell_tracking.local_tracker import _make_tracking_lock, _track_local_patch
 from app.analysis.barbell_tracking.postprocess import (
+  _bridge_confirmed_short_coast_gap,
   _interpolate_missing,
   _smooth_points,
   _smooth_points_with_diagnostics,
 )
 from app.analysis.barbell_tracking.pin_tracker import build_pin_assisted_barbell_result
+from app.analysis.barbell_tracking.pose import _pose_bounds
 
 TEST_COLLAR_OFFSET_RATIO = 0.28
 
@@ -415,6 +417,7 @@ class BarbellTrackerTest(unittest.TestCase):
           selected_side="left",
           rep_windows=[{"rep_index": 1, "start": 0.2, "bottom": 0.55, "end": 0.95}],
           target_fps=12.0,
+          retain_decoded_frames=True,
         )
 
     self.assertTrue(result["barbellPath"]["available"])
@@ -1187,6 +1190,43 @@ class BarbellTrackerTest(unittest.TestCase):
     self.assertIsNotNone(residual)
     self.assertGreater(residual, tracker_module.PATH_PRIOR_MAX_RESIDUAL_PX)
 
+  def test_pose_bounds_keep_three_quarter_bar_inside_deep_squat_crop(self) -> None:
+    frame = {
+      "landmarks": {
+        "right_shoulder": landmark(0.245, 0.638),
+        "right_hip": landmark(0.283, 0.719),
+        "right_elbow": landmark(0.35, 0.64),
+        "right_wrist": landmark(0.45, 0.63),
+      }
+    }
+
+    _, _, max_x, _, _ = _pose_bounds(
+      frame,
+      width=405,
+      height=720,
+      selected_side="right",
+    )
+
+    self.assertGreaterEqual(max_x, 240.0)
+
+  def test_pose_bounds_keep_narrower_crop_for_aligned_torso(self) -> None:
+    frame = {
+      "landmarks": {
+        "right_shoulder": landmark(0.260, 0.625),
+        "right_hip": landmark(0.284, 0.718),
+        "right_elbow": landmark(0.335, 0.662),
+      }
+    }
+
+    _, _, max_x, _, _ = _pose_bounds(
+      frame,
+      width=405,
+      height=720,
+      selected_side="right",
+    )
+
+    self.assertLess(max_x, 225.0)
+
   def test_hub_detection_accepts_compact_visible_hub(self) -> None:
     frame = np.zeros((180, 240, 3), dtype=np.uint8)
     plate = Candidate(x=120, y=90, radius=42, confidence=0.9)
@@ -1494,6 +1534,60 @@ class BarbellTrackerTest(unittest.TestCase):
     self.assertAlmostEqual(filtered[1]["x"], 0.42, places=4)
     self.assertAlmostEqual(filtered[1]["y"], 0.505, places=4)
     self.assertEqual(filtered[1]["rawAutomaticPoint"]["x"], 0.74)
+
+  def test_confirmed_short_coast_gap_adds_one_low_confidence_midpoint(self) -> None:
+    points = [
+      {
+        "time": 1.0,
+        "x": 0.45,
+        "y": 0.56,
+        "confidence": 0.27,
+        "trackingState": "estimated",
+        "estimatedSource": "kinematic_coast",
+      },
+      {
+        "time": 1.96,
+        "x": 0.59,
+        "y": 0.62,
+        "confidence": 0.88,
+        "trackingState": "automatic",
+      },
+    ]
+
+    bridged, bridge_count = _bridge_confirmed_short_coast_gap(points)
+
+    self.assertEqual(bridge_count, 1)
+    self.assertEqual(len(bridged), 3)
+    self.assertEqual(bridged[1]["estimatedSource"], "confirmed_short_coast_gap")
+    self.assertAlmostEqual(bridged[1]["time"], 1.48)
+    self.assertLessEqual(float(bridged[1]["confidence"]), 0.24)
+
+  def test_short_coast_gap_bridge_rejects_long_or_unconfirmed_gaps(self) -> None:
+    coast = {
+      "time": 1.0,
+      "x": 0.45,
+      "y": 0.56,
+      "confidence": 0.27,
+      "trackingState": "estimated",
+      "estimatedSource": "kinematic_coast",
+    }
+    automatic = {
+      "time": 2.01,
+      "x": 0.59,
+      "y": 0.62,
+      "confidence": 0.88,
+      "trackingState": "automatic",
+    }
+
+    for points in (
+      [coast, automatic],
+      [{**coast, "estimatedSource": "interpolation"}, {**automatic, "time": 1.96}],
+      [{**coast, "trackingState": "automatic"}, {**automatic, "time": 1.96}],
+    ):
+      with self.subTest(points=points):
+        bridged, bridge_count = _bridge_confirmed_short_coast_gap(points)
+        self.assertEqual(bridge_count, 0)
+        self.assertEqual(bridged, points)
 
   def test_smoothing_reduces_manual_jitter_but_preserves_reference_pin(self) -> None:
     points = [

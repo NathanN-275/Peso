@@ -59,9 +59,9 @@ export default function ResetPasswordFormScreen({
       return;
     }
 
-    if (trimmedPassword.length < 6) {
+    if (trimmedPassword.length < 8) {
       setInfoMessage(null);
-      setErrorMessage('Use a password with at least 6 characters.');
+      setErrorMessage('Use a password with at least 8 characters.');
       return;
     }
 
@@ -140,6 +140,7 @@ export default function ResetPasswordFormScreen({
               {/* Both fields are required so the new password can be confirmed. */}
               <Input
                 label="Enter Password"
+                testID="reset-new-password"
                 placeholder="Value"
                 value={password}
                 onChangeText={setPassword}
@@ -150,6 +151,7 @@ export default function ResetPasswordFormScreen({
               />
               <Input
                 label="Confirm Password"
+                testID="reset-confirm-password"
                 placeholder="Value"
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
@@ -191,6 +193,7 @@ export default function ResetPasswordFormScreen({
             <View style={{ marginTop: 10, gap: 10 }}>
               <Button
                 label={submitting ? 'Resetting...' : 'Reset'}
+                testID="reset-submit"
                 onPress={handleReset}
                 disabled={submitting}
                 style={{ width: '100%' }}

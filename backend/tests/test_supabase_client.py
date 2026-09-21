@@ -22,7 +22,6 @@ class SupabaseClientTest(unittest.TestCase):
       backend_env="test",
       supabase_url="https://example.supabase.co",
       supabase_service_role_key="service-role",
-      supabase_jwt_secret="jwt-secret",
       cleanup_job_token="cleanup-token",
       supabase_postgrest_timeout_seconds=12,
       supabase_storage_timeout_seconds=34,

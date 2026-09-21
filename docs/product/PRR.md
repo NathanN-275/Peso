@@ -1,8 +1,15 @@
 # Peso Production Readiness Review
 
-**Status:** Beta readiness checklist | **Updated:** 2026-08-25
+**Status:** Public beta blocked pending operational acceptance | **Updated:** 2026-09-20
 
 This review is the release gate for the focused web beta. It is not a claim that every exercise, camera view, or future coaching feature is production-ready.
+
+The public beta targets the existing production backend and production
+Supabase project (`jfgiydtrskpqxyorvvbc`) through one protected `main` →
+`production` release. The isolated Render beta and `peso-staging` remain
+private and are not promoted. See the dated
+[release evidence](../deployment/public-beta-release-20260920.md) for completed
+checks and remaining blockers; local passes do not establish deployed acceptance.
 
 ## Readiness summary
 
@@ -16,7 +23,39 @@ This review is the release gate for the focused web beta. It is not a claim that
 | Automated verification | Ready to run in CI | `.github/workflows/security.yml` covers backend tests, frontend checks, audits, RLS/migration review, and secret scanning. |
 | User documentation | In progress | Keep this review, the README, and backend deployment notes aligned with each release. |
 
-## Release checklist
+## Public marketing launch checklist
+
+The information-only marketing launch is separate from the public beta. It
+permits only `/`, `/beta`, `/privacy`, and `/terms`, with no signup, uploads,
+analysis, or email collection. All full-beta blockers below remain open.
+
+- [ ] Create a private `peso-marketing` project using package `web`, base root,
+      `production` branch, private previews, and no branch deploys.
+- [ ] Keep `peso-webapp` private and skip its production builds.
+- [ ] Pass clean and post-Expo-export marketing builds and artifact verification.
+- [ ] Verify desktop/mobile layout, navigation, legal pages, refresh, forced
+      app/auth redirects, no backend requests, and security headers on a private Netlify preview.
+- [ ] Verify production can become public while staging, previews, and every
+      older app-containing deploy URL remain protected. Stop if unverified.
+- [ ] Verify the production merge cannot deploy any backend; record and retain
+      the existing backend deploy identity.
+- [ ] Use one protected `main` → `production` PR with all required checks passing,
+      including marketing-build, container-security, reservation-database-security,
+      and the new marketing project’s exact Netlify preview check.
+- [ ] Publish the marketing artifact with production visibility still private.
+- [ ] Capture deploy ID, commit, URL, and current Netlify billing-cycle baseline.
+- [ ] Record DNS/domain assignments; move apex and www to marketing, preserving
+      unrelated DNS, apex primary, www redirect, and verified TLS for both names.
+      If setup fails, remain private and restore the previous domain assignment.
+- [ ] Obtain Nathan's action-time confirmation immediately before public visibility.
+- [ ] Verify anonymous marketing access and redirected app/auth entry points;
+      repeat checks against staging, previews, and historical deploy URLs.
+- [ ] Restore private visibility immediately if isolation fails. Never roll back
+      to an app-containing deploy while production is public.
+
+See [marketing release evidence](../deployment/marketing-release-20260920.md).
+
+## Public beta release checklist
 
 ### Product
 
@@ -32,15 +71,26 @@ This review is the release gate for the focused web beta. It is not a claim that
 - [ ] Run `npm run dashboard:typecheck` and `npm run dashboard:build`.
 - [ ] Run backend tests with production-like required environment variables.
 - [ ] Apply and verify all Supabase migrations, RLS policies, storage buckets, and indexes.
-- [ ] Confirm Render API and worker deployments use the same model/configuration version.
+- [ ] Record the exact production API/worker image or deployed commit and model
+      versions, and verify the accepted Starter accuracy/memory evidence applies
+      to that release. Do not reopen the cleared accuracy gate without a change
+      that invalidates its evidence.
+- [ ] Pass `npm run web:build:release` with verified production variables and
+      `npm run web:budget` for the same output.
+- [ ] Require container and reservation-database security checks alongside the
+      existing GitHub security, production-source, and Netlify preview checks.
 
 ### Security and privacy
 
-- [ ] Set `BACKEND_ENV=production` and explicit production CORS origins.
+- [ ] Verify `BACKEND_ENV=production` and exact approved production CORS origins
+      on the production API. Keep Student and private-beta origins isolated.
 - [ ] Set non-placeholder service, JWT, cleanup, and storage configuration secrets.
 - [ ] Verify signed URL expiration, upload limits, per-user quotas, and cleanup jobs.
 - [ ] Confirm logs do not expose tokens, raw media, or unnecessary personal data.
 - [ ] Review dependency and secret-scan results; resolve or document exceptions.
+- [ ] Complete outstanding credential rotations, GitHub Support history-purge
+      confirmation, and GitGuardian verification. A clean local Gitleaks scan
+      does not prove cached pull-request history was purged.
 
 ### Observability and support
 
@@ -51,7 +101,7 @@ This review is the release gate for the focused web beta. It is not a claim that
 
 ## Exit criteria
 
-Release is approved when all required checklist items pass, no unresolved high-severity security issue remains, supported-flow smoke tests pass on web and mobile, and the owner accepts the documented limitations. Any unchecked item becomes a tracked follow-up rather than an implicit promise.
+Release is approved when all required checklist items pass, no unresolved high-severity security issue remains, supported-flow smoke tests pass on web and mobile, and the owner accepts the documented limitations. An unchecked required item blocks release; tracking it as a follow-up does not waive the gate.
 
 ## Post-release review
 

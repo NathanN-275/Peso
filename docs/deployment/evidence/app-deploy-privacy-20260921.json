@@ -1,0 +1,283 @@
+{
+  "captured_at": "2026-09-21T02:32:48.888194+00:00",
+  "probes": [
+    {
+      "url": "https://6ab095daf5ba6800088c7297--peso-webapp.netlify.app/",
+      "status": "500",
+      "error": "",
+      "retry_get_status": "500"
+    },
+    {
+      "url": "https://6ab095d8e56cba00081134fa--peso-webapp.netlify.app/",
+      "status": "500",
+      "error": "",
+      "retry_get_status": "500"
+    },
+    {
+      "url": "https://6ab09376f9409f00083bc6b9--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6ab092eb1b0a150008b1b6b3--peso-webapp.netlify.app/",
+      "status": "500",
+      "error": "",
+      "retry_get_status": "500"
+    },
+    {
+      "url": "https://6aac523996885a00073bdfbd--peso-webapp.netlify.app/",
+      "status": "404",
+      "error": ""
+    },
+    {
+      "url": "https://6aac4cc58a1b590008235765--peso-webapp.netlify.app/",
+      "status": "404",
+      "error": ""
+    },
+    {
+      "url": "https://6aac42ecea9869000833a8ea--peso-webapp.netlify.app/",
+      "status": "404",
+      "error": ""
+    },
+    {
+      "url": "https://6aa8a97c4d60da000870247e--peso-webapp.netlify.app/",
+      "status": "404",
+      "error": ""
+    },
+    {
+      "url": "https://6aa88a875149240008f699cf--peso-webapp.netlify.app/",
+      "status": "404",
+      "error": ""
+    },
+    {
+      "url": "https://6aa864b5d3ef5c0008518e5a--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6aa72e9da9499f0008dc1e3b--peso-webapp.netlify.app/",
+      "status": "404",
+      "error": ""
+    },
+    {
+      "url": "https://6aa49c19092f3b0008292036--peso-webapp.netlify.app/",
+      "status": "404",
+      "error": ""
+    },
+    {
+      "url": "https://6aa499933ca1f70009dd9453--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6aa23766ca74af0008acb814--peso-webapp.netlify.app/",
+      "status": "404",
+      "error": ""
+    },
+    {
+      "url": "https://6aa235970c352d000871d9f1--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6aa1fd39a071ff0009e649c2--peso-webapp.netlify.app/",
+      "status": "404",
+      "error": ""
+    },
+    {
+      "url": "https://6aa1fcbe9cd8f40008df614d--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6aa1fc4afbf21c000835433b--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6aa1c99254579d00081873f1--peso-webapp.netlify.app/",
+      "status": "404",
+      "error": ""
+    },
+    {
+      "url": "https://6aa1c59d7ff5520009b20904--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a9a0dcff6e20700081d684c--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a9a09bcfe560d000810f48f--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a99bdb95c06ce000988c60c--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a99bd48dc1442000856b37f--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a99bc52dc14420008564ae6--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a99a6370d48e60009ca34a4--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a99a4147a81b00008dc5ec2--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a971f639317bd0008981221--peso-webapp.netlify.app/",
+      "status": "404",
+      "error": ""
+    },
+    {
+      "url": "https://6a971ddc56c92000088b04b6--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a9234045e436787ff1076ed--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a92331390ee2174e2f681ff--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a8e506cc380b7000848b0fe--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a8e2ac45ee3359c928785cd--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a8e2a6a7ca3dc0008dcb229--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a8e27306595bca6ceee7207--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a73977d122a0867a2654ab5--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a737812c957b800085210a3--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a7378102af9350008363c44--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a72cb39bf87500008e564af--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a72cb1746fb1a000884a232--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a72c9de88366a000816c651--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a72b69ce4a14f3333296160--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a72b63ba93b173bd1ab8dcd--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a72b120a2b0520ff2470478--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a72893e13a2740008c0ad16--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a728089c493ea00088a3b85--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a727ffb939043c29db9d909--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a727fd4f8039900088faf93--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a727efc60eea3000899f502--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a727c79571a34000883128e--peso-webapp.netlify.app/",
+      "status": "404",
+      "error": ""
+    },
+    {
+      "url": "https://6a727bc716ddbdd190607882--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://6a7272899a437dd57624fb40--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://main--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    },
+    {
+      "url": "https://deploy-preview-46--peso-webapp.netlify.app/",
+      "status": "401",
+      "error": ""
+    }
+  ]
+}

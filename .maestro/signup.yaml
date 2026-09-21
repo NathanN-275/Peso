@@ -1,0 +1,45 @@
+appId: com.anonymous.peso-app
+name: Signup with security challenge
+tags:
+  - ios
+  - auth
+---
+- launchApp:
+    clearState: true
+- tapOn:
+    id: welcome-signup
+- tapOn:
+    id: auth-name
+- inputText: Peso Test User
+- tapOn:
+    id: auth-username
+- inputText: ${PESO_E2E_USERNAME}
+- tapOn:
+    id: auth-phone
+- inputText: "2025550100"
+- tapOn:
+    id: auth-email
+- inputText: ${PESO_E2E_SIGNUP_EMAIL}
+- tapOn:
+    id: auth-password
+- inputText: ${PESO_E2E_SIGNUP_PASSWORD}
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: auth-us-resident
+    direction: DOWN
+- tapOn:
+    id: auth-us-resident
+- tapOn:
+    id: auth-terms
+- extendedWaitUntil:
+    visible:
+      id: auth-submit
+      enabled: true
+    timeout: 30000
+- tapOn:
+    id: auth-submit
+    enabled: true
+- extendedWaitUntil:
+    visible: "Check your email to confirm your account.*"
+    timeout: 30000

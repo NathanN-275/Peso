@@ -7,6 +7,7 @@ const {
   mergeAnalysisActivity,
   shouldPollAnalysisActivity,
 } = require('../lib/analysisActivityPolicy');
+const { canRetryAnalysis } = require('../lib/analysisRecoveryPolicy');
 
 test('analysis activity polls only for active queued or processing work', () => {
   assert.equal(shouldPollAnalysisActivity([{ status: 'queued' }], true), true);
@@ -66,15 +67,52 @@ test('successful queue handoff leaves the upload screen and restores from Home',
 
   assert.match(uploadSource, /triggerVideoAnalysis[\s\S]*onAnalysisQueued/);
   assert.match(rootSource, /onAnalysisQueued=\{handleAnalysisQueued\}/);
+  assert.match(uploadSource, /Upload complete\. Taking you back to Home…/);
+  assert.match(rootSource, /Video queued for analysis\. You can upload or record another video\./);
   assert.match(rootSource, /pendingAnalysisReview/);
   assert.match(homeSource, /getAnalysisActivity/);
   assert.match(homeSource, /\{analysisActivity\.length > 0 \|\| activityError \? \(/);
   assert.doesNotMatch(homeSource, /activityLoading/);
   assert.match(homeSource, /Ready to review/);
+  assert.match(homeSource, /queuedAnalysisConfirmation/);
   assert.match(homeSource, /Tracking barbell/);
   assert.match(homeSource, /Download failed — Retry/);
+  assert.match(homeSource, /Try analysis again/);
+  assert.match(homeSource, /Delete video/);
+  assert.match(homeSource, /Alert\.alert\([\s\S]*Delete failed video\?/);
+  assert.match(homeSource, /actionBusy/);
+  assert.match(homeSource, /setActivityError/);
+  assert.match(homeSource, /setActivityReloadKey/);
+  assert.match(homeSource, /triggerVideoAnalysis/);
+  assert.match(homeSource, /discardAnalyzedVideo/);
   assert.match(homeSource, /ui_ready_delay_ms/);
   assert.match(rootSource, /throw error/);
+});
+
+test('activity recovery policy keeps invalid uploads out of retry flows', () => {
+  assert.equal(canRetryAnalysis({
+    stage: 'failed',
+    failure_class: 'invalid_video',
+    recovery_action: 'replace_upload',
+  }), false);
+});
+
+test('native recovery actions refresh backend auth before retry and delete requests', () => {
+  const homeSource = fs.readFileSync(
+    path.join(__dirname, '../src/screens/HomeScreen.tsx'),
+    'utf8'
+  );
+
+  assert.match(
+    homeSource,
+    /const retryFailedAnalysis[\s\S]*?getFreshBackendAccessToken\(\)[\s\S]*?triggerVideoAnalysis\(videoId, accessToken\)/
+  );
+  assert.match(
+    homeSource,
+    /const deleteFailedAnalysis[\s\S]*?getFreshBackendAccessToken\(\)[\s\S]*?discardAnalyzedVideo\(videoId, accessToken\)/
+  );
+  assert.doesNotMatch(homeSource, /triggerVideoAnalysis\(videoId, session\.access_token\)/);
+  assert.doesNotMatch(homeSource, /discardAnalyzedVideo\(videoId, session\.access_token\)/);
 });
 
 test('Netlify web app uses durable video-id routes instead of demo timers', () => {
@@ -105,6 +143,13 @@ test('Netlify web app uses durable video-id routes instead of demo timers', () =
   assert.match(webActivitySource, /getAnalysisActivity/);
   assert.match(webActivitySource, /mergeAnalysisActivity/);
   assert.match(webActivitySource, /localStorage/);
+  assert.match(webAppSource, /window\.confirm\([\s\S]*Delete this failed video\?/);
+  assert.match(webAppSource, /recoveryBusy/);
+  assert.match(webAppSource, /setRecoveryError/);
+  assert.match(webAppSource, /recordQueued/);
+  assert.match(webAppSource, /removeActivity/);
+  assert.match(webAppSource, /triggerVideoAnalysis/);
+  assert.match(webAppSource, /discardAnalyzedVideo/);
 });
 
 test('durable queue schema deduplicates active jobs and recovers expired leases', () => {

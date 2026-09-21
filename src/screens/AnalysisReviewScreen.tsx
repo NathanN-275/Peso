@@ -453,7 +453,7 @@ export default function AnalysisReviewScreen({
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} testID="review-screen">
       <View style={styles.container}>
         <ConfirmationDialog
           visible={showQualityWarning}
@@ -466,6 +466,7 @@ export default function AnalysisReviewScreen({
         />
         <View style={styles.topBar}>
           <Pressable
+            testID="review-back"
             accessibilityRole="button"
             onPress={handleBack}
             disabled={saving || discarding || deletingSavedVideo}
@@ -476,6 +477,7 @@ export default function AnalysisReviewScreen({
           <Text style={styles.title}>{formatFlagLabel(result.exercise)}</Text>
           {isSavedMode ? (
             <Pressable
+              testID="review-delete"
               accessibilityRole="button"
               onPress={() => setShowSavedDeleteSheet(true)}
               disabled={deletingSavedVideo}
@@ -489,6 +491,7 @@ export default function AnalysisReviewScreen({
             </Pressable>
           ) : (
             <Pressable
+              testID="review-save"
               accessibilityRole="button"
               onPress={() => setShowWorkoutDetailsSheet(true)}
               disabled={saving || discarding}

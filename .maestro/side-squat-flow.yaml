@@ -1,0 +1,58 @@
+appId: com.anonymous.peso-app
+name: Side-view squat release flow
+tags:
+  - ios
+  - release
+  - side-squat
+---
+- addMedia:
+    - "../assets/demo/peso-pose-overlay.mp4"
+- launchApp:
+    clearState: true
+- runFlow: flows/login.yaml
+- tapOn:
+    id: nav-add-video
+- tapOn:
+    id: add-upload-video
+- tapOn:
+    id: setup-exercise
+- inputText: Squat
+- tapOn:
+    id: setup-exercise-squat
+- tapOn:
+    id: setup-angle
+- tapOn:
+    id: setup-angle-side
+- tapOn:
+    id: setup-continue
+- runFlow: flows/pick-first-video.yaml
+- extendedWaitUntil:
+    visible:
+      id: upload-start-analysis
+      enabled: true
+    timeout: 30000
+- tapOn:
+    id: upload-start-analysis
+    enabled: true
+- runFlow:
+    when:
+      visible: Continue to Analysis
+    commands:
+      - tapOn: Continue to Analysis
+- extendedWaitUntil:
+    visible:
+      id: review-screen
+    timeout: 240000
+- tapOn:
+    id: review-save
+- extendedWaitUntil:
+    visible:
+      id: workout-save
+    timeout: 10000
+- tapOn:
+    id: workout-save
+- extendedWaitUntil:
+    visible:
+      id: home-screen
+    timeout: 30000
+- assertVisible: Saved Lifts

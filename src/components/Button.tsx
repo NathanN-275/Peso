@@ -15,6 +15,8 @@ type ButtonProps = {
   style?: StyleProp<ViewStyle>;
   variant?: 'primary' | 'secondary';
   disabled?: boolean;
+  testID?: string;
+  accessibilityLabel?: string;
 };
 
 export default function Button({
@@ -23,6 +25,8 @@ export default function Button({
   style,
   variant = 'primary',
   disabled = false,
+  testID,
+  accessibilityLabel,
 }: ButtonProps) {
   const variantColors = getButtonVariantColors(variant, tokens.colors);
   const buttonStyles = [
@@ -38,6 +42,8 @@ export default function Button({
 
   return (
     <TouchableOpacity
+      testID={testID}
+      accessibilityLabel={accessibilityLabel ?? label}
       onPress={(event) => {
         event.stopPropagation?.();
         onPress?.(event);

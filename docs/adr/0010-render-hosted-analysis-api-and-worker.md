@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted for the current production backend. ADR 0015 separately authorizes an
+isolated non-production Render beta; it does not alter this production decision.
 
 ## Decision
 
@@ -33,3 +34,7 @@ without changing client code.
   the public Turnstile site key, and `EXPO_PUBLIC_PRODUCTION_BACKEND_URL`.
 - Production CORS lists only the exact Netlify production and approved preview
   origins. Authenticated API responses are never cached.
+- Render remains authoritative while the Azure Student environment is tested.
+  Any paid Azure production cutover requires separate approval and a new ADR.
+- `render.yaml`, `Peso-backend`, and `peso-analysis-worker` remain production
+  only. The isolated beta is governed by ADR 0015 and `render-beta.yaml`.

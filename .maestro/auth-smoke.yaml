@@ -1,0 +1,28 @@
+appId: com.anonymous.peso-app
+name: Auth session smoke
+tags:
+  - ios
+  - auth
+  - smoke
+---
+- launchApp:
+    clearState: true
+- runFlow: flows/login.yaml
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: home-screen
+    timeout: 30000
+- tapOn:
+    id: nav-profile
+- extendedWaitUntil:
+    visible:
+      id: settings-logout
+    timeout: 10000
+- tapOn:
+    id: settings-logout
+- extendedWaitUntil:
+    visible:
+      id: welcome-login
+    timeout: 10000

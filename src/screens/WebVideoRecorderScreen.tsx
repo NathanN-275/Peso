@@ -449,6 +449,8 @@ function PhotosTrimSelector({
 
       <View style={styles.filmstripShell}>
         <View
+          testID="recording-trim-track"
+          accessibilityLabel="Trim recording"
           accessibilityRole="adjustable"
           style={styles.filmstripTrack}
           onLayout={({ nativeEvent }: LayoutChangeEvent) => setTrackWidth(nativeEvent.layout.width)}

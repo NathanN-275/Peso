@@ -1,0 +1,30 @@
+appId: com.anonymous.peso-app
+name: Native password reset deep link
+tags:
+  - ios
+  - auth
+  - deep-link
+---
+- launchApp:
+    clearState: true
+- openLink:
+    link: ${PESO_E2E_RESET_LINK}
+- tapOn:
+    text: Open
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: reset-new-password
+    timeout: 30000
+- tapOn:
+    id: reset-new-password
+- inputText: ${PESO_E2E_NEW_PASSWORD}
+- tapOn:
+    id: reset-confirm-password
+- inputText: ${PESO_E2E_NEW_PASSWORD}
+- hideKeyboard
+- tapOn:
+    id: reset-submit
+- extendedWaitUntil:
+    visible: "Password updated.*"
+    timeout: 30000

@@ -1,0 +1,44 @@
+name: Azure Student Compute Control
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Reversible student compute action
+        required: true
+        type: choice
+        options:
+          - pause-worker
+          - resume-worker
+          - pause-all
+          - resume-all
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: azure-student-compute-control
+  cancel-in-progress: false
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    environment: student
+    env:
+      AZURE_RESOURCE_GROUP: peso-student-centralus-rg
+      AZURE_WORKER_NAME: peso-student-analysis-worker
+      AZURE_API_NAME: peso-student-api
+      ACTION: ${{ inputs.action }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Sign in to Azure with student OIDC identity
+        uses: azure/login@4c03e4685fe81df2c50d5714c7d93cf39d8deb7f # v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Apply and verify compute control
+        run: ./scripts/control_azure_student_compute.sh "$ACTION"
