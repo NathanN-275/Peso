@@ -1,3 +1,6 @@
+---
+import { betaAvailable, betaHref, betaLabel } from '../scripts/beta-entry.js';
+---
 <footer class="site-footer">
   <a class="wordmark wordmark--footer" href="/" aria-label="Peso home">
     <img src="/peso-logo.png" width="396" height="120" alt="Peso" loading="lazy" />
@@ -6,7 +9,7 @@
   <nav aria-label="Legal">
     <a href="/privacy">Privacy</a>
     <a href="/terms">Terms</a>
-    <a href="/beta">Beta coming soon</a>
+    <a href={betaHref}>{betaLabel}</a>
   </nav>
-  <p class="fine-print">© {new Date().getFullYear()} Peso. Beta coming soon.</p>
+  <p class="fine-print">© {new Date().getFullYear()} Peso. {betaAvailable ? 'Public web beta.' : 'Beta coming soon.'}</p>
 </footer>

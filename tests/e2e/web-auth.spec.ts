@@ -86,7 +86,7 @@ test('signup, generated confirmation link, and login use one Peso account', asyn
   await page.goto('/app/signup');
   await page.getByRole('textbox', { name: 'Email' }).fill(signupEmail);
   await page.getByLabel('Password').fill(signupPassword);
-  await page.getByRole('checkbox', { name: /reside in the United States/i }).check();
+  await expect(page.getByRole('checkbox', { name: /reside in the United States/i })).toHaveCount(0);
   await page.getByRole('checkbox', { name: /beta Terms/i }).check();
   await completeChallengeAndSubmit(page, /create account/i);
   await expect(page.getByRole('heading', { name: 'Verify your email' })).toBeVisible();

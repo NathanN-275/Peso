@@ -335,6 +335,16 @@ class CleanupRouteAuthorizationTest(unittest.TestCase):
 
 
 class ConfigSecurityTest(unittest.TestCase):
+  def test_unsaved_retention_defaults_to_three_days(self) -> None:
+    with patch.dict(os.environ, {
+      "SUPABASE_URL": "https://example.supabase.co",
+      "SUPABASE_SERVICE_ROLE_KEY": "service-role",
+      "BACKEND_ENV": "test",
+      "CLEANUP_JOB_TOKEN": "cleanup-test-token",
+    }, clear=True):
+      load_settings.cache_clear()
+      self.assertEqual(load_settings().saved_video_storage_ttl_hours, 72)
+
   def tearDown(self) -> None:
     load_settings.cache_clear()
 
