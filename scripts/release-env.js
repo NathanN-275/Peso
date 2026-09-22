@@ -103,6 +103,7 @@ function approvedRenderBetaApi(binding) {
 function validateReleaseEnv(environment, {
   studentApiBinding = loadStudentApiBinding(),
   renderBetaBinding = loadRenderBetaBinding(),
+  combinedBinding = require('../config/combined-web-release-binding.json'),
 } = {}) {
   const errors = REQUIRED_PUBLIC_VARIABLES
     .filter((name) => !clean(environment[name]))
@@ -166,8 +167,34 @@ function validateReleaseEnv(environment, {
     }
   }
 
+  if (releaseEnvironment === 'public-beta') {
+    const { isCombinedProject } = require('./netlify-build');
+    if (!isCombinedProject(environment, combinedBinding) ||
+        combinedBinding.status !== 'private-candidate-verified' ||
+        combinedBinding.api_service_id !== 'srv-dak9ohfqj5pc73ac2ga0' ||
+        combinedBinding.worker_service_id !== 'srv-dak9ohfqj5pc73ac2g8g' ||
+        !/^[a-f0-9]{40}$/.test(combinedBinding.source_commit ?? '') ||
+        !/^[a-f0-9]{64}$/.test(combinedBinding.blueprint_sha256 ?? '')) {
+      errors.push('Public beta requires the verified private candidate binding and existing beta services.');
+    }
+    if (clean(environment.EXPO_PUBLIC_SUPABASE_URL) !== 'https://jfgiydtrskpqxyorvvbc.supabase.co') {
+      errors.push('Public beta must use Nathan\'s selected PesoDatabase project.');
+    }
+    try {
+      const site = new URL(combinedBinding.site_origin);
+      const api = new URL(combinedBinding.api_url);
+      if (site.protocol !== 'https:' || site.origin !== combinedBinding.site_origin ||
+          api.protocol !== 'https:' || api.origin !== combinedBinding.api_url ||
+          clean(environment.EXPO_PUBLIC_PRODUCTION_BACKEND_URL) !== api.origin ||
+          new URL(challengeUrl).origin !== site.origin ||
+          clean(environment.EXPO_PUBLIC_BACKEND_URL)) throw new Error('unbound endpoint');
+    } catch {
+      errors.push('Public beta must use the exact verified API and challenge origin without a backend override.');
+    }
+  }
+
   if (
-    releaseEnvironment === 'production' &&
+    ['production', 'public-beta'].includes(releaseEnvironment) &&
     TURNSTILE_TEST_SITE_KEYS.has(clean(environment.EXPO_PUBLIC_TURNSTILE_SITE_KEY))
   ) {
     errors.push('Cloudflare Turnstile test site keys are not allowed in production.');

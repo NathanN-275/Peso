@@ -20,7 +20,11 @@ function buildScript(env, binding = combinedBinding) {
     ? 'web:build:release'
     : 'web:build:marketing';
 }
-module.exports = { APP_SITE_ID, buildScript, isCombinedProject };
+function buildEnvironment(env, binding = combinedBinding) {
+  return isCombinedProject(env, binding) ? { ...env, PESO_RELEASE_ENV: 'public-beta' } : env;
+}
+module.exports = { APP_SITE_ID, buildScript, isCombinedProject, buildEnvironment };
 if (require.main === module) {
-  execFileSync('npm', ['run', buildScript(process.env)], { stdio: 'inherit' });
+  const env = buildEnvironment(process.env);
+  execFileSync('npm', ['run', buildScript(env)], { stdio: 'inherit', env });
 }

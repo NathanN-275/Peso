@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { APP_SITE_ID, buildScript } = require('./netlify-build');
+const { APP_SITE_ID, buildScript, buildEnvironment } = require('./netlify-build');
 
 test('an explicitly bound new project builds both surfaces in production and previews', () => {
   const site = '11111111-2222-3333-4444-555555555555';
@@ -9,6 +9,17 @@ test('an explicitly bound new project builds both surfaces in production and pre
     assert.equal(buildScript({ SITE_ID: site, CONTEXT }, binding), 'web:build:release');
     assert.equal(buildScript({ SITE_ID: 'other', CONTEXT }, binding), 'web:build:marketing');
   }
+});
+
+test('combined dispatch cannot select a weaker release environment', () => {
+  const binding = { schema_version: 1, site_id: '11111111-2222-3333-4444-555555555555' };
+  for (const CONTEXT of ['production', 'deploy-preview', 'branch-deploy']) {
+    const env = { SITE_ID: binding.site_id, CONTEXT, PESO_RELEASE_ENV: 'staging' };
+    assert.equal(buildEnvironment(env, binding).PESO_RELEASE_ENV, 'public-beta');
+    assert.equal(env.PESO_RELEASE_ENV, 'staging');
+  }
+  const historical = { SITE_ID: APP_SITE_ID, PESO_RELEASE_ENV: 'render-beta' };
+  assert.equal(buildEnvironment(historical, binding), historical);
 });
 
 test('missing, malformed and historical app bindings cannot enable combined production', () => {
