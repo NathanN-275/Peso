@@ -777,6 +777,9 @@ def _delete_account_storage(user_id: str, repository: VideoRepository) -> None:
     owned_paths.extend(storage.list_storage_prefix(f"{user_id}/exports/{video['id']}-"))
 
   storage.delete_storage_paths(owned_paths)
+  # Include abandoned reservations and objects whose video rows were removed
+  # before storage deletion completed. The slash preserves the owner boundary.
+  storage.delete_storage_prefix(f"{user_id}/")
   StorageService(bucket="profile-avatars").delete_storage_prefix(f"{user_id}/")
 
 

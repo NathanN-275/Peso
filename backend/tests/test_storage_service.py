@@ -49,6 +49,45 @@ from app.services.storage_service import (
 
 
 class StorageServiceTest(unittest.TestCase):
+  def test_directory_deletion_batches_and_propagates_partial_delete_failure(self) -> None:
+    service = object.__new__(StorageService)
+    service.client = MagicMock()
+    service.bucket = 'videos'
+    paths = [f'owner/{i}.mp4' for i in range(205)]
+    service.list_storage_prefix = MagicMock(return_value=paths)
+    remove = service.client.storage.from_.return_value.remove
+    remove.side_effect = [None, RuntimeError('delete unavailable')]
+    with self.assertRaisesRegex(RuntimeError, 'delete unavailable'):
+      service.delete_storage_prefix('owner/')
+    self.assertEqual([call.args[0] for call in remove.call_args_list], [paths[:100], paths[100:200]])
+
+  def test_directory_deletion_walks_nested_objects_without_listing_other_owners(self) -> None:
+    service = object.__new__(StorageService)
+    service.client = MagicMock()
+    service.bucket = 'profile-avatars'
+    bucket = service.client.storage.from_.return_value
+    folders = {
+      'owner': [{'name': 'nested', 'id': None}, {'name': 'avatar.jpg', 'id': 'one'}],
+      'owner/nested': [{'name': 'old.jpg', 'id': 'two'}],
+    }
+    bucket.list.side_effect = lambda folder, options: folders[folder]
+    service.delete_storage_prefix('owner/')
+    bucket.remove.assert_called_once_with(['owner/avatar.jpg', 'owner/nested/old.jpg'])
+    self.assertEqual([call.args[0] for call in bucket.list.call_args_list], ['owner', 'owner/nested'])
+
+  def test_directory_listing_failure_never_deletes_a_partial_inventory(self) -> None:
+    service = object.__new__(StorageService)
+    service.client = MagicMock()
+    service.bucket = 'videos'
+    bucket = service.client.storage.from_.return_value
+    bucket.list.side_effect = [
+      [{'name': 'clip.mp4', 'id': 'one'}, {'name': 'nested', 'id': None}],
+      RuntimeError('storage unavailable'),
+    ]
+    with self.assertRaisesRegex(RuntimeError, 'storage unavailable'):
+      service.delete_storage_prefix('owner/')
+    bucket.remove.assert_not_called()
+
   def test_export_listing_paginates_and_propagates_failure(self) -> None:
     service = object.__new__(StorageService)
     service.client = MagicMock()

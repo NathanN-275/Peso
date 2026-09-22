@@ -1322,12 +1322,30 @@ class VideoRoutesTest(unittest.TestCase):
     self.assertIn(f"{USER_ID}/playback/{VIDEO_ID}.mp4", deleted_paths)
     self.assertIn(f"{USER_ID}/thumbnails/{VIDEO_ID}.jpg", deleted_paths)
     self.assertIn(f"{USER_ID}/exports/{VIDEO_ID}-export.mp4", deleted_paths)
+    video_storage.delete_storage_prefix.assert_called_once_with(f"{USER_ID}/")
     avatar_storage.delete_storage_prefix.assert_called_once_with(f"{USER_ID}/")
     archive_storage.delete_storage_prefix.assert_called_once_with(f"{USER_ID}/")
     admin_client.table.assert_called_once_with("profiles")
     admin_client.table.return_value.delete.return_value.eq.assert_called_once_with("id", USER_ID)
     admin_client.auth.admin.delete_user.assert_called_once_with(USER_ID)
     self.assertTrue(response.deleted)
+
+  def test_delete_account_storage_failure_preserves_identity_for_retry(self) -> None:
+    repository = MagicMock()
+    repository.list_user_videos.return_value = []
+    storage = MagicMock()
+    storage.delete_storage_prefix.side_effect = RuntimeError('storage unavailable')
+    admin_client = MagicMock()
+    with (
+      patch('app.routes.videos.VideoRepository', return_value=repository),
+      patch('app.routes.videos.StorageService', return_value=storage),
+      patch('app.routes.videos.get_supabase_admin_client', return_value=admin_client),
+      self.assertRaises(HTTPException) as raised,
+    ):
+      delete_account(USER_ID)
+    self.assertEqual(raised.exception.status_code, 500)
+    admin_client.table.assert_not_called()
+    admin_client.auth.admin.delete_user.assert_not_called()
 
   def test_playback_url_signs_video_only_on_demand(self) -> None:
     repository = MagicMock()

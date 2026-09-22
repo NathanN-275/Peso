@@ -92,3 +92,26 @@ recorded.
   container was stopped and removed after testing. An initial regression run
   caught an obsolete readiness mock; it was updated to require both queue and
   outbox schema checks, then the full suite passed.
+
+## Account directory cleanup checkpoint — September 22
+
+Directory prefixes ending in `/` now enumerate nested Supabase objects instead
+of attempting to remove the virtual folder returned by its parent listing.
+Listing completes before deletion; malformed entries, excessive nesting and
+listing failures fail explicitly. Deletes are batched at 100 paths, and any
+failed batch propagates to the caller. Filename prefixes used for individual
+video exports retain their existing behavior.
+
+Account deletion sweeps the exact `<user-id>/` video namespace after deleting
+known video paths, covering abandoned Supabase uploads and orphan files with no
+remaining video row. Avatars and saved-lift archives use the same recursive
+directory handling. A storage error prevents profile/Auth deletion so the user
+can retry. Focused route/storage/cleanup verification passed 103 tests and 11
+subtests, including nested files, partial listing, partial delete and identity
+preservation after storage failure.
+
+This does not establish deletion under concurrent uploads, worker/export writes,
+or Auth failure after profile deletion. Those races still need durable account
+deletion coordination and live acceptance. Azure objects without repository
+references are not covered by the Supabase namespace sweep; the selected public
+beta uses Supabase storage. No hosted account or object was deleted by this work.
