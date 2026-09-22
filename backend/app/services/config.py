@@ -111,6 +111,7 @@ class Settings:
   azure_blob_source_container: str = "source-videos"
   azure_managed_identity_client_id: str | None = None
   budget_shutdown_token: str = ""
+  intake_stop_projected_monthly_usd: int | None = None
   signed_url_ttl_seconds: int = DEFAULT_SIGNED_URL_TTL_SECONDS
   storage_download_signed_url_ttl_seconds: int = DEFAULT_STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS
   supabase_http_max_connections: int = DEFAULT_SUPABASE_HTTP_MAX_CONNECTIONS
@@ -332,6 +333,15 @@ def get_settings() -> Settings:
     or None
   )
   budget_shutdown_token = os.getenv("BUDGET_SHUTDOWN_TOKEN", "").strip()
+  intake_stop_raw = os.getenv("INTAKE_STOP_PROJECTED_MONTHLY_USD", "").strip()
+  intake_stop_projected_monthly_usd = None
+  if intake_stop_raw:
+    try:
+      intake_stop_projected_monthly_usd = int(intake_stop_raw)
+    except ValueError as error:
+      raise RuntimeError("INTAKE_STOP_PROJECTED_MONTHLY_USD must be an integer from 1 to 50.") from error
+    if not 1 <= intake_stop_projected_monthly_usd <= 50:
+      raise RuntimeError("INTAKE_STOP_PROJECTED_MONTHLY_USD must be an integer from 1 to 50.")
   if azure_blob_account_url and not re.fullmatch(
     r"https://[a-z0-9]{3,24}\.blob\.core\.windows\.net", azure_blob_account_url,
   ):
@@ -525,6 +535,7 @@ def get_settings() -> Settings:
     azure_blob_source_container=azure_blob_source_container,
     azure_managed_identity_client_id=azure_managed_identity_client_id,
     budget_shutdown_token=budget_shutdown_token,
+    intake_stop_projected_monthly_usd=intake_stop_projected_monthly_usd,
     signed_url_ttl_seconds=signed_url_ttl_seconds,
     storage_download_signed_url_ttl_seconds=storage_download_signed_url_ttl_seconds,
     supabase_http_max_connections=supabase_http_max_connections,

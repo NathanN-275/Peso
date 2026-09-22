@@ -28,6 +28,7 @@ class UploadReservationsPostgresTest(unittest.TestCase):
       connection.execute((root / "supabase/migrations/202609030001_upload_reservations.sql").read_text())
       connection.execute((root / "supabase/migrations/202609210001_unsaved_video_retention.sql").read_text())
       connection.execute((root / "supabase/migrations/202609210002_retention_deletion_outbox.sql").read_text())
+      connection.execute((root / "supabase/migrations/20260922002632_intake_stop_reason.sql").read_text())
 
   def setUp(self):
     self.user = uuid4()
@@ -148,6 +149,27 @@ class UploadReservationsPostgresTest(unittest.TestCase):
     with self.psycopg.connect(DATABASE_URL) as connection:
       connection.execute("delete from auth.users where id=%s", (self.user,))
     self.assertEqual(self.rpc("select user_id from public.upload_reservations where id=%s", (reservation,)), [(None,)])
+
+  def test_intake_stop_preserves_accepted_uploads_and_queue_admission(self):
+    accepted = self.reserve()
+    self.rpc('select public.disable_video_upload_admission()')
+    with self.assertRaises(self.psycopg.errors.NoDataFound):
+      self.reserve()
+    self.assertEqual(self.rpc('select count(*) from public.upload_reservations'), [(1,)])
+    video = self.verify(accepted)
+    self.assertTrue(self.rpc('select id from public.enqueue_video_analysis_job(%s,false,3,20)', (video,)))
+    self.assertEqual(self.rpc('select state from public.upload_reservations where id=%s', (accepted,)), [('consumed',)])
+    self.assertEqual(self.rpc('select enabled from public.upload_admission_control'), [(False,)])
+
+  def test_admission_stop_waits_for_existing_reservation_transaction(self):
+    with ThreadPoolExecutor(max_workers=1) as pool:
+      with self.psycopg.connect(DATABASE_URL) as connection:
+        connection.execute("select pg_advisory_xact_lock(hashtextextended('peso:upload-capacity',0))")
+        stopping = pool.submit(self.rpc, 'select public.disable_video_upload_admission()')
+        self.assertEqual(connection.execute('select enabled from public.upload_admission_control').fetchall(), [(True,)])
+      stopping.result(timeout=10)
+    with self.assertRaises(self.psycopg.errors.NoDataFound):
+      self.reserve()
 
   def expired_video(self):
     video = self.verify(self.reserve())

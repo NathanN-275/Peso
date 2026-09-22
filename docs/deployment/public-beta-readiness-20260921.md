@@ -183,3 +183,15 @@ Supabase's current [storage listing reference](https://supabase.com/docs/referen
 confirms the pagination options. The outbox has explicit service-role grants,
 RLS and revoked client access, consistent with the
 [new-table API grant change](https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically).
+
+## Intake-stop implementation checkpoint
+
+Added a token-protected measurement endpoint that latches admission off for
+reviewed projected-spend or measured storage thresholds. $35 remains an alert;
+Nathan's stop threshold is pending and is left unconfigured. The endpoint never
+reopens intake. Seventeen local PostgreSQL tests prove admission locking and
+that a previously accepted reservation can still verify and enqueue after the
+stop. The full upload-to-playback test still needs a live private candidate.
+See [intake stop operations](intake-stop.md) for measurement freshness, manual
+resume, collector/notification gaps and the limitation that intake is not a
+provider billing cap. No monitor was scheduled and no hosted admission changed.
