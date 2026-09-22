@@ -372,6 +372,18 @@ class VideoRepository:
       )
     return response.data or []
 
+  def claim_expired_deletion(self, video_id: str) -> dict[str, Any] | None:
+    response = self.client.rpc("claim_expired_video_deletion", {"p_video_id": video_id}).execute()
+    return response.data[0] if response.data else None
+
+  def list_pending_deletions(self) -> list[dict[str, Any]]:
+    response = (self.client.table("video_deletion_outbox").select("video_id,user_id,storage_paths")
+                .order("created_at").limit(200).execute())
+    return response.data or []
+
+  def complete_deletion(self, video_id: str) -> None:
+    self.client.table("video_deletion_outbox").delete().eq("video_id", video_id).execute()
+
   def list_stale_pending_in_progress_videos(self, cutoff_iso: str) -> list[dict[str, Any]]:
     try:
       response = (

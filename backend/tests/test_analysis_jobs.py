@@ -28,13 +28,15 @@ class AnalysisJobRepositoryTest(unittest.TestCase):
     ):
       AnalysisJobRepository().check_readiness()
 
-    client.table.assert_called_once_with("analysis_jobs")
+    client.table.assert_any_call("analysis_jobs")
+    client.table.assert_any_call("video_deletion_outbox")
+    client.table.return_value.select.assert_any_call("video_id,user_id,storage_paths")
     selected_columns = client.table.return_value.select.call_args.args[0]
     self.assertIn("stage", selected_columns)
     self.assertIn("stage_timestamps", selected_columns)
     self.assertIn("last_heartbeat_at", selected_columns)
     self.assertIn("failure_class", selected_columns)
-    client.table.return_value.select.return_value.limit.assert_called_once_with(1)
+    client.table.return_value.select.return_value.limit.assert_any_call(1)
 
   def test_enqueue_calls_atomic_database_rpc(self) -> None:
     client = MagicMock()

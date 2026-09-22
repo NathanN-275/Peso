@@ -83,6 +83,27 @@ class FakeRepository:
     self.stale_videos = stale_videos or []
     self.referenced_videos = referenced_videos or []
     self.deleted_video_ids: list[str] = []
+    self.pending_deletions: dict[str, dict] = {}
+    self.claimed_video_ids: list[str] = []
+
+  def claim_expired_deletion(self, video_id: str) -> dict | None:
+    row = next((v for v in self.expired_videos if v['id'] == video_id), None)
+    if not row or row.get('save_state') == 'saved':
+      return None
+    self.claimed_video_ids.append(video_id)
+    task = {'video_id': video_id, 'user_id': row['user_id'], 'storage_paths': [
+      row[key] for key in ('storage_path', 'original_storage_path', 'playback_path', 'thumbnail_path') if row.get(key)
+    ]}
+    self.pending_deletions[video_id] = task
+    self.expired_videos.remove(row)
+    return task
+
+  def list_pending_deletions(self) -> list[dict]:
+    return list(self.pending_deletions.values())
+
+  def complete_deletion(self, video_id: str) -> None:
+    self.pending_deletions.pop(video_id, None)
+    self.deleted_video_ids.append(video_id)
 
   def list_expired_pending_videos(self) -> list[dict]:
     return self.expired_videos
@@ -112,8 +133,60 @@ class FakeStorage:
   def delete_storage_path(self, storage_path: str) -> None:
     self.deleted_paths.append(storage_path)
 
+  def list_storage_prefix(self, prefix: str) -> list[str]:
+    return [o['path'] for o in self.storage_objects if o['path'].startswith(prefix)]
+
 
 class StorageCleanupServiceTest(unittest.TestCase):
+  def test_partial_storage_failure_keeps_outbox_and_retry_is_idempotent(self) -> None:
+    item = video('11111111-1111-1111-1111-111111111111', thumbnail_path=f'{USER_ID}/thumb.jpg')
+    repository = FakeRepository(expired_videos=[item], referenced_videos=[item])
+    storage = FakeStorage()
+    original_delete = storage.delete_storage_path
+    def fail_thumbnail(path):
+      if path.endswith('thumb.jpg'):
+        raise RuntimeError('Storage temporarily unavailable')
+      original_delete(path)
+    storage.delete_storage_path = fail_thumbnail
+    service = StorageCleanupService(repository, storage, settings())
+    report = service.run(now=NOW)
+    self.assertTrue(report.errors)
+    self.assertEqual(report.deleted_count, 0)
+    self.assertIn(item['id'], repository.pending_deletions)
+    self.assertEqual(repository.expired_videos, [])
+    storage.delete_storage_path = original_delete
+    self.assertEqual(service.run(now=NOW).deleted_count, 1)
+    self.assertEqual(repository.pending_deletions, {})
+    self.assertEqual(service.run(now=NOW).deleted_count, 0)
+
+  def test_save_after_candidate_listing_wins_before_claim(self) -> None:
+    item = video('11111111-1111-1111-1111-111111111111')
+    repository = FakeRepository(expired_videos=[item], referenced_videos=[item])
+    repository.claim_expired_deletion = lambda _video_id: None
+    storage = FakeStorage()
+    report = StorageCleanupService(repository, storage, settings()).run(now=NOW)
+    self.assertEqual(report.deleted_count, 0)
+    self.assertEqual(storage.deleted_paths, [])
+
+  def test_missing_claim_migration_does_not_fall_back_to_storage_first_deletion(self) -> None:
+    item = video('11111111-1111-1111-1111-111111111111')
+    repository = FakeRepository(expired_videos=[item], referenced_videos=[item])
+    storage = FakeStorage()
+    with patch.object(repository, 'claim_expired_deletion', side_effect=RuntimeError('missing RPC')):
+      report = StorageCleanupService(repository, storage, settings()).run(now=NOW)
+    self.assertTrue(report.errors)
+    self.assertEqual(storage.deleted_paths, [])
+
+  def test_export_listing_failure_preserves_pending_deletion(self) -> None:
+    item = video('11111111-1111-1111-1111-111111111111')
+    repository = FakeRepository(expired_videos=[item], referenced_videos=[item])
+    storage = FakeStorage()
+    with patch.object(storage, 'list_storage_prefix', side_effect=RuntimeError('unavailable')):
+      report = StorageCleanupService(repository, storage, settings()).run(now=NOW)
+    self.assertTrue(report.errors)
+    self.assertIn(item['id'], repository.pending_deletions)
+    self.assertEqual(storage.deleted_paths, [])
+
   def test_expired_pending_video_cleanup_deletes_storage_exports_and_row(self) -> None:
     video_id = "11111111-1111-1111-1111-111111111111"
     source_path = f"{USER_ID}/{video_id}.mp4"
@@ -165,7 +238,7 @@ class StorageCleanupServiceTest(unittest.TestCase):
     self.assertEqual(repository.deleted_video_ids, [])
     self.assertEqual(storage.deleted_paths, [])
 
-  def test_active_in_progress_video_is_skipped_but_stale_pending_video_is_deleted(self) -> None:
+  def test_retention_never_deletes_active_or_stale_analysis_jobs(self) -> None:
     active_id = "11111111-1111-1111-1111-111111111111"
     stale_id = "22222222-2222-2222-2222-222222222222"
     active_path = f"{USER_ID}/{active_id}.mp4"
@@ -191,11 +264,11 @@ class StorageCleanupServiceTest(unittest.TestCase):
 
     report = StorageCleanupService(repository, storage, settings()).run(now=NOW)
 
-    self.assertEqual(report.deleted_count, 1)
+    self.assertEqual(report.deleted_count, 0)
     self.assertEqual(report.expired_pending_videos, 0)
-    self.assertEqual(report.stale_pending_videos, 1)
-    self.assertEqual(repository.deleted_video_ids, [stale_id])
-    self.assertEqual(storage.deleted_paths, [stale_path])
+    self.assertEqual(report.stale_pending_videos, 0)
+    self.assertEqual(repository.deleted_video_ids, [])
+    self.assertEqual(storage.deleted_paths, [])
 
   def test_old_exports_are_temporary_and_regenerated_on_demand(self) -> None:
     old_export = f"{USER_ID}/exports/11111111-1111-1111-1111-111111111111-analysis-h264-v1.mp4"

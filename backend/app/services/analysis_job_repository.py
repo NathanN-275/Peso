@@ -22,6 +22,7 @@ class AnalysisJobRepository:
 
   def check_readiness(self) -> None:
     """Fail when the deployed queue schema is older than this API contract."""
+    self.client.table("video_deletion_outbox").select("video_id,user_id,storage_paths").limit(1).execute()
     (
       self.client.table("analysis_jobs")
       .select(ANALYSIS_JOB_COLUMNS)

@@ -327,8 +327,18 @@ class StorageService:
     self.client.storage.from_(self.bucket).remove([storage_path])
 
   def list_storage_objects(self, folder: str = "") -> list[dict[str, Any]]:
-    objects = self.client.storage.from_(self.bucket).list(folder.strip("/"))
-    return objects if isinstance(objects, list) else []
+    objects: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+      page = self.client.storage.from_(self.bucket).list(folder.strip("/"), {
+        "limit": 100, "offset": offset, "sortBy": {"column": "name", "order": "asc"},
+      })
+      if not isinstance(page, list):
+        raise RuntimeError("Storage listing returned an invalid response.")
+      objects.extend(page)
+      if len(page) < 100:
+        return objects
+      offset += len(page)
 
   def list_storage_objects_recursive(
     self,
@@ -375,10 +385,8 @@ class StorageService:
 
   def list_storage_prefix(self, prefix: str) -> list[str]:
     folder, _, name_prefix = prefix.rstrip("/").rpartition("/")
-    try:
-      objects = self.client.storage.from_(self.bucket).list(folder)
-    except Exception:
-      return []
+    # Listing failure is not an empty folder: deletion must remain retryable.
+    objects = self.list_storage_objects(folder)
 
     return [
       f"{folder}/{item['name']}" if folder else item["name"]

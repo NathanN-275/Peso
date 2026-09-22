@@ -147,3 +147,39 @@ spending. No production migration or launch is approved by this report.
 - Supabase CLI has no authenticated access token; live inspection needs the
   signed-in dashboard or restored CLI authentication. No secret was requested
   in chat or copied into this report.
+
+## Fresh Supabase connector and retention checkpoint
+
+The Supabase connector became available during this task. Read-only inspection
+at 2026-09-22 00:21 UTC (September 21 local time) confirms both projects are
+`ACTIVE_HEALTHY`, on organization `ireiverxhceuwvshqkjz` with plan `free`.
+Production uses PostgreSQL 17.6.1.084 in us-east-1; staging uses 17.6.1.165 in
+us-west-2. Production has 21 recorded migrations through `202608270001`; staging
+has 23 through `202609030001`. Neither has the new retention migrations.
+
+Production security advisors still report three authenticated GraphQL schema
+visibility warnings (`profiles`, `videos`, `analysis_results`) and disabled
+leaked-password protection. All five production public tables have RLS enabled.
+Staging reports only informational RLS-without-policy notices for its four
+backend-only queue/reservation tables. This is not live two-user isolation proof.
+
+Read-only storage inventory confirms `videos`, `profile-avatars`, and
+`saved-lift-exports` are private in both projects. Video object limit is 50 MiB;
+avatar limit is 512 KiB. Neither inventory returned Storage object metadata
+rows. Database size at inspection was 14,806,163 bytes in production and
+12,274,835 bytes in staging. These snapshots do not prove billing headroom,
+egress usage, physical orphan absence, or recoverable backups.
+
+Retention implementation now uses an atomic database claim and durable media
+deletion outbox. See [retention operations](retention-cleanup.md) for timestamp,
+race behavior, failure retry, migration ordering and rollback limitations. The
+migration is prepared locally and has not been applied to either hosted project.
+Fifteen disposable PostgreSQL tests passed, including save-first/cleanup-first
+transaction ordering, concurrency, active-job protection and client-role denial.
+The storage implementation now paginates listings and propagates errors instead
+of treating them as empty directories.
+
+Supabase's current [storage listing reference](https://supabase.com/docs/reference/python/storage-from-list)
+confirms the pagination options. The outbox has explicit service-role grants,
+RLS and revoked client access, consistent with the
+[new-table API grant change](https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically).

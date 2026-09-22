@@ -49,6 +49,20 @@ from app.services.storage_service import (
 
 
 class StorageServiceTest(unittest.TestCase):
+  def test_export_listing_paginates_and_propagates_failure(self) -> None:
+    service = object.__new__(StorageService)
+    service.client = MagicMock()
+    service.bucket = 'videos'
+    listing = service.client.storage.from_.return_value.list
+    listing.side_effect = [[{'name': f'clip-{i:03}.mp4'} for i in range(100)], [{'name': 'clip-100.mp4'}]]
+    paths = service.list_storage_prefix('owner/exports/clip-')
+    self.assertEqual(len(paths), 101)
+    self.assertEqual(paths[-1], 'owner/exports/clip-100.mp4')
+    self.assertEqual(listing.call_args.args[1]['offset'], 100)
+    listing.side_effect = RuntimeError('unavailable')
+    with self.assertRaisesRegex(RuntimeError, 'unavailable'):
+      service.list_storage_prefix('owner/exports/clip-')
+
   def _service(self, object_info: dict[str, object]) -> StorageService:
     service = object.__new__(StorageService)
     service.get_object_info = MagicMock(return_value=object_info)

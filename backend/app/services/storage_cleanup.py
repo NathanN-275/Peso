@@ -99,10 +99,6 @@ def _object_timestamp(storage_object: dict[str, Any]) -> datetime | None:
   )
 
 
-def _video_updated_at(video: dict[str, Any]) -> datetime | None:
-  return _parse_datetime(video.get("updated_at")) or _parse_datetime(video.get("created_at"))
-
-
 def _is_older_than(timestamp: datetime | None, cutoff: datetime) -> bool:
   return timestamp is not None and timestamp < cutoff
 
@@ -211,96 +207,68 @@ class StorageCleanupService:
     dry_run: bool,
     now: datetime,
   ) -> None:
-    stale_cutoff = now - timedelta(hours=self.settings.stale_processing_hours)
-    candidates: dict[str, tuple[dict[str, Any], str]] = {}
-
     try:
       expired_videos = self.repository.list_expired_pending_videos()
-    except Exception as error:
-      message = f"Unable to list expired pending videos: {error}"
-      logger.warning(message)
-      report.errors.append(message)
+    except Exception:
+      report.errors.append("Unable to list expired videos; retention was not claimed.")
       expired_videos = []
 
     for video in expired_videos:
-      if not self._video_can_be_deleted(video, stale_cutoff=stale_cutoff):
+      if video.get("save_state") == "saved" or video.get("is_saved"):
         continue
-
-      video_id = str(video.get("id") or "")
-
-      if video_id:
-        candidates[video_id] = (video, "expired")
-
-    try:
-      stale_videos = self.repository.list_stale_pending_in_progress_videos(stale_cutoff.isoformat())
-    except Exception as error:
-      message = f"Unable to list stale pending videos: {error}"
-      logger.warning(message)
-      report.errors.append(message)
-      stale_videos = []
-
-    for video in stale_videos:
-      if video.get("save_state") == "saved":
+      if str(video.get("status") or "") in IN_PROGRESS_STATUSES:
         continue
-
       video_id = str(video.get("id") or "")
-
-      if video_id and video_id not in candidates:
-        candidates[video_id] = (video, "stale")
-
-    for video_id, (video, reason) in candidates.items():
-      source_path = video.get("storage_path")
       user_id = str(video.get("user_id") or "")
-
-      if (
-        not isinstance(source_path, str)
-        or not is_app_storage_path(source_path)
-        or not storage_path_belongs_to_user(source_path, user_id)
-      ):
+      paths = self._video_storage_paths(video)
+      if not video_id or not paths or not storage_path_belongs_to_user(video.get("storage_path") or "", user_id):
         report.errors.append(f"Skipped video {video_id} because its storage path is outside the owning user folder.")
         continue
-
-      if reason == "expired":
-        report.expired_pending_videos += 1
-      else:
-        report.stale_pending_videos += 1
-
-      storage_paths = self._video_storage_paths(video)
-      storage_paths.extend(self._export_paths_for_video(video, video_id, object_by_path.values()))
-
-      storage_deleted = self._delete_storage_paths(
-        storage_paths,
-        report=report,
-        object_by_path=object_by_path,
-        scheduled_storage_paths=scheduled_storage_paths,
-        dry_run=dry_run,
-      )
-
       if dry_run:
+        report.expired_pending_videos += 1
+        paths.extend(self._export_paths_for_video(video, video_id, object_by_path.values()))
+        self._delete_storage_paths(paths, report=report, object_by_path=object_by_path,
+                                   scheduled_storage_paths=scheduled_storage_paths, dry_run=True)
         continue
-
-      if not storage_deleted:
-        report.errors.append(f"Skipped deleting video row {video_id} because storage cleanup failed.")
-        continue
-
       try:
-        self.repository.mark_discarded(video_id)
-        report.deleted_count += 1
-      except Exception as error:
-        message = f"Unable to mark video {video_id} as discarded: {error}"
-        logger.warning(message)
-        report.errors.append(message)
+        claimed = self.repository.claim_expired_deletion(video_id)
+        if claimed:
+          report.expired_pending_videos += 1
+      except Exception:
+        # Missing migration, concurrent transaction failure, or malformed paths:
+        # do not fall back to the old non-atomic storage-first deletion.
+        report.errors.append(f"Unable to claim expired video {video_id}; no storage deletion was attempted for it.")
 
-  def _video_can_be_deleted(self, video: dict[str, Any], *, stale_cutoff: datetime) -> bool:
-    if video.get("save_state") == "saved":
-      return False
-
-    status = str(video.get("status") or "")
-
-    if status not in IN_PROGRESS_STATUSES:
-      return True
-
-    return _is_older_than(_video_updated_at(video), stale_cutoff)
+    try:
+      pending = self.repository.list_pending_deletions()
+    except Exception:
+      report.errors.append("Unable to read pending media deletions; verify the retention migration.")
+      return
+    for task in pending:
+      video_id = str(task["video_id"])
+      user_id = str(task["user_id"])
+      paths = list(task["storage_paths"])
+      if any(not storage_path_belongs_to_user(path, user_id) for path in paths):
+        report.errors.append(f"Pending deletion {video_id} contains a path outside the owning user folder.")
+        continue
+      try:
+        # List exports afresh: a prior partial listing must never acknowledge
+        # deletion while leaving files untracked. Storage errors preserve the task.
+        paths.extend(self.storage.list_storage_prefix(f"{user_id}/exports/{video_id}-"))
+      except Exception:
+        report.errors.append(f"Unable to list exports for pending deletion {video_id}.")
+        continue
+      if any(not storage_path_belongs_to_user(path, user_id) for path in paths):
+        report.errors.append(f"Export deletion {video_id} contains an unsafe storage path.")
+        continue
+      deleted = self._delete_storage_paths(paths, report=report, object_by_path=object_by_path,
+                                           scheduled_storage_paths=scheduled_storage_paths, dry_run=dry_run)
+      if deleted and not dry_run:
+        try:
+          self.repository.complete_deletion(video_id)
+          report.deleted_count += 1
+        except Exception:
+          report.errors.append(f"Unable to acknowledge media deletion {video_id}; it will be retried.")
 
   def _video_storage_paths(self, video: dict[str, Any]) -> list[str]:
     storage_paths: list[str] = []
@@ -439,6 +407,7 @@ class StorageCleanupService:
         self.storage.delete_storage_path(path)
       except Exception as error:
         deleted_all_paths = False
+        scheduled_storage_paths.discard(path)
         message = f"Unable to delete storage object {path}: {error}"
         logger.warning(message)
         report.errors.append(message)
