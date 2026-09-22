@@ -14,6 +14,7 @@ from ..analysis.manual_tracking import validate_tracking_setup
 from ..services.auth import get_current_user_id
 from ..services.azure_blob_storage import AzureBlobConfigurationError, get_azure_blob_storage
 from ..services.config import get_settings
+from ..services.ip_admission import enforce_us_ip
 from ..services.media_metadata import MediaValidationError, enforce_video_limits, probe_video_metadata
 from ..services.storage_service import (
   ALLOWED_VIDEO_EXTENSIONS,
@@ -109,7 +110,7 @@ def _get_upload_storage(settings):
     raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Private upload storage is not configured.") from error
 
 
-@router.post("", response_model=UploadReservationResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=UploadReservationResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(enforce_us_ip)])
 def create_upload_reservation(
   request: CreateUploadReservationRequest,
   user_id: str = Depends(get_current_user_id),

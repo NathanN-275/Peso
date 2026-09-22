@@ -29,6 +29,7 @@ class UploadReservationsPostgresTest(unittest.TestCase):
       connection.execute((root / "supabase/migrations/202609210001_unsaved_video_retention.sql").read_text())
       connection.execute((root / "supabase/migrations/202609210002_retention_deletion_outbox.sql").read_text())
       connection.execute((root / "supabase/migrations/20260922002632_intake_stop_reason.sql").read_text())
+      connection.execute((root / "supabase/migrations/20260922003008_us_ip_beta_admission.sql").read_text())
 
   def setUp(self):
     self.user = uuid4()
@@ -230,3 +231,25 @@ class UploadReservationsPostgresTest(unittest.TestCase):
       for sql in ('select * from public.video_deletion_outbox', "select * from public.claim_expired_video_deletion('00000000-0000-0000-0000-000000000000')"):
         with self.subTest(role=role), self.assertRaises(self.psycopg.errors.InsufficientPrivilege):
           self.rpc(sql, role=role)
+
+  def test_signup_hook_uses_only_auth_ip_and_fails_closed_without_current_ranges(self):
+    def hook(ip, **extra):
+      event = {'metadata': {'name':'before-user-created', 'ip_address':ip}, **extra}
+      return self.rpc('select public.hook_us_ip_before_user_created(%s::jsonb)',
+                      (json.dumps(event),), role='supabase_auth_admin')[0][0]
+    self.assertEqual(hook('192.0.2.1')['error']['http_code'], 403)
+    with self.psycopg.connect(DATABASE_URL) as connection:
+      connection.execute("insert into public.us_beta_ip_ranges values ('192.0.2.0/24','test-only',now()+interval '1 hour')")
+    try:
+      self.assertEqual(hook('192.0.2.1'), {})
+      for address in ('198.51.100.1', 'invalid', '', None):
+        self.assertEqual(hook(address, user={'user_metadata': {'country':'US', 'ip_address':'192.0.2.1'}})['error']['http_code'], 403)
+      for role in ('anon','authenticated','service_role'):
+        with self.assertRaises(self.psycopg.errors.InsufficientPrivilege):
+          self.rpc("select public.hook_us_ip_before_user_created('{}')", role=role)
+      with self.psycopg.connect(DATABASE_URL) as connection:
+        connection.execute("update public.us_beta_ip_ranges set valid_until=now()-interval '1 second'")
+      self.assertEqual(hook('192.0.2.1')['error']['http_code'], 403)
+    finally:
+      with self.psycopg.connect(DATABASE_URL) as connection:
+        connection.execute('delete from public.us_beta_ip_ranges')

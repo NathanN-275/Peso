@@ -1,8 +1,10 @@
 # Intake stop and manual recovery
 
 Implementation prepared; production activation and monitoring are not verified.
-Nathan's projected-spend stop threshold is still pending. No spending or capacity
-increase is authorized by this procedure.
+Nathan approved PesoDatabase (`jfgiydtrskpqxyorvvbc`), a $50 monthly budget,
+a $50 projected monthly spend intake stop, and actual monthly spend notifications
+at $15, $25, $35 and $50 on September 22, 2026. No public launch, paid service
+resumption or capacity increase is authorized by these preferences.
 
 ## Measurements and behavior
 
@@ -13,6 +15,7 @@ The token is the backend's `BUDGET_SHUTDOWN_TOKEN`. JSON body:
 ```json
 {
   "observed_at": "2026-09-22T00:00:00Z",
+  "actual_monthly_usd": "15.00",
   "projected_monthly_usd": "35.00",
   "storage_used_bytes": 123456
 }
@@ -30,10 +33,13 @@ storage inventory, using complete paginated results.
 
 `INTAKE_STOP_PROJECTED_MONTHLY_USD` must contain Nathan's reviewed integer dollar
 threshold (1–50); blank configuration returns 503. The example environment leaves
-it blank deliberately. $35 always produces a projected-spend alert. A sample
+it at Nathan's approved $50 value. Actual spend and projected spend are separate
+required measurements. The response lists reached actual-spend milestones in
+`actual_spend_milestones_usd` ($15, $25, $35, $50); this is **not** a notification
+delivery receipt. A sample
 at or above the selected stop, or at/above the configured storage block ratio
 (currently 95% of configured storage quota), disables new admission durably.
-The API logs `projected_spend_alert` and `intake_stop` events without credentials.
+The API logs `intake_stop` events without credentials.
 Healthy samples never enable admission; `stop_triggered=false` is not evidence
 that intake is currently open.
 
@@ -56,11 +62,15 @@ setting `UPLOAD_RESERVATIONS_ENABLED=false`, which may affect completion paths.
    the reservation migration and approved staging rehearsal.
 2. Configure a non-browser budget token and the reviewed threshold. Do not print
    either credentials or complete authenticated request payloads in logs.
-3. Wire a trusted monitor to current billing forecasts and measured storage,
+3. Wire a trusted monitor to actual monthly billing, current billing forecasts and measured storage,
    send samples within the five-minute freshness window, and alert the operator
    on missing measurements, non-2xx responses, stale samples and stop events.
    Verify provider billing delay; a recent timestamp cannot make stale billing
-   current. This repository does not yet supply that provider collector.
+   current. Persist notification delivery per billing month and milestone, retry
+   failures, and notify for every newly reached threshold if a sample crosses
+   several at once. Reset milestone state only for a new billing month. Never
+   mark delivery successful from this endpoint response alone. This repository
+   does not yet supply that provider collector or notification delivery adapter.
 4. In isolated staging, accept one test upload, trip the stop, confirm a new
    upload fails clearly, then finish the accepted upload through actual worker
    playback. Confirm no rejected-request reservation exists. This live test is

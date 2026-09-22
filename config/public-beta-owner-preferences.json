@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "approved_on": "2026-09-22",
+  "supabase_project_name": "PesoDatabase",
+  "supabase_project_ref": "jfgiydtrskpqxyorvvbc",
+  "monthly_budget_usd": 50,
+  "actual_monthly_spend_notification_thresholds_usd": [15, 25, 35, 50],
+  "stop_new_uploads_at_projected_monthly_usd": 50,
+  "finish_accepted_uploads_and_analysis": true,
+  "public_launch_authorized": false,
+  "paid_infrastructure_resumption_authorized": false
+}

@@ -26,6 +26,7 @@ def _authorize_budget_token(token: str | None) -> None:
 class IntakeMeasurement(BaseModel):
   model_config = ConfigDict(extra="forbid")
   observed_at: AwareDatetime
+  actual_monthly_usd: Decimal = Field(ge=0, max_digits=12, decimal_places=2, allow_inf_nan=False)
   projected_monthly_usd: Decimal = Field(ge=0, max_digits=12, decimal_places=2, allow_inf_nan=False)
   storage_used_bytes: int = Field(ge=0, strict=True)
 
@@ -51,12 +52,14 @@ def evaluate_budget_admission(
   if reasons:
     get_supabase_admin_client().rpc("disable_video_upload_admission", {}).execute()
     logger.warning("Intake stop event=intake_stop reasons=%s", ",".join(reasons))
-  alert = measurement.projected_monthly_usd >= Decimal("35")
-  if alert:
-    logger.warning("Projected monthly spend alert event=projected_spend_alert threshold_usd=35")
+  # These are reached milestones, not delivery receipts. The collector must
+  # persist delivery state per billing month and retry failed notifications.
+  milestones = [amount for amount in (15, 25, 35, 50)
+                if measurement.actual_monthly_usd >= amount]
   # stop_triggered describes this sample. A healthy sample does not imply the
   # durable switch is enabled; it may already be stopped by another event.
-  return {"stop_triggered": bool(reasons), "reasons": reasons, "spend_alert": alert}
+  return {"stop_triggered": bool(reasons), "reasons": reasons,
+          "actual_spend_milestones_usd": milestones}
 
 
 @router.post("/disable")

@@ -53,8 +53,9 @@ November 26). Independent DNS/anonymous TLS probing remains open.
 Historical September 20 evidence identifies production Supabase
 `jfgiydtrskpqxyorvvbc` and isolated staging `iseqgaewjpjcxrndibep`. Current plan,
 migrations, backups, authentication settings, storage headroom and advisors
-are **not yet reverified**. Nathan's selection of the eventual public database
-is pending; do not repurpose staging or transfer its data to production.
+are **not yet reverified**. Nathan selected existing PesoDatabase (`jfgiydtrskpqxyorvvbc`) on September 22;
+do not repurpose staging or transfer its data to production. Subsequent fresh
+Supabase observations are recorded below.
 
 ## Confirmed implementation gaps
 
@@ -187,11 +188,32 @@ RLS and revoked client access, consistent with the
 ## Intake-stop implementation checkpoint
 
 Added a token-protected measurement endpoint that latches admission off for
-reviewed projected-spend or measured storage thresholds. $35 remains an alert;
-Nathan's stop threshold is pending and is left unconfigured. The endpoint never
+reviewed projected-spend or measured storage thresholds. Nathan approved the
+$50 projected stop and actual-spend alerts at $15, $25, $35 and $50 on September
+22. The example configuration now uses $50; hosted configuration is unchanged.
+The endpoint never
 reopens intake. Seventeen local PostgreSQL tests prove admission locking and
 that a previously accepted reservation can still verify and enqueue after the
 stop. The full upload-to-playback test still needs a live private candidate.
 See [intake stop operations](intake-stop.md) for measurement freshness, manual
 resume, collector/notification gaps and the limitation that intake is not a
 provider billing cap. No monitor was scheduled and no hosted admission changed.
+
+## Owner preferences — September 22
+
+The canonical recorded preferences are in
+`config/public-beta-owner-preferences.json`: existing PesoDatabase, $50 monthly
+budget, actual-spend notifications at $15/$25/$35/$50, and new-upload admission
+stopped at projected monthly spend >= $50. Accepted uploads and analysis finish.
+Public launch and resuming paid infrastructure each require separate approval.
+Billing collection, durable monthly notification deduplication and actual delivery
+remain unverified and inactive; recording preferences does not activate them.
+
+## IP-admission implementation checkpoint
+
+Prepared transport-peer-aware API admission and a Supabase before-user-created
+hook with shared, expiring US CIDR data. Spoofed forwarding headers, missing or
+expired data, direct signup metadata spoofing, and database role permissions were
+tested locally. The full backend suite passed 504 tests and 57 subtests; all 18
+PostgreSQL integration tests passed separately. Nothing was enabled on hosted
+services. See [IP admission](us-ip-admission.md) for remaining activation gates.

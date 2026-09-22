@@ -29,6 +29,7 @@ from ..services.analysis_trace import get_analysis_trace_service
 from ..services.analysis_job_repository import AnalysisJobRepository
 from ..services.auth import get_current_user_id
 from ..services.config import get_settings
+from ..services.ip_admission import enforce_us_ip
 from ..services.saved_lift_exports import ARCHIVE_BUCKET, SavedLiftExportService
 from ..services.supabase_client import get_supabase_admin_client
 from ..services.storage_cleanup import StorageCleanupService, cleanup_requires_token
@@ -788,7 +789,7 @@ def _delete_saved_lift_assets(storage: StorageService, video: dict, user_id: str
     _delete_owned_storage_path(storage, path, user_id, "Saved Lift export")
 
 
-@router.post("/videos", response_model=RegisterVideoResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/videos", response_model=RegisterVideoResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(enforce_us_ip)])
 def register_video(
   request: RegisterVideoRequest,
   user_id: str = Depends(get_current_user_id),

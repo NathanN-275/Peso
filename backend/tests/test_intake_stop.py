@@ -28,11 +28,20 @@ class IntakeStopTest(TestCase):
 
   def sample(self, **overrides):
     return IntakeMeasurement(**{'observed_at': datetime.now(timezone.utc),
+      'actual_monthly_usd': Decimal('0'),
       'projected_monthly_usd': Decimal('10'), 'storage_used_bytes': 100, **overrides})
 
-  def test_alert_does_not_stop_below_selected_threshold(self):
+  def test_actual_spend_alerts_are_independent_of_forecast(self):
     result = evaluate_budget_admission(self.sample(projected_monthly_usd=Decimal('35')), 'test-token')
-    self.assertEqual(result, {'stop_triggered': False, 'reasons': [], 'spend_alert': True})
+    self.assertEqual(result, {'stop_triggered': False, 'reasons': [], 'actual_spend_milestones_usd': []})
+    for amount, expected in [('14.99', []), ('15', [15]), ('24.99', [15]),
+                             ('25', [15, 25]), ('34.99', [15, 25]),
+                             ('35', [15, 25, 35]), ('49.99', [15, 25, 35]),
+                             ('50', [15, 25, 35, 50]), ('70', [15, 25, 35, 50])]:
+      with self.subTest(actual=amount):
+        result = evaluate_budget_admission(self.sample(actual_monthly_usd=amount), 'test-token')
+        self.assertEqual(result['actual_spend_milestones_usd'], expected)
+        self.assertFalse(result['stop_triggered'])
     self.client.rpc.assert_not_called()
 
   def test_equality_at_spend_or_storage_threshold_stops_intake(self):
@@ -70,6 +79,7 @@ class IntakeStopTest(TestCase):
 
   def test_invalid_measurements_are_not_treated_as_zero(self):
     for changes in ({'projected_monthly_usd': 'NaN'}, {'projected_monthly_usd': -1},
+                    {'actual_monthly_usd': 'NaN'}, {'actual_monthly_usd': -1},
                     {'storage_used_bytes': -1}, {'storage_used_bytes': True}, {'observed_at': datetime.now()}):
       with self.subTest(changes=changes), self.assertRaises(ValidationError):
         self.sample(**changes)

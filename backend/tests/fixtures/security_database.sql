@@ -4,6 +4,7 @@ create extension if not exists pgcrypto;
 create role anon nologin;
 create role authenticated nologin;
 create role service_role nologin bypassrls;
+create role supabase_auth_admin nologin;
 create schema auth;
 create table auth.users (id uuid primary key);
 create function public.set_updated_at() returns trigger language plpgsql as $$
@@ -27,5 +28,5 @@ create table public.analysis_jobs (
   id uuid primary key default gen_random_uuid(), video_id uuid references public.videos(id) on delete cascade,
   status text default 'queued', attempt_count integer default 0, created_at timestamptz default now()
 );
-grant usage on schema public, auth to service_role, authenticated, anon;
+grant usage on schema public, auth to service_role, authenticated, anon, supabase_auth_admin;
 grant all on public.videos, public.analysis_jobs, public.analysis_results to service_role;
