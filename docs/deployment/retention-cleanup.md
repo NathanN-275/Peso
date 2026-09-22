@@ -115,3 +115,19 @@ or Auth failure after profile deletion. Those races still need durable account
 deletion coordination and live acceptance. Azure objects without repository
 references are not covered by the Supabase namespace sweep; the selected public
 beta uses Supabase storage. No hosted account or object was deleted by this work.
+
+## Explicit video deletion failure handling
+
+Saved Lift deletion and discard now reject cross-owner paths before removing
+media, propagate media-delete failures as retryable 503 responses, and retain
+database references on those failures. Batch Saved Lift deletion finishes all
+selected media operations before deleting any selected rows, preserving retry
+of the same selection after a later media failure. Missing files from an earlier
+partial attempt can be deleted again safely by the storage provider.
+
+Database failures during the subsequent multi-row deletion are still not atomic;
+concurrent save/discard and worker/export writes remain open. This is failure
+handling, not the durable deletion coordination needed for full acceptance.
+The pre-change backend regression passed 508 tests and 68 subtests; 18 database
+tests were skipped without a connected database. The changed route/storage suite
+is verified separately and does not establish hosted deletion behavior.

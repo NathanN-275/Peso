@@ -152,6 +152,58 @@ class VideoRoutesTest(unittest.TestCase):
     repository.delete_video_with_analysis.assert_not_called()
     storage.assert_not_called()
 
+  def test_video_deletion_failure_keeps_records_and_allows_retry(self) -> None:
+    for operation in ('saved', 'discard'):
+      with self.subTest(operation=operation):
+        video = {'id': str(VIDEO_ID), 'user_id': USER_ID, 'save_state': 'saved',
+                 'storage_path': f'{USER_ID}/source/clip.mp4',
+                 'playback_path': f'{USER_ID}/playback/clip.mp4'}
+        repository = MagicMock()
+        repository.get_owned_videos.return_value = [video]
+        repository.require_owned_video.return_value = video
+        repository.video_is_saved.return_value = True
+        storage = MagicMock()
+        storage.list_storage_prefix.return_value = []
+        storage.delete_storage_path.side_effect = [None, RuntimeError('storage unavailable')]
+        with (
+          patch('app.routes.videos.VideoRepository', return_value=repository),
+          patch('app.routes.videos.AnalysisJobRepository'),
+          patch('app.routes.videos.StorageService', return_value=storage),
+        ):
+          def remove():
+            return (delete_saved_lifts(DeleteSavedLiftsRequest(lift_ids=[VIDEO_ID]), USER_ID)
+                    if operation == 'saved' else discard_video(VIDEO_ID, USER_ID))
+          with self.assertRaises(HTTPException) as raised:
+            remove()
+          self.assertEqual(raised.exception.status_code, 503)
+          repository.delete_video_with_analysis.assert_not_called()
+          repository.mark_discarded.assert_not_called()
+          storage.delete_storage_path.side_effect = None
+          remove()
+          if operation == 'saved':
+            repository.delete_video_with_analysis.assert_called_once_with(str(VIDEO_ID))
+          else:
+            repository.mark_discarded.assert_called_once_with(str(VIDEO_ID))
+
+  def test_batch_delete_keeps_earlier_rows_when_later_media_deletion_fails(self) -> None:
+    second_id = UUID('22222222-2222-2222-2222-222222222222')
+    repository = MagicMock()
+    repository.get_owned_videos.return_value = [
+      {'id': str(ident), 'user_id': USER_ID, 'save_state': 'saved',
+       'storage_path': f'{USER_ID}/source/{ident}.mp4'} for ident in [VIDEO_ID, second_id]
+    ]
+    repository.video_is_saved.return_value = True
+    storage = MagicMock()
+    storage.list_storage_prefix.return_value = []
+    storage.delete_storage_path.side_effect = [None, RuntimeError('second media unavailable')]
+    with (
+      patch('app.routes.videos.VideoRepository', return_value=repository),
+      patch('app.routes.videos.StorageService', return_value=storage),
+      self.assertRaises(HTTPException),
+    ):
+      delete_saved_lifts(DeleteSavedLiftsRequest(lift_ids=[VIDEO_ID, second_id]), USER_ID)
+    repository.delete_video_with_analysis.assert_not_called()
+
   def test_storage_usage_endpoint_returns_quota_report_without_mutation(self) -> None:
     quota_service = MagicMock()
     quota_service.get_usage.return_value.to_dict.return_value = {
@@ -1638,7 +1690,7 @@ class VideoRoutesTest(unittest.TestCase):
     repository.delete_video_with_analysis.assert_not_called()
     self.assertTrue(response.discarded)
 
-  def test_discard_skips_storage_paths_outside_user_folder(self) -> None:
+  def test_discard_rejects_storage_paths_outside_user_folder(self) -> None:
     repository = MagicMock()
     repository.require_owned_video.return_value = {
       "id": str(VIDEO_ID),
@@ -1655,13 +1707,14 @@ class VideoRoutesTest(unittest.TestCase):
       patch("app.routes.videos.VideoRepository", return_value=repository),
       patch("app.routes.videos.AnalysisJobRepository", return_value=jobs),
       patch("app.routes.videos.StorageService", return_value=storage),
+      self.assertRaises(HTTPException) as raised,
     ):
-      response = discard_video(VIDEO_ID, USER_ID)
+      discard_video(VIDEO_ID, USER_ID)
 
-    storage.delete_storage_path.assert_called_once_with(f"{USER_ID}/uploads/{VIDEO_ID}.mov")
+    self.assertEqual(raised.exception.status_code, 403)
+    storage.delete_storage_path.assert_not_called()
     jobs.cancel_for_video.assert_called_once_with(str(VIDEO_ID))
-    repository.mark_discarded.assert_called_once_with(str(VIDEO_ID))
-    self.assertTrue(response.discarded)
+    repository.mark_discarded.assert_not_called()
 
   def test_discard_stops_when_job_cancellation_is_unavailable(self) -> None:
     repository = MagicMock()
