@@ -41,3 +41,55 @@ Before activation, capture the current environment references without exposing
 secret values. Rehearse migration/restore and verify backend compatibility with
 the selected database. A code rollback must retain migrations needed by the
 previously accepted version; changing the Supabase URL is not a data rollback.
+
+## Read-only provider and schema verification — September 22
+
+Fresh Render connector reads of both service IDs confirm the API and worker are
+still suspended, each has one Starter instance in Oregon, both use repository
+`NathanN-275/Peso` on `main`, and automatic deployment and previews are off.
+The API reports `https://peso-beta-api.onrender.com`, `/health/ready`, root Docker
+context and no command override. The worker reports
+`python -m app.jobs.analysis_worker` with 300-second shutdown grace. No service
+was changed or resumed. These reads do not verify secret bindings or runtime
+health while suspended.
+
+The candidate blueprint passed Render's official JSON schema with zero errors,
+using `jsonschema 4.26.0` installed in a temporary directory. Evidence digests:
+
+- Schema URL: `https://render.com/schema/render.yaml.json`
+- Schema SHA-256: `57aa0a1ff9c3b2d0fcb91b790b7b285aef6397adb0c92930e6e601054444cfe5`
+- Blueprint SHA-256: `c42fe2583fb1b252d47603e9066703ce9723049a541939f4435cf121db3552f3`
+
+This is structural validation, not Render's authenticated semantic validation
+or a dry-run of updating existing services. The Render CLI is not installed;
+the protected CI validation remains required. GitHub CLI reports the stored
+NathanN-275 token invalid, so authenticated PR creation is still unavailable
+through that path. The combined release binding stays pending.
+
+## GitHub protection readback — September 22
+
+The authenticated browser session can read repository settings even though CLI
+authentication is invalid. No settings were changed. Classic branch protection
+is absent; repository rulesets show `Nathan` disabled and `Protect production`
+active. Active ruleset ID `22210122` targets only `production`, with an empty
+bypass list. It requires pull requests and status checks, requires branches to
+be up to date, restricts deletion and blocks force pushes. Review approval count
+was not established by the available readback; do not infer human approval.
+
+Required status checks observed:
+
+- `backend-security`
+- `frontend-security`
+- `secret-scan`
+- `production-release-source`
+- `netlify/peso-webapp/deploy-preview`
+- `container-security`
+- `reservation-database-security`
+- `marketing-build`
+- `netlify/peso-marketing/deploy-preview`
+
+These Netlify checks refer to historical projects. They do not prove that the
+new combined candidate was built or remains private. Capture the new project's
+actual check identity before proposing a ruleset change; retain existing
+protections until the reviewed replacement is configured. No push, PR, merge,
+rule modification or publication occurred during this inspection.
