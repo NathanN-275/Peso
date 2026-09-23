@@ -1,3 +1,4 @@
+const { assertStagingE2EEnvironment } = require('../../scripts/e2e-environment');
 import { expect, test, type Page } from '@playwright/test';
 import { createClient, type User } from '@supabase/supabase-js';
 
@@ -47,7 +48,10 @@ async function signIn(page: Page, email = loginAccount.email, password = loginAc
 }
 
 test.beforeAll(async () => {
-  await deleteUser(await findUser(signupEmail));
+  assertStagingE2EEnvironment(process.env);
+  if (await findUser(signupEmail)) {
+    throw new Error('The signup fixture email already belongs to an account. Supply an unused test address.');
+  }
   const { data, error } = await admin.auth.admin.createUser({
     email: loginAccount.email,
     password: loginAccount.password,
