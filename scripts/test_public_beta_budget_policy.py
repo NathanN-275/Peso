@@ -32,7 +32,7 @@ class BudgetPolicyTests(unittest.TestCase):
     def test_rejects_missing_stale_or_misaligned_provider_data(self):
         for invalid in (
             samples()[:2],
-            [replace(item, observed_at=NOW - timedelta(minutes=6)) for item in samples()],
+            [replace(item, observed_at=NOW - timedelta(days=1, seconds=1)) for item in samples()],
             samples(month="2026-08"),
             [replace(item, projected_usd=Decimal("NaN")) for item in samples()],
             [replace(item, actual_usd=Decimal("1.001"), projected_usd=Decimal("2")) for item in samples()],
@@ -40,6 +40,14 @@ class BudgetPolicyTests(unittest.TestCase):
         ):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 evaluate(invalid, now=NOW)
+
+    def test_month_rollover_requires_new_calendar_entries_and_resets_alert_keys(self):
+        october = datetime(2026, 10, 1, 0, 1, tzinfo=timezone.utc)
+        readings = [replace(item, month="2026-10", observed_at=october) for item in samples()]
+        readings[0] = replace(readings[0], actual_usd=Decimal("15.00"),
+                              projected_usd=Decimal("20.00"))
+        decision = evaluate(readings, now=october)
+        self.assertEqual(undelivered_milestones(decision, {("2026-09", 15)}), (15,))
 
 
 if __name__ == "__main__":

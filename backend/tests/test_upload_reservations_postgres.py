@@ -30,12 +30,13 @@ class UploadReservationsPostgresTest(unittest.TestCase):
       connection.execute((root / "supabase/migrations/202609210002_retention_deletion_outbox.sql").read_text())
       connection.execute((root / "supabase/migrations/20260922002632_intake_stop_reason.sql").read_text())
       connection.execute((root / "supabase/migrations/20260922003008_us_ip_beta_admission.sql").read_text())
+      connection.execute((root / "supabase/migrations/20260923224101_budget_alert_delivery.sql").read_text())
 
   def setUp(self):
     self.user = uuid4()
     self.other = uuid4()
     with self.psycopg.connect(DATABASE_URL, autocommit=True) as connection:
-      connection.execute("truncate public.video_deletion_outbox, public.analysis_jobs, public.videos, public.upload_reservations, auth.users cascade")
+      connection.execute("truncate public.budget_alert_delivery, public.video_deletion_outbox, public.analysis_jobs, public.videos, public.upload_reservations, auth.users cascade")
       connection.execute("update public.upload_admission_control set enabled = true where id = 1")
       connection.execute("insert into auth.users values (%s), (%s)", (self.user, self.other))
 
@@ -77,6 +78,24 @@ class UploadReservationsPostgresTest(unittest.TestCase):
     self.assertEqual(sum(accepted), 4)
     counts = self.rpc("select user_id, count(*) from public.upload_reservations group by user_id")
     self.assertTrue(all(count <= 3 for _, count in counts))
+
+  def test_budget_alert_claim_is_unique_and_client_roles_cannot_access_ledger(self):
+    month = '2026-09-01'
+    identifiers = [uuid4() for _ in range(12)]
+    def attempt(claim_id):
+      return self.rpc('select public.claim_budget_alert(%s,%s,%s)', (month, 15, claim_id))[0][0]
+    with ThreadPoolExecutor(max_workers=12) as pool:
+      results = list(pool.map(attempt, identifiers))
+    self.assertEqual(sum(results), 1)
+    winning = identifiers[results.index(True)]
+    self.assertEqual(self.rpc('select public.complete_budget_alert(%s,%s,%s)', (month, 15, winning)), [(True,)])
+    self.assertEqual(attempt(uuid4()), False)
+    self.assertEqual(self.rpc('select public.release_budget_alert(%s,%s,%s)', (month, 15, winning)), [(False,)])
+    for role in ('anon', 'authenticated'):
+      with self.assertRaises(self.psycopg.errors.InsufficientPrivilege):
+        self.rpc('select * from public.budget_alert_delivery', role=role)
+      with self.assertRaises(self.psycopg.errors.InsufficientPrivilege):
+        self.rpc('select public.claim_budget_alert(%s,%s,%s)', (month, 25, uuid4()), role=role)
 
   def test_concurrent_byte_reservations_do_not_overbook(self):
     def attempt(_index):

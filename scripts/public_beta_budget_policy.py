@@ -15,7 +15,7 @@ import re
 PROVIDERS = frozenset({"render", "supabase", "netlify"})
 MILESTONES = (15, 25, 35, 50)
 STOP_AT = Decimal("50.00")
-MAX_SAMPLE_AGE_SECONDS = 300
+MAX_SAMPLE_AGE_SECONDS = 24 * 60 * 60
 
 
 @dataclass(frozen=True)

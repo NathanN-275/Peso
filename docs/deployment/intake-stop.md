@@ -21,7 +21,7 @@ The token is the backend's `BUDGET_SHUTDOWN_TOKEN`. JSON body:
 }
 ```
 
-The timestamp above is illustrative; a real measurement must be at most five
+The timestamp above is illustrative; a real measurement sent to this API must be at most five
 minutes old and cannot be more than 30 seconds in the future. Negative,
 non-finite, timezone-free and malformed measurements are rejected. Collect the
 projected **total** monthly spend from provider billing/forecast data, including
@@ -69,8 +69,10 @@ setting `UPLOAD_RESERVATIONS_ENABLED=false`, which may affect completion paths.
    current. Persist notification delivery per billing month and milestone, retry
    failures, and notify for every newly reached threshold if a sample crosses
    several at once. Reset milestone state only for a new billing month. Never
-   mark delivery successful from this endpoint response alone. This repository
-   does not yet supply that provider collector or notification delivery adapter.
+   mark delivery successful from this endpoint response alone. The separate
+   hourly GitHub Actions monitor described below supplies manual-entry billing
+   collection and email delivery; this endpoint remains available for other
+   trusted monitors.
 4. In isolated staging, accept one test upload, trip the stop, confirm a new
    upload fails clearly, then finish the accepted upload through actual worker
    playback. Confirm no rejected-request reservation exists. This live test is
@@ -103,8 +105,79 @@ $50 target is not guaranteed by this switch.
   future samples, invalid numbers, missing threshold, token rejection, persistent
   stop behavior and database failure propagation.
 - Focused intake/reservation/cleanup suite: 55 passed, 21 subtests passed.
-- Seventeen disposable PostgreSQL tests passed, including preserving accepted
+- Nineteen disposable PostgreSQL tests passed, including preserving accepted
   upload verification/queue admission, stop/admission locking, capacity limits,
   retention races and client-role access denial.
 - Hosted activation, collector scheduling, billing accuracy, notification
   delivery and full accepted-job completion remain open release gates.
+- Ten focused spending-policy and monitor tests passed, covering thresholds,
+  month rollover, malformed or stale data, email retry, and fail-closed stop.
+
+## Combined monthly guardrail (prepared, inactive)
+
+`.github/workflows/public-beta-budget.yml` runs hourly on the default branch,
+but its job runs only when the repository variable
+`PESO_PUBLIC_BETA_BUDGET_MONITOR_ENABLED` is exactly `true`. Leave that variable
+unset until the release gates below are complete. The runner uses the existing
+PesoDatabase project `jfgiydtrskpqxyorvvbc` directly, so it works even while
+the paid Render backend remains stopped. It does not start Render, enable
+uploads, or launch the public site.
+
+Nathan enters three private GitHub Actions secrets at least daily:
+`PESO_RENDER_BILLING_JSON`, `PESO_SUPABASE_BILLING_JSON`, and
+`PESO_NETLIFY_BILLING_JSON`. Each must have this exact JSON shape, with values
+verified from that provider's billing detail for the **current UTC calendar
+month**:
+
+```json
+{
+  "month": "2026-09",
+  "period_start": "2026-09-01",
+  "period_end_exclusive": "2026-10-01",
+  "checked_at": "2026-09-23T20:00:00Z",
+  "source_reference": "Private billing page and calendar-month line items checked by Nathan",
+  "actual_usd": "0.00",
+  "projected_usd": "0.00"
+}
+```
+
+The dates and amounts above illustrate the format; do not use them as live
+figures. `checked_at` is when the underlying billing information was checked,
+not merely when the secret was edited. `actual_usd` is incurred charges for the
+calendar month. `projected_usd` includes those charges plus expected remaining
+charges for that same month. Include all relevant provider charges, including
+taxes where applicable. If a dashboard reports only a billing cycle that
+crosses calendar months, derive a verified calendar-month figure from its
+line items. If that is not possible, leave uploads stopped and do not enter a
+guess or zero. Do not put billing figures or credentials in commits, issues,
+PR comments, or workflow dispatch inputs.
+
+The workflow also needs private secrets `PESO_BUDGET_SUPABASE_SERVICE_ROLE_KEY`
+for the **same** PesoDatabase project, `PESO_BUDGET_EMAIL_ADDRESS` for Nathan's
+own Gmail address, and `PESO_BUDGET_GMAIL_APP_PASSWORD` for its app password.
+Store them as GitHub Actions secrets; never paste them in chat or the repo. The
+job uses a `public-beta-budget` environment and prints only a generic outcome
+and delivered-alert count. Restrict who can edit the workflow and secrets,
+because the service-role key can call the intake stop RPC and write the alert
+ledger. The workflow intentionally has no GitHub write permission.
+
+The runner rejects missing, malformed, future-dated, or more-than-24-hour-old
+entries and calls `disable_video_upload_admission` directly in PesoDatabase.
+It also stops intake when the sum of three projected monthly totals is at
+least $50. Healthy runs never reopen intake. The `budget_alert_delivery` table
+records each actual-spend milestone ($15, $25, $35, $50) once per UTC month.
+Failed Gmail sends are retried; a send that succeeds just before an interrupted
+acknowledgement may result in a duplicate email. If PesoDatabase itself is
+unreachable, the runner cannot enforce a new stop and exits with a failure;
+investigate the current intake state immediately. An already stopped intake
+remains stopped. Existing accepted uploads and analysis continue after a stop.
+
+Before enabling the repository variable, apply the reviewed
+`20260923224101_budget_alert_delivery.sql` migration to PesoDatabase, configure
+the six secrets, and run a private stop and email test. Confirm a new
+reservation is rejected after stopping intake while one accepted upload and
+its analysis finish. Check that the workflow logs expose no figures or
+credentials and that the mail reaches Nathan's account. Review the source
+figures and their UTC calendar-month attribution. Activate only after these
+checks. Public launch and resuming paid infrastructure still require Nathan's
+separate approval.
