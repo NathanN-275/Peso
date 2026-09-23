@@ -1,0 +1,3 @@
+# Public Render resource ID, not an authentication credential. Exact historical findings only.
+aab7b54209769991277f8433d4ad0d2fd5733743:config/combined-web-release-binding.json:generic-api-key:7
+aab7b54209769991277f8433d4ad0d2fd5733743:scripts/release-env.test.js:generic-api-key:188
