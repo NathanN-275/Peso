@@ -47,10 +47,11 @@ pre-cutover backup is still required. The existing
    recorded in this note.
 
 At approximately 02:16 UTC, the temporary recovery project was **paused** and
-the original staging project had returned to **Healthy**. The disposable
-project has not yet been deleted; its copied database remains retained by
-Supabase while paused. Deletion is pending Nathan's action-time confirmation.
-PesoDatabase was never the restore target.
+the original staging project had returned to **Healthy**. After Nathan confirmed
+permanent deletion, the temporary project was deleted. At approximately 02:25
+UTC, the organization project list contained only PesoDatabase and
+`peso-staging`; both project dashboards showed **Healthy**. PesoDatabase was
+never the restore target.
 
 This establishes a **hosted logical database recovery path for this backup's
 contents**. It does not prove recovery of Storage object bytes: the source had
