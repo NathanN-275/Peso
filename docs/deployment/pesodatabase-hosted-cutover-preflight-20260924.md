@@ -1,16 +1,18 @@
 # PesoDatabase hosted cutover preflight — September 24, 2026 UTC
 
-**Finding: BLOCKED for scheduling the hosted migration and service cutover.**
-This was a read-only check of the existing **PesoDatabase** project
-`jfgiydtrskpqxyorvvbc`, not staging. The seven-file database chain still
+**Finding at the initial preflight: BLOCKED for scheduling the hosted migration
+and service cutover.** This was a read-only check of the existing **PesoDatabase**
+project `jfgiydtrskpqxyorvvbc`, not staging. The seven-file database chain still
 matches the [isolated rehearsal](pesodatabase-seven-migration-rehearsal-20260923.md),
 but both suspended Render services retain their **intentional historical staging**
 binding (`iseqgaewjpjcxrndibep`). The separate
 [public-beta candidate blueprint](public-beta-candidate-binding.md) already
 specifies PesoDatabase; converting the existing services is a coordinated
 future cutover, not a correction to make in isolation. The available backup is a
-single local copy, and a hosted recovery has not been rehearsed. No hosted database, Render,
-GitHub, payment, or launch setting was changed.
+single local copy, and a hosted recovery had not yet been rehearsed. No hosted
+database, Render, GitHub, payment, or launch setting was changed by that
+initial preflight. A later, separately authorized hosted rehearsal is recorded
+in [its own note](pesodatabase-hosted-recovery-rehearsal-20260924.md).
 
 ## Evidence snapshot
 
@@ -38,15 +40,16 @@ The seven pending files are, in order:
 
 ## Blockers and exact later cutover checklist
 
-**Blockers now:** the coordinated switch from the historical staging service
-configuration to the public candidate has not occurred; its project-bound
+**Blockers at this snapshot:** the coordinated switch from the historical
+staging service configuration to the public candidate has not occurred; its project-bound
 credentials and other release inputs have not been checked against PesoDatabase.
-Hosted restoration is untested and the verified dump is a single local copy;
+Hosted restoration was untested and the verified dump was a single local copy;
 Supabase warns of quota restriction. The guardrail code is in an unmerged draft
 PR and has no configured secrets or private end-to-end test. None of these is
 resolved by the migration dry run. Do not schedule a coordinated migration and
-service cutover yet. This corrects the initial reading that the staging binding
-was an accidental mismatch; it was intentional for the existing beta services.
+service cutover from this snapshot. This corrects the initial reading that the
+staging binding was an accidental mismatch; it was intentional for the existing
+beta services.
 
 Follow-up at approximately 01:43 UTC: the candidate Blueprint already pairs
 `PESO_DEPLOYMENT_ENVIRONMENT=production` with the exact PesoDatabase URL, while
@@ -65,7 +68,10 @@ feature](https://supabase.com/docs/guides/platform/clone-project) itself require
 paid physical backups, so the available Free-plan route is a manual logical
 restore into a **new, private, disposable project**, never into staging. Do not
 pause staging, create a project or branch, or spend money without a specific
-decision on that route.
+decision on that route. Nathan subsequently authorized a temporary staging
+pause and disposable hosted recovery rehearsal; see the later note for its
+result. That test does not replace a fresh pre-cutover backup or resolve the
+coordinated Render binding.
 
 For a later, separately authorized cutover:
 
