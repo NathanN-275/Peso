@@ -26,12 +26,17 @@ class UploadReservationsPostgresTest(unittest.TestCase):
     with psycopg.connect(DATABASE_URL, autocommit=True) as connection:
       connection.execute((Path(__file__).parent / "fixtures/security_database.sql").read_text())
       connection.execute((root / "supabase/migrations/202609030001_upload_reservations.sql").read_text())
+      connection.execute((root / "supabase/migrations/202609210001_unsaved_video_retention.sql").read_text())
+      connection.execute((root / "supabase/migrations/202609210002_retention_deletion_outbox.sql").read_text())
+      connection.execute((root / "supabase/migrations/20260922002632_intake_stop_reason.sql").read_text())
+      connection.execute((root / "supabase/migrations/20260922003008_us_ip_beta_admission.sql").read_text())
+      connection.execute((root / "supabase/migrations/20260923224101_budget_alert_delivery.sql").read_text())
 
   def setUp(self):
     self.user = uuid4()
     self.other = uuid4()
     with self.psycopg.connect(DATABASE_URL, autocommit=True) as connection:
-      connection.execute("truncate public.analysis_jobs, public.videos, public.upload_reservations, auth.users cascade")
+      connection.execute("truncate public.budget_alert_delivery, public.video_deletion_outbox, public.analysis_jobs, public.videos, public.upload_reservations, auth.users cascade")
       connection.execute("update public.upload_admission_control set enabled = true where id = 1")
       connection.execute("insert into auth.users values (%s), (%s)", (self.user, self.other))
 
@@ -73,6 +78,24 @@ class UploadReservationsPostgresTest(unittest.TestCase):
     self.assertEqual(sum(accepted), 4)
     counts = self.rpc("select user_id, count(*) from public.upload_reservations group by user_id")
     self.assertTrue(all(count <= 3 for _, count in counts))
+
+  def test_budget_alert_claim_is_unique_and_client_roles_cannot_access_ledger(self):
+    month = '2026-09-01'
+    identifiers = [uuid4() for _ in range(12)]
+    def attempt(claim_id):
+      return self.rpc('select public.claim_budget_alert(%s,%s,%s)', (month, 15, claim_id))[0][0]
+    with ThreadPoolExecutor(max_workers=12) as pool:
+      results = list(pool.map(attempt, identifiers))
+    self.assertEqual(sum(results), 1)
+    winning = identifiers[results.index(True)]
+    self.assertEqual(self.rpc('select public.complete_budget_alert(%s,%s,%s)', (month, 15, winning)), [(True,)])
+    self.assertEqual(attempt(uuid4()), False)
+    self.assertEqual(self.rpc('select public.release_budget_alert(%s,%s,%s)', (month, 15, winning)), [(False,)])
+    for role in ('anon', 'authenticated'):
+      with self.assertRaises(self.psycopg.errors.InsufficientPrivilege):
+        self.rpc('select * from public.budget_alert_delivery', role=role)
+      with self.assertRaises(self.psycopg.errors.InsufficientPrivilege):
+        self.rpc('select public.claim_budget_alert(%s,%s,%s)', (month, 25, uuid4()), role=role)
 
   def test_concurrent_byte_reservations_do_not_overbook(self):
     def attempt(_index):
@@ -146,3 +169,106 @@ class UploadReservationsPostgresTest(unittest.TestCase):
     with self.psycopg.connect(DATABASE_URL) as connection:
       connection.execute("delete from auth.users where id=%s", (self.user,))
     self.assertEqual(self.rpc("select user_id from public.upload_reservations where id=%s", (reservation,)), [(None,)])
+
+  def test_intake_stop_preserves_accepted_uploads_and_queue_admission(self):
+    accepted = self.reserve()
+    self.rpc('select public.disable_video_upload_admission()')
+    with self.assertRaises(self.psycopg.errors.NoDataFound):
+      self.reserve()
+    self.assertEqual(self.rpc('select count(*) from public.upload_reservations'), [(1,)])
+    video = self.verify(accepted)
+    self.assertTrue(self.rpc('select id from public.enqueue_video_analysis_job(%s,false,3,20)', (video,)))
+    self.assertEqual(self.rpc('select state from public.upload_reservations where id=%s', (accepted,)), [('consumed',)])
+    self.assertEqual(self.rpc('select enabled from public.upload_admission_control'), [(False,)])
+
+  def test_admission_stop_waits_for_existing_reservation_transaction(self):
+    with ThreadPoolExecutor(max_workers=1) as pool:
+      with self.psycopg.connect(DATABASE_URL) as connection:
+        connection.execute("select pg_advisory_xact_lock(hashtextextended('peso:upload-capacity',0))")
+        stopping = pool.submit(self.rpc, 'select public.disable_video_upload_admission()')
+        self.assertEqual(connection.execute('select enabled from public.upload_admission_control').fetchall(), [(True,)])
+      stopping.result(timeout=10)
+    with self.assertRaises(self.psycopg.errors.NoDataFound):
+      self.reserve()
+
+  def expired_video(self):
+    video = self.verify(self.reserve())
+    self.rpc("update public.videos set expires_at=now()-interval '1 second', status='completed' where id=%s returning id", (video,))
+    self.rpc("insert into public.analysis_results(video_id,result_json) values (%s,'{}') returning id", (video,))
+    return video
+
+  def test_retention_atomically_removes_history_results_and_keeps_retry_paths(self):
+    video = self.expired_video()
+    paths = self.rpc("select storage_path from public.videos where id=%s", (video,))
+    claimed = self.rpc("select video_id, storage_paths from public.claim_expired_video_deletion(%s)", (video,))
+    self.assertEqual(claimed, [(video, [paths[0][0]])])
+    self.assertEqual(self.rpc("select id from public.videos where id=%s", (video,)), [])
+    self.assertEqual(self.rpc("select id from public.analysis_results where video_id=%s", (video,)), [])
+    self.assertEqual(self.rpc("select video_id from public.claim_expired_video_deletion(%s)", (video,)), [])
+    self.assertEqual(self.rpc("select video_id from public.video_deletion_outbox"), [(video,)])
+    # A late result cannot resurrect a deleted analysis/history entry.
+    with self.assertRaises(self.psycopg.errors.ForeignKeyViolation):
+      self.rpc("insert into public.analysis_results(video_id,result_json) values (%s,'{}') returning id", (video,))
+
+  def test_retention_preserves_saved_and_unexpired_videos_and_active_jobs(self):
+    video = self.expired_video()
+    for assignment in ("save_state='saved'", "save_state='pending',is_saved=true", "is_saved=false,expires_at=now()+interval '1 hour'"):
+      self.rpc(f"update public.videos set {assignment} where id=%s returning id", (video,))
+      self.assertEqual(self.rpc("select * from public.claim_expired_video_deletion(%s)", (video,)), [])
+    self.rpc("update public.videos set expires_at=now()-interval '1 second' where id=%s returning id", (video,))
+    for state in ('queued', 'processing', 'retry_wait'):
+      job = self.rpc("insert into public.analysis_jobs(video_id,status) values (%s,%s) returning id", (video, state))[0][0]
+      self.assertEqual(self.rpc("select * from public.claim_expired_video_deletion(%s)", (video,)), [])
+      self.rpc("delete from public.analysis_jobs where id=%s returning id", (job,))
+
+  def test_save_winning_lock_prevents_retention_deletion(self):
+    video = self.expired_video()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+      with self.psycopg.connect(DATABASE_URL) as connection:
+        connection.execute("update public.videos set save_state='saved', expires_at=null where id=%s", (video,))
+        cleanup = pool.submit(self.rpc, "select * from public.claim_expired_video_deletion(%s)", (video,))
+      self.assertEqual(cleanup.result(timeout=10), [])
+    self.assertEqual(self.rpc("select save_state from public.videos where id=%s", (video,)), [('saved',)])
+
+  def test_cleanup_winning_lock_cannot_be_undone_by_a_late_save(self):
+    video = self.expired_video()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+      with self.psycopg.connect(DATABASE_URL) as connection:
+        connection.execute("select * from public.claim_expired_video_deletion(%s)", (video,)).fetchall()
+        save = pool.submit(self.rpc, "update public.videos set save_state='saved' where id=%s returning id", (video,))
+      self.assertEqual(save.result(timeout=10), [])
+    self.assertEqual(self.rpc("select video_id from public.video_deletion_outbox"), [(video,)])
+
+  def test_concurrent_retention_claims_create_one_durable_deletion(self):
+    video = self.expired_video()
+    with ThreadPoolExecutor(max_workers=8) as pool:
+      claims = list(pool.map(lambda _: self.rpc("select video_id from public.claim_expired_video_deletion(%s)", (video,)), range(8)))
+    self.assertEqual(sum(len(rows) for rows in claims), 1)
+
+  def test_client_roles_cannot_read_or_claim_media_deletions(self):
+    for role in ('anon', 'authenticated'):
+      for sql in ('select * from public.video_deletion_outbox', "select * from public.claim_expired_video_deletion('00000000-0000-0000-0000-000000000000')"):
+        with self.subTest(role=role), self.assertRaises(self.psycopg.errors.InsufficientPrivilege):
+          self.rpc(sql, role=role)
+
+  def test_signup_hook_uses_only_auth_ip_and_fails_closed_without_current_ranges(self):
+    def hook(ip, **extra):
+      event = {'metadata': {'name':'before-user-created', 'ip_address':ip}, **extra}
+      return self.rpc('select public.hook_us_ip_before_user_created(%s::jsonb)',
+                      (json.dumps(event),), role='supabase_auth_admin')[0][0]
+    self.assertEqual(hook('192.0.2.1')['error']['http_code'], 403)
+    with self.psycopg.connect(DATABASE_URL) as connection:
+      connection.execute("insert into public.us_beta_ip_ranges values ('192.0.2.0/24','test-only',now()+interval '1 hour')")
+    try:
+      self.assertEqual(hook('192.0.2.1'), {})
+      for address in ('198.51.100.1', 'invalid', '', None):
+        self.assertEqual(hook(address, user={'user_metadata': {'country':'US', 'ip_address':'192.0.2.1'}})['error']['http_code'], 403)
+      for role in ('anon','authenticated','service_role'):
+        with self.assertRaises(self.psycopg.errors.InsufficientPrivilege):
+          self.rpc("select public.hook_us_ip_before_user_created('{}')", role=role)
+      with self.psycopg.connect(DATABASE_URL) as connection:
+        connection.execute("update public.us_beta_ip_ranges set valid_until=now()-interval '1 second'")
+      self.assertEqual(hook('192.0.2.1')['error']['http_code'], 403)
+    finally:
+      with self.psycopg.connect(DATABASE_URL) as connection:
+        connection.execute('delete from public.us_beta_ip_ranges')

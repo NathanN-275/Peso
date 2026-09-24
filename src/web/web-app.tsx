@@ -371,7 +371,6 @@ function LoginScreen() {
 function SignupScreen() {
   const navigate = useNavigate();
   const { signUpWithEmail, configError } = useAuth();
-  const [usResident, setUsResident] = useState(false);
   const [terms, setTerms] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -402,17 +401,16 @@ function SignupScreen() {
   };
 
   return (
-    <AuthLayout eyebrow="Limited beta" title="Create your account" description="The web beta is free and currently available to US residents.">
+    <AuthLayout eyebrow="Limited beta" title="Create your account" description="The free web beta is available through US IP addresses. IP location does not establish residency.">
       <Field label="Email" placeholder="you@example.com" value={email} onChangeText={setEmail} />
       <Field label="Password" placeholder="At least 8 characters" secureTextEntry value={password} onChangeText={setPassword} />
-      <CheckRow checked={usResident} onPress={() => setUsResident(!usResident)} label="I confirm that I reside in the United States." />
       <CheckRow checked={terms} onPress={() => setTerms(!terms)} label="I agree to the beta Terms and acknowledge the Privacy Policy." />
       <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification">
         <Text style={styles.turnstileTitle}>Security check</Text>
         <AuthChallenge action="signup" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
       </View>
       {(error || captchaError || configError) && <Text selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
-      <ActionButton label={submitting ? 'Creating account…' : error ? 'Retry account creation' : 'Create account'} disabled={submitting || !email.trim() || password.length < 8 || !usResident || !terms || !captchaToken} onPress={() => void signUp()} />
+      <ActionButton label={submitting ? 'Creating account…' : error ? 'Retry account creation' : 'Create account'} disabled={submitting || !email.trim() || password.length < 8 || !terms || !captchaToken} onPress={() => void signUp()} />
       <View style={styles.formFooterRow}>
         <Text style={styles.mutedText}>Already have an account?</Text>
         <Pressable accessibilityRole="link" onPress={() => navigate('/login')}>

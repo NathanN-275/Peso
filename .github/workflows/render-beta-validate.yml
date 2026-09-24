@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - render-beta.yaml
+      - render-public-beta.yaml
       - Dockerfile
       - backend/**
       - scripts/**
@@ -73,6 +74,7 @@ jobs:
           : "${RENDER_API_KEY:?Configure a Render API key as a protected repository secret.}"
           : "${RENDER_WORKSPACE_ID:?Configure the non-production Render workspace ID as a repository variable.}"
           render blueprints validate render-beta.yaml --workspace "$RENDER_WORKSPACE_ID"
+          render blueprints validate render-public-beta.yaml --workspace "$RENDER_WORKSPACE_ID"
 
       - name: Run policy and release-environment tests
         run: npm run test:policy

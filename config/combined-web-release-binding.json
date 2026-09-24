@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "site_id": null,
+  "status": "pending",
+  "site_origin": null,
+  "api_url": null,
+  "api_service_id": "srv-dak9ohfqj5pc73ac2ga0",
+  "worker_service_id": "srv-dak9ohfqj5pc73ac2g8g",
+  "source_commit": null,
+  "blueprint_sha256": null
+}

@@ -1,13 +1,15 @@
 # Peso Production Readiness Review
 
-**Status:** Public beta blocked pending operational acceptance | **Updated:** 2026-09-20
+**Status:** Public web beta blocked pending operational acceptance | **Updated:** 2026-09-21
 
-This review is the release gate for the focused web beta. It is not a claim that every exercise, camera view, or future coaching feature is production-ready.
+This review is the release gate for the focused public web beta. The current release goal is the [public web beta launch plan](../deployment/public-beta-launch-plan.md), which supersedes older marketing-only launch framing. This is not a claim that every exercise, camera view, or future coaching feature is production-ready.
 
 The public beta targets the existing production backend and production
 Supabase project (`jfgiydtrskpqxyorvvbc`) through one protected `main` →
 `production` release. The isolated Render beta and `peso-staging` remain
-private and are not promoted. See the dated
+private and are not promoted. The launch surface is the existing `usepeso.com`
+homepage plus `/app`, with open signup after Nathan's acceptance and explicit
+launch approval. See the dated
 [release evidence](../deployment/public-beta-release-20260920.md) for completed
 checks and remaining blockers; local passes do not establish deployed acceptance.
 
@@ -23,11 +25,12 @@ checks and remaining blockers; local passes do not establish deployed acceptance
 | Automated verification | Ready to run in CI | `.github/workflows/security.yml` covers backend tests, frontend checks, audits, RLS/migration review, and secret scanning. |
 | User documentation | In progress | Keep this review, the README, and backend deployment notes aligned with each release. |
 
-## Public marketing launch checklist
+## Superseded marketing-only launch checklist
 
-The information-only marketing launch is separate from the public beta. It
-permits only `/`, `/beta`, `/privacy`, and `/terms`, with no signup, uploads,
-analysis, or email collection. All full-beta blockers below remain open.
+The marketing-only launch work below remains useful preparation evidence, but it
+is not the final release target. The final target is the combined homepage and
+`/app` public beta described above. Do not make the marketing-only site public
+as a substitute for the approved beta release.
 
 - [ ] Create a private `peso-marketing` project using package `web`, base root,
       `production` branch, private previews, and no branch deploys.

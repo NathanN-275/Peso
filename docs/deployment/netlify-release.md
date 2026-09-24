@@ -203,3 +203,14 @@ key, API binding, and challenge values. Never copy credentials from production
 PesoDatabase (`jfgiydtrskpqxyorvvbc`). The production branch's Netlify values
 and hosting remain unchanged. Do not activate the test website until the image
 security scan, migration preview, and Render beta runtime acceptance pass.
+
+
+## September 21 private publication checkpoint
+
+PR 46 automatically published marketing deploy `6ab17428436e50000838783f` at
+`d92dfea5334d338cf7af842f0d1b3672ca3d1cc9` privately. Do not trigger a duplicate
+production build. Current usage is 32.9/300 credits; remaining 267.1. Domains
+still belong to the private app project. Finish authenticated response/network
+checks, Cloudflare zone inventory and private domain/TLS cutover before requesting
+public confirmation. The [dated evidence](marketing-release-20260920.md) records
+project IDs, backend identity, probe results and the unchanged rollback baseline.

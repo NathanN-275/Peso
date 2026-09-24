@@ -29,6 +29,7 @@ from ..services.analysis_trace import get_analysis_trace_service
 from ..services.analysis_job_repository import AnalysisJobRepository
 from ..services.auth import get_current_user_id
 from ..services.config import get_settings
+from ..services.ip_admission import enforce_us_ip
 from ..services.saved_lift_exports import ARCHIVE_BUCKET, SavedLiftExportService
 from ..services.supabase_client import get_supabase_admin_client
 from ..services.storage_cleanup import StorageCleanupService, cleanup_requires_token
@@ -776,19 +777,29 @@ def _delete_account_storage(user_id: str, repository: VideoRepository) -> None:
     owned_paths.extend(storage.list_storage_prefix(f"{user_id}/exports/{video['id']}-"))
 
   storage.delete_storage_paths(owned_paths)
+  # Include abandoned reservations and objects whose video rows were removed
+  # before storage deletion completed. The slash preserves the owner boundary.
+  storage.delete_storage_prefix(f"{user_id}/")
   StorageService(bucket="profile-avatars").delete_storage_prefix(f"{user_id}/")
 
 
-def _delete_saved_lift_assets(storage: StorageService, video: dict, user_id: str) -> None:
+def _delete_video_assets(storage: StorageService, video: dict, user_id: str) -> None:
   video_id = str(video["id"])
-  for path in [path for path in dict.fromkeys(_video_storage_paths(video)) if path]:
-    _delete_owned_storage_path(storage, path, user_id, "Saved Lift")
+  paths = [path for path in dict.fromkeys(_video_storage_paths(video)) if path]
+  paths.extend(storage.list_storage_prefix(f"{user_id}/exports/{video_id}-"))
+  # Verify the entire selection before mutation, and retain the database record
+  # if any object fails so a retry still has its media references.
+  for path in paths:
+    require_user_storage_path(path, user_id, "storage_path")
+  for path in dict.fromkeys(paths):
+    if not _delete_owned_storage_path(storage, path, user_id, "video"):
+      raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Unable to delete all video files. Please try again.",
+      )
 
-  for path in storage.list_storage_prefix(f"{user_id}/exports/{video_id}-"):
-    _delete_owned_storage_path(storage, path, user_id, "Saved Lift export")
 
-
-@router.post("/videos", response_model=RegisterVideoResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/videos", response_model=RegisterVideoResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(enforce_us_ip)])
 def register_video(
   request: RegisterVideoRequest,
   user_id: str = Depends(get_current_user_id),
@@ -1418,7 +1429,10 @@ def delete_saved_lifts(
 
   storage = StorageService()
   for lift_id in lift_ids:
-    _delete_saved_lift_assets(storage, videos_by_id[lift_id], user_id)
+    _delete_video_assets(storage, videos_by_id[lift_id], user_id)
+  # Preserve every selected row until all media operations finish. Otherwise a
+  # later storage failure makes retrying the same selection fail with 404.
+  for lift_id in lift_ids:
     repository.delete_video_with_analysis(lift_id)
 
   return DeleteSavedLiftsResponse(
@@ -1548,18 +1562,7 @@ def discard_video(
       detail="Unable to stop analysis safely. Please try again.",
     ) from error
 
-  paths = [
-    str(video.get("storage_path") or ""),
-    str(video.get("original_storage_path") or ""),
-    str(video.get("playback_path") or ""),
-    str(video.get("thumbnail_path") or ""),
-  ]
-
-  for path in [path for path in dict.fromkeys(paths) if path]:
-    _delete_owned_storage_path(storage, path, user_id, "discard")
-
-  for path in storage.list_storage_prefix(f"{user_id}/exports/{video_id}-"):
-    _delete_owned_storage_path(storage, path, user_id, "export")
+  _delete_video_assets(storage, video, user_id)
 
   repository.mark_discarded(str(video_id))
   return DiscardVideoResponse(video_id=video_id, discarded=True)

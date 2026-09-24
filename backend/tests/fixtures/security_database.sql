@@ -4,6 +4,7 @@ create extension if not exists pgcrypto;
 create role anon nologin;
 create role authenticated nologin;
 create role service_role nologin bypassrls;
+create role supabase_auth_admin nologin;
 create schema auth;
 create table auth.users (id uuid primary key);
 create function public.set_updated_at() returns trigger language plpgsql as $$
@@ -15,11 +16,17 @@ create table public.videos (
   duration_ms integer, fps numeric, save_state text, expires_at timestamptz,
   original_size_bytes bigint, uploaded_size_bytes bigint, was_compressed boolean,
   storage_state text, tracking_setup jsonb, quality_preflight_required boolean,
-  discarded_at timestamptz
+  discarded_at timestamptz, is_saved boolean default false,
+  original_storage_path text, playback_path text, thumbnail_path text
+);
+create table public.analysis_results (
+  id uuid primary key default gen_random_uuid(),
+  video_id uuid references public.videos(id) on delete cascade,
+  result_json jsonb
 );
 create table public.analysis_jobs (
   id uuid primary key default gen_random_uuid(), video_id uuid references public.videos(id) on delete cascade,
   status text default 'queued', attempt_count integer default 0, created_at timestamptz default now()
 );
-grant usage on schema public, auth to service_role, authenticated, anon;
-grant all on public.videos, public.analysis_jobs to service_role;
+grant usage on schema public, auth to service_role, authenticated, anon, supabase_auth_admin;
+grant all on public.videos, public.analysis_jobs, public.analysis_results to service_role;

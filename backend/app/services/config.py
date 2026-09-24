@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import math
+from ipaddress import ip_network
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -26,7 +27,8 @@ LOCAL_DEV_CORS_ORIGIN_REGEX = (
 )
 DEFAULT_MAX_VIDEO_UPLOAD_BYTES = 50 * 1024 * 1024
 DEFAULT_MODEL_VERSION = "mediapipe-landmarker-rtmpose-v4-pin-assisted"
-DEFAULT_SAVED_VIDEO_STORAGE_TTL_HOURS = 24
+# Historical setting name: this deadline applies only while a video is unsaved.
+DEFAULT_SAVED_VIDEO_STORAGE_TTL_HOURS = 72
 DEFAULT_EXPORT_CACHE_TTL_HOURS = 6
 DEFAULT_EXPORT_STORAGE_TTL_HOURS = DEFAULT_EXPORT_CACHE_TTL_HOURS
 DEFAULT_ORPHAN_STORAGE_MIN_AGE_HOURS = 24
@@ -110,6 +112,9 @@ class Settings:
   azure_blob_source_container: str = "source-videos"
   azure_managed_identity_client_id: str | None = None
   budget_shutdown_token: str = ""
+  us_ip_beta_enabled: bool = False
+  trusted_proxy_cidrs: tuple[str, ...] = ()
+  intake_stop_projected_monthly_usd: int | None = None
   signed_url_ttl_seconds: int = DEFAULT_SIGNED_URL_TTL_SECONDS
   storage_download_signed_url_ttl_seconds: int = DEFAULT_STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS
   supabase_http_max_connections: int = DEFAULT_SUPABASE_HTTP_MAX_CONNECTIONS
@@ -331,6 +336,27 @@ def get_settings() -> Settings:
     or None
   )
   budget_shutdown_token = os.getenv("BUDGET_SHUTDOWN_TOKEN", "").strip()
+  us_ip_beta_raw = os.getenv("US_IP_BETA_ENABLED", "false").strip().lower()
+  if us_ip_beta_raw not in {'true', 'false'}:
+    raise RuntimeError('US_IP_BETA_ENABLED must be explicitly true or false.')
+  us_ip_beta_enabled = us_ip_beta_raw == 'true'
+  trusted_proxy_cidrs = tuple(value.strip() for value in os.getenv("TRUSTED_PROXY_CIDRS", "").split(',') if value.strip())
+  for cidr in trusted_proxy_cidrs:
+    try:
+      network = ip_network(cidr)
+      if network.prefixlen == 0:
+        raise ValueError('Trusting every address is not permitted.')
+    except ValueError as error:
+      raise RuntimeError('TRUSTED_PROXY_CIDRS must contain explicit networks, never wildcard trust.') from error
+  intake_stop_raw = os.getenv("INTAKE_STOP_PROJECTED_MONTHLY_USD", "").strip()
+  intake_stop_projected_monthly_usd = None
+  if intake_stop_raw:
+    try:
+      intake_stop_projected_monthly_usd = int(intake_stop_raw)
+    except ValueError as error:
+      raise RuntimeError("INTAKE_STOP_PROJECTED_MONTHLY_USD must be an integer from 1 to 50.") from error
+    if not 1 <= intake_stop_projected_monthly_usd <= 50:
+      raise RuntimeError("INTAKE_STOP_PROJECTED_MONTHLY_USD must be an integer from 1 to 50.")
   if azure_blob_account_url and not re.fullmatch(
     r"https://[a-z0-9]{3,24}\.blob\.core\.windows\.net", azure_blob_account_url,
   ):
@@ -524,6 +550,9 @@ def get_settings() -> Settings:
     azure_blob_source_container=azure_blob_source_container,
     azure_managed_identity_client_id=azure_managed_identity_client_id,
     budget_shutdown_token=budget_shutdown_token,
+    us_ip_beta_enabled=us_ip_beta_enabled,
+    trusted_proxy_cidrs=trusted_proxy_cidrs,
+    intake_stop_projected_monthly_usd=intake_stop_projected_monthly_usd,
     signed_url_ttl_seconds=signed_url_ttl_seconds,
     storage_download_signed_url_ttl_seconds=storage_download_signed_url_ttl_seconds,
     supabase_http_max_connections=supabase_http_max_connections,

@@ -16,9 +16,16 @@ The release gate for a defined scope. It records evidence, known limits, require
 
 ## Marketing Site
 
-The information-only Peso website at `/`, `/beta`, `/privacy`, and `/terms`.
-It explains the future US web beta without signup, uploads, analysis, email
-collection, or authenticated state. Publishing it does not launch the Web App.
+The public-facing Peso homepage and supporting `/beta`, `/privacy`, and
+`/terms` pages. The information-only/private marketing deployment is a
+preparation state, not the final public-beta release.
+
+## Public Web Beta
+
+The approved public release of the Marketing Site and Web App together at
+`usepeso.com`, with open signup and the supported side-view squat workflow.
+It is US-IP-restricted during beta and remains private until Nathan completes
+end-to-end acceptance and gives action-time approval for public exposure.
 
 ## Web App
 
