@@ -33,8 +33,9 @@ migration, service resumption, workflow activation, or public launch occurred.
 
 Follow-up: a private logical export and isolated local restore were verified
 later on September 23; see the [backup rehearsal record](pesodatabase-backup-restore-rehearsal-20260923.md).
-The hosted cutover remains blocked pending the seven-file migration rehearsal
-and compatible release checks below.
+The [seven-file migration rehearsal](pesodatabase-seven-migration-rehearsal-20260923.md)
+then passed on that restored copy. The hosted cutover remains blocked pending
+fresh pre-cutover checks, the compatible release, and private end-to-end tests.
 
 ## Pending migrations, in required order
 

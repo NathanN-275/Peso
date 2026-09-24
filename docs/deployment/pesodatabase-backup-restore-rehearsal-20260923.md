@@ -67,3 +67,7 @@ compatible API/worker cutover against an isolated copy, then recheck the live
 backup, queue, and Storage inventory immediately before any hosted change.
 Keep Render suspended and the hourly budget workflow disabled until their
 separate private tests pass.
+
+Follow-up: the [seven-migration rehearsal](pesodatabase-seven-migration-rehearsal-20260923.md)
+passed on a fresh isolated restore. Hosted application still requires the
+pre-cutover checks and private end-to-end tests above.
