@@ -37,8 +37,10 @@ The [seven-file migration rehearsal](pesodatabase-seven-migration-rehearsal-2026
 then passed on that restored copy. The hosted cutover remains blocked pending
 fresh pre-cutover checks, the compatible release, and private end-to-end tests.
 A [hosted cutover preflight](pesodatabase-hosted-cutover-preflight-20260924.md)
-on September 24 found that both suspended Render services still target staging;
-see its blocker finding and cutover checklist before any hosted change.
+on September 24 confirmed that both suspended Render services retain their
+intentional historical staging binding. The separate public candidate selects
+PesoDatabase; see the blocker finding and cutover checklist before any hosted
+change.
 
 ## Pending migrations, in required order
 
