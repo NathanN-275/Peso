@@ -31,6 +31,11 @@ migration, service resumption, workflow activation, or public launch occurred.
   review. The dashboard also warned that requests may stop when its quota is
   exhausted. Neither condition is resolved by the migration dry run.
 
+Follow-up: a private logical export and isolated local restore were verified
+later on September 23; see the [backup rehearsal record](pesodatabase-backup-restore-rehearsal-20260923.md).
+The hosted cutover remains blocked pending the seven-file migration rehearsal
+and compatible release checks below.
+
 ## Pending migrations, in required order
 
 | Migration | Effect and relation to the spending guardrail |
