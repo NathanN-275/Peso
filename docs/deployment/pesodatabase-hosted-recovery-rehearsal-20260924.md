@@ -8,12 +8,20 @@ temporary target was `peso-recovery-rehearsal-20260924`
 (`iseqgaewjpjcxrndibep`) was paused to free one of the two active Free-plan
 slots. The API and worker remained suspended and the budget workflow inactive.
 
-**Current cutover finding: BLOCKED.** The hosted logical-restore blocker is
-resolved for this backup, but the Render API/worker are still intentionally
+**Current cutover finding: BLOCKED.** The hosted row/history restore succeeded
+for this backup, but the Render API/worker are still intentionally
 staging-bound. Their PesoDatabase credentials have not been verified or changed,
 the seven migrations remain unapplied to PesoDatabase, and a fresh protected
 pre-cutover backup is still required. The existing
 `render-public-beta.yaml` is a review-only candidate, not a deployed binding.
+
+Follow-up during [pre-cutover packet preparation](pesodatabase-precutover-packet.md):
+the private managed-schema export contains eight custom Storage policies that
+were not applied in this hosted rehearsal. The six public-policy count and
+bucket visibility above do not prove Storage policy recovery or client access.
+Keep complete recovery blocked until custom managed-schema definitions and
+owner/non-owner behavior have been restored and checked in an approved isolated
+hosted test. This does not invalidate the row/history restore result.
 
 ## Procedure and evidence
 

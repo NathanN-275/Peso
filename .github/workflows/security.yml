@@ -61,6 +61,9 @@ jobs:
       - name: Verify public beta spending decisions
         run: python -m unittest discover -s scripts -p 'test_public_beta_budget_*.py'
 
+      - name: Verify read-only PesoDatabase pre-cutover checker
+        run: python -m unittest discover -s scripts -p 'test_pesodatabase_precutover.py'
+
       - name: Audit Python dependencies
         run: pip-audit -r backend/requirements.txt
 

@@ -14,6 +14,11 @@ database, Render, GitHub, payment, or launch setting was changed by that
 initial preflight. A later, separately authorized hosted rehearsal is recorded
 in [its own note](pesodatabase-hosted-recovery-rehearsal-20260924.md).
 
+For the next decision use the [pre-cutover packet and local checker](pesodatabase-precutover-packet.md),
+which require fresh evidence and identify the hosted rehearsal's remaining
+custom Storage-policy recovery gap. This historical snapshot is not a current
+pass result.
+
 ## Evidence snapshot
 
 | Check | Result and source |
