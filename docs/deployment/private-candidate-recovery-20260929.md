@@ -86,16 +86,76 @@ This follows [Supabase's separate managed-schema recovery guidance](https://supa
 
 ## Open blockers before chunk 2
 
-- Fresh database export and contemporaneous Storage inventory/backup under the
-  [pre-cutover freeze procedure](pesodatabase-precutover-packet.md) remain pending.
-  The September 23 backup is historical, not a current recovery point.
-- The historical backup's Proton download now passes second-copy integrity
-  verification. Repeat upload/download verification for the fresh recovery
-  snapshot; this historical copy does not satisfy the fresh-window gate.
-  Confirm the remote folder remains private and account recovery is configured
-  before attesting protected-copy readiness.
+- A new September 29 snapshot is prepared as described below. Its Proton
+  upload/download verification and hosted restore remain pending. Full writer
+  freeze is not independently proven; retain `freeze_verified=false` and take
+  a fresh cutover-window snapshot under the [freeze procedure](pesodatabase-precutover-packet.md)
+  before migration. The checker freshness limit is 60 minutes.
+- Nathan confirmed the Proton folder is private, recovery information is saved,
+  and Peso apps will remain closed with no uploads, signups or database edits
+  during recovery. Historical second-copy integrity passed; new-copy integrity
+  is still pending.
 - Hosted custom Storage-policy recovery and real Storage API access remain
   unverified. No isolated hosted target is currently approved. Keep
   `managed_schema_customizations_verified=false`.
 
 Do not advance to cutover approval on the strength of this local result.
+
+## Follow-up: new recovery snapshot and reviewable hosted test
+
+The final export ran `2026-09-29T01:39:04Z`–`01:39:28Z`, after Nathan's
+quiet-window confirmation. It is in the private directory
+`/Users/nathan/Downloads/peso-private-backups/2026-09-29-recovery-013904`.
+An earlier `013553` export is retained privately but is not the selected packet.
+All six final SQL checksums and `0600` permissions pass. All eight policy
+statements exactly match the reviewed recovery SQL. Source observations before
+(`01:38:07Z`) and after (`01:39:50Z`) export both show zero videos, active jobs,
+and Storage objects. All three buckets are private; limits and MIME settings
+are saved in `storage-inventory.json`. No object bytes were copied because the
+inventory is empty. This does not prove absence of in-flight/orphaned bytes.
+
+Both Render service dashboards showed suspended at verification, with deployed
+commit `4325798f4a4bd7a8f8d55587c5520a5cf9c014d3`. GitHub repository API access
+succeeded; workflow and repository-variable listings contain neither the budget
+workflow nor its enable variable. Initial direct reads returned unavailable
+because these entries are absent. No `pg_cron`/`pg_net` extensions or custom
+Auth/Storage triggers calling functions outside managed schemas were found.
+These observations support a quiet window but are not an exhaustive writer audit.
+
+Upload artifact: `2026-09-29-recovery-013904.zip` in the private backup root.
+It contains SQL, manifests, snapshot metadata, inventory and recovery notes;
+diagnostic logs are excluded. ZIP CRC and byte-for-byte read-back passed.
+
+| Digest | SHA-256 |
+| --- | --- |
+| SQL manifest | `da6d96392fb99ed7425b4f2782ba47267652b65d195080870b258ec8dc71df5b` |
+| Packet manifest | `aecc905adab9b37ffa7da28472ffd5567987c9fb67c6fc9541094162c76404f3` |
+| Upload ZIP | `2357105a5c00b164fc3344d609450e5087aa34bdeecae6d7a7eb03f5f465756e` |
+
+### Proposed hosted operation — awaiting approval
+
+Target organization: **NathanN-275's Org** (`ireiverxhceuwvshqkjz`), currently
+Free. Both source and staging are healthy. [Free-plan limits](https://supabase.com/docs/guides/platform/billing-on-supabase)
+allow two active projects and exclude paused projects. Confirm organization and
+provider cost before creation; stop if the proposed operation requires payment.
+
+1. Temporarily pause **peso-staging** (`iseqgaewjpjcxrndibep`). This interrupts
+   staging Auth/Database/Storage until resumed. Never pause PesoDatabase.
+2. Create **peso-recovery-20260929** in **us-east-1**, in the organization above,
+   only if confirmed free. Record and verify its new ref before any restore.
+3. Restore the selected private backup using the transactional recipe above,
+   retaining platform-managed schemas. Restore the reviewed custom policies;
+   compare definitions, roles, RLS, bucket privacy/limits, rows and history.
+   Exercise a failed policy transaction and confirm rollback before successful
+   policy restoration. Stop on any unexplained mismatch.
+4. In the new target only, create two synthetic test accounts (no email sends),
+   use authenticated Storage API calls to test owner CRUD, other-user and anon
+   denial, MIME/size enforcement and byte read-back checksums. Verify Auth and
+   API access without printing tokens, row contents or private files.
+5. Whether the test passes or fails, pause the disposable target and resume
+   staging; verify staging returns healthy. Keep the paused test project for
+   investigation. Permanent deletion requires its own decision.
+
+Approval covers only this isolated recovery operation. Production migrations,
+Render configuration/resumption, budget activation and public launch remain
+outside its scope. No proposed hosted mutation has occurred.
