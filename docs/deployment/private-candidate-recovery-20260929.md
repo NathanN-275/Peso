@@ -26,12 +26,21 @@ No hosted changes, migrations, Render resumption, or guardrail activation occurr
   historical empty inventory, not today's Storage state or API byte recovery.
 - Pre-cutover checker regression suite: **26 tests passed**. `git diff --check`
   passed. These tests are not current provider evidence.
+- At `2026-09-29T01:31:53Z`, verified the ZIP Nathan reported downloading
+  after uploading the private backup folder to Proton Drive. It contains exactly
+  the six expected SQL files and `SHA256SUMS`; every file is byte-for-byte
+  identical to the original, and all six SHA-256 checks pass. Verification read
+  the ZIP directly without extracting or displaying private data. Remote origin
+  is based on Nathan's upload/download report, not independent account inspection;
+  account sharing and recovery settings were not inspected. This verifies the
+  second copy of the historical backup only.
 
 ## SHA-256 evidence
 
 | Artifact | SHA-256 |
 | --- | --- |
 | Private `SHA256SUMS` | `abae8d0e618df8b07d21a49cb90563693223d519bd542f7a9e8becc26dea3e57` |
+| Proton downloaded ZIP | `06b089e4e9dca40bb273f9510e6ab7b1c3dd9c53a604e23a46a25c596d2851f0` |
 | `roles.sql` | `0f63b83fd24aaa9450c44a8e4bca19afaa2c303594f4886c9be396e4bec3158b` |
 | `schema.sql` | `cc23548d35ef96531620428cec2cf54808d70602c47a58df16c1f1b82873299c` |
 | `auth_storage_schema.sql` | `13fc409ef4c0af726d6245df961979bf5f15c201c2e044138ca0862a8c2e08b5` |
@@ -80,10 +89,11 @@ This follows [Supabase's separate managed-schema recovery guidance](https://supa
 - Fresh database export and contemporaneous Storage inventory/backup under the
   [pre-cutover freeze procedure](pesodatabase-precutover-packet.md) remain pending.
   The September 23 backup is historical, not a current recovery point.
-- No protected off-machine second copy is verified. Nathan asked about a VM:
-  a VM on this Mac shares its failure domain; an existing remote VM or protected
-  cloud destination can qualify after permissions and checksums are verified.
-  Destination selection remains pending. No upload or VM provisioning occurred.
+- The historical backup's Proton download now passes second-copy integrity
+  verification. Repeat upload/download verification for the fresh recovery
+  snapshot; this historical copy does not satisfy the fresh-window gate.
+  Confirm the remote folder remains private and account recovery is configured
+  before attesting protected-copy readiness.
 - Hosted custom Storage-policy recovery and real Storage API access remain
   unverified. No isolated hosted target is currently approved. Keep
   `managed_schema_customizations_verified=false`.
