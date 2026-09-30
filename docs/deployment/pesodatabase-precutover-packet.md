@@ -13,6 +13,11 @@ and access behavior must be verified before claiming complete recovery. The
 checker includes a separate gate for this gap. Do not schedule a migration from
 the previous green restore result alone.
 
+Follow-up: [local Storage-policy recovery checks](storage-policy-local-recovery-20260928.md)
+now exercise the reviewed eight-policy restore artifact with real PostgreSQL
+RLS and synthetic users. This local result does not satisfy the hosted recovery
+attestation; it remains false until the separate hosted test passes.
+
 ## 1. Read-only evidence and checker
 
 Use Python 3.11+, Git, authenticated Supabase CLI (rehearsed version 2.98.2),

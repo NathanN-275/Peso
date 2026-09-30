@@ -1,52 +1,67 @@
-# Public Web Beta Launch Plan
+# Public Web Beta Deployment Plan
 
-**Status:** Current project goal | **Source:** `peso_public_web_beta_launch_plan.pdf` | **Owner:** Nathan | **Updated:** 2026-09-21
+Approved by Nathan in this chat on September 30, 2026. This replaces the older
+plan's dependency on an unavailable source PDF. Target: the combined homepage
+and authenticated `/app`, US-only signup/upload admission, and side-view squats.
 
-This document records the approved interpretation of the attached launch plan.
-It is the current release goal for Peso and supersedes older marketing-only
-launch framing. It does not authorize external changes by itself.
+## Execution contract
 
-## Release target
+Complete one gate per chunk. Stop after every gate and report: **TL;DR: what
+changed; why; verification; next blocker.** Do not advance after a failed gate.
+Keep credentials and backup contents outside Git. Record only sanitized
+evidence and exact release identifiers. Preserve existing data and projects.
+Commit messages include summary, what changed, why, affected systems, and tests.
 
-Launch the existing Peso homepage and existing Web App together at
-`usepeso.com`, with the Web App mounted at `/app`. Preserve the historical
-`peso-webapp` and `peso-marketing` projects, their deploy history, existing data,
-account compatibility, and the deferred native app. Reuse functioning product
-flows and visual design; changes must be justified by the launch gates.
+## Gates
 
-The beta is US-IP-restricted, permits open signup after launch, and supports
-the existing side-view squat workflow. IP location is an access restriction,
-not proof of residency. An unlisted URL is not an access-control mechanism.
+1. **Freeze candidate:** reconcile working changes and PR #47, select a source
+   SHA, run policy/type/backend tests, local builds with explicit non-production
+   fixtures and migration audits. Production-build acceptance remains mandatory
+   in Gate 11, as Nathan confirmed on September 30.
+2. **Container security:** scan the exact candidate and run offline runtime and
+   dependency checks. Change dependencies only for current failures; September
+   28 PR checks passed and supersede the historical failing scan.
+3. **Credential history:** finish rotation, provider verification and GitHub
+   history-purge work; verify secret scans.
+4. **Staging authentication:** isolated test users, redirects, email, Turnstile,
+   browser and required native authentication tests.
+5. **Hosted recovery:** approved disposable target, logical restore, custom
+   Storage policies, real owner/non-owner access and object-byte verification.
+6. **Fresh recovery point:** verified writer freeze, private export, checksums,
+   Storage inventory/bytes and verified protected off-machine copy.
+7. **Production migrations:** review current dry run, apply reviewed chain,
+   verify history, RPCs, RLS, grants and Data API behavior.
+8. **US admission:** authoritative geography source and refresh, Auth hook,
+   verified incoming proxy trust, IPv4/IPv6 and spoof/expiry failure tests.
+9. **Guardrails:** retention/cleanup, budget alerts and intake stop, delivery,
+   accepted-job draining, quotas and monitoring acceptance.
+10. **Render cutover:** reviewed existing IDs and matching production credentials,
+    manual deployment, separately approved paid resumption, API readiness then
+    worker acceptance and two longest-clip measurements.
+11. **Private Web App:** combined Netlify project, verified binding and production
+    configuration, release build/budget, preview and historical URL privacy.
+12. **End-to-end acceptance:** two owners; upload through analysis, save, export,
+    deletion, recovery and mobile compatibility; isolation and expired sessions.
+13. **Protected release:** one main-to-production PR, required checks on the
+    release SHA, recorded frontend/backend/migration/model identifiers.
+14. **Public launch:** final costs, identities and rollback evidence; Nathan's
+    action-time confirmation; public smoke tests and first-cycle monitoring.
 
-## Hard approval gates
+## Source checkpoint and production acceptance
 
-- Keep all sites and app routes non-public until Nathan completes end-to-end
-  acceptance and gives explicit action-time approval for public exposure.
-- Obtain approval before paid provisioning, capacity or spend increases,
-  destructive changes, DNS cutover, or any public visibility change.
-- Do not declare launch complete until production acceptance passes and Nathan
-  authorizes publication.
+`PESO_RELEASE_ENV=public-beta` requires the private candidate binding that Gate
+11 creates. Nathan approved separating Gate 1 source verification from Gate 11
+hosted release-build acceptance on September 30. Gate 1 uses a local fixture
+build with dotenv loading disabled; that output must never be deployed. Gate 11
+must run production release validation and build/budget checks with the real
+verified binding. Never bypass the validator or invent provider evidence.
 
-## Required work
+A source SHA can identify a tested checkpoint; subsequent implementation gates
+create new SHAs that require fresh applicable checks before release. Gate 1
+cannot freeze the final release bytes before those changes exist.
 
-1. Inspect and reconcile repository, Git, Netlify, Render, Supabase, DNS/TLS,
-   migrations, credentials, security findings, costs, and release blockers.
-2. Prepare the combined frontend, API, worker, database, authentication,
-   retention, privacy, capacity, performance, and monitoring path.
-3. Benchmark representative clips against the roughly 60-second target and
-   90-second acceptable case; measure queue wait separately.
-4. Preserve the three-day expiry for unsaved work, owner-scoped access,
-   evidence-aware uncertainty, and existing native-app compatibility.
-5. Run technical checks plus browser and mobile acceptance, including signup,
-   email verification, reset, upload/recording, analysis, review, save/discard,
-   history, deletion, recovery, isolation, and accessibility.
-6. Produce a protected release PR, release manifest, acceptance evidence,
-   rollback procedure, and launch-day monitoring checklist.
+## Completion
 
-## Definition of done
-
-The candidate passes the technical and human gates; all required operational,
-security, legal, email, migration/backup, and provider facts are verified; the
-intake stop is demonstrated; rollback boundaries are documented; and Nathan
-approves final public exposure. Until then, the release remains private and
-the goal is incomplete.
+All mandatory PRR gates pass, no blocking security finding remains, production
+bindings agree, US admission fails closed, two-user acceptance and recovery pass,
+and Nathan authorizes public exposure. Local checks alone do not prove this.

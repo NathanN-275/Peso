@@ -1,11 +1,14 @@
-# Public web beta is the combined homepage and Web App release
+# Release the homepage and Web App as one US-only beta
 
-**Status:** accepted
+**Status:** accepted; reconfirmed by Nathan on 2026-09-30
 
-The current launch target is the existing Peso homepage and `/app` together at
-`usepeso.com`, with open signup after acceptance and explicit action-time
-approval. This supersedes the older marketing-only public-launch framing while
-preserving the separate historical Netlify projects, deploy history, data,
-private previews, and deferred native app. The first public release remains
-focused on the supported side-view squat workflow and retains a hard stop
-before public exposure.
+Launch the existing homepage and authenticated `/app` together at `usepeso.com`,
+with US-IP-restricted open signup and side-view squat analysis. Nathan chose
+the public web beta rather than a separate marketing-only launch or an
+invite-only milestone. This requires completing operational acceptance before
+public exposure, but makes the launch deliver the actual product workflow.
+
+Preserve historical projects and data. Use the existing suspended Render beta
+services with the reviewed production binding and PesoDatabase; staging data
+is not promoted. Public visibility requires Nathan's action-time confirmation.
+The deployment plan and PRR retain the detailed gates and evidence.

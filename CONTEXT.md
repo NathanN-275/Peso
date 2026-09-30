@@ -17,15 +17,13 @@ The release gate for a defined scope. It records evidence, known limits, require
 ## Marketing Site
 
 The public-facing Peso homepage and supporting `/beta`, `/privacy`, and
-`/terms` pages. The information-only/private marketing deployment is a
-preparation state, not the final public-beta release.
+`/terms` pages. It introduces the product and directs users into the Web App.
 
 ## Public Web Beta
 
-The approved public release of the Marketing Site and Web App together at
-`usepeso.com`, with open signup and the supported side-view squat workflow.
-It is US-IP-restricted during beta and remains private until Nathan completes
-end-to-end acceptance and gives action-time approval for public exposure.
+The combined Marketing Site and authenticated Web App release, with open
+signup restricted by US IP admission and the supported side-view squat workflow.
+An information-only marketing deployment is a preparation state, not this release.
 
 ## Web App
 
