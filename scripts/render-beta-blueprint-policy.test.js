@@ -97,3 +97,16 @@ test('beta validation runs Blueprint, policy, runtime, and peso-staging migratio
   assert.match(workflow, /supabase db push --db-url "\$SUPABASE_DB_URL" --dry-run/);
   assert.doesNotMatch(workflow, /render deploys create|render blueprint sync|supabase db push --db-url "\$SUPABASE_DB_URL"\s*$/m);
 });
+
+test('manual staging preview pins reviewed source without accepting arbitrary branches or mutable refs', () => {
+  assert.match(workflow, /release_sha:\n\s+description:[^\n]+\n\s+required: true\n\s+type: string/);
+  assert.match(workflow, /refs\/heads\/main\|refs\/heads\/feat\/combined-public-beta/);
+  assert.match(workflow, /git merge-base --is-ancestor "\$EXPECTED_SOURCE_COMMIT" "\$GITHUB_SHA"/);
+  assert.match(workflow, /\^\[a-f0-9\]\{40\}\$/);
+  assert.match(workflow, /test "\$\(git rev-parse HEAD\)" = "\$EXPECTED_SOURCE_COMMIT"/);
+  assert.match(workflow, /ref: \$\{\{ inputs\.release_sha \}\}/);
+  assert.match(workflow, /needs: validate[\s\S]*environment: student/);
+  assert.match(workflow, /source_commit=%s\\nworkflow_commit=%s\\n/);
+  assert.match(workflow, /sha256sum supabase\/migrations\/\*\.sql/);
+  assert.doesNotMatch(workflow, /pull_request_target|secrets: inherit/);
+});

@@ -19,7 +19,14 @@ production Supabase project.
 
 ## 2. Validate code, Blueprint, and database history
 
-Run the **Render Beta Release Validation** workflow from `main`. It performs
+Run the **Render Beta Release Validation** workflow manually from `main` or
+the approved `feat/combined-public-beta` candidate branch. Supply `release_sha`
+as the full reviewed 40-character source commit. Both jobs check out that exact
+commit; it must be an ancestor of the selected workflow branch. PR runs still
+skip the credentialed migration preview. This permits a candidate dry run
+without merging it into `main`, applying migrations, or accepting its backend
+binding. The artifact records source and workflow commits plus SQL checksums.
+It performs
 policy and release-environment tests, application type checking, backend tests,
 a root-Dockerfile build, offline Docker runtime checks, Render Blueprint
 validation, and the `peso-staging` migration-history check and dry run. Download
