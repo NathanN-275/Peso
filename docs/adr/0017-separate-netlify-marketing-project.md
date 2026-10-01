@@ -18,3 +18,13 @@ protected release checks. Obtain Nathan's action-time confirmation before
 making marketing production public; keep previews private and immediately
 restore Private on isolation failure. Never publicly roll back to app content.
 No upgrades or authentication-origin changes are part of this launch.
+
+
+Implementation checkpoint, September 21, 2026: marketing project
+`19cbad85-dd2d-4d3b-a24a-242de78d30af` privately published deploy
+`6ab17428436e50000838783f` at `d92dfea5334d338cf7af842f0d1b3672ca3d1cc9`.
+App project `230da8eb-f00e-45d4-ba54-95f2e26f21c4` remains Private. Domain
+assignment is still on the app project while Cloudflare sign-in and remaining
+private response/network acceptance are pending. No rollback was needed; no
+public exposure is authorized yet. See the [release evidence](../deployment/marketing-release-20260920.md)
+for the measured usage, DNS/TLS baseline and unchanged Render identity.

@@ -4,12 +4,18 @@ on:
   pull_request:
     paths:
       - render-beta.yaml
+      - render-public-beta.yaml
       - Dockerfile
       - backend/**
       - scripts/**
       - supabase/migrations/**
       - .github/workflows/render-beta-validate.yml
   workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Full reviewed source commit to validate and preview (no deploy or database writes)
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -24,6 +30,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Verify manually selected release source before accessing credentials
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REF" in
+            refs/heads/main|refs/heads/feat/combined-public-beta) ;;
+            *) echo "Manual validation requires an approved source branch."; exit 1 ;;
+          esac
+          [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_COMMIT"
+          git merge-base --is-ancestor "$EXPECTED_SOURCE_COMMIT" "$GITHUB_SHA"
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -73,6 +96,7 @@ jobs:
           : "${RENDER_API_KEY:?Configure a Render API key as a protected repository secret.}"
           : "${RENDER_WORKSPACE_ID:?Configure the non-production Render workspace ID as a repository variable.}"
           render blueprints validate render-beta.yaml --workspace "$RENDER_WORKSPACE_ID"
+          render blueprints validate render-public-beta.yaml --workspace "$RENDER_WORKSPACE_ID"
 
       - name: Run policy and release-environment tests
         run: npm run test:policy
@@ -96,13 +120,15 @@ jobs:
         run: ./scripts/verify_container_runtime.sh peso-render-beta:${{ github.sha }}
 
   migration-preview:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/combined-public-beta')
     name: Check peso-staging migration history and dry run
     needs: validate
     runs-on: ubuntu-latest
     environment: student
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.release_sha }}
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -115,13 +141,18 @@ jobs:
       - name: Compare migration history and preview every pending migration
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          EXPECTED_SOURCE_COMMIT: ${{ inputs.release_sha }}
         run: |
           set -euo pipefail
+          [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_COMMIT"
           mkdir -p release-evidence/render-beta-migrations
           node scripts/student-environment.js --database-only
+          printf 'source_commit=%s\nworkflow_commit=%s\n' "$EXPECTED_SOURCE_COMMIT" "$GITHUB_SHA" > release-evidence/render-beta-migrations/source.txt
+          sha256sum supabase/migrations/*.sql > release-evidence/render-beta-migrations/migrations.sha256
           NO_COLOR=1 supabase migration list --db-url "$SUPABASE_DB_URL" 2>&1 | tee release-evidence/render-beta-migrations/list.txt
           NO_COLOR=1 supabase db push --db-url "$SUPABASE_DB_URL" --dry-run 2>&1 | tee release-evidence/render-beta-migrations/plan.txt
-          (cd release-evidence/render-beta-migrations && sha256sum list.txt plan.txt > SHA256SUMS)
+          (cd release-evidence/render-beta-migrations && sha256sum source.txt migrations.sha256 list.txt plan.txt > SHA256SUMS)
 
       - name: Upload Render beta migration evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

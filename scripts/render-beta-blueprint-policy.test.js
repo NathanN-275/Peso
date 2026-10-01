@@ -5,6 +5,7 @@ const test = require('node:test');
 
 const root = path.resolve(__dirname, '..');
 const beta = fs.readFileSync(path.join(root, 'render-beta.yaml'), 'utf8');
+const publicBeta = fs.readFileSync(path.join(root, 'render-public-beta.yaml'), 'utf8');
 const production = fs.readFileSync(path.join(root, 'render.yaml'), 'utf8');
 const netlify = fs.readFileSync(path.join(root, 'netlify.toml'), 'utf8');
 const workflow = fs.readFileSync(path.join(root, '.github/workflows/render-beta-validate.yml'), 'utf8');
@@ -23,6 +24,25 @@ test('Render beta is isolated from the unchanged production Blueprint', () => {
   assert.match(beta, /name: peso-beta-api/);
   assert.match(beta, /name: peso-beta-analysis-worker/);
   assert.doesNotMatch(beta, /name: Peso-backend|name: peso-analysis-worker\n/);
+});
+
+test('public candidate selects PesoDatabase and owner budget without increasing service plans', () => {
+  const preferences = require('../config/public-beta-owner-preferences.json');
+  const blocks = publicBeta.split(/  - type: /).slice(1);
+  assert.equal(blocks.length, 2);
+  for (const block of blocks) {
+    assert.match(block, /plan: starter/);
+    assert.match(block, /autoDeployTrigger: "off"/);
+    assert.match(block, /PESO_DEPLOYMENT_ENVIRONMENT\n\s+value: production/);
+    assert.ok(block.includes(`value: https://${preferences.supabase_project_ref}.supabase.co`));
+    assert.ok(block.includes(`INTAKE_STOP_PROJECTED_MONTHLY_USD\n        value: "${preferences.stop_new_uploads_at_projected_monthly_usd}"`));
+    assert.match(block, /SAVED_VIDEO_STORAGE_TTL_HOURS\n\s+value: "72"/);
+    assert.match(block, /US_IP_BETA_ENABLED\n\s+value: "true"/);
+    for (const key of ['BACKEND_CORS_ORIGINS', 'TRUSTED_PROXY_CIDRS', 'BUDGET_SHUTDOWN_TOKEN', 'SUPABASE_SERVICE_ROLE_KEY']) {
+      assert.match(block, new RegExp(`${key}\\n\\s+sync: false`));
+    }
+    assert.doesNotMatch(block, /iseqgaewjpjcxrndibep|main--peso-webapp/);
+  }
 });
 
 test('both beta services use the root Dockerfile and manual deploys', () => {
@@ -76,4 +96,17 @@ test('beta validation runs Blueprint, policy, runtime, and peso-staging migratio
   assert.match(workflow, /supabase migration list --db-url "\$SUPABASE_DB_URL"/);
   assert.match(workflow, /supabase db push --db-url "\$SUPABASE_DB_URL" --dry-run/);
   assert.doesNotMatch(workflow, /render deploys create|render blueprint sync|supabase db push --db-url "\$SUPABASE_DB_URL"\s*$/m);
+});
+
+test('manual staging preview pins reviewed source without accepting arbitrary branches or mutable refs', () => {
+  assert.match(workflow, /release_sha:\n\s+description:[^\n]+\n\s+required: true\n\s+type: string/);
+  assert.match(workflow, /refs\/heads\/main\|refs\/heads\/feat\/combined-public-beta/);
+  assert.match(workflow, /git merge-base --is-ancestor "\$EXPECTED_SOURCE_COMMIT" "\$GITHUB_SHA"/);
+  assert.match(workflow, /\^\[a-f0-9\]\{40\}\$/);
+  assert.match(workflow, /test "\$\(git rev-parse HEAD\)" = "\$EXPECTED_SOURCE_COMMIT"/);
+  assert.match(workflow, /ref: \$\{\{ inputs\.release_sha \}\}/);
+  assert.match(workflow, /needs: validate[\s\S]*environment: student/);
+  assert.match(workflow, /source_commit=%s\\nworkflow_commit=%s\\n/);
+  assert.match(workflow, /sha256sum supabase\/migrations\/\*\.sql/);
+  assert.doesNotMatch(workflow, /pull_request_target|secrets: inherit/);
 });
