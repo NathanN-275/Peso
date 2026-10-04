@@ -7,7 +7,14 @@ from datetime import datetime, timezone
 
 
 def redact_sensitive_text(value: str) -> str:
-  value = re.sub(r"(https?://[^\s?\"']+)\?[^\s\"']+", r"\1?<redacted>", value)
+  # Uvicorn logs root-relative request targets, not just absolute URLs.
+  value = re.sub(r"((?:https?://|/)[^\s?\"']*)\?[^\s\"']+", r"\1?<redacted>", value)
+  value = re.sub(
+    r"(?i)(\bticket[\"']?\s*[:=]\s*)([\"'])[^\r\n]*?\2",
+    r"\1\2<redacted>\2",
+    value,
+  )
+  value = re.sub(r"(?i)(\bticket\s*=\s*)[^\s,;\"']+", r"\1<redacted>", value)
   value = re.sub(r"(?i)Bearer\s+\S+", "Bearer <redacted>", value)
   value = re.sub(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", "<redacted-jwt>", value)
   return value
