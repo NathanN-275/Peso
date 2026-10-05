@@ -3,6 +3,10 @@ const test = require('node:test');
 
 const { approvedRenderBetaApi, validateReleaseEnv } = require('./release-env');
 
+// Public resource identifiers, not provider authentication credentials.
+const BETA_WEB_SERVICE_ID = 'srv-dak9ohfqj5pc73ac2ga0';
+const BETA_WORKER_SERVICE_ID = 'srv-dak9ohfqj5pc73ac2g8g';
+
 const approvedBinding = (apiUrl) => ({
   schema_version: 1,
   status: 'accepted',
@@ -12,14 +16,14 @@ const approvedBinding = (apiUrl) => ({
   source_workflow_run_id: '123456789',
 });
 
-const acceptedRenderBetaBinding = (apiUrl = 'https://peso-beta-api.onrender.com') => ({
+const acceptedRenderBetaBinding = (apiUrl = 'https://api-staging.usepeso.com') => ({
   schema_version: 1,
   status: 'accepted',
   api_url: apiUrl,
   blueprint_sha256: 'c'.repeat(64),
   source_commit: 'd'.repeat(40),
-  api_service_id: 'srv-betaapi123',
-  worker_service_id: 'srv-betaworker456',
+  api_service_id: BETA_WEB_SERVICE_ID,
+  worker_service_id: BETA_WORKER_SERVICE_ID,
 });
 
 test('release auth configuration rejects a missing Turnstile site key', () => {
@@ -153,8 +157,8 @@ test('Render beta builds require peso-staging, the exact beta API, and the priva
     EXPO_PUBLIC_SUPABASE_URL: 'https://iseqgaewjpjcxrndibep.supabase.co',
     EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test',
     EXPO_PUBLIC_TURNSTILE_SITE_KEY: 'test-site-key',
-    EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/',
-    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://peso-beta-api.onrender.com',
+    EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main.usepeso.com/auth/turnstile/',
+    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://api-staging.usepeso.com',
   };
   const options = { renderBetaBinding: acceptedRenderBetaBinding() };
 
@@ -165,17 +169,73 @@ test('Render beta builds require peso-staging, the exact beta API, and the priva
     EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://peso-webapp.netlify.app/auth/turnstile/',
     EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://peso-beta-api-attacker.onrender.com',
   })) assert.ok(validateReleaseEnv({...env, [name]: value}, options).errors.length, name);
+  for (const change of [
+    { EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/' },
+    { EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main.usepeso.com.attacker.example/auth/turnstile/' },
+    { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://peso-beta-api.onrender.com' },
+    { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://api-staging.usepeso.com/path' },
+    { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://api-staging.usepeso.com?token=secret' },
+    { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://user:secret@api-staging.usepeso.com' },
+    { EXPO_PUBLIC_BACKEND_URL: 'https://override.example.com' },
+  ]) assert.ok(validateReleaseEnv({ ...env, ...change }, options).errors.length, JSON.stringify(change));
 });
 
 test('Render beta binding fails closed on pending, malformed, or non-beta evidence', () => {
   assert.equal(approvedRenderBetaApi({ status: 'pending' }), '');
-  assert.equal(approvedRenderBetaApi(acceptedRenderBetaBinding('https://peso-beta-api.onrender.com/path')), '');
+  for (const apiUrl of [
+    'https://peso-beta-api.onrender.com',
+    'https://api-staging.usepeso.com/path',
+    'https://api-staging.usepeso.com?token=secret',
+    'https://api-staging.usepeso.com#fragment',
+    'https://user:secret@api-staging.usepeso.com',
+    'https://api-staging.usepeso.com:8443',
+    'https://api-staging.usepeso.com.attacker.example',
+    'http://api-staging.usepeso.com',
+  ]) assert.equal(approvedRenderBetaApi(acceptedRenderBetaBinding(apiUrl)), '', apiUrl);
   assert.equal(approvedRenderBetaApi({
     ...acceptedRenderBetaBinding(),
     blueprint_sha256: 'not-a-digest',
   }), '');
+  for (const change of [
+    { status: 'pending' }, { source_commit: null }, { source_commit: 'not-a-sha' },
+    { api_service_id: 'srv-other' }, { worker_service_id: 'srv-other' },
+  ]) assert.equal(approvedRenderBetaApi({ ...acceptedRenderBetaBinding(), ...change }), '');
   assert.equal(
     approvedRenderBetaApi(acceptedRenderBetaBinding()),
-    'https://peso-beta-api.onrender.com',
+    'https://api-staging.usepeso.com',
   );
+});
+
+test('combined public beta binds the selected database, existing services and exact private site', () => {
+  const binding = {
+    schema_version: 1, status: 'private-candidate-verified',
+    site_id: '11111111-1111-4111-8111-111111111111',
+    site_origin: 'https://candidate.example.com', api_url: 'https://candidate-api.example.com',
+    api_service_id: 'srv-dak9ohfqj5pc73ac2ga0',
+    worker_service_id: 'srv-dak9ohfqj5pc73ac2g8g',
+    source_commit: 'a'.repeat(40), blueprint_sha256: 'b'.repeat(64),
+  };
+  const env = {
+    PESO_RELEASE_ENV: 'public-beta', SITE_ID: binding.site_id,
+    EXPO_PUBLIC_SUPABASE_URL: 'https://jfgiydtrskpqxyorvvbc.supabase.co',
+    EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_fixture',
+    EXPO_PUBLIC_TURNSTILE_SITE_KEY: 'real-site-key-fixture',
+    EXPO_PUBLIC_AUTH_CHALLENGE_URL: `${binding.site_origin}/auth/turnstile/`,
+    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: binding.api_url,
+  };
+  assert.deepEqual(validateReleaseEnv(env, { combinedBinding: binding }).errors, []);
+  assert.ok(validateReleaseEnv(env).errors.length, 'pending tracked binding blocks deployment');
+  for (const change of [
+    { SITE_ID: '230da8eb-f00e-45d4-ba54-95f2e26f21c4' },
+    { EXPO_PUBLIC_SUPABASE_URL: 'https://iseqgaewjpjcxrndibep.supabase.co' },
+    { EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://other.example.com/auth/turnstile/' },
+    { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://other-api.example.com' },
+    { EXPO_PUBLIC_BACKEND_URL: 'https://override.example.com' },
+    { EXPO_PUBLIC_TURNSTILE_SITE_KEY: '1x00000000000000000000AA' },
+  ]) assert.ok(validateReleaseEnv({ ...env, ...change }, { combinedBinding: binding }).errors.length);
+  for (const change of [
+    { status: 'pending' }, { source_commit: null }, { blueprint_sha256: null },
+    { api_service_id: 'srv-other' }, { worker_service_id: 'srv-other' },
+    { site_origin: `${binding.site_origin}/path` }, { api_url: `${binding.api_url}/path` },
+  ]) assert.ok(validateReleaseEnv(env, { combinedBinding: { ...binding, ...change } }).errors.length);
 });

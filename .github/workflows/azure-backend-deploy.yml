@@ -109,9 +109,19 @@ jobs:
         run: python scripts/fetch_pose_models.py
 
       - name: Audit dependencies and migrations
+        id: npm_audit
         run: |
           npm run audit:ci
           python scripts/supabase_security_audit.py
+
+      - name: Retain complete Node audit and policy evidence
+        if: ${{ always() && (steps.npm_audit.outcome == 'success' || steps.npm_audit.outcome == 'failure') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: student-deploy-node-audit-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/npm-audit/
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Validate policy and types
         run: |

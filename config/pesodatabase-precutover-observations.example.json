@@ -1,0 +1,44 @@
+{
+  "observed_at": null,
+  "freeze_at": null,
+  "backup_completed_at": null,
+  "backup_project_ref": "jfgiydtrskpqxyorvvbc",
+  "backup_manifest_sha256": null,
+  "second_copy": {
+    "verified_at": null,
+    "manifest_sha256": null,
+    "off_machine": false
+  },
+  "source_commit": null,
+  "blueprint_sha256": null,
+  "budget_workflow_disabled": false,
+  "quota_healthy": false,
+  "managed_schema_customizations_verified": false,
+  "counts": {
+    "videos": null,
+    "active_uploads": null,
+    "active_analysis_jobs": null,
+    "reservations": null,
+    "storage_objects": null
+  },
+  "services": {
+    "srv-dak9ohfqj5pc73ac2ga0": {
+      "environment": null,
+      "supabase_url": null,
+      "credential_project_ref": null,
+      "credentials_verified": false,
+      "suspended": false,
+      "auto_deploy": null,
+      "deployed_commit": null
+    },
+    "srv-dak9ohfqj5pc73ac2g8g": {
+      "environment": null,
+      "supabase_url": null,
+      "credential_project_ref": null,
+      "credentials_verified": false,
+      "suspended": false,
+      "auto_deploy": null,
+      "deployed_commit": null
+    }
+  }
+}

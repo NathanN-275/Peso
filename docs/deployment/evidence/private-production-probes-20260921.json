@@ -1,0 +1,371 @@
+{
+  "captured_at": "2026-09-21T18:21:47.172207+00:00",
+  "probes": [
+    {
+      "url": "https://6ab095daf5ba6800088c7297--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 500 \ncache-control: private, max-age=0\ncontent-type: text/plain; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:44 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7P8AXMWF0K1ERTPQCG6M\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6ab095d8e56cba00081134fa--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 500 \ncache-control: private, max-age=0\ncontent-type: text/plain; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:44 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7P8BKSWAYEV21F809F0X\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6ab09376f9409f00083bc6b9--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:44 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7P8AV3977KP6EX2MT4KE\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6ab092eb1b0a150008b1b6b3--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 500 \ncache-control: private, max-age=0\ncontent-type: text/plain; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:44 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7P8AWT8XMPY3BTMTTQCX\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6aac523996885a00073bdfbd--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 404 \ncache-control: private, max-age=0\ncontent-type: text/plain; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:44 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7P8BZYCZYADHF506G4MB\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6aac4cc58a1b590008235765--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 404 \ncache-control: private, max-age=0\ncontent-type: text/plain; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:44 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7P8DQTAVF7MFNZRN9C2S\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6aac42ecea9869000833a8ea--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 404 \ncache-control: private, max-age=0\ncontent-type: text/plain; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:44 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7P8C472ZD4G0A2PVEFZD\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6aa8a97c4d60da000870247e--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 404 \ncache-control: private, max-age=0\ncontent-type: text/plain; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:44 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7P8B7HXTSFBSR64DT1NJ\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6aa88a875149240008f699cf--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 404 \ncache-control: private, max-age=0\ncontent-type: text/plain; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:44 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PE6PTZADDWF95SSABHX\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6aa864b5d3ef5c0008518e5a--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:44 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PE6NCKFP867K8GDZJYG\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6aa72e9da9499f0008dc1e3b--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 404 \ncache-control: private, max-age=0\ncontent-type: text/plain; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:44 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PE7TDXQYS5BHVRH51KT\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6aa49c19092f3b0008292036--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 404 \ncache-control: private, max-age=0\ncontent-type: text/plain; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:44 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PE6JYFWPTW2JX3ATT1E\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6aa499933ca1f70009dd9453--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:44 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PEBQX15DMNJEMCNWRZ1\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6aa23766ca74af0008acb814--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 404 \ncache-control: private, max-age=0\ncontent-type: text/plain; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:44 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PE69HV42S3AYEEA2T7X\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6aa235970c352d000871d9f1--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PE6PCYW9G9CDHXB6VDN\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6aa1fd39a071ff0009e649c2--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 404 \ncache-control: private, max-age=0\ncontent-type: text/plain; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:44 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PJNC0FGTQMVZ0EJ1VSG\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6aa1fcbe9cd8f40008df614d--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PMEZ0EQXBM8T13133WZ\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6aa1fc4afbf21c000835433b--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PMD1Y62XCCTFH370G4V\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6aa1c99254579d00081873f1--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 404 \ncache-control: private, max-age=0\ncontent-type: text/plain; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:44 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PMQZV0EM95BN0QD8NYQ\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6aa1c59d7ff5520009b20904--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PMF7EE27Y7C86E1GF7V\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a9a0dcff6e20700081d684c--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PT308HPZJFRFDQQ5PNS\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a9a09bcfe560d000810f48f--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PVK5KNGF9KVQJHSVPJZ\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a99bdb95c06ce000988c60c--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PVKHRJJWHGKJXG9FQN9\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a99bd48dc1442000856b37f--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PXX6G989MD14CS9F9T4\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a99bc52dc14420008564ae6--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PXXN8B7B9D4G3HCV6WQ\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a99a6370d48e60009ca34a4--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PYTRAERSA9FXJWJ4V3B\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a99a4147a81b00008dc5ec2--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7PZSVCJKQNCEQKZ16AH5\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a971f639317bd0008981221--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 404 \ncache-control: private, max-age=0\ncontent-type: text/plain; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7Q11J2VAVXZX72JBDPVE\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a971ddc56c92000088b04b6--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7QAYC3K11DNTE1EC5KS7\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a9234045e436787ff1076ed--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7QC25ZEAW120ER7D2KKR\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a92331390ee2174e2f681ff--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7QBVXA1SXXAZ63JFW0ZJ\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a8e506cc380b7000848b0fe--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7QBVQ9CCCGP4338S0ANY\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a8e2ac45ee3359c928785cd--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7QC266HEJK5P9EMTP64V\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a8e2a6a7ca3dc0008dcb229--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7QC5QKB67FA3KBDHPRHZ\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a8e27306595bca6ceee7207--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7QCSVXE33YT2W7EF9EXE\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a73977d122a0867a2654ab5--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:45 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7QCRR9N9TN1TMH95160C\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a737812c957b800085210a3--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7QH17D6BVBD79TRE4RP2\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a7378102af9350008363c44--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7QPM8YCRC9N3V11TVRNA\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a72cb39bf87500008e564af--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7QSM5BSP7NYVMNV4SMJW\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a72cb1746fb1a000884a232--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7QSMCJ38FWGN1CZDS1P7\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a72c9de88366a000816c651--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7QTHX9N49W3RPA2QPTQF\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a72b69ce4a14f3333296160--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7QSMC986K9GGH5X6C1DQ\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a72b63ba93b173bd1ab8dcd--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7QTHZRFYJZZPKW6JAM5J\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a72b120a2b0520ff2470478--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7QVSGJJ2PEWSZH4W7K1G\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a72893e13a2740008c0ad16--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7QYN65T2G1RQYQC05CZ9\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a728089c493ea00088a3b85--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7R1Z8CZKYV5C4GPAS30K\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a727ffb939043c29db9d909--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7R1YVNSQ8KES2SAP6BF3\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a727fd4f8039900088faf93--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7R5RMQMSZRV46CQ67SDJ\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a727efc60eea3000899f502--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7R5R98P02CYTYCYEV5G9\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a727c79571a34000883128e--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 404 \ncache-control: private, max-age=0\ncontent-type: text/plain; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7RBATPWBN5ZC11JY9F1P\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a727bc716ddbdd190607882--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7RB9KQT9ZD4W8P4KTJZ7\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6a7272899a437dd57624fb40--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7RD0JBA2DGCSA6F6PQYV\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://main--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7RCZQ38EWE9WC75QZZ1P\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7RE698W311A86JXADTR7\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://deploy-preview-46--peso-webapp.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:47 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7RF88NN2QM2D5QYRAF8P\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://peso-marketing.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7RF8YF1M76D0Y7FWQGF3\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6ab17428436e50000838783f--peso-marketing.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:46 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7RGH778VY6KRX66JHRG0\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://deploy-preview-46--peso-marketing.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:47 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7RH9SMDWPFJD00S2P3ZQ\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://6ab096ecf37b7f000812b2ea--peso-marketing.netlify.app/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:47 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains; preload\nx-nf-request-id: 01M32K7RJ7TWQ3ABTPJNQ9TX2H\nx-robots-tag: noindex\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://usepeso.com/",
+      "headers": "HTTP/2 401 \ncontent-type: text/html; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:47 GMT\nserver: Netlify\nstrict-transport-security: max-age=31536000\nx-nf-request-id: 01M32K7RM12SCQQA9QSJHV67HV\n\n",
+      "error": "",
+      "exit_code": 0
+    },
+    {
+      "url": "https://www.usepeso.com/",
+      "headers": "HTTP/2 301 \ncontent-type: text/plain; charset=utf-8\ndate: Mon, 21 Sep 2026 18:21:47 GMT\nlocation: https://usepeso.com/\nserver: Netlify\nstrict-transport-security: max-age=31536000; includeSubDomains\nx-nf-request-id: 01M32K7RNWGJZH4JKP1B4PHW6N\n\n",
+      "error": "",
+      "exit_code": 0
+    }
+  ]
+}

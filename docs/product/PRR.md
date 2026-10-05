@@ -1,13 +1,16 @@
 # Peso Production Readiness Review
 
-**Status:** Public beta blocked pending operational acceptance | **Updated:** 2026-09-20
+**Status:** Public beta blocked pending operational acceptance | **Updated:** 2026-09-30
 
 This review is the release gate for the focused web beta. It is not a claim that every exercise, camera view, or future coaching feature is production-ready.
 
-The public beta targets the existing production backend and production
-Supabase project (`jfgiydtrskpqxyorvvbc`) through one protected `main` →
-`production` release. The isolated Render beta and `peso-staging` remain
-private and are not promoted. See the dated
+The public beta targets PesoDatabase (`jfgiydtrskpqxyorvvbc`) and the existing
+suspended beta Render API/worker through the reviewed `render-public-beta.yaml`
+cutover. Their historical staging binding must be replaced as a coordinated
+operation; `peso-staging` data is not promoted. The combined homepage and `/app`
+release uses US-only signup/upload admission and a protected `main` →
+`production` release. Follow the [approved gate sequence](../deployment/public-beta-launch-plan.md).
+See the dated
 [release evidence](../deployment/public-beta-release-20260920.md) for completed
 checks and remaining blockers; local passes do not establish deployed acceptance.
 
@@ -23,11 +26,11 @@ checks and remaining blockers; local passes do not establish deployed acceptance
 | Automated verification | Ready to run in CI | `.github/workflows/security.yml` covers backend tests, frontend checks, audits, RLS/migration review, and secret scanning. |
 | User documentation | In progress | Keep this review, the README, and backend deployment notes aligned with each release. |
 
-## Public marketing launch checklist
+## Historical marketing-only preparation checklist
 
-The information-only marketing launch is separate from the public beta. It
-permits only `/`, `/beta`, `/privacy`, and `/terms`, with no signup, uploads,
-analysis, or email collection. All full-beta blockers below remain open.
+These items describe the earlier information-only launch path. Retain them as
+historical preparation evidence; they are not the target of the approved public
+beta deployment plan. All required full-beta gates still apply.
 
 - [ ] Create a private `peso-marketing` project using package `web`, base root,
       `production` branch, private previews, and no branch deploys.

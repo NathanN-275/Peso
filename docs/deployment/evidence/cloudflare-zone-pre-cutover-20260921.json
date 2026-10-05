@@ -1,0 +1,104 @@
+{
+  "captured_at": "2026-09-21T18:31:19.047303+00:00",
+  "source": "Cloudflare DNS Records UI; Showing 1-12 of 12",
+  "zone": "usepeso.com",
+  "zone_id": "19ca8408385bfaa58c66b3beb9de4582",
+  "records": [
+    {
+      "type": "CNAME",
+      "name": "@",
+      "content": "apex-loadbalancer.netlify.com",
+      "ttl_display": "Auto",
+      "priority": null,
+      "proxy_status": "DNS only"
+    },
+    {
+      "type": "CNAME",
+      "name": "www",
+      "content": "peso-webapp.netlify.app",
+      "ttl_display": "Auto",
+      "priority": null,
+      "proxy_status": "DNS only"
+    },
+    {
+      "type": "MX",
+      "name": "send.auth",
+      "content": "feedback-smtp.us-east-1.amazonses.com",
+      "ttl_display": "1 hr",
+      "priority": 10,
+      "proxy_status": "DNS only"
+    },
+    {
+      "type": "MX",
+      "name": "@",
+      "content": "route3.mx.cloudflare.net",
+      "ttl_display": "Auto",
+      "priority": 39,
+      "proxy_status": "DNS only"
+    },
+    {
+      "type": "MX",
+      "name": "@",
+      "content": "route2.mx.cloudflare.net",
+      "ttl_display": "Auto",
+      "priority": 62,
+      "proxy_status": "DNS only"
+    },
+    {
+      "type": "MX",
+      "name": "@",
+      "content": "route1.mx.cloudflare.net",
+      "ttl_display": "Auto",
+      "priority": 8,
+      "proxy_status": "DNS only"
+    },
+    {
+      "type": "TXT",
+      "name": "cf2024-1._domainkey",
+      "content": "\"v=DKIM1; h=sha256; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAiweykoi+o48IOGuP7GR3X0MOExCUDY/BCRHoWBnh3rChl7WhdyCxW3jgq1daEjPPqoi7sJvdg5hEQVsgVRQP4DcnQDVjGMbASQtrY4WmB1VebF+RPJB2ECPsEDTpeiI5ZyUAwJaVX7r6bznU67g7LvFq35yIo4sdlmtZGV+i0H4cpYH9+3JJ78k\" \"m4KXwaf9xUJCWF6nxeD+qG6Fyruw1Qlbds2r85U9dkNDVAS3gioCvELryh1TxKGiVTkg4wqHTyHfWsp7KD3WQHYJn0RyfJJu6YEmL77zonn7p2SRMvTMP3ZEXibnC9gz3nnhR6wcYL8Q7zXypKTMD58bTixDSJwIDAQAB\"",
+      "ttl_display": "Auto",
+      "priority": null,
+      "proxy_status": "DNS only"
+    },
+    {
+      "type": "TXT",
+      "name": "_dmarc.auth",
+      "content": "\"v=DMARC1; p=none; rua=mailto:security@usepeso.com\"",
+      "ttl_display": "Auto",
+      "priority": null,
+      "proxy_status": "DNS only"
+    },
+    {
+      "type": "TXT",
+      "name": "_dmarc",
+      "content": "\"v=DMARC1; p=none; rua=mailto:3bef67749690410883d16d53006e1bc8@dmarc-reports.cloudflare.net\"",
+      "ttl_display": "Auto",
+      "priority": null,
+      "proxy_status": "DNS only"
+    },
+    {
+      "type": "TXT",
+      "name": "resend._domainkey.auth",
+      "content": "\"p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC4RMskQ+Yx6+G889bl6WSjSzc3ZwGK7+5RaC3x7SF1ZdRQBTMYua8XMgAjBdg6i/uVogjjW5w5O+jLqvDP0IlsSoYQtv8k/nHxiQcKVo1weywJxsugj6ObzXGLUJ5Aur+/dswgLaPKXvriVRXvMvkY+W867DrvVZ/+sluLAZW16wIDAQAB\"",
+      "ttl_display": "1 hr",
+      "priority": null,
+      "proxy_status": "DNS only"
+    },
+    {
+      "type": "TXT",
+      "name": "send.auth",
+      "content": "\"v=spf1 include:amazonses.com ~all\"",
+      "ttl_display": "1 hr",
+      "priority": null,
+      "proxy_status": "DNS only"
+    },
+    {
+      "type": "TXT",
+      "name": "@",
+      "content": "\"v=spf1 include:_spf.mx.cloudflare.net ~all\"",
+      "ttl_display": "Auto",
+      "priority": null,
+      "proxy_status": "DNS only"
+    }
+  ]
+}

@@ -47,4 +47,4 @@ COPY backend/app ./app
 COPY --from=python-build /build/backend/app/analysis/models ./app/analysis/models
 USER 10001:10001
 EXPOSE 10000
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "10000"]
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "10000", "--no-proxy-headers"]

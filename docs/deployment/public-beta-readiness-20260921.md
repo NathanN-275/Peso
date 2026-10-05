@@ -1,0 +1,219 @@
+# Combined public web beta readiness — 2026-09-21
+
+Status: **NO-GO; implementation and operational acceptance are incomplete.**
+Source requirements: Nathan's `peso_public_web_beta_launch_plan.pdf`, dated
+September 21. This report records fresh observations separately from historical
+evidence. It does not authorize publication, spending, migrations, or deletion.
+
+## Candidate and working tree
+
+- Inspected branch: `main`; HEAD `4572479745a85abca43e75c9f16fb17418d52bdf`.
+- Pre-existing local modifications: `CONTEXT.md`, `docs/product/PRD.md`, and
+  `docs/product/PRR.md`; pre-existing deletions:
+  `docs/adr/0018-public-web-beta-release-scope.md` and
+  `docs/deployment/public-beta-launch-plan.md`. Preserve these edits.
+- Fresh baseline: app TypeScript check passed; all 215 repository policy tests
+  passed. These checks do not prove deployed or human acceptance.
+- GitHub CLI authentication is invalid. PR creation and protection verification
+  require a working authenticated path.
+
+## Verified provider inventory
+
+Read-only Render connector inspection on September 21:
+
+| Resource | Identity | Observed configuration |
+| --- | --- | --- |
+| Beta API | `srv-dak9ohfqj5pc73ac2ga0` | Suspended; Oregon; Starter; Docker; repository root; `./Dockerfile`; health `/health/ready`; `main`; automatic deploy off |
+| Beta worker | `srv-dak9ohfqj5pc73ac2g8g` | Suspended; Oregon; Starter; Docker; command `python -m app.jobs.analysis_worker`; 300-second shutdown grace; `main`; automatic deploy off |
+| Historical production API | `srv-d9poevht0dsc73d07d3g` | Not suspended; Ohio; Free Python runtime; root `backend`; health `/health`; `production`; automatic deploy off |
+
+Render workspace: `tea-d9poa1h42hec73f5k580`. No resources were resumed or
+modified. Account rates, credits, disks, environment names, deployment image
+identities, log retention, and usage still require verification. Do not apply
+the root `render.yaml` as a description of the existing beta: it declares
+different service names and a Standard worker.
+
+Read-only Netlify dashboard inspection on September 21:
+
+- Display name `usepeso.com` resolves to project `peso-webapp`, ID
+  `230da8eb-f00e-45d4-ba54-95f2e26f21c4`.
+- Its production visibility and Deploy Preview visibility are both **Private**.
+- Overview shows `https://usepeso.com/`, repository `NathanN-275/Peso`, and last
+  published August 28. Exact domain assignments, TLS and deployed commit remain
+  to be captured; an overview link alone is not DNS evidence.
+- Separate `peso-marketing` project exists and is marked Private in the project
+  list; exact ID, bindings and preview visibility still require inspection.
+- No project or access-control settings were changed.
+
+Subsequent domain-management inspection confirms `usepeso.com` as the primary
+domain on `peso-webapp`, `www.usepeso.com` configured to redirect to it, and
+Netlify's Let’s Encrypt certificate covering both names (auto-renew before
+November 26). Independent DNS/anonymous TLS probing remains open.
+
+Historical September 20 evidence identifies production Supabase
+`jfgiydtrskpqxyorvvbc` and isolated staging `iseqgaewjpjcxrndibep`. Current plan,
+migrations, backups, authentication settings, storage headroom and advisors
+are **not yet reverified**. Nathan selected existing PesoDatabase (`jfgiydtrskpqxyorvvbc`) on September 22;
+do not repurpose staging or transfer its data to production. Subsequent fresh
+Supabase observations are recorded below.
+
+## Confirmed implementation gaps
+
+1. Netlify dispatch exports the app only for the historical app project's
+   `main` branch deploy. Other deploys produce marketing; historical app
+   production builds are explicitly skipped. A new combined project needs an
+   explicit build binding without changing historical project behavior.
+2. Homepage links still lead to `/beta`, with preview-only wording. Combined
+   artifacts need signup links while preserving the existing visual design and
+   historical marketing-only artifact.
+3. Backend unsaved retention defaults to 24 hours, not the required 72 hours.
+   Cleanup deletes media then marks the row discarded; it does not remove
+   associated results. Candidate selection followed by storage deletion also
+   needs a database-backed save/cleanup race solution.
+4. Budget admission already has an authenticated disable webhook and durable
+   reservation guard. Actual spend/resource triggers, accepted-job completion,
+   leak checks, and manual resume require verification.
+5. US-IP admission, including direct signup bypass protection and trustworthy
+   proxy provenance, has not been established.
+6. The tracked Render beta release binding is `pending`; it must not be marked
+   accepted without measured runtime evidence.
+
+## Required evidence still open
+
+- Exact private candidate deploy, route/deep-link/assets checks and bundle
+  credential inspection; complete desktop and phone-browser E2E.
+- Worker restart, queue/concurrency/reservation isolation and cleanup races;
+  60/90-second benchmarks using Nathan's clips, with queue time separate.
+- Versioned acceptance clips and reviewed tracking annotations; sampled visual
+  evidence without calling model outputs ground truth.
+- Fresh backend/integration/database isolation tests, dependency/secret/container
+  scans and shared native compatibility checks for the final candidate.
+- Scoped credential remediation, retained Git history purge status and current
+  security findings; old scan results are historical only.
+- Production-capable email sender, verification/reset delivery and legal review;
+  account deletion, support and retention wording.
+- Migration order, backup limitations, restore rehearsal, compatible rollback,
+  outage procedure, projected total billing and tested intake stop.
+- Protected release PR and manifest; Nathan's private E2E acceptance and distinct
+  final launch confirmation; production smoke tests and launch monitoring.
+
+## Approval boundaries
+
+Keep existing sites and all candidate deploys access-controlled. Before paid
+provisioning, service resumption with billing impact, increased capacity,
+destructive operations, DNS changes or publication, present the exact operation,
+impact, cost and rollback to Nathan. The $35 alert and $50 target do not authorize
+spending. No production migration or launch is approved by this report.
+
+## Local implementation and verification checkpoint
+
+- Added `config/combined-web-release-binding.json` with a deliberately unbound
+  `site_id`. Dispatch can build the complete artifact for a reviewed new project
+  in production, preview and branch contexts. Existing projects retain their
+  previous behavior. Bind only after verifying new-project access controls;
+  the binding is not itself an access-control mechanism.
+- New-project configuration is prepared in `netlify.combined.toml`, retaining
+  route and security-header behavior without the historical `main` branch's
+  hardcoded staging Supabase/API variables. Select this config for the new
+  project; configure separately reviewed public values in each deploy context.
+- Combined artifacts now link homepage/header/footer CTAs to `/app/signup`;
+  marketing-only artifacts keep `/beta`. Existing layout is preserved. Footer
+  already has a bounded 88px wordmark rule; further mobile visual QA is pending.
+- Changed API unsaved TTL default to 72 hours and documented the environment
+  setting. Prepared migration `202609210001_unsaved_video_retention.sql` to
+  align the database default; it has **not** been applied. Existing deadlines
+  are untouched. Full deletion and race-safe retention remain open.
+- Privacy draft describes the requested three-day/no-training policy while
+  explicitly retaining deletion-verification and legal-review launch gates.
+- Web signup no longer requires a US-residency declaration. Copy and its E2E
+  expectation now match the requested IP-based audience. Backend geo admission
+  and direct Supabase signup enforcement remain required before launch.
+- App typecheck passed; 217 policy tests passed. Backend baseline: 485 passed,
+  nine database tests skipped, 34 subtests passed. The first backend invocation
+  used the wrong working directory and failed collection; rerunning from
+  `backend` passed. The added retention-default test and cleanup suite then
+  passed all 24 tests after fixing the test's missing cleanup-token fixture.
+- Marketing build passed its artifact verifier. Combined build passed with
+  **dummy public configuration**, dotenv disabled. This is compilation evidence,
+  not a production release build or acceptance of the pending Render binding.
+  Latest startup JS: 520,897 gzip bytes (614,400 limit); fonts: 58,224 bytes (204,800
+  limit). Static Supabase security audit and whitespace check passed.
+- Local browser inspection verifies signup CTA destinations and unchanged
+  homepage layout. Signup opens and survives direct refresh with the updated
+  audience wording. Demo media initially appeared unavailable before lazy
+  loading; scrolling to its section verified readyState 4, no media error,
+  active playback at 12.67 seconds of 18.93 seconds. Complete phone/app route QA
+  is still pending. Dummy Turnstile configuration reports verification errors;
+  this build cannot establish real authentication acceptance.
+- Supabase CLI has no authenticated access token; live inspection needs the
+  signed-in dashboard or restored CLI authentication. No secret was requested
+  in chat or copied into this report.
+
+## Fresh Supabase connector and retention checkpoint
+
+The Supabase connector became available during this task. Read-only inspection
+at 2026-09-22 00:21 UTC (September 21 local time) confirms both projects are
+`ACTIVE_HEALTHY`, on organization `ireiverxhceuwvshqkjz` with plan `free`.
+Production uses PostgreSQL 17.6.1.084 in us-east-1; staging uses 17.6.1.165 in
+us-west-2. Production has 21 recorded migrations through `202608270001`; staging
+has 23 through `202609030001`. Neither has the new retention migrations.
+
+Production security advisors still report three authenticated GraphQL schema
+visibility warnings (`profiles`, `videos`, `analysis_results`) and disabled
+leaked-password protection. All five production public tables have RLS enabled.
+Staging reports only informational RLS-without-policy notices for its four
+backend-only queue/reservation tables. This is not live two-user isolation proof.
+
+Read-only storage inventory confirms `videos`, `profile-avatars`, and
+`saved-lift-exports` are private in both projects. Video object limit is 50 MiB;
+avatar limit is 512 KiB. Neither inventory returned Storage object metadata
+rows. Database size at inspection was 14,806,163 bytes in production and
+12,274,835 bytes in staging. These snapshots do not prove billing headroom,
+egress usage, physical orphan absence, or recoverable backups.
+
+Retention implementation now uses an atomic database claim and durable media
+deletion outbox. See [retention operations](retention-cleanup.md) for timestamp,
+race behavior, failure retry, migration ordering and rollback limitations. The
+migration is prepared locally and has not been applied to either hosted project.
+Fifteen disposable PostgreSQL tests passed, including save-first/cleanup-first
+transaction ordering, concurrency, active-job protection and client-role denial.
+The storage implementation now paginates listings and propagates errors instead
+of treating them as empty directories.
+
+Supabase's current [storage listing reference](https://supabase.com/docs/reference/python/storage-from-list)
+confirms the pagination options. The outbox has explicit service-role grants,
+RLS and revoked client access, consistent with the
+[new-table API grant change](https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically).
+
+## Intake-stop implementation checkpoint
+
+Added a token-protected measurement endpoint that latches admission off for
+reviewed projected-spend or measured storage thresholds. Nathan approved the
+$50 projected stop and actual-spend alerts at $15, $25, $35 and $50 on September
+22. The example configuration now uses $50; hosted configuration is unchanged.
+The endpoint never
+reopens intake. Seventeen local PostgreSQL tests prove admission locking and
+that a previously accepted reservation can still verify and enqueue after the
+stop. The full upload-to-playback test still needs a live private candidate.
+See [intake stop operations](intake-stop.md) for measurement freshness, manual
+resume, collector/notification gaps and the limitation that intake is not a
+provider billing cap. No monitor was scheduled and no hosted admission changed.
+
+## Owner preferences — September 22
+
+The canonical recorded preferences are in
+`config/public-beta-owner-preferences.json`: existing PesoDatabase, $50 monthly
+budget, actual-spend notifications at $15/$25/$35/$50, and new-upload admission
+stopped at projected monthly spend >= $50. Accepted uploads and analysis finish.
+Public launch and resuming paid infrastructure each require separate approval.
+Billing collection, durable monthly notification deduplication and actual delivery
+remain unverified and inactive; recording preferences does not activate them.
+
+## IP-admission implementation checkpoint
+
+Prepared transport-peer-aware API admission and a Supabase before-user-created
+hook with shared, expiring US CIDR data. Spoofed forwarding headers, missing or
+expired data, direct signup metadata spoofing, and database role permissions were
+tested locally. The full backend suite passed 504 tests and 57 subtests; all 18
+PostgreSQL integration tests passed separately. Nothing was enabled on hosted
+services. See [IP admission](us-ip-admission.md) for remaining activation gates.

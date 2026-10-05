@@ -1,3 +1,4 @@
+const { assertStagingE2EEnvironment } = require('../../scripts/e2e-environment');
 import { createClient, type User } from '@supabase/supabase-js';
 import { expect, test } from '@playwright/test';
 
@@ -13,6 +14,7 @@ const admin = createClient(
 let recordingUser: User | null = null;
 
 test.beforeAll(async () => {
+  assertStagingE2EEnvironment(process.env);
   const { data, error } = await admin.auth.admin.createUser({
     email: account.email,
     password: account.password,

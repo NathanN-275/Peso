@@ -8,6 +8,7 @@ if (!['marketing', 'private-beta'].includes(mode)) {
   throw new Error('Choose marketing or private-beta explicitly.');
 }
 const root = path.resolve(__dirname, '..');
+execFileSync(process.execPath, ['scripts/dependency-patches.js', 'verify'], { cwd: root, stdio: 'inherit' });
 const dist = path.join(root, 'dist');
 const run = (args) => execFileSync('npm', args, {
   cwd: root, stdio: 'inherit', env: { ...process.env, PESO_WEB_BUILD: mode },

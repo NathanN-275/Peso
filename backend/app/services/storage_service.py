@@ -327,8 +327,18 @@ class StorageService:
     self.client.storage.from_(self.bucket).remove([storage_path])
 
   def list_storage_objects(self, folder: str = "") -> list[dict[str, Any]]:
-    objects = self.client.storage.from_(self.bucket).list(folder.strip("/"))
-    return objects if isinstance(objects, list) else []
+    objects: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+      page = self.client.storage.from_(self.bucket).list(folder.strip("/"), {
+        "limit": 100, "offset": offset, "sortBy": {"column": "name", "order": "asc"},
+      })
+      if not isinstance(page, list):
+        raise RuntimeError("Storage listing returned an invalid response.")
+      objects.extend(page)
+      if len(page) < 100:
+        return objects
+      offset += len(page)
 
   def list_storage_objects_recursive(
     self,
@@ -374,11 +384,34 @@ class StorageService:
     return size_bytes if size_bytes is not None else 0
 
   def list_storage_prefix(self, prefix: str) -> list[str]:
+    if prefix.endswith("/"):
+      # A directory prefix must enumerate its contents, not remove the virtual
+      # folder entry returned by listing its parent. Finish listing before any
+      # deletion so a partial listing cannot be mistaken for complete cleanup.
+      root = prefix.strip("/")
+      if not root:
+        raise ValueError("Refusing an empty storage directory prefix.")
+      paths: list[str] = []
+      pending = [(root, 0)]
+      while pending:
+        folder, depth = pending.pop()
+        if depth > 32:
+          raise RuntimeError("Storage directory exceeds the cleanup depth limit.")
+        for item in self.list_storage_objects(folder):
+          if not isinstance(item, dict):
+            raise RuntimeError("Storage directory returned an invalid entry.")
+          name = item.get("name")
+          if not isinstance(name, str) or not name or name in {".", ".."} or "/" in name:
+            raise RuntimeError("Storage directory returned an invalid object name.")
+          path = f"{folder}/{name}"
+          if _storage_item_is_folder(item):
+            pending.append((path, depth + 1))
+          else:
+            paths.append(path)
+      return paths
     folder, _, name_prefix = prefix.rstrip("/").rpartition("/")
-    try:
-      objects = self.client.storage.from_(self.bucket).list(folder)
-    except Exception:
-      return []
+    # Listing failure is not an empty folder: deletion must remain retryable.
+    objects = self.list_storage_objects(folder)
 
     return [
       f"{folder}/{item['name']}" if folder else item["name"]
@@ -391,8 +424,8 @@ class StorageService:
   def delete_storage_prefix(self, prefix: str) -> None:
     paths = self.list_storage_prefix(prefix)
 
-    if paths:
-      self.client.storage.from_(self.bucket).remove(paths)
+    for offset in range(0, len(paths), 100):
+      self.client.storage.from_(self.bucket).remove(paths[offset:offset + 100])
 
   def delete_storage_paths(self, storage_paths: list[str]) -> None:
     paths = [path for path in dict.fromkeys(storage_paths) if path]
