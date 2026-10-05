@@ -59,8 +59,15 @@ browser end-to-end acceptance, complete application-build compatibility, or
 safety for every hostile input. The original upstream licenses remain in the
 installed packages (braces MIT, forge BSD-3-Clause OR GPL-2.0).
 
-The release audit and its existing policy remain unchanged and blocking.
-Any evidence-bound audit treatment needs separate review and Nathan's
-approval. Replace these temporary backports with official patched releases
+Nathan separately approved a guarded, two-advisory audit treatment, expiring
+at `2026-10-12T23:59:59Z`. The audit CLI verifies installed bytes, reviewed
+input hashes and consumer scope itself; caller assertions cannot enable it.
+It preserves raw registry findings and decision evidence under the ignored
+`artifacts/npm-audit/` directory. CI workflows retain attempted audit runs on
+success and failure. This is project-policy acceptance, not a clean registry
+audit or release approval. Changed evidence/scope, new causes, or expiry block.
+See [policy implementation evidence](../../docs/deployment/dependency-audit-treatment-implementation-20261005.md).
+Replace these temporary backports with official patched releases
 when available, updating/removing the manifest, installer hooks, and related
-tests together after compatibility and security verification.
+tests and temporary audit treatment together after compatibility and security
+verification. Do not automatically renew the exception or use unpatched bundles.
