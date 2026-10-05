@@ -24,7 +24,8 @@ const RENDER_BETA_BINDING_PATH = require('node:path').resolve(
   __dirname,
   '../config/render-beta-release-binding.json'
 );
-const RENDER_BETA_ORIGIN = 'https://peso-beta-api.onrender.com';
+const RENDER_BETA_ORIGIN = 'https://api-staging.usepeso.com';
+const RENDER_BETA_WEB_ORIGIN = 'https://main.usepeso.com';
 
 function clean(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -88,8 +89,8 @@ function approvedRenderBetaApi(binding) {
   if (!binding || binding.schema_version !== 1 || binding.status !== 'accepted' ||
       !/^[a-f0-9]{64}$/.test(binding.blueprint_sha256 ?? '') ||
       !/^[a-f0-9]{40}$/.test(binding.source_commit ?? '') ||
-      !/^srv-[a-z0-9]+$/.test(binding.api_service_id ?? '') ||
-      !/^srv-[a-z0-9]+$/.test(binding.worker_service_id ?? '')) return '';
+      binding.api_service_id !== 'srv-dak9ohfqj5pc73ac2ga0' ||
+      binding.worker_service_id !== 'srv-dak9ohfqj5pc73ac2g8g') return '';
   try {
     const api = new URL(binding.api_url);
     return api.origin === RENDER_BETA_ORIGIN && api.href === `${RENDER_BETA_ORIGIN}/`
@@ -149,7 +150,7 @@ function validateReleaseEnv(environment, {
   }
 
   if (releaseEnvironment === 'render-beta') {
-    const { STUDENT_SUPABASE_URL, STUDENT_ORIGIN } = require('./student-environment');
+    const { STUDENT_SUPABASE_URL } = require('./student-environment');
     const expectedRenderBetaApi = approvedRenderBetaApi(renderBetaBinding);
     if (clean(environment.EXPO_PUBLIC_SUPABASE_URL) !== STUDENT_SUPABASE_URL) {
       errors.push('Render beta website must use the permanent peso-staging Supabase project.');
@@ -159,7 +160,8 @@ function validateReleaseEnv(environment, {
       const challenge = new URL(challengeUrl);
       if (!expectedRenderBetaApi || api.origin !== expectedRenderBetaApi ||
           api.origin !== clean(environment.EXPO_PUBLIC_PRODUCTION_BACKEND_URL) || api.protocol !== 'https:' ||
-          api.port || challenge.origin !== STUDENT_ORIGIN) {
+          api.port || challenge.origin !== RENDER_BETA_WEB_ORIGIN ||
+          clean(environment.EXPO_PUBLIC_BACKEND_URL)) {
         throw new Error('invalid Render beta endpoint');
       }
     } catch {

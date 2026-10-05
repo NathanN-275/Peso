@@ -56,7 +56,8 @@ test('both beta services use the root Dockerfile and manual deploys', () => {
     assert.match(block, /autoDeployTrigger: "off"/);
     assert.match(block, /PESO_DEPLOYMENT_ENVIRONMENT\n\s+value: student/);
     assert.match(block, /BACKEND_ENV\n\s+value: production/);
-    assert.match(block, /BACKEND_CORS_ORIGINS\n\s+value: https:\/\/main--peso-webapp\.netlify\.app/);
+    assert.match(block, /BACKEND_CORS_ORIGINS\n\s+value: https:\/\/main\.usepeso\.com\n/);
+    assert.doesNotMatch(block, /main--peso-webapp|value: https:\/\/main\.usepeso\.com[,/*]/);
     assert.match(block, /UPLOAD_RESERVATIONS_ENABLED\n\s+value: "true"/);
     assert.match(block, /UPLOAD_STORAGE_PROVIDER\n\s+value: supabase/);
     assert.doesNotMatch(block, /AZURE_BLOB|BUDGET_SHUTDOWN/);
@@ -80,7 +81,8 @@ test('beta API readiness and Starter worker sizing are explicit', () => {
 test('private main Netlify branch is bound only to the pending Render beta release', () => {
   assert.match(netlify, /\[context\.main\.environment\][\s\S]*PESO_RELEASE_ENV = "render-beta"/);
   assert.match(netlify, /\[context\.main\.environment\][\s\S]*EXPO_PUBLIC_SUPABASE_URL = "https:\/\/iseqgaewjpjcxrndibep\.supabase\.co"/);
-  assert.match(netlify, /\[context\.main\.environment\][\s\S]*EXPO_PUBLIC_PRODUCTION_BACKEND_URL = "https:\/\/peso-beta-api\.onrender\.com"/);
+  assert.match(netlify, /\[context\.main\.environment\][\s\S]*EXPO_PUBLIC_PRODUCTION_BACKEND_URL = "https:\/\/api-staging\.usepeso\.com"/);
+  assert.match(netlify, /\[context\.main\.environment\][\s\S]*EXPO_PUBLIC_AUTH_CHALLENGE_URL = "https:\/\/main\.usepeso\.com\/auth\/turnstile\/"/);
   assert.doesNotMatch(netlify, /\[context\.production\.environment\]/);
 });
 

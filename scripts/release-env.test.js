@@ -3,6 +3,10 @@ const test = require('node:test');
 
 const { approvedRenderBetaApi, validateReleaseEnv } = require('./release-env');
 
+// Public resource identifiers, not provider authentication credentials.
+const BETA_WEB_SERVICE_ID = 'srv-dak9ohfqj5pc73ac2ga0';
+const BETA_WORKER_SERVICE_ID = 'srv-dak9ohfqj5pc73ac2g8g';
+
 const approvedBinding = (apiUrl) => ({
   schema_version: 1,
   status: 'accepted',
@@ -12,14 +16,14 @@ const approvedBinding = (apiUrl) => ({
   source_workflow_run_id: '123456789',
 });
 
-const acceptedRenderBetaBinding = (apiUrl = 'https://peso-beta-api.onrender.com') => ({
+const acceptedRenderBetaBinding = (apiUrl = 'https://api-staging.usepeso.com') => ({
   schema_version: 1,
   status: 'accepted',
   api_url: apiUrl,
   blueprint_sha256: 'c'.repeat(64),
   source_commit: 'd'.repeat(40),
-  api_service_id: 'srv-betaapi123',
-  worker_service_id: 'srv-betaworker456',
+  api_service_id: BETA_WEB_SERVICE_ID,
+  worker_service_id: BETA_WORKER_SERVICE_ID,
 });
 
 test('release auth configuration rejects a missing Turnstile site key', () => {
@@ -153,8 +157,8 @@ test('Render beta builds require peso-staging, the exact beta API, and the priva
     EXPO_PUBLIC_SUPABASE_URL: 'https://iseqgaewjpjcxrndibep.supabase.co',
     EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test',
     EXPO_PUBLIC_TURNSTILE_SITE_KEY: 'test-site-key',
-    EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/',
-    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://peso-beta-api.onrender.com',
+    EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main.usepeso.com/auth/turnstile/',
+    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://api-staging.usepeso.com',
   };
   const options = { renderBetaBinding: acceptedRenderBetaBinding() };
 
@@ -165,18 +169,40 @@ test('Render beta builds require peso-staging, the exact beta API, and the priva
     EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://peso-webapp.netlify.app/auth/turnstile/',
     EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://peso-beta-api-attacker.onrender.com',
   })) assert.ok(validateReleaseEnv({...env, [name]: value}, options).errors.length, name);
+  for (const change of [
+    { EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/' },
+    { EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main.usepeso.com.attacker.example/auth/turnstile/' },
+    { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://peso-beta-api.onrender.com' },
+    { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://api-staging.usepeso.com/path' },
+    { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://api-staging.usepeso.com?token=secret' },
+    { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://user:secret@api-staging.usepeso.com' },
+    { EXPO_PUBLIC_BACKEND_URL: 'https://override.example.com' },
+  ]) assert.ok(validateReleaseEnv({ ...env, ...change }, options).errors.length, JSON.stringify(change));
 });
 
 test('Render beta binding fails closed on pending, malformed, or non-beta evidence', () => {
   assert.equal(approvedRenderBetaApi({ status: 'pending' }), '');
-  assert.equal(approvedRenderBetaApi(acceptedRenderBetaBinding('https://peso-beta-api.onrender.com/path')), '');
+  for (const apiUrl of [
+    'https://peso-beta-api.onrender.com',
+    'https://api-staging.usepeso.com/path',
+    'https://api-staging.usepeso.com?token=secret',
+    'https://api-staging.usepeso.com#fragment',
+    'https://user:secret@api-staging.usepeso.com',
+    'https://api-staging.usepeso.com:8443',
+    'https://api-staging.usepeso.com.attacker.example',
+    'http://api-staging.usepeso.com',
+  ]) assert.equal(approvedRenderBetaApi(acceptedRenderBetaBinding(apiUrl)), '', apiUrl);
   assert.equal(approvedRenderBetaApi({
     ...acceptedRenderBetaBinding(),
     blueprint_sha256: 'not-a-digest',
   }), '');
+  for (const change of [
+    { status: 'pending' }, { source_commit: null }, { source_commit: 'not-a-sha' },
+    { api_service_id: 'srv-other' }, { worker_service_id: 'srv-other' },
+  ]) assert.equal(approvedRenderBetaApi({ ...acceptedRenderBetaBinding(), ...change }), '');
   assert.equal(
     approvedRenderBetaApi(acceptedRenderBetaBinding()),
-    'https://peso-beta-api.onrender.com',
+    'https://api-staging.usepeso.com',
   );
 });
 
