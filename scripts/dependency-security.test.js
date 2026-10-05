@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const braces = require('braces');
 const forge = require('node-forge');
-const { generateKeyPairSync } = require('node:crypto');
+const { generateKeyPairSync, sign: nativeSign } = require('node:crypto');
 const vm = require('node:vm');
 
 // Fixture keys exist only in memory, never in Git, logs, or provider state.
@@ -14,16 +14,21 @@ const keys = generateKeyPairSync('rsa', {
 const privateKey = forge.pki.privateKeyFromPem(keys.privateKey);
 const publicKey = forge.pki.publicKeyFromPem(keys.publicKey);
 const digest = forge.md.sha256.create().update('Peso dependency regression').digest().getBytes();
-function signature(extra, withNull = true) {
+function signature(extra, withNull = true, parameters = '', { ber = false, signer = privateKey } = {}) {
   const a = forge.asn1, U = a.Class.UNIVERSAL, T = a.Type;
   const algorithm = [a.create(U, T.OID, false, a.oidToDer(forge.pki.oids.sha256).getBytes())];
-  if (withNull) algorithm.push(a.create(U, T.NULL, false, ''));
+  if (withNull) algorithm.push(a.create(U, T.NULL, false, parameters));
   if (extra) algorithm.push(a.create(U, T.OCTETSTRING, false, 'unconsumed child'));
   const info = a.create(U, T.SEQUENCE, true, [
     a.create(U, T.SEQUENCE, true, algorithm), a.create(U, T.OCTETSTRING, false, digest),
   ]);
   // Sign a deliberately malformed structure; this tests acceptance, not no-key forgery.
-  return privateKey.sign(a.toDer(info).getBytes(), 'NONE');
+  let der = a.toDer(info).getBytes();
+  if (ber) {
+    assert.ok(der.charCodeAt(1) < 128, 'Fixture requires short-form outer length');
+    der = '\x30\x80' + der.slice(2) + '\x00\x00';
+  }
+  return signer.sign(der, 'NONE');
 }
 
 test('installed braces rejects excessive nesting before recursive processing', () => {
@@ -32,6 +37,58 @@ test('installed braces rejects excessive nesting before recursive processing', (
 
 test('installed RSA verifier rejects an extra nested DigestAlgorithm child', () => {
   assert.throws(() => publicKey.verify(digest, signature(true)), /valid RSASSA-PKCS1-v1_5 DigestInfo/);
+});
+
+test('installed RSA verifier rejects nonempty DigestAlgorithm NULL contents', () => {
+  for (const parameters of ['x', 'x'.repeat(8), 'x'.repeat(32), '\x00', '\xff']) {
+    assert.throws(() => publicKey.verify(digest, signature(false, true, parameters)),
+      /valid RSASSA-PKCS1-v1_5 DigestInfo/);
+  }
+});
+
+test('installed RSA verifier accepts valid legacy BER but rejects its nonempty NULL contents', () => {
+  assert.equal(publicKey.verify(digest, signature(false, true, '', { ber: true })), true);
+  assert.throws(() => publicKey.verify(digest, signature(false, true, 'x', { ber: true })),
+    /valid RSASSA-PKCS1-v1_5 DigestInfo/);
+});
+
+test('installed RSA verifier enforces NULL validation for exponent 65537 keys', () => {
+  const other = generateKeyPairSync('rsa', {
+    modulusLength: 1024, publicExponent: 65537,
+    privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+    publicKeyEncoding: { type: 'pkcs1', format: 'pem' },
+  });
+  const signer = forge.pki.privateKeyFromPem(other.privateKey);
+  const verifier = forge.pki.publicKeyFromPem(other.publicKey);
+  assert.equal(verifier.verify(digest, signature(false, false, '', { signer })), true);
+  assert.equal(verifier.verify(digest, signature(false, true, '', { signer })), true);
+  for (const parameters of ['x', 'x'.repeat(8), 'x'.repeat(32), '\x00', '\xff']) {
+    assert.throws(() => verifier.verify(digest, signature(false, true, parameters, { signer })),
+      /valid RSASSA-PKCS1-v1_5 DigestInfo/);
+  }
+});
+
+test('installed RSA verifier accepts native signatures and rejects a changed digest', () => {
+  const sig = nativeSign('RSA-SHA256', Buffer.from('Peso dependency regression'), keys.privateKey).toString('binary');
+  assert.equal(publicKey.verify(digest, sig), true);
+  assert.equal(publicKey.verify('x'.repeat(digest.length), sig), false);
+});
+
+test('installed RSA verifier preserves PSS verification', () => {
+  const pss = forge.pss.create({
+    md: forge.md.sha256.create(),
+    mgf: forge.mgf.mgf1.create(forge.md.sha256.create()), saltLength: 20,
+  });
+  const md = forge.md.sha256.create().update('Peso dependency regression');
+  const sig = privateKey.sign(md, pss);
+  assert.equal(publicKey.verify(digest, sig, pss), true);
+  assert.equal(publicKey.verify('x'.repeat(digest.length), sig, pss), false);
+});
+
+test('installed RSA verifier preserves NONE verification', () => {
+  const sig = privateKey.sign(digest, 'NONE');
+  assert.equal(publicKey.verify(digest, sig, 'NONE'), true);
+  assert.equal(publicKey.verify('x'.repeat(digest.length), sig, 'NONE'), false);
 });
 
 for (const method of ['parse', 'compile', 'expand', 'stringify']) {

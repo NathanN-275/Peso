@@ -67,12 +67,12 @@
       "integrity": "sha512-LarFH0+6VfriEhqMMcLX2F7SwSXeWwnEAJEsYm5QKWchiVYVvJyV9v7UDvUv+w5HO23ZpQTXDv/GxdDdMyOuoQ==",
       "advisory": "GHSA-86w9-cpqp-85rv",
       "source": {
-        "pullRequest": "https://github.com/digitalbazaar/forge/pull/1152",
-        "commit": "ceba34402e329f0365134f23fe19898756527d65"
+        "pullRequest": "https://github.com/digitalbazaar/forge/pull/1157",
+        "commit": "683ab3344899cc08a581e4d5675a33e87aff7b04"
       },
       "patch": {
         "file": "node-forge-1.4.0.patch",
-        "sha256": "f4ab98b30a7b6997e80c810a8f2fd90dad534c734228ad9273199b382d5fbda2"
+        "sha256": "be39d6da41ca04aed6ae697f65000184083b8a4c1b9874ab759fd2cfd4dc70fe"
       },
       "files": {
         "LICENSE": {
@@ -265,7 +265,7 @@
         },
         "lib/rsa.js": {
           "original": "fd4740238145ec26470eb3f06a627c72039538ce1307dbdce40521f94dfd0a50",
-          "patched": "acc22e5d36e27832c34e02dd3933aad7977d45b047eead5016520735efedc9c5"
+          "patched": "22cdfb3220439533211cf00ff7c7e6605607761d77a2c3c263411d4c70798c4f"
         },
         "lib/sha1.js": {
           "original": "0792cc13fa342fd9d8c213c4ffd0d697fc019144258e383dd0ac985bd717564c",

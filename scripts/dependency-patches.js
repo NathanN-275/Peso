@@ -4,7 +4,7 @@ const { createHash } = require('node:crypto');
 
 const root = path.resolve(__dirname, '..');
 // Repository-reviewed trust anchor. Updating this requires reviewing the manifest.
-const MANIFEST_SHA256 = 'c3e2975b689679011555bbbc1c2025412369c4218d9b16790891b51fd1af93c3';
+const MANIFEST_SHA256 = '1bae92dd0779b9cd026754c599c47508fd49f36a36c2c3decf07325f6728b6b0';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 
 function checkedPath(relative) {

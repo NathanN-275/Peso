@@ -133,6 +133,25 @@ test('verifier rejects an untracked nested copy of a vulnerable package', t => {
   assert.match(result.stderr, /package paths/);
 });
 
+test('installer and verifier reject the previously accepted element-count-only Forge backport', t => {
+  const dir = fixture(t);
+  assert.equal(cli(dir, 'apply').status, 0);
+  const filename = path.join(dir, 'node_modules/node-forge/lib/rsa.js');
+  // Fault injection reconstructs the exact independently assessed former bytes.
+  const previous = fs.readFileSync(filename, 'utf8')
+    .replace('          // ASN.1 NULL parameters must also be empty, not unchecked bytes.\n', '')
+    .replace("(('parameters' in capture) ? 2 : 1) ||\n            ('parameters' in capture && capture.parameters !== '')) {",
+      "(('parameters' in capture) ? 2 : 1)) {");
+  assert.equal(hash(Buffer.from(previous)), 'acc22e5d36e27832c34e02dd3933aad7977d45b047eead5016520735efedc9c5');
+  fs.writeFileSync(filename, previous);
+  for (const mode of ['verify', 'apply']) {
+    const result = cli(dir, mode);
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /Installed integrity mismatch: node-forge\/lib\/rsa.js/);
+    assert.equal(fs.readFileSync(filename, 'utf8'), previous);
+  }
+});
+
 for (const [name, change, error] of [
   ['unpatched installation', () => {}, /Missing or partial patch/],
   ['missing installed file', d => fs.unlinkSync(path.join(d, 'node_modules/braces/lib/parse.js')), /inventory/],

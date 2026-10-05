@@ -9,12 +9,17 @@ an npm audit allowance or release approval.
   `28d440b5dd449dbf1fe6f3506cf94ecca4d02660`. Unreleased parser behavior from
   the proposal's base is excluded. The proposal was closed without merging
   by the 2026-10-05 recheck.
-- `node-forge-1.4.0.patch`: the nested DigestAlgorithm validation change from
-  proposal [#1152](https://github.com/digitalbazaar/forge/pull/1152), pinned to
-  `ceba34402e329f0365134f23fe19898756527d65`.
+- `node-forge-1.4.0.patch`: the combined nested DigestAlgorithm element-count
+  and NULL-content validation changes from proposals
+  [#1152](https://github.com/digitalbazaar/forge/pull/1152) and
+  [#1157](https://github.com/digitalbazaar/forge/pull/1157), pinned to the
+  assessed combined runtime at `683ab3344899cc08a581e4d5675a33e87aff7b04`.
 
-Both patch SHA-256 hashes match the isolated assessment recorded in
-`docs/deployment/dependency-security-blocker-20261004.md`. `manifest.json`
+The brace patch hash matches the
+[initial assessment](../../docs/deployment/dependency-security-blocker-20261004.md);
+the combined Forge patch hash matches the
+[supplemental assessment](../../docs/deployment/forge-null-backport-assessment-20261005.md).
+`manifest.json`
 pins the registry resolution and integrity, expected package path/version,
 patch hashes, and original/patched hashes of every installed package file.
 
@@ -31,7 +36,9 @@ the manifest against the SHA-256 trust anchor in the installer, the lockfile's
 version/resolution/integrity and package locations, patch hashes, and the exact
 inventory and bytes of all 69 installed files. Missing, altered, partially
 patched, symlinked, or unexpected copies fail. An interrupted partial install
-must be repaired with a clean install, not automatically accepted.
+must be repaired with a clean install, not automatically accepted. The prior
+element-count-only Forge backport is also rejected; run `npm ci` after this
+patch update rather than attempting to layer a new patch on old installed bytes.
 
 App start/export/typecheck/policy-test commands verify explicitly, including
 when npm lifecycle hooks are disabled. The combined web builder and release
@@ -40,7 +47,8 @@ outside these commands is not protected by this integration.
 
 Regression tests cover the installer CLI, verifier CLI, and actual installed
 brace/RSA public APIs. See the dated
-[implementation evidence](../../docs/deployment/dependency-patch-installation-20261005.md).
+[initial implementation evidence](../../docs/deployment/dependency-patch-installation-20261005.md)
+and [supplemental installation evidence](../../docs/deployment/forge-null-backport-installation-20261005.md).
 
 ## Limits and retirement
 
