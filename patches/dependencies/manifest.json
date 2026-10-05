@@ -1,0 +1,317 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    {
+      "name": "braces",
+      "version": "3.0.3",
+      "path": "node_modules/braces",
+      "resolved": "https://registry.npmjs.org/braces/-/braces-3.0.3.tgz",
+      "integrity": "sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==",
+      "advisory": "GHSA-vfj7-8cjw-p6xm",
+      "source": {
+        "pullRequest": "https://github.com/micromatch/braces/pull/72",
+        "commit": "28d440b5dd449dbf1fe6f3506cf94ecca4d02660"
+      },
+      "patch": {
+        "file": "braces-3.0.3.patch",
+        "sha256": "e07abe26dbd330daea0e448ca1382327322dd5eccc08c5dd1a9b9f7bf5a6d699"
+      },
+      "files": {
+        "LICENSE": {
+          "original": "35bdd8a44339719441900fb50fbefc5e2dca1ca662cbaed7a687de842c8b70f2",
+          "patched": "35bdd8a44339719441900fb50fbefc5e2dca1ca662cbaed7a687de842c8b70f2"
+        },
+        "README.md": {
+          "original": "947b0fc3cc12eaaa070207126213fbdf9ab2bf8cd13dcc6e4007b36b79309866",
+          "patched": "947b0fc3cc12eaaa070207126213fbdf9ab2bf8cd13dcc6e4007b36b79309866"
+        },
+        "index.js": {
+          "original": "332ea07c7b006361aad12aa994ca75dc1db8e8382b884909e2f38f10b85c88a4",
+          "patched": "332ea07c7b006361aad12aa994ca75dc1db8e8382b884909e2f38f10b85c88a4"
+        },
+        "lib/compile.js": {
+          "original": "dc98f22eee3d511785d92a00758d5f0d48efed5f5813bdecc2de430c529b5c9f",
+          "patched": "b651f7715e6db8942ce61d3394357b4d81c8ece88240aa31a458ea1165edd195"
+        },
+        "lib/constants.js": {
+          "original": "c18ac5adb57308f1ce42a28552da3a31f5d83709743ebd9a636336813a744d4b",
+          "patched": "f9fb688959232eee3e6ad7906a5b0e3234815db49ee857ef86983d65b917dc7c"
+        },
+        "lib/expand.js": {
+          "original": "41ccc196ebfa7b7781a634e721eb744e4e7bcb54cba427a7e3d6806a1b9e58f7",
+          "patched": "7ea3e14c2b2b256ef244fd3d83b8fcaa20aa2232b4e6d768c3bb6ab567f66cf5"
+        },
+        "lib/parse.js": {
+          "original": "e572166565f15fa6ad9865ae49d678218e32aabfd1b3720f6d0d43d39800d310",
+          "patched": "72aabaadaa555cdfbd07fbd7c7f743373e4dc8eec04a97550cc57bbeec30eb6c"
+        },
+        "lib/stringify.js": {
+          "original": "379f22d77bfa1478341ccd49c5e4267464aabcbba03558bab332aac23fc6f23a",
+          "patched": "49dc2d8bafa74f34715a18a845bcb82ce66caaf3bab4cf117998e06b1f9a50a9"
+        },
+        "lib/utils.js": {
+          "original": "b5a7596aa67730412b3c029ef09e84e6b67b8e445cffd35d1d295549c89066c7",
+          "patched": "b5a7596aa67730412b3c029ef09e84e6b67b8e445cffd35d1d295549c89066c7"
+        },
+        "package.json": {
+          "original": "56f08b888a4f30dc7cf8a7dbb36ffe92b737912ba36abe9d069d32167c957ac7",
+          "patched": "56f08b888a4f30dc7cf8a7dbb36ffe92b737912ba36abe9d069d32167c957ac7"
+        }
+      }
+    },
+    {
+      "name": "node-forge",
+      "version": "1.4.0",
+      "path": "node_modules/node-forge",
+      "resolved": "https://registry.npmjs.org/node-forge/-/node-forge-1.4.0.tgz",
+      "integrity": "sha512-LarFH0+6VfriEhqMMcLX2F7SwSXeWwnEAJEsYm5QKWchiVYVvJyV9v7UDvUv+w5HO23ZpQTXDv/GxdDdMyOuoQ==",
+      "advisory": "GHSA-86w9-cpqp-85rv",
+      "source": {
+        "pullRequest": "https://github.com/digitalbazaar/forge/pull/1152",
+        "commit": "ceba34402e329f0365134f23fe19898756527d65"
+      },
+      "patch": {
+        "file": "node-forge-1.4.0.patch",
+        "sha256": "f4ab98b30a7b6997e80c810a8f2fd90dad534c734228ad9273199b382d5fbda2"
+      },
+      "files": {
+        "LICENSE": {
+          "original": "f63ff0e4e239244aa79280da2dd4811a0469e5e201caf5cbc0d97c3a1dff8e82",
+          "patched": "f63ff0e4e239244aa79280da2dd4811a0469e5e201caf5cbc0d97c3a1dff8e82"
+        },
+        "README.md": {
+          "original": "4ea0e2db410fd5d87c3c9b21912b9ed3fe6c57b3107fa92e2c90b1e618121a49",
+          "patched": "4ea0e2db410fd5d87c3c9b21912b9ed3fe6c57b3107fa92e2c90b1e618121a49"
+        },
+        "dist/forge.all.min.js": {
+          "original": "cb9ba4045a81825f8edb646c38d53a1ac30ce07665bf26042c8dea86d7208642",
+          "patched": "cb9ba4045a81825f8edb646c38d53a1ac30ce07665bf26042c8dea86d7208642"
+        },
+        "dist/forge.all.min.js.map": {
+          "original": "0b21eb8fb1c124e963d564b6462177331027f6e739f48e73184e0f6a81cac3f1",
+          "patched": "0b21eb8fb1c124e963d564b6462177331027f6e739f48e73184e0f6a81cac3f1"
+        },
+        "dist/forge.min.js": {
+          "original": "d9b9074e6861200d676e25dcfe97889db5e8f4150bb766d29c491ad709a51b58",
+          "patched": "d9b9074e6861200d676e25dcfe97889db5e8f4150bb766d29c491ad709a51b58"
+        },
+        "dist/forge.min.js.map": {
+          "original": "5f11be794b0ad083ce9b2bcee1079e7ee1f0771d37beb90d6f13b2b9a8a0eba3",
+          "patched": "5f11be794b0ad083ce9b2bcee1079e7ee1f0771d37beb90d6f13b2b9a8a0eba3"
+        },
+        "dist/prime.worker.min.js": {
+          "original": "877bd31b0cc79ecb9163649034fbafaeec45e8e2861fc4fa9fb11335f28c4ef9",
+          "patched": "877bd31b0cc79ecb9163649034fbafaeec45e8e2861fc4fa9fb11335f28c4ef9"
+        },
+        "dist/prime.worker.min.js.map": {
+          "original": "73f786b89ef54b00e0cfb6969b2881e7cffa77b4be3f03e998f70993290716a8",
+          "patched": "73f786b89ef54b00e0cfb6969b2881e7cffa77b4be3f03e998f70993290716a8"
+        },
+        "flash/swf/SocketPool.swf": {
+          "original": "0ebae322dc751e77e18ceef4960bcda1d1634f53a49e7030fb640cf90f1d8839",
+          "patched": "0ebae322dc751e77e18ceef4960bcda1d1634f53a49e7030fb640cf90f1d8839"
+        },
+        "lib/aes.js": {
+          "original": "be13b617cfff1d583f616c0ce97147cebd9bf101cf893f027cc18c3a54bd3a2f",
+          "patched": "be13b617cfff1d583f616c0ce97147cebd9bf101cf893f027cc18c3a54bd3a2f"
+        },
+        "lib/aesCipherSuites.js": {
+          "original": "bdc5762c0d6edee74e469a59e0157555463d7abeadf34c4377121673dacc2360",
+          "patched": "bdc5762c0d6edee74e469a59e0157555463d7abeadf34c4377121673dacc2360"
+        },
+        "lib/asn1-validator.js": {
+          "original": "6f206656ab557712c2a09f3b8bba69004dd41b2b37cee0cb836d44ea8034004b",
+          "patched": "6f206656ab557712c2a09f3b8bba69004dd41b2b37cee0cb836d44ea8034004b"
+        },
+        "lib/asn1.js": {
+          "original": "271047be6eab614060ef361cce2c8a92abf066c40fb329f44cfac3269214b912",
+          "patched": "271047be6eab614060ef361cce2c8a92abf066c40fb329f44cfac3269214b912"
+        },
+        "lib/baseN.js": {
+          "original": "08175e677127132340002bdb63dd19ba41c0baae546936032c7d6a6335e219b6",
+          "patched": "08175e677127132340002bdb63dd19ba41c0baae546936032c7d6a6335e219b6"
+        },
+        "lib/cipher.js": {
+          "original": "67e3547ac39aaa8862d9519f55571dc0deef6e1d3d6a48ea6d6b653fb7a35a3f",
+          "patched": "67e3547ac39aaa8862d9519f55571dc0deef6e1d3d6a48ea6d6b653fb7a35a3f"
+        },
+        "lib/cipherModes.js": {
+          "original": "79d74191887706cd5e14bbbcd1ff49472aa1f2baa9154e45f7578c17c3ffefbb",
+          "patched": "79d74191887706cd5e14bbbcd1ff49472aa1f2baa9154e45f7578c17c3ffefbb"
+        },
+        "lib/des.js": {
+          "original": "cb0ae63c8477e61be95c3948bf52f1b7ed02d8522791d9ed1704b6b8b8517734",
+          "patched": "cb0ae63c8477e61be95c3948bf52f1b7ed02d8522791d9ed1704b6b8b8517734"
+        },
+        "lib/ed25519.js": {
+          "original": "b0d15f1e11168a3a6de9914cdff9bf1be0c5c2fc313499e44dfeb164f5202849",
+          "patched": "b0d15f1e11168a3a6de9914cdff9bf1be0c5c2fc313499e44dfeb164f5202849"
+        },
+        "lib/forge.js": {
+          "original": "4300955cc75f3cb5b71287b0fa37ec07d3a6bb721a9f6f8b7db19328801046bf",
+          "patched": "4300955cc75f3cb5b71287b0fa37ec07d3a6bb721a9f6f8b7db19328801046bf"
+        },
+        "lib/form.js": {
+          "original": "a2f6e0fbab87d5acb02e08c8f92ea8269445f9f35ee1706fb82246ba8f5aba12",
+          "patched": "a2f6e0fbab87d5acb02e08c8f92ea8269445f9f35ee1706fb82246ba8f5aba12"
+        },
+        "lib/hmac.js": {
+          "original": "bab6d0f322458186f6d123cfdd208ab1298a64ab6925b478968a0dfb446a8fa9",
+          "patched": "bab6d0f322458186f6d123cfdd208ab1298a64ab6925b478968a0dfb446a8fa9"
+        },
+        "lib/http.js": {
+          "original": "3ad8ec7eb451c173b5980265f30f7b3d84268a1cc9b3e0e86337bc55facbc658",
+          "patched": "3ad8ec7eb451c173b5980265f30f7b3d84268a1cc9b3e0e86337bc55facbc658"
+        },
+        "lib/index.all.js": {
+          "original": "48fa7454923f3baa3dd5a5bf9475892aa5f272c4cc8b5a0ec4f3d6c2370ac631",
+          "patched": "48fa7454923f3baa3dd5a5bf9475892aa5f272c4cc8b5a0ec4f3d6c2370ac631"
+        },
+        "lib/index.js": {
+          "original": "c231851a9d065df1fae045d6e6fb17cf5688b260f9ee0db4965fe1ef3c0607ab",
+          "patched": "c231851a9d065df1fae045d6e6fb17cf5688b260f9ee0db4965fe1ef3c0607ab"
+        },
+        "lib/jsbn.js": {
+          "original": "9d2cd4ad90eadf84b0110d9e1fc02512fc89e7ad64d0fee2d578fa51af28e48d",
+          "patched": "9d2cd4ad90eadf84b0110d9e1fc02512fc89e7ad64d0fee2d578fa51af28e48d"
+        },
+        "lib/kem.js": {
+          "original": "6552b048e05b92278f70b2810317e1505d521ee9e2ec5496047d927f5f7d1f70",
+          "patched": "6552b048e05b92278f70b2810317e1505d521ee9e2ec5496047d927f5f7d1f70"
+        },
+        "lib/log.js": {
+          "original": "9453eeba574a617225c8f54cfd2c11f1bade2e6a39f73d6e1a9da142db1afaeb",
+          "patched": "9453eeba574a617225c8f54cfd2c11f1bade2e6a39f73d6e1a9da142db1afaeb"
+        },
+        "lib/md.all.js": {
+          "original": "6a10918cc8f727cc8cec20fee5e13f55c11e30b3f03b8800108cabb299211d4d",
+          "patched": "6a10918cc8f727cc8cec20fee5e13f55c11e30b3f03b8800108cabb299211d4d"
+        },
+        "lib/md.js": {
+          "original": "ebfc33ed52d3c8cf2d584310fe0f45b23d911f532deef8044844bf2271b04402",
+          "patched": "ebfc33ed52d3c8cf2d584310fe0f45b23d911f532deef8044844bf2271b04402"
+        },
+        "lib/md5.js": {
+          "original": "ed58ce89d124a276a083280bd7003b09c294c4063e6925d83fe422664a51f810",
+          "patched": "ed58ce89d124a276a083280bd7003b09c294c4063e6925d83fe422664a51f810"
+        },
+        "lib/mgf.js": {
+          "original": "2d6d851d6791d0cc1697342edf275993e745fd8c33ef13ad7201026d8a0eea54",
+          "patched": "2d6d851d6791d0cc1697342edf275993e745fd8c33ef13ad7201026d8a0eea54"
+        },
+        "lib/mgf1.js": {
+          "original": "9a4acd26ee423034995a811c357e69a6c2368480664b62862982f5c404cfcc0e",
+          "patched": "9a4acd26ee423034995a811c357e69a6c2368480664b62862982f5c404cfcc0e"
+        },
+        "lib/oids.js": {
+          "original": "13e31fe08ccb431fefe44f9d2285891b846e65b17b24329bf14eed04de584015",
+          "patched": "13e31fe08ccb431fefe44f9d2285891b846e65b17b24329bf14eed04de584015"
+        },
+        "lib/pbe.js": {
+          "original": "2b5c931e1549f5b98478a5b7b014fd3b62260a20db0704f72612dbe64540e25c",
+          "patched": "2b5c931e1549f5b98478a5b7b014fd3b62260a20db0704f72612dbe64540e25c"
+        },
+        "lib/pbkdf2.js": {
+          "original": "1cd2f133c60cf860f23d05313a39a5dc060389adcca8423c2143ee904db9f627",
+          "patched": "1cd2f133c60cf860f23d05313a39a5dc060389adcca8423c2143ee904db9f627"
+        },
+        "lib/pem.js": {
+          "original": "c6509f3aae5ad5e9286da727ea4cbf3b748ad7deff407e76b226f7a6a3b6a120",
+          "patched": "c6509f3aae5ad5e9286da727ea4cbf3b748ad7deff407e76b226f7a6a3b6a120"
+        },
+        "lib/pkcs1.js": {
+          "original": "c43cf348520a3f6adc4769a3c3410cde502a6bc7a768d5a71a575fa72d19acc7",
+          "patched": "c43cf348520a3f6adc4769a3c3410cde502a6bc7a768d5a71a575fa72d19acc7"
+        },
+        "lib/pkcs12.js": {
+          "original": "d0f9693ff8b6e755031566139f0e23a762c9a7af6a1b08a27d522810019906d3",
+          "patched": "d0f9693ff8b6e755031566139f0e23a762c9a7af6a1b08a27d522810019906d3"
+        },
+        "lib/pkcs7.js": {
+          "original": "f5cc5a89b093262cdcf8f7e01615dddcdb87907228a1c56b5fe73db8cc4160a2",
+          "patched": "f5cc5a89b093262cdcf8f7e01615dddcdb87907228a1c56b5fe73db8cc4160a2"
+        },
+        "lib/pkcs7asn1.js": {
+          "original": "9a00faef7bff964e3c983eb4a435e8218bdd631b0f0217807b1b2bff895ab76a",
+          "patched": "9a00faef7bff964e3c983eb4a435e8218bdd631b0f0217807b1b2bff895ab76a"
+        },
+        "lib/pki.js": {
+          "original": "43f1b98dbd39a0c8277b7c0d44325a851712ce5434146ca2a2587a2a7ae1bb1e",
+          "patched": "43f1b98dbd39a0c8277b7c0d44325a851712ce5434146ca2a2587a2a7ae1bb1e"
+        },
+        "lib/prime.js": {
+          "original": "5c63550c13aa4351c210b0766a8ad4a1f23101e1968c6244be7aad8f008e4073",
+          "patched": "5c63550c13aa4351c210b0766a8ad4a1f23101e1968c6244be7aad8f008e4073"
+        },
+        "lib/prime.worker.js": {
+          "original": "c2fc7777c7a07c7bc3909d400f9f65dabd6c484a11840e1ef71b2b67236ffd9d",
+          "patched": "c2fc7777c7a07c7bc3909d400f9f65dabd6c484a11840e1ef71b2b67236ffd9d"
+        },
+        "lib/prng.js": {
+          "original": "fc70051ea878498be4d7473ba6b0982f3e2522962e3deee558b393ac4fb18cf9",
+          "patched": "fc70051ea878498be4d7473ba6b0982f3e2522962e3deee558b393ac4fb18cf9"
+        },
+        "lib/pss.js": {
+          "original": "c9e83c50451bd90735030cf3fe3d2a68403f678853a6d300cfa3e59b813e7f9b",
+          "patched": "c9e83c50451bd90735030cf3fe3d2a68403f678853a6d300cfa3e59b813e7f9b"
+        },
+        "lib/random.js": {
+          "original": "13daf47db350648ebb98cc0d694f246ae7be508aa03a0d7b9c9f2dbdf127add0",
+          "patched": "13daf47db350648ebb98cc0d694f246ae7be508aa03a0d7b9c9f2dbdf127add0"
+        },
+        "lib/rc2.js": {
+          "original": "d2eb78b77441d9784f5edfced1ad2f49cb35c2a956687ce9d754cf40bbd1b3c3",
+          "patched": "d2eb78b77441d9784f5edfced1ad2f49cb35c2a956687ce9d754cf40bbd1b3c3"
+        },
+        "lib/rsa.js": {
+          "original": "fd4740238145ec26470eb3f06a627c72039538ce1307dbdce40521f94dfd0a50",
+          "patched": "acc22e5d36e27832c34e02dd3933aad7977d45b047eead5016520735efedc9c5"
+        },
+        "lib/sha1.js": {
+          "original": "0792cc13fa342fd9d8c213c4ffd0d697fc019144258e383dd0ac985bd717564c",
+          "patched": "0792cc13fa342fd9d8c213c4ffd0d697fc019144258e383dd0ac985bd717564c"
+        },
+        "lib/sha256.js": {
+          "original": "54b2f4c0ee9d4a561b6d18b1713fddeb815ea1c9d50537f7cbb4fc4474ab732d",
+          "patched": "54b2f4c0ee9d4a561b6d18b1713fddeb815ea1c9d50537f7cbb4fc4474ab732d"
+        },
+        "lib/sha512.js": {
+          "original": "d600f189d7bd22630b9301a5dea0fd49bb0ac3687f2c8feb7ecdcccd3d21c092",
+          "patched": "d600f189d7bd22630b9301a5dea0fd49bb0ac3687f2c8feb7ecdcccd3d21c092"
+        },
+        "lib/socket.js": {
+          "original": "689715cdeeba3274d6763ab92716a8a3dc1d24a684ea88fee9e2aca72e2dade0",
+          "patched": "689715cdeeba3274d6763ab92716a8a3dc1d24a684ea88fee9e2aca72e2dade0"
+        },
+        "lib/ssh.js": {
+          "original": "6f27454e3fc028c8a6b1c02ae98969aace558ee0c1b6784e8fb12d4419e46d24",
+          "patched": "6f27454e3fc028c8a6b1c02ae98969aace558ee0c1b6784e8fb12d4419e46d24"
+        },
+        "lib/tls.js": {
+          "original": "ceee226d32c623bbae290d76b5950be0c06880310ec26dc289f66bd631de4916",
+          "patched": "ceee226d32c623bbae290d76b5950be0c06880310ec26dc289f66bd631de4916"
+        },
+        "lib/tlssocket.js": {
+          "original": "99728e72301548ee5233c16bc0417f07892022d24fd178dfb9c0a40aff541a47",
+          "patched": "99728e72301548ee5233c16bc0417f07892022d24fd178dfb9c0a40aff541a47"
+        },
+        "lib/util.js": {
+          "original": "a05620c922303dd687e9447754ebde42878f37e51c390a9a3aedb592434795bc",
+          "patched": "a05620c922303dd687e9447754ebde42878f37e51c390a9a3aedb592434795bc"
+        },
+        "lib/x509.js": {
+          "original": "cce5b00838c8c08486964c1f62cb8ae3491365509b26a27cfe1917f73dee3be9",
+          "patched": "cce5b00838c8c08486964c1f62cb8ae3491365509b26a27cfe1917f73dee3be9"
+        },
+        "lib/xhr.js": {
+          "original": "d9abf523180b6d03b2cc99909eef3488a6b4bc1f822d7fb9d1e945abf555cb42",
+          "patched": "d9abf523180b6d03b2cc99909eef3488a6b4bc1f822d7fb9d1e945abf555cb42"
+        },
+        "package.json": {
+          "original": "a907bca8a62d97478062f2bd8ed5cd47d00b79385d3f08a8cad1c3bd7e3eb5bf",
+          "patched": "a907bca8a62d97478062f2bd8ed5cd47d00b79385d3f08a8cad1c3bd7e3eb5bf"
+        }
+      }
+    }
+  ]
+}

@@ -12,6 +12,11 @@ const productionLikeBackendEnvironment = {
 
 const releaseChecks = [
   {
+    name: 'Installed dependency patch integrity',
+    command: process.execPath,
+    args: ['scripts/dependency-patches.js', 'verify'],
+  },
+  {
     name: 'Release configuration',
     command: process.execPath,
     args: ['scripts/release-env.js'],
