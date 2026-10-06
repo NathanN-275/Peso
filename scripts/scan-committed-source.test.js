@@ -60,21 +60,21 @@ test('exact merged snapshot catches content omitted by first-parent no-merges', 
   assert.equal(result.evidence.findingCount, 1);
   assert.equal(result.evidence.outcome, 'findings');
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(result.directory, 'findings.json'))),
-    [{ rule: 'fixture', file: 'merge-only.txt', startLine: 1 }]);
+    [{ rule: 'fixture', file: 'merge-only.txt', startLine: 1, endLine: null, startColumn: null, endColumn: null }]);
   assert.doesNotMatch(fs.readFileSync(path.join(result.directory, 'coverage.json'), 'utf8'), /must-not-be-retained/);
 });
 
 test('zero-byte success, scanner errors, missing and malformed reports fail closed', t => {
   const f = fixture(t);
   const { scanCommittedSource } = require('./scan-committed-source');
-  for (const mode of ['zero', 'error', 'missing', 'malformed', 'contradictory', 'no-coverage-log', 'missing-binary', 'outside-snapshot']) {
+  for (const mode of ['zero', 'error', 'missing', 'malformed', 'contradictory', 'no-coverage-log', 'missing-binary', 'outside-snapshot', 'unsafe-byte-count']) {
     const result = scanCommittedSource({ repo: f.repo, sha: f.sha,
       evidenceRoot: path.join(f.root, mode), runScanner(args) {
         if (mode !== 'missing') fs.writeFileSync(args[args.indexOf('--report-path') + 1],
           mode === 'malformed' ? '{}' : mode === 'contradictory' ? '[{"RuleID":"fixture","File":"base.txt","StartLine":1}]' :
             mode === 'outside-snapshot' ? '[{"RuleID":"fixture","File":"../private.env","StartLine":1}]' : '[]');
         return { status: mode === 'error' ? 2 : mode === 'missing-binary' ? null : 0, stdout: '',
-          stderr: mode === 'no-coverage-log' ? '' : `INF scanned ~${mode === 'zero' ? 0 : 48} bytes (48 B) in 1ms` };
+          stderr: mode === 'no-coverage-log' ? '' : `INF scanned ~${mode === 'zero' ? 0 : mode === 'unsafe-byte-count' ? '999999999999999999999999' : 48} bytes (48 B) in 1ms` };
       } });
     assert.equal(result.exitCode, 1, mode);
     assert.equal(result.evidence.outcome, 'error', mode);
@@ -87,6 +87,7 @@ test('CI requires snapshot scanning and always retains sanitized failure evidenc
   assert.match(job, /fetch-depth: 0/);
   assert.match(job, /run: node --test scripts\/scan-committed-source.test.js/);
   assert.match(job, /GITLEAKS_VERSION: "8.30.1"/);
+  assert.match(job, /run: node --test scripts\/scan-committed-source.integration.cjs/);
   assert.match(job, /if: \$\{\{ always\(\) && !cancelled\(\) \}\}\s+run: node scripts\/scan-committed-source.js/);
   assert.match(job, /always\(\).*steps.source_secret_scan.outcome == 'failure'/);
   assert.match(job, /path: artifacts\/source-secret-scan\//);
