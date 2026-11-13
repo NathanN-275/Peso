@@ -32,6 +32,17 @@ test('both public Render services select the Azure-free MVP image and Supabase p
   }
 });
 
+test('avatar normalization tests run against the pinned MVP runtime, not Ubuntu FFmpeg', () => {
+  const security = read('.github/workflows/security.yml');
+  const backendJob = security.split('\n  backend-security:\n')[1].split('\n  frontend-security:\n')[0];
+  assert.match(backendJob, /PESO_SKIP_AVATAR_NORMALIZER_TESTS: "true"/);
+
+  const runtime = read('scripts/verify_container_runtime.sh');
+  assert.match(runtime, /loadTestsFromName\("test_avatar_writes\.AvatarNormalizerTests"\)/);
+  assert.match(runtime, /--network none --read-only[\s\S]*\/checks\/tests:ro/);
+  assert.match(read('backend/tests/test_avatar_writes.py'), /PESO_SKIP_AVATAR_NORMALIZER_TESTS/);
+});
+
 test('required container and Render validation build the MVP artifact and verify SDK absence', () => {
   for (const name of ['security.yml', 'render-beta-validate.yml']) {
     assert.match(read('.github/workflows/' + name), /docker build --pull --file Dockerfile\.mvp --tag/);

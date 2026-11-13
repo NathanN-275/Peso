@@ -273,6 +273,8 @@ class AvatarNormalizerDiagnosticTests(unittest.TestCase):
 
 
 @unittest.skipUnless(sys.platform.startswith('linux'),'The normalizer intentionally requires Linux resource limits.')
+@unittest.skipIf(os.environ.get('PESO_SKIP_AVATAR_NORMALIZER_TESTS') == 'true',
+  'Avatar normalizer tests run against the pinned MVP runtime in container-security.')
 class AvatarNormalizerTests(unittest.TestCase):
   def encoded(self,extension):
     import cv2

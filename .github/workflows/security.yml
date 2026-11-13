@@ -56,6 +56,7 @@ jobs:
           SUPABASE_JWT_SECRET: test-jwt-secret
           CLEANUP_JOB_TOKEN: test-cleanup-token
           BACKEND_ALLOW_UNAUTHENTICATED_DEV_CLEANUP: "false"
+          PESO_SKIP_AVATAR_NORMALIZER_TESTS: "true"
         run: python -m unittest discover -s tests
 
       - name: Verify public beta spending decisions
