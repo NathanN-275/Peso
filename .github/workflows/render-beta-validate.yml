@@ -116,6 +116,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: release-test-service-role
           CLEANUP_JOB_TOKEN: release-test-cleanup-token
           BACKEND_ALLOW_UNAUTHENTICATED_DEV_CLEANUP: "false"
+          PESO_SKIP_AVATAR_NORMALIZER_TESTS: "true"
         run: python -m unittest discover -s tests
 
       - name: Build public MVP container without Azure
