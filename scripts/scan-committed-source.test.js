@@ -87,12 +87,20 @@ test('CI requires snapshot scanning and always retains sanitized failure evidenc
   assert.match(job, /fetch-depth: 0/);
   assert.match(job, /run: node --test scripts\/scan-committed-source.test.js/);
   assert.match(job, /GITLEAKS_VERSION: "8.30.1"/);
+  assert.match(job, /GITLEAKS_CONFIG: \.gitleaks\.toml/);
   assert.match(job, /run: node --test scripts\/scan-committed-source.integration.cjs/);
   assert.match(job, /if: \$\{\{ always\(\) && !cancelled\(\) \}\}\s+run: node scripts\/scan-committed-source.js/);
   assert.match(job, /always\(\).*steps.source_secret_scan.outcome == 'failure'/);
   assert.match(job, /path: artifacts\/source-secret-scan\//);
   assert.match(job, /if-no-files-found: error/);
   assert.doesNotMatch(job, /continue-on-error/);
+  const gitleaksConfig = fs.readFileSync(path.join(__dirname, '../.gitleaks.toml'), 'utf8');
+  assert.match(gitleaksConfig, /targetRules = \["generic-api-key"\]/);
+  assert.match(gitleaksConfig, /matchCondition = "AND"/);
+  assert.match(gitleaksConfig, /regexTarget = "line"/);
+  assert.doesNotMatch(gitleaksConfig, /\.\*/);
+  assert.match(gitleaksConfig, /\^backend\/tests\/test_private_media_grants_postgres\\\.py\$/);
+  assert.match(gitleaksConfig, /\^supabase\/migrations\/20261026173152_private_media_provider_session_decision\\\.sql\$/);
 });
 
 test('clean scan retains byte coverage and archive/report hashes', t => {

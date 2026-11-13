@@ -63,6 +63,7 @@ jobs:
       - name: Install frontend and backend dependencies
         run: |
           npm ci
+          npm --prefix web ci
           python -m pip install --requirement backend/requirements.txt
 
       - name: Install and verify backend media tools

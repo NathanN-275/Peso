@@ -25,7 +25,8 @@ function fixture(t, report = clean, options = {}) {
   fs.writeFileSync(path.join(root, 'bin/npm'), `#!${process.execPath}\nconst fs=require('node:fs');\nconst args=process.argv.slice(2);\nif(args.includes('--version')) { console.log('12.0.0'); process.exit(0); }\nfs.writeFileSync(${JSON.stringify(path.join(root, 'invocation.json'))}, JSON.stringify({args,cwd:process.cwd(),omit:process.env.npm_config_omit}));\nprocess.stdout.write(${JSON.stringify(JSON.stringify(report))});\nprocess.exit(${options.exit ?? 0});\n`, { mode: 0o755 });
   const run = (extra = {}) => spawnSync(process.execPath, [path.join(root, 'scripts/npm-audit-web-ci.js')], {
     cwd: path.join(root, 'caller'), encoding: 'utf8', timeout: 15000,
-    env: { ...process.env, CI: 'true', GITHUB_ACTIONS: 'false', PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}`, ...extra },
+    env: { ...process.env, CI: 'true', GITHUB_ACTIONS: 'false', GITHUB_SHA: 'a'.repeat(40),
+      PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}`, ...extra },
   });
   const evidence = () => {
     const base = path.join(root, 'artifacts/npm-audit-web');
@@ -138,6 +139,12 @@ test('missing Git provenance in CI cannot produce acceptance', t => {
   const f = fixture(t);
   fs.writeFileSync(path.join(f.root, 'bin/git'), `#!${process.execPath}\nprocess.exit(1);\n`, { mode: 0o755 });
   assert.equal(f.run().status, 1);
+  assert.match(f.evidence().decision.error, /provenance/i);
+});
+
+test('mismatched GitHub source SHA cannot produce acceptance', t => {
+  const f = fixture(t);
+  assert.equal(f.run({ GITHUB_SHA: 'c'.repeat(40) }).status, 1);
   assert.match(f.evidence().decision.error, /provenance/i);
 });
 
