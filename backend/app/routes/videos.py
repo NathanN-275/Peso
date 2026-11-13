@@ -29,7 +29,6 @@ from ..services.analysis_trace import get_analysis_trace_service
 from ..services.analysis_job_repository import AnalysisJobRepository
 from ..services.auth import get_current_user_id
 from ..services.config import get_settings
-from ..services.ip_admission import enforce_us_ip
 from ..services.saved_lift_exports import ARCHIVE_BUCKET, SavedLiftExportService
 from ..services.supabase_client import get_supabase_admin_client
 from ..services.storage_cleanup import StorageCleanupService, cleanup_requires_token
@@ -93,6 +92,7 @@ class AnalysisActivityItemResponse(BaseModel):
   updated_at: str
   expires_at: str | None = None
   thumbnail_url: str | None = None
+  thumbnail_available: bool = False
   stage_started_at: str | None = None
   stage_timestamps: dict[str, str] = Field(default_factory=dict)
   last_heartbeat_at: str | None = None
@@ -162,6 +162,7 @@ class SavedVideoResponse(BaseModel):
   thumbnail_path: str | None = None
   video_url: str | None = None
   thumbnail_url: str | None = None
+  thumbnail_available: bool = False
   save_state: str
   storage_state: Literal["available", "pruned"] = "available"
   saved_at: str | None = None
@@ -263,8 +264,8 @@ class VideoPlaybackUrlResponse(BaseModel):
 class AnalyzedVideoExportResponse(BaseModel):
   video_id: UUID
   analysis_id: UUID
-  storage_path: str
-  export_url: str
+  storage_path: str | None = None
+  export_url: str | None = None
   variant: str
 
 
@@ -656,7 +657,7 @@ def _saved_video_response(
 
   thumbnail_path = video.get("thumbnail_path")
   thumbnail_url = None
-  if thumbnail_path:
+  if thumbnail_path and not get_settings().private_media_enabled:
     _, thumbnail_url, _ = _create_owned_signed_url(storage, thumbnail_path, user_id, "thumbnail_path")
 
   return SavedVideoResponse(
@@ -667,9 +668,10 @@ def _saved_video_response(
     load_value=video.get("load_value"),
     load_unit=video.get("load_unit"),
     storage_path=None,
-    thumbnail_path=thumbnail_path,
+    thumbnail_path=None if get_settings().private_media_enabled else thumbnail_path,
     video_url=None,
     thumbnail_url=thumbnail_url,
+    thumbnail_available=bool(thumbnail_path) and video.get("storage_state") != "pruned" and not video.get("discarded_at"),
     save_state=video.get("save_state") or ("saved" if video.get("is_saved") else "pending"),
     storage_state=video.get("storage_state") or "available",
     saved_at=video.get("saved_at"),
@@ -799,7 +801,7 @@ def _delete_video_assets(storage: StorageService, video: dict, user_id: str) -> 
       )
 
 
-@router.post("/videos", response_model=RegisterVideoResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(enforce_us_ip)])
+@router.post("/videos", response_model=RegisterVideoResponse, status_code=status.HTTP_201_CREATED)
 def register_video(
   request: RegisterVideoRequest,
   user_id: str = Depends(get_current_user_id),
@@ -1176,7 +1178,7 @@ def get_analysis_activity(
       continue
 
     thumbnail_url = None
-    if video.get("thumbnail_path"):
+    if video.get("thumbnail_path") and not get_settings().private_media_enabled:
       try:
         _, thumbnail_url, _ = _create_owned_signed_url(
           storage,
@@ -1199,6 +1201,7 @@ def get_analysis_activity(
         updated_at=str(job.get("updated_at") or video.get("updated_at") or ""),
         expires_at=video.get("expires_at"),
         thumbnail_url=thumbnail_url,
+        thumbnail_available=bool(video.get("thumbnail_path")) and video.get("storage_state") != "pruned" and not video.get("discarded_at"),
         stage_started_at=(str(job["stage_started_at"]) if job.get("stage_started_at") else None),
         stage_timestamps={
           str(stage): str(timestamp)
@@ -1415,25 +1418,30 @@ def delete_saved_lifts(
 ) -> DeleteSavedLiftsResponse:
   lift_ids = list(dict.fromkeys(str(lift_id) for lift_id in request.lift_ids))
   repository = VideoRepository()
-  videos = repository.get_owned_videos(lift_ids, user_id)
-  videos_by_id = {str(video["id"]): video for video in videos}
+  try:
+    rows = repository.revoke_saved_lifts(lift_ids, user_id)
+  except Exception as error:
+    code = str(getattr(error, "code", ""))
+    if code == "42501":
+      raise HTTPException(status_code=404, detail="One or more Saved Lifts were not found.") from error
+    if code == "55000":
+      raise HTTPException(status_code=409, detail="Only Saved Lifts or matching deletion retries are available.") from error
+    if code == "22023":
+      raise HTTPException(status_code=400, detail="Select valid Saved Lift IDs.") from error
+    logger.warning("Saved Lift deletion could not establish revocation.")
+    raise HTTPException(status_code=503, detail="Unable to revoke Saved Lift access. Please try again.") from error
 
-  if set(videos_by_id) != set(lift_ids):
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="One or more Saved Lifts were not found.")
-
-  if any(not repository.video_is_saved(videos_by_id[lift_id]) for lift_id in lift_ids):
-    raise HTTPException(
-      status_code=status.HTTP_409_CONFLICT,
-      detail="Only Saved Lifts can be permanently deleted.",
-    )
-
-  storage = StorageService()
-  for lift_id in lift_ids:
-    _delete_video_assets(storage, videos_by_id[lift_id], user_id)
-  # Preserve every selected row until all media operations finish. Otherwise a
-  # later storage failure makes retrying the same selection fail with 404.
-  for lift_id in lift_ids:
-    repository.delete_video_with_analysis(lift_id)
+  try:
+    tasks = [row["task"] for row in rows if not row["completed"]]
+    if tasks:
+      report = StorageCleanupService(repository=repository).process_deletions(tasks)
+      if report.errors or type(report.deleted_count) is not int or report.deleted_count != len(tasks):
+        raise RuntimeError("Saved Lift cleanup is incomplete")
+    if repository.saved_lift_deletion_complete(lift_ids, user_id) is not True:
+      raise RuntimeError("Saved Lift completion proof is incomplete")
+  except Exception as error:
+    logger.warning("Saved Lift access was revoked; deletion requires retry.")
+    raise HTTPException(status_code=503, detail="Saved Lift access was revoked, but cleanup is incomplete. Retry the same selection.") from error
 
   return DeleteSavedLiftsResponse(
     deleted_lift_ids=lift_ids,
@@ -1446,6 +1454,8 @@ def get_video_playback_url(
   video_id: UUID,
   user_id: str = Depends(get_current_user_id),
 ) -> VideoPlaybackUrlResponse:
+  if get_settings().private_media_enabled:
+    raise HTTPException(status.HTTP_409_CONFLICT, "Update the app to load private media.")
   repository = VideoRepository()
   storage = StorageService()
   video = repository.require_owned_video(str(video_id), user_id)
@@ -1527,12 +1537,14 @@ def export_analyzed_video(
     pose=requested.pose,
     barbell=requested.barbell,
   )
-  export_path, export_url, _ = _create_owned_signed_url(
-    storage,
-    artifact.storage_path,
-    user_id,
-    "export_path",
-  )
+  export_path = export_url = None
+  if not get_settings().private_media_enabled:
+    export_path, export_url, _ = _create_owned_signed_url(
+      storage,
+      artifact.storage_path,
+      user_id,
+      "export_path",
+    )
   return AnalyzedVideoExportResponse(
     video_id=video_id,
     analysis_id=analysis["id"],
@@ -1547,24 +1559,28 @@ def discard_video(
   video_id: UUID,
   user_id: str = Depends(get_current_user_id),
 ) -> DiscardVideoResponse:
-  # Discard removes storage objects and keeps a discarded metadata row.
+  # Commit the tombstone, job cancellation and archive expiry before Storage I/O.
   repository = VideoRepository()
-  jobs = AnalysisJobRepository()
-  storage = StorageService()
-  video = repository.require_owned_video(str(video_id), user_id)
-
+  repository.require_owned_video(str(video_id), user_id)
   try:
-    jobs.cancel_for_video(str(video_id))
+    task = repository.revoke_for_discard(str(video_id), user_id)
   except Exception as error:
-    logger.exception("Unable to cancel analysis job before discarding video %s.", video_id)
+    logger.warning("Unable to revoke media before discarding video %s.", video_id)
     raise HTTPException(
       status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
       detail="Unable to stop analysis safely. Please try again.",
     ) from error
 
-  _delete_video_assets(storage, video, user_id)
-
-  repository.mark_discarded(str(video_id))
+  try:
+    report = StorageCleanupService(repository=repository).process_deletions([task])
+    if report.errors or report.deleted_count != 1:
+      raise RuntimeError("Discard cleanup is incomplete")
+  except Exception as error:
+    logger.warning("Discard cleanup requires retry for video %s.", video_id)
+    raise HTTPException(
+      status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+      detail="Video access was revoked, but file cleanup is incomplete. Please try again.",
+    ) from error
   return DiscardVideoResponse(video_id=video_id, discarded=True)
 
 

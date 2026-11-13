@@ -1,15 +1,18 @@
 # Peso Production Readiness Review
 
-**Status:** Public beta blocked pending operational acceptance | **Updated:** 2026-09-30
+**Status:** Public beta blocked pending operational acceptance | **Updated:** 2026-11-09
+
+The blocked status was revalidated on November 9. The approved isolated restore, synthetic-account cleanup and migration rehearsal have passed within their recorded scopes; production application and remaining hosted release acceptance are open. See the [current gate tracker](../deployment/public-beta-acceleration-plan-20261105.md) for the latest evidence and blockers.
 
 This review is the release gate for the focused web beta. It is not a claim that every exercise, camera view, or future coaching feature is production-ready.
 
-The public beta targets PesoDatabase (`jfgiydtrskpqxyorvvbc`) and the existing
-suspended beta Render API/worker through the reviewed `render-public-beta.yaml`
-cutover. Their historical staging binding must be replaced as a coordinated
-operation; `peso-staging` data is not promoted. The combined homepage and `/app`
-release uses US-only signup/upload admission and a protected `main` →
-`production` release. Follow the [approved gate sequence](../deployment/public-beta-launch-plan.md).
+The public beta targets PesoDatabase (`jfgiydtrskpqxyorvvbc`) and a fresh
+production Render API and worker. Separate staging services use `peso-staging`
+during approved test windows. The combined homepage and `/app` release uses
+US-IP signup and allows signed-in users to upload from abroad. Release proceeds
+through the protected `main` → `production` path. Follow the
+[scope decision](../adr/0021-scope-us-ip-signup-and-replace-render-pair.md)
+and [approved gate sequence](../deployment/public-beta-launch-plan.md).
 See the dated
 [release evidence](../deployment/public-beta-release-20260920.md) for completed
 checks and remaining blockers; local passes do not establish deployed acceptance.
@@ -25,6 +28,40 @@ checks and remaining blockers; local passes do not establish deployed acceptance
 | Data safety | Ready with operational checks | Signed media access and cleanup controls exist; verify production environment values before release. |
 | Automated verification | Ready to run in CI | `.github/workflows/security.yml` covers backend tests, frontend checks, audits, RLS/migration review, and secret scanning. |
 | User documentation | In progress | Keep this review, the README, and backend deployment notes aligned with each release. |
+
+## Gate 2: release security and offline runtime
+
+Gate 2 requires matching evidence for the exact candidate. Record its source
+commit, lockfiles, patch identities, tested image and relevant runtime
+versions. Retain complete dependency and container reports. CRITICAL and
+untreated HIGH findings block. Nathan must approve any temporary HIGH treatment
+for its exact finding, evidence, artifact scope and expiry; enforced policy must
+also support it, and written approval never overrides a failing security job.
+The current web audit's no-HIGH-exceptions guard remains in force; this scope
+change does not alter audit policy. Complete matching evidence closes Gate 2
+without another manual sign-off, subject to any required HIGH-treatment approval.
+
+Run the existing Linux build, patch-integrity and offline container checks,
+covering API/worker imports, native inference, media processing and supported
+formats. Runtime versions must match the claimed candidate environment. Required
+checks and matching evidence must complete successfully, including isolation
+and cleanup; missing evidence or unexplained failures block closure. Earlier
+evidence applies only when its inputs and coverage still match. Later build and
+cutover gates bind the deployed artifact or repeat applicable checks because a
+matching source commit does not identify arbitrary rebuilds. Metadata and
+synthetic fixtures do not establish hosted compatibility; a boundary snapshot
+does not establish continuous isolation.
+
+Browser behavior and accessibility are accepted in Gates 11/12. Gate 11 covers
+the login/signup shell, fonts and reload behavior, plus WebKit keyboard skip-link
+visibility at 1280x900 with reduced motion and a mobile width. Gate 12 covers
+required browser user flows and real authentication. Gates 11/12 own current
+visual regression acceptance. Required accessibility failures block launch.
+The historical Firefox reproduction, full 120-page/33-control matrix and
+exhaustive source/input/visual comparison are diagnostic follow-up unless a
+finding shows release security impact, which returns to Gate 2. Moving an item
+does not mark it passed or waive launch acceptance. Existing CI jobs and
+security enforcement remain in force.
 
 ## Historical marketing-only preparation checklist
 

@@ -46,8 +46,10 @@ test('installed RSA verifier rejects nonempty DigestAlgorithm NULL contents', ()
   }
 });
 
-test('installed RSA verifier accepts valid legacy BER but rejects its nonempty NULL contents', () => {
-  assert.equal(publicKey.verify(digest, signature(false, true, '', { ber: true })), true);
+test('installed RSA verifier rejects noncanonical BER DigestInfo even with empty NULL contents', () => {
+  // Official Forge 1.4.1+ re-encodes canonical DER to close additional signature-forgery encodings.
+  assert.throws(() => publicKey.verify(digest, signature(false, true, '', { ber: true })),
+    /valid RSASSA-PKCS1-v1_5 DigestInfo/);
   assert.throws(() => publicKey.verify(digest, signature(false, true, 'x', { ber: true })),
     /valid RSASSA-PKCS1-v1_5 DigestInfo/);
 });
@@ -136,3 +138,35 @@ for (const withNull of [false, true]) {
     assert.throws(() => publicKey.verify(digest, signature(true, withNull)), /valid RSASSA-PKCS1-v1_5 DigestInfo/);
   });
 }
+
+test('released Forge preserves Buffer PEM decoding and key parsing', () => {
+  for (const pem of [keys.privateKey, keys.publicKey]) {
+    const bytes = Buffer.from(pem);
+    assert.deepEqual(forge.pem.decode(bytes), forge.pem.decode(pem));
+  }
+  assert.equal(forge.pki.privateKeyFromPem(Buffer.from(keys.privateKey)).n.toString(16), privateKey.n.toString(16));
+  assert.equal(forge.pki.publicKeyFromPem(Buffer.from(keys.publicKey)).n.toString(16), publicKey.n.toString(16));
+});
+
+test('Expo code-signing consumer uses released Forge for certificate and buffer verification', () => {
+  const { createRequire } = require('node:module');
+  const entry = require.resolve('@expo/code-signing-certificates');
+  const consumerRequire = createRequire(entry);
+  assert.equal(consumerRequire.resolve('node-forge'), require.resolve('node-forge'));
+  assert.equal(consumerRequire('node-forge/package.json').version, '1.4.2');
+  const consumer = require(entry);
+  const generated = generateKeyPairSync('rsa', {
+    modulusLength: 2048, publicExponent: 65537,
+    privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+    publicKeyEncoding: { type: 'pkcs1', format: 'pem' },
+  });
+  const pair = consumer.convertKeyPairPEMToKeyPair({ privateKeyPEM: generated.privateKey, publicKeyPEM: generated.publicKey });
+  const certificate = consumer.generateSelfSignedCodeSigningCertificate({ keyPair: pair,
+    validityNotBefore: new Date('2025-01-01T00:00:00Z'), validityNotAfter: new Date('2028-01-01T00:00:00Z'),
+    commonName: 'Peso isolated release regression' });
+  assert.doesNotThrow(() => consumer.validateSelfSignedCertificate(certificate, pair));
+  const restored = consumer.convertCertificatePEMToCertificate(consumer.convertCertificateToCertificatePEM(certificate));
+  assert.equal(restored.subject.getField('CN').value, 'Peso isolated release regression');
+  assert.equal(typeof consumer.signBufferRSASHA256AndVerify(pair.privateKey, restored, Buffer.from('Peso released Forge check')), 'string');
+  assert.throws(() => consumer.signBufferRSASHA256AndVerify(privateKey, restored, Buffer.from('Peso released Forge check')));
+});

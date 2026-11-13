@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import hashlib
 import sys
 from pathlib import Path
 
@@ -10,19 +11,116 @@ ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS_DIR = ROOT / "supabase" / "migrations"
 
 
-def _normalized_sql() -> str:
+def _normalized_sql(*, preserve_case: bool = False) -> str:
   parts = []
   for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
     parts.append(f"\n-- {path.name}\n{path.read_text(encoding='utf-8')}")
-  return "\n".join(parts).lower()
+  source = "\n".join(parts)
+  return source if preserve_case else source.lower()
 
 
 def _policy_blocks(sql: str) -> list[str]:
-  return re.findall(r"create\s+policy\s+.*?;", sql, flags=re.DOTALL)
+  return re.findall(r"create\s+policy\s+.*?;", sql, flags=re.DOTALL | re.IGNORECASE)
+
+
+def _avatar_storage_denial_policy(block: str) -> bool:
+  # These policies only subtract avatar access from existing owner policies.
+  for operation, predicate in {
+    "select": r"using\s*\({bucket}\)",
+    "insert": r"with\s+check\s*\({bucket}\)",
+    "update": r"using\s*\({bucket}\)\s+with\s+check\s*\({bucket}\)",
+    "delete": r"using\s*\({bucket}\)",
+  }.items():
+    bucket = r"\s*bucket_id\s*<>\s*'(?-i:profile-avatars)'\s*"
+    shape = (rf"create\s+policy\s+avatar_backend_{operation}_only\s+on\s+storage\.objects\s+"
+      rf"as\s+restrictive\s+for\s+{operation}\s+to\s+authenticated\s+"
+      + predicate.format(bucket=bucket) + r"\s*;")
+    if re.fullmatch(shape, block, flags=re.IGNORECASE):
+      return True
+  return False
 
 
 def _public_tables(sql: str) -> set[str]:
   return set(re.findall(r"create\s+table\s+(?:if\s+not\s+exists\s+)?public\.([a-z0-9_]+)", sql))
+
+
+# These two boolean-only Auth readers were reviewed with real PostgreSQL ACL,
+# owner/session, disabled-policy and failure-denial tests. Changed SQL needs review.
+PROVIDER_MIGRATION = "20261026173152_private_media_provider_session_decision.sql"
+PROVIDER_MIGRATION_SHA256 = "fd7e09a635b9e1e4c5cff76f85036077b7bfbfd4cc49e77577e8927bc6152840"
+PROVIDER_FUNCTIONS = {
+  "public.private_media_session_is_live": "uuid, uuid",
+  "public.private_media_session_is_live_since": "uuid, uuid, timestamptz",
+}
+
+
+def _provider_function_errors(sql: str, headers: list[re.Match]) -> list[str]:
+  errors = []
+  migration = MIGRATIONS_DIR / PROVIDER_MIGRATION
+  if not migration.exists() or hashlib.sha256(migration.read_bytes()).hexdigest() != PROVIDER_MIGRATION_SHA256:
+    errors.append("Private media provider-session migration differs from its reviewed source.")
+  identifiers = re.sub(r'"([a-z_][a-z0-9_]*)"', r'\1', sql)
+  if re.search(r'grant\s+[^;]*\bon\s+all\s+(?:functions|routines|procedures)\s+in\s+schema\b', identifiers):
+    errors.append('Broad schema function grants require explicit per-function review.')
+  for name, signature in PROVIDER_FUNCTIONS.items():
+    declarations = [h for h in headers if f"{h.group(1)}.{h.group(2)}" == name]
+    if len(declarations) != 1:
+      errors.append(f"{name} must have exactly one reviewed definition.")
+    # Do not let another migration widen either reviewed function's direct ACL,
+    # ownership or configuration while retaining the original source file.
+    # Inspect the entire command so leading whitespace, quoted identifiers,
+    # overloads and multi-target ACL syntax cannot hide a provider reader.
+    statements = re.findall(r"(?:grant|revoke|alter)\s+[^;]*;", sql)
+    normalized = []
+    for statement in statements:
+      statement = re.sub(r'"([a-z_][a-z0-9_]*)"', r'\1', statement)
+      if not re.search(r"\b" + re.escape(name.split('.')[-1]) + r"\b", statement):
+        continue
+      statement = re.sub(r"\s+", " ", statement).strip()
+      statement = re.sub(r"\s*([().,;])\s*", r"\1", statement)
+      normalized.append(statement)
+    canonical = re.sub(r"\s+", "", signature)
+    expected = [
+      f"alter function {name}({canonical})owner to postgres;",
+      f"revoke all on function {name}({canonical})from public,anon,authenticated;",
+      f"grant execute on function {name}({canonical})to service_role;",
+    ]
+    if sorted(normalized) != sorted(expected):
+      errors.append(f"{name} has missing or changed service-only privileges, ownership or configuration.")
+  return errors
+
+
+PROFILE_OWNER_MIGRATION = "20261029210252_owner_profile_storage_admission.sql"
+PROFILE_OWNER_MIGRATION_SHA256 = "217a626a5772eda76490fab1c324eee128c1c834094ebbaa958252150f86542e"
+PROFILE_OWNER_FUNCTIONS = {
+    "peso_private.initialize_private_media_owner": "",
+    "peso_private.owned_media_write_is_live": "uuid",
+}
+
+
+def _profile_owner_function_errors(sql: str, headers: list[re.Match]) -> list[str]:
+  errors = []
+  migration = MIGRATIONS_DIR / PROFILE_OWNER_MIGRATION
+  if not migration.exists() or hashlib.sha256(migration.read_bytes()).hexdigest() != PROFILE_OWNER_MIGRATION_SHA256:
+    errors.append("Profile owner migration differs from its reviewed source.")
+  for name, signature in PROFILE_OWNER_FUNCTIONS.items():
+    if len([h for h in headers if f"{h.group(1)}.{h.group(2)}" == name]) != 1:
+      errors.append(f"{name} must have exactly one reviewed definition.")
+    statements = re.findall(r"(?:grant|revoke|alter|drop)\s+[^;]*;", sql)
+    normalized = []
+    for statement in statements:
+      statement = re.sub(r'"([a-z_][a-z0-9_]*)"', r'\1', statement)
+      if not re.search(r"\b" + re.escape(name.split('.')[-1]) + r"\b", statement):
+        continue
+      statement = re.sub(r"\s+", " ", statement).strip()
+      normalized.append(re.sub(r"\s*([().,;])\s*", r"\1", statement))
+    expected = [f"alter function {name}({signature})owner to postgres;",
+      f"revoke all on function {name}({signature})from public,anon,authenticated,service_role,supabase_auth_admin;"]
+    if name.endswith('owned_media_write_is_live'):
+      expected.append(f"grant execute on function {name}({signature})to authenticated;")
+    if sorted(normalized) != sorted(expected):
+      errors.append(f"{name} has missing or changed owner-decision privileges, ownership or configuration.")
+  return errors
 
 
 def audit_supabase_security() -> list[str]:
@@ -34,7 +132,7 @@ def audit_supabase_security() -> list[str]:
       errors.append(f"public.{table} is created without an enable row level security migration.")
 
   function_headers = list(re.finditer(
-    r"create\s+(?:or\s+replace\s+)?function\s+([a-z0-9_]+)\.([a-z0-9_]+)\([^)]*\)",
+    r'create\s+(?:or\s+replace\s+)?function\s+"?([a-z0-9_]+)"?\s*\.\s*"?([a-z0-9_]+)"?\s*\([^)]*\)',
     sql,
   ))
   security_definer_functions: set[str] = set()
@@ -46,7 +144,11 @@ def audit_supabase_security() -> list[str]:
   allowed_security_definer_functions = {
     "azure_scaler.analysis_queue_depth",
     "public.pending_video_analysis_job_count",
+    *PROVIDER_FUNCTIONS,
+    *PROFILE_OWNER_FUNCTIONS,
   }
+  errors.extend(_provider_function_errors(sql, function_headers))
+  errors.extend(_profile_owner_function_errors(sql, function_headers))
   unexpected_security_definer_functions = security_definer_functions - allowed_security_definer_functions
   if unexpected_security_definer_functions:
     errors.append(
@@ -112,7 +214,11 @@ def audit_supabase_security() -> list[str]:
     if "security_invoker" not in block:
       errors.append(f"public.{match.group(1)} view does not explicitly opt into security_invoker.")
 
-  for block in _policy_blocks(sql):
+  for raw_block in _policy_blocks(_normalized_sql(preserve_case=True)):
+    block = raw_block.lower()
+    avatar_denial = _avatar_storage_denial_policy(raw_block)
+    if re.match(r'create\s+policy\s+"?avatar_backend_(select|insert|update|delete)_only"?\s', block) and not avatar_denial:
+      errors.append("Avatar backend Storage policies must keep their exact restrictive denial shape.")
     if "to authenticated" not in block:
       continue
 
@@ -127,7 +233,7 @@ def audit_supabase_security() -> list[str]:
     if "on storage.objects" in block:
       has_bucket_check = "bucket_id" in block
       has_folder_owner_check = "storage.foldername" in block and "auth.uid()" in block
-      if not has_bucket_check or not has_folder_owner_check:
+      if not avatar_denial and (not has_bucket_check or not has_folder_owner_check):
         errors.append(f"Storage policy lacks bucket/folder ownership checks: {block.splitlines()[0]}")
 
   if not re.search(r"revoke\s+insert\s*,\s*update\s*,\s*delete\s+on\s+public\.videos\s+from\s+authenticated", sql):

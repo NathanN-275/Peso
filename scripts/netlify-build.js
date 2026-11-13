@@ -21,7 +21,15 @@ function buildScript(env, binding = combinedBinding) {
     : 'web:build:marketing';
 }
 function buildEnvironment(env, binding = combinedBinding) {
-  return isCombinedProject(env, binding) ? { ...env, PESO_RELEASE_ENV: 'public-beta' } : env;
+  if (isCombinedProject(env, binding)) return { ...env, PESO_RELEASE_ENV: 'public-beta' };
+  // Branch-only TOML settings would override every project's main build.
+  if (env.SITE_ID === APP_SITE_ID && env.CONTEXT === 'branch-deploy' && env.BRANCH === 'main') {
+    return { ...env, PESO_RELEASE_ENV: 'render-beta',
+      EXPO_PUBLIC_SUPABASE_URL: require('./student-environment').STUDENT_SUPABASE_URL,
+      EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://api-staging.usepeso.com',
+      EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main.usepeso.com/auth/turnstile/' };
+  }
+  return env;
 }
 module.exports = { APP_SITE_ID, buildScript, isCombinedProject, buildEnvironment };
 if (require.main === module) {

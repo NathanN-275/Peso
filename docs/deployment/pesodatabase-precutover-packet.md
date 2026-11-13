@@ -253,6 +253,13 @@ and verify reads if nonempty. Reconfigure project-bound settings/credentials onl
 under a separate rebind decision. Preserve both recovery material and failed-state
 evidence until acceptance; an old deploy or a URL change is not data recovery.
 
+The [November 8 grant counterexample](pesodatabase-hosted-recovery-rehearsal-20261108.md)
+also requires capturing target default privileges and comparing a full schema
+read-back, including client grants, before accepting recovery. Empty-target
+restoration and matching counts do not prove those grants match. Keep signup
+and Data API disabled on a mismatch; preserve it and obtain separate approval
+for the reviewed repair before API tests or rebind.
+
 The manual logical recovery method follows [Supabase's backup/restore guidance](https://supabase.com/docs/guides/platform/migrating-within-supabase/backup-restore),
 including separately preserving history and managed-schema customizations. Our
 September 24 rehearsal covers the documented subset only.

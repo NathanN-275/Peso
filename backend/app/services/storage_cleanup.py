@@ -8,7 +8,7 @@ from typing import Any
 
 from .config import Settings, get_settings
 from .storage_service import StorageService
-from .video_repository import VideoRepository
+from .video_repository import VideoRepository, validate_media_deletion_task
 from .video_storage_paths import storage_path_belongs_to_user
 
 
@@ -123,10 +123,13 @@ class StorageCleanupService:
     repository: VideoRepository | None = None,
     storage: StorageService | None = None,
     settings: Settings | None = None,
+    *,
+    archive_storage: StorageService | None = None,
   ) -> None:
     self.repository = repository or VideoRepository()
     self.storage = storage or StorageService()
     self.settings = settings or get_settings()
+    self.archive_storage = archive_storage
 
   def run(self, *, dry_run: bool = False, now: datetime | None = None) -> StorageCleanupReport:
     cleanup_now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -166,6 +169,23 @@ class StorageCleanupService:
         now=cleanup_now,
       )
 
+    return report
+
+  def process_deletions(self, tasks: list[dict[str, Any]], *, dry_run: bool = False) -> StorageCleanupReport:
+    """Process only committed snapshots supplied by the caller, without a retention sweep."""
+    report = StorageCleanupReport(dry_run=dry_run)
+    try:
+      if not isinstance(tasks, list) or not tasks:
+        raise ValueError("Cleanup snapshots are required")
+      for task in tasks:
+        validate_media_deletion_task(task)
+      if len({task["video_id"] for task in tasks}) != len(tasks):
+        raise ValueError("Duplicate cleanup snapshots")
+    except Exception:
+      report.errors.append("Unable to validate pending media deletion; no storage deletion was attempted.")
+      return report
+    self._process_deletion_tasks(tasks, report=report, object_by_path={},
+                                 scheduled_storage_paths=set(), dry_run=dry_run)
     return report
 
   def _list_storage_objects(self, report: StorageCleanupReport) -> list[dict[str, Any]]:
@@ -244,29 +264,53 @@ class StorageCleanupService:
     except Exception:
       report.errors.append("Unable to read pending media deletions; verify the retention migration.")
       return
-    for task in pending:
-      video_id = str(task["video_id"])
-      user_id = str(task["user_id"])
-      paths = list(task["storage_paths"])
-      if any(not storage_path_belongs_to_user(path, user_id) for path in paths):
-        report.errors.append(f"Pending deletion {video_id} contains a path outside the owning user folder.")
-        continue
+    self._process_deletion_tasks(pending, report=report, object_by_path=object_by_path,
+                                 scheduled_storage_paths=scheduled_storage_paths, dry_run=dry_run)
+
+  def _process_deletion_tasks(
+    self, tasks: list[dict[str, Any]], *, report: StorageCleanupReport,
+    object_by_path: dict[str, dict[str, Any]], scheduled_storage_paths: set[str], dry_run: bool,
+  ) -> None:
+    for task in tasks:
       try:
-        # List exports afresh: a prior partial listing must never acknowledge
-        # deletion while leaving files untracked. Storage errors preserve the task.
-        paths.extend(self.storage.list_storage_prefix(f"{user_id}/exports/{video_id}-"))
+        validate_media_deletion_task(task)
+        video_id = task["video_id"]
+        user_id = task["user_id"]
+        paths = task["storage_paths"]
+        archives = task["archive_paths"]
+        prefixes = task["export_prefixes"]
+        expected_prefix = f"{user_id}/exports/{video_id}-"
+        # Retention tasks created before the extended schema have an empty
+        # prefix snapshot; they still need a fresh deterministic export listing.
+        paths = list(paths)
+        for prefix in set(prefixes or [expected_prefix]):
+          listed = self.storage.list_storage_prefix(prefix)
+          if any(not isinstance(path, str) or not path.startswith(prefix)
+                 or not storage_path_belongs_to_user(path, user_id) for path in listed):
+            raise ValueError("Unsafe listed export path")
+          paths.extend(listed)
+        archive_storage = self.archive_storage
+        if archives and archive_storage is None and not dry_run:
+          archive_storage = StorageService(bucket="saved-lift-exports")
+          self.archive_storage = archive_storage
       except Exception:
-        report.errors.append(f"Unable to list exports for pending deletion {video_id}.")
+        report.errors.append("Unable to validate or list pending media deletion; its task was retained.")
         continue
-      if any(not storage_path_belongs_to_user(path, user_id) for path in paths):
-        report.errors.append(f"Export deletion {video_id} contains an unsafe storage path.")
-        continue
+      # Validate both buckets and every listing before the first deletion.
       deleted = self._delete_storage_paths(paths, report=report, object_by_path=object_by_path,
                                            scheduled_storage_paths=scheduled_storage_paths, dry_run=dry_run)
+      if archives:
+        archives_deleted = self._delete_storage_paths(
+          archives, report=report, object_by_path={},
+          scheduled_storage_paths=scheduled_storage_paths, dry_run=dry_run,
+          storage=archive_storage, bucket="saved-lift-exports")
+        deleted = deleted and archives_deleted
       if deleted and not dry_run:
         try:
-          self.repository.complete_deletion(video_id)
-          report.deleted_count += 1
+          if self.repository.complete_deletion(task):
+            report.deleted_count += 1
+          else:
+            report.errors.append(f"Pending media deletion {video_id} changed; it will be retried.")
         except Exception:
           report.errors.append(f"Unable to acknowledge media deletion {video_id}; it will be retried.")
 
@@ -384,6 +428,8 @@ class StorageCleanupService:
     object_by_path: dict[str, dict[str, Any]],
     scheduled_storage_paths: set[str],
     dry_run: bool,
+    storage: StorageService | None = None,
+    bucket: str = "videos",
   ) -> bool:
     deleted_all_paths = True
 
@@ -393,10 +439,11 @@ class StorageCleanupService:
         deleted_all_paths = False
         continue
 
-      if path in scheduled_storage_paths:
+      scheduled_path = path if bucket == "videos" else f"{bucket}:{path}"
+      if scheduled_path in scheduled_storage_paths:
         continue
 
-      scheduled_storage_paths.add(path)
+      scheduled_storage_paths.add(scheduled_path)
       report.storage_objects += 1
       report.bytes_reclaimable += _object_size_bytes(object_by_path.get(path, {}))
 
@@ -404,10 +451,10 @@ class StorageCleanupService:
         continue
 
       try:
-        self.storage.delete_storage_path(path)
+        (storage or self.storage).delete_storage_path(path)
       except Exception as error:
         deleted_all_paths = False
-        scheduled_storage_paths.discard(path)
+        scheduled_storage_paths.discard(scheduled_path)
         message = f"Unable to delete storage object {path}: {error}"
         logger.warning(message)
         report.errors.append(message)

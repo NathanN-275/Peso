@@ -11,6 +11,64 @@ from app.services.security_logging import SecurityJsonFormatter, redact_sensitiv
 
 
 class SecurityLoggingTest(unittest.TestCase):
+  def test_redacts_raw_credential_headers_including_cookie_attributes(self) -> None:
+    value = (
+      "HTTP failure\r\n"
+      "Cookie: peso_media=synthetic-cookie; other=synthetic-other\r\n"
+      "Set-Cookie: peso_media=synthetic-response; Path=/; HttpOnly; Secure\r\n"
+      'Cookie: "synthetic-quoted"; other=synthetic-trailing\r\n'
+      "Cookie: peso_media=synthetic-folded\r\n\tother=synthetic-continuation\r\n"
+      "x-PeSo-MeDiA-gRaNt: synthetic-grant with spaces\r\n"
+      "Authorization: Basic synthetic-basic\r\n"
+      "status=403 job=test-job"
+    )
+    redacted = redact_sensitive_text(value)
+    self.assertNotIn("synthetic-", redacted)
+    self.assertIn("status=403 job=test-job", redacted)
+    self.assertEqual(redact_sensitive_text(redacted), redacted)
+
+  def test_redacts_credential_headers_in_json_and_python_diagnostics(self) -> None:
+    headers = {
+      "Cookie": 'peso_media=synthetic-cookie; quoted="synthetic-quoted"',
+      "Set-Cookie": ["peso_media=synthetic-first; Path=/", "other=synthetic-second"],
+      "X-Peso-Media-Grant": "synthetic-grant",
+      "Authorization": "Bearer synthetic-authorization",
+      "Proxy-Authorization": "Basic synthetic-proxy",
+      "status": 403,
+    }
+    for value in (json.dumps({"headers": headers}), str({"headers": headers})):
+      with self.subTest(value=value):
+        redacted = redact_sensitive_text(value)
+        self.assertNotIn("synthetic-", redacted)
+        self.assertIn("403", redacted)
+        self.assertEqual(redact_sensitive_text(redacted), redacted)
+    self.assertEqual(json.loads(redact_sensitive_text(json.dumps(headers)))["status"], 403)
+
+  def test_redacts_byte_header_pairs_and_bare_error_fields(self) -> None:
+    for value in (
+      "[(b'cookie', b'peso_media=synthetic-cookie'), (b'set-cookie', b'other=synthetic-response')]",
+      "headers=[('X-Peso-Media-Grant', 'synthetic-grant'), ('status', '403')]",
+      "request failed Cookie=peso_media=synthetic-cookie; other=synthetic-other",
+      'X-Peso-Media-Grant="synthetic-grant" status=403',
+    ):
+      with self.subTest(value=value):
+        redacted = redact_sensitive_text(value)
+        self.assertNotIn("synthetic-", redacted)
+        self.assertEqual(redact_sensitive_text(redacted), redacted)
+
+  def test_formatter_redacts_structured_header_message_and_omits_extra_payloads(self) -> None:
+    record = logging.LogRecord(
+      "app.media", logging.ERROR, __file__, 0,
+      {"headers": {"Cookie": "synthetic-cookie", "Set-Cookie": "synthetic-response",
+                   "X-Peso-Media-Grant": "synthetic-grant"}, "status": 403}, (), None,
+    )
+    record.headers = {"Cookie": "synthetic-extra-cookie"}
+    record.exc_text = "Set-Cookie: synthetic-exception-cookie"
+    payload = json.loads(SecurityJsonFormatter().format(record))
+    self.assertNotIn("synthetic-", json.dumps(payload))
+    self.assertIn("403", payload["message"])
+    self.assertNotIn("headers", payload)
+
   def test_error_text_redacts_entire_query_and_preserves_path(self) -> None:
     for target in (
       "/videos/test/media?TICKET=synthetic-ticket&ticket=second-ticket",
@@ -30,7 +88,10 @@ class SecurityLoggingTest(unittest.TestCase):
     )
 
   def test_error_text_preserves_nonsecret_context(self) -> None:
-    value = "GET /videos/test/media status=206 job=test-job. Retry? ticket_count=2"
+    value = (
+      "GET /videos/test/media status=206 job=test-job. Retry? ticket_count=2 "
+      "cookie_count=2 X-Cookie-Policy=blocked Set-Cookie-Policy=secure"
+    )
     self.assertEqual(redact_sensitive_text(value), value)
 
   def test_json_logs_redact_interpolated_fields_and_omit_exception_text(self) -> None:

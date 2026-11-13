@@ -1,10 +1,15 @@
 import { ReactNode, createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Session, User } from '@supabase/supabase-js';
-import { AppState, Platform } from 'react-native';
-import { supabase, supabaseConfigError } from '../lib/supabase';
+import { AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { supabase, supabaseConfigError, supabaseAuthUrl, signOutWithPrivateMedia,
+  getAcceptedAuthSnapshot, subscribeAcceptedAuthSession, initializeAcceptedAuthSession,
+  waitForAcceptedAuthSession, retryAuthSessionTransition, updateUserWithPrivateMedia } from '../lib/supabase';
+import { getPrivateMediaSessionKey } from '../lib/privateMediaLogout';
+import { ensureOwnProfile } from '../lib/profile';
 
 type AuthContextValue = {
   session: Session | null;
+  mediaSessionKey: string | null;
   user: User | null;
   initializing: boolean;
   configError: string | null;
@@ -26,7 +31,7 @@ type AuthContextValue = {
   }>;
   resetPasswordForEmail: (email: string, captchaToken: string) => Promise<void>;
   updatePassword: (password: string) => Promise<void>;
-  activatePasswordRecoveryMode: () => void;
+  activatePasswordRecoveryMode: (expectedSessionKey: string | null) => boolean;
   signOut: () => Promise<void>;
 };
 
@@ -137,52 +142,6 @@ function getSignUpErrorMessage(error: unknown) {
   return SIGN_UP_FAILED_MESSAGE;
 }
 
-function isMissingProfilesTableError(error: unknown) {
-  // Missing profile tables are tolerated during early setup.
-  if (!error || typeof error !== 'object') {
-    return false;
-  }
-
-  const code = 'code' in error ? error.code : undefined;
-  const message = 'message' in error ? error.message : undefined;
-
-  return (
-    code === 'PGRST205' ||
-    (typeof message === 'string' &&
-      message.includes("Could not find the table 'public.profiles' in the schema cache"))
-  );
-}
-
-function isProfileUsernameConflictError(error: unknown) {
-  if (!error || typeof error !== 'object') {
-    return false;
-  }
-
-  const code = 'code' in error ? error.code : undefined;
-  const message = 'message' in error ? error.message : undefined;
-
-  return (
-    code === '23505' ||
-    (typeof message === 'string' && message.toLowerCase().includes('profiles_username'))
-  );
-}
-
-function deriveUsername(user: User) {
-  // Fall back through metadata, email, then phone.
-  const metadataUsername =
-    typeof user.user_metadata?.username === 'string' ? user.user_metadata.username : null;
-
-  if (metadataUsername) {
-    return metadataUsername;
-  }
-
-  if (user.email) {
-    return user.email.split('@')[0] ?? null;
-  }
-
-  return user.phone ?? null;
-}
-
 function getAuthRedirectUrl(route: 'login' | 'reset' = 'reset') {
   // Recovery links need a platform-specific redirect target.
   if (Platform.OS === 'web') {
@@ -194,144 +153,54 @@ function getAuthRedirectUrl(route: 'login' | 'reset' = 'reset') {
   return route === 'reset' ? 'pesoapp://reset-password' : 'pesoapp://login';
 }
 
-async function ensureProfile(user: User) {
-  // Keep a matching profiles row in Supabase when possible.
-  if (!supabase) {
-    throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
-  }
-
-  const profilePayload = {
-    id: user.id,
-    username: deriveUsername(user),
-  };
-
-  const { error } = await supabase.from('profiles').upsert(profilePayload, {
-    onConflict: 'id',
-  });
-
-  if (error) {
-    if (isMissingProfilesTableError(error)) {
-      console.warn(
-        "Supabase table 'public.profiles' is missing. Continuing without profile sync."
-      );
-      return;
-    }
-
-    if (isProfileUsernameConflictError(error)) {
-      const { error: retryError } = await supabase.from('profiles').upsert(
-        {
-          id: user.id,
-          username: null,
-        },
-        {
-          onConflict: 'id',
-        }
-      );
-
-      if (!retryError) {
-        return;
-      }
-    }
-
-    logSupabaseError('ensureProfile failed', error, {
-      table: 'profiles',
-      operation: 'upsert',
-      userId: user.id,
-    });
-    throw error;
-  }
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  // Auth state lives here so every screen can read the same session.
-  const [session, setSession] = useState<Session | null>(null);
-  const [initializing, setInitializing] = useState(true);
+  const [snapshot, setSnapshot] = useState(getAcceptedAuthSnapshot);
+  const [initializationError, setInitializationError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
   const [passwordRecoveryMode, setPasswordRecoveryMode] = useState(false);
   const pendingRecoveryLinkRef = useRef(false);
+  const recoverySessionKeyRef = useRef<string | null>(null);
+  const session = snapshot.status === 'ready' ? snapshot.session : null;
+  const initializing = snapshot.status === 'initializing' || snapshot.status === 'pending';
 
   useEffect(() => {
-    // Bootstrap the current session once at startup.
     let active = true;
-
-    const bootstrap = async () => {
-      if (!supabase) {
-        if (active) {
-          setInitializing(false);
-        }
-        return;
-      }
-
-      const {
-        data: { session: currentSession },
-        error,
-      } = await supabase.auth.getSession();
-
-      if (error) {
-        throw error;
-      }
-
-      if (!active) {
-        return;
-      }
-
-      setSession(currentSession);
-      if (!pendingRecoveryLinkRef.current) {
-        setPasswordRecoveryMode(false);
-      }
-
-      if (currentSession?.user) {
-        await ensureProfile(currentSession.user);
-      }
-
-      if (active) {
-        setInitializing(false);
-      }
-    };
-
-    bootstrap().catch((error) => {
-      logSupabaseError('Failed to initialize auth session', error);
-      if (active) {
-        setInitializing(false);
-      }
-    });
-
-    if (!supabase) {
-      return () => {
-        active = false;
-      };
-    }
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, nextSession) => {
-      // Track sign-in, sign-out, and password recovery in one place.
-      setSession(nextSession);
-
-      if (event === 'PASSWORD_RECOVERY') {
+    let profileRevision = -1;
+    const publish = (next: ReturnType<typeof getAcceptedAuthSnapshot>) => {
+      if (!active) return;
+      setSnapshot(next);
+      if (next.status !== 'ready') return;
+      setInitializationError(null);
+      const nextKey = getPrivateMediaSessionKey(next.session?.access_token, supabaseAuthUrl);
+      if (next.event === 'PASSWORD_RECOVERY' && nextKey) {
         pendingRecoveryLinkRef.current = true;
+        recoverySessionKeyRef.current = nextKey;
         setPasswordRecoveryMode(true);
-        return;
-      }
-
-      if (event === 'SIGNED_OUT') {
+      } else if (!next.session || (pendingRecoveryLinkRef.current && recoverySessionKeyRef.current !== nextKey)) {
         pendingRecoveryLinkRef.current = false;
+        recoverySessionKeyRef.current = null;
         setPasswordRecoveryMode(false);
       }
-
-      if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && nextSession?.user) {
-        ensureProfile(nextSession.user).catch((error) => {
-          logSupabaseError('Failed to ensure profile row after auth state change', error, {
-            event,
-            userId: nextSession.user.id,
-          });
+      if (next.session?.user && next.revision !== profileRevision) {
+        profileRevision = next.revision;
+        const accepted = next.session;
+        // Profile work uses the accepted generation, never the raw Auth callback.
+        void Promise.resolve().then(async () => {
+          const current = getAcceptedAuthSnapshot();
+          if (active && current.status === 'ready' && current.revision === next.revision) {
+            await ensureOwnProfile(accepted.user, accepted.access_token);
+          }
+        }).catch(() => {
+          console.warn('Unable to initialize profile. Profile editing can retry after loading.');
         });
       }
-    });
-
-    return () => {
-      active = false;
-      subscription.unsubscribe();
     };
+    const unsubscribe = subscribeAcceptedAuthSession(publish);
+    publish(getAcceptedAuthSnapshot());
+    void initializeAcceptedAuthSession().catch(() => {
+      if (active) setInitializationError('Unable to finish your sign-in change. Please retry.');
+    });
+    return () => { active = false; unsubscribe(); };
   }, []);
 
   useEffect(() => {
@@ -359,6 +228,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value: AuthContextValue = {
     session,
+    mediaSessionKey: getPrivateMediaSessionKey(session?.access_token, supabaseAuthUrl),
     user: session?.user ?? null,
     initializing,
     configError: supabaseConfigError,
@@ -370,7 +240,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       const verifiedCaptchaToken = requireCaptchaToken(captchaToken);
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
         options: { captchaToken: verifiedCaptchaToken },
@@ -380,6 +250,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logSupabaseError('signInWithPassword failed', error);
         throw new Error(getSignInErrorMessage(error));
       }
+      await waitForAcceptedAuthSession(data.session);
     },
     async signUpWithEmail(email, password, profile, captchaToken) {
       // Signup stores profile hints in auth metadata.
@@ -410,10 +281,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error(getSignUpErrorMessage(error));
       }
 
+      const acceptedSession = data.session ? await waitForAcceptedAuthSession(data.session) : null;
       return {
-        session: data.session,
+        session: acceptedSession,
         user: data.user,
-        requiresEmailConfirmation: !data.session,
+        requiresEmailConfirmation: !acceptedSession,
       };
     },
     async resetPasswordForEmail(email, captchaToken) {
@@ -447,36 +319,79 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
       }
 
-      const { error } = await supabase.auth.updateUser({ password });
+      const expectedKey = getPrivateMediaSessionKey(session?.access_token, supabaseAuthUrl);
+      const { error } = await updateUserWithPrivateMedia(expectedKey, { password });
 
       if (error) {
         throw error;
       }
 
+      const current = getAcceptedAuthSnapshot();
+      if (expectedKey && (current.status !== 'ready'
+          || getPrivateMediaSessionKey(current.session?.access_token, supabaseAuthUrl) !== expectedKey)) {
+        throw new Error('Your sign-in session changed. Please retry the account update.');
+      }
       setPasswordRecoveryMode(false);
       pendingRecoveryLinkRef.current = false;
+      recoverySessionKeyRef.current = null;
     },
-    activatePasswordRecoveryMode() {
-      // The app switches into recovery UI as soon as a reset link is detected.
+    activatePasswordRecoveryMode(expectedSessionKey) {
+      // Native listeners outlive a render; validate the accepted callback identity now.
+      const current = getAcceptedAuthSnapshot();
+      const key = getPrivateMediaSessionKey(current.session?.access_token, supabaseAuthUrl);
+      if (current.status !== 'ready' || !expectedSessionKey || key !== expectedSessionKey) return false;
       pendingRecoveryLinkRef.current = true;
+      recoverySessionKeyRef.current = expectedSessionKey;
       setPasswordRecoveryMode(true);
+      return true;
     },
     async signOut() {
       if (!supabase) {
         throw new Error(supabaseConfigError ?? 'Supabase is not configured.');
       }
 
-      const { error } = await supabase.auth.signOut();
+      const { error } = await signOutWithPrivateMedia(getPrivateMediaSessionKey(session?.access_token, supabaseAuthUrl));
 
       if (error) {
         throw error;
       }
 
       pendingRecoveryLinkRef.current = false;
+      recoverySessionKeyRef.current = null;
     },
   };
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  const transitionVisible = snapshot.status !== 'ready' || initializationError !== null;
+  const transitionError = initializationError ?? snapshot.error;
+  const retry = async () => {
+    setRetrying(true);
+    setInitializationError(null);
+    try {
+      await retryAuthSessionTransition();
+      await initializeAcceptedAuthSession();
+    } catch {
+      setInitializationError('Unable to finish your sign-in change. Please retry.');
+    } finally { setRetrying(false); }
+  };
+
+  return (
+    <AuthContext.Provider value={value}>
+      <View style={transitionStyles.root}>
+        <View style={[transitionStyles.root, transitionVisible && transitionStyles.hidden]}>{children}</View>
+        {transitionVisible && <View style={transitionStyles.panel} accessibilityViewIsModal>
+          <Text accessibilityRole="header" style={transitionStyles.title}>Finishing your sign-in change</Text>
+          <Text accessibilityRole={transitionError ? 'alert' : undefined} style={transitionStyles.message}>
+            {transitionError ?? 'Securing your previous session before continuing…'}
+          </Text>
+          {(snapshot.status === 'blocked' || initializationError) && <Pressable accessibilityRole="button"
+            accessibilityState={{ disabled: retrying, busy: retrying }} disabled={retrying}
+            onPress={() => { void retry(); }} style={transitionStyles.button}>
+            <Text style={transitionStyles.buttonText}>{retrying ? 'Retrying…' : 'Retry session change'}</Text>
+          </Pressable>}
+        </View>}
+      </View>
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth() {
@@ -488,3 +403,14 @@ export function useAuth() {
 
   return context;
 }
+
+const transitionStyles = StyleSheet.create({
+  root: { flex: 1 },
+  hidden: { display: 'none' },
+  panel: { flex: 1, minHeight: 320, justifyContent: 'center', alignItems: 'center', padding: 28,
+    gap: 18, backgroundColor: '#07090D' },
+  title: { color: '#FFFFFF', fontSize: 22, fontWeight: '600', textAlign: 'center' },
+  message: { color: '#A7B3C7', fontSize: 16, textAlign: 'center', maxWidth: 460 },
+  button: { paddingHorizontal: 22, paddingVertical: 14, borderRadius: 10, backgroundColor: '#1F6BFF' },
+  buttonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
+});

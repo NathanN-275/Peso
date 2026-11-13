@@ -30,13 +30,36 @@ class AnalysisJobRepositoryTest(unittest.TestCase):
 
     client.table.assert_any_call("analysis_jobs")
     client.table.assert_any_call("video_deletion_outbox")
-    client.table.return_value.select.assert_any_call("video_id,user_id,storage_paths")
+    client.table.return_value.select.assert_any_call("video_id,user_id,storage_paths,archive_paths,export_prefixes,delete_metadata")
     selected_columns = client.table.return_value.select.call_args.args[0]
     self.assertIn("stage", selected_columns)
     self.assertIn("stage_timestamps", selected_columns)
     self.assertIn("last_heartbeat_at", selected_columns)
     self.assertIn("failure_class", selected_columns)
     client.table.return_value.select.return_value.limit.assert_any_call(1)
+
+  def test_readiness_fails_closed_when_extended_cleanup_columns_are_missing(self) -> None:
+    client = MagicMock()
+    client.table.return_value.select.return_value.limit.return_value.execute.side_effect = RuntimeError('missing archive_paths')
+    with patch('app.services.analysis_job_repository.get_supabase_admin_client', return_value=client):
+      with self.assertRaisesRegex(RuntimeError, 'missing archive_paths'):
+        AnalysisJobRepository().check_readiness()
+    client.rpc.assert_not_called()
+    client.table.assert_called_once_with('video_deletion_outbox')
+
+  def test_readiness_requires_complete_saved_deletion_receipt_schema(self) -> None:
+    client = MagicMock()
+    def table(name):
+      query = MagicMock()
+      if name == "saved_lift_deletion_receipts":
+        query.select.return_value.limit.return_value.execute.side_effect = RuntimeError("receipt schema missing")
+      return query
+    client.table.side_effect = table
+    with patch("app.services.analysis_job_repository.get_supabase_admin_client", return_value=client):
+      with self.assertRaisesRegex(RuntimeError, "receipt schema missing"):
+        AnalysisJobRepository().check_readiness()
+    client.rpc.assert_not_called()
+    self.assertEqual([call.args[0] for call in client.table.call_args_list], ["video_deletion_outbox", "saved_lift_deletion_receipts"])
 
   def test_enqueue_calls_atomic_database_rpc(self) -> None:
     client = MagicMock()
@@ -84,12 +107,13 @@ class AnalysisJobRepositoryTest(unittest.TestCase):
       return_value=client,
     ):
       repository = AnalysisJobRepository()
-      self.assertTrue(repository.progress(JOB_ID, "worker-test", "pose"))
+      self.assertTrue(repository.progress(JOB_ID, "worker-test", "pose", attempt_count=1))
       self.assertEqual(
         repository.fail(
           JOB_ID,
           "worker-test",
           "bad video",
+          attempt_count=1,
           failure_class="invalid_video",
           retryable=False,
         ),
@@ -119,7 +143,7 @@ class AnalysisJobRepositoryTest(unittest.TestCase):
 class AnalysisWorkerTest(unittest.TestCase):
   def test_successful_job_completes_after_analysis(self) -> None:
     jobs = MagicMock()
-    jobs.claim.return_value = {"id": JOB_ID, "video_id": VIDEO_ID, "attempt_count": 1}
+    jobs.claim.return_value = {"id": JOB_ID, "video_id": VIDEO_ID, "status": "processing", "attempt_count": 1}
     jobs.complete.return_value = True
     analyzer = MagicMock()
     worker = AnalysisWorker(
@@ -132,12 +156,12 @@ class AnalysisWorkerTest(unittest.TestCase):
     self.assertTrue(worker.run_once())
 
     analyzer.assert_called_once_with(VIDEO_ID)
-    jobs.complete.assert_called_once_with(JOB_ID, "worker-test")
+    jobs.complete.assert_called_once_with(JOB_ID, "worker-test", attempt_count=1)
     jobs.fail.assert_not_called()
 
   def test_failed_job_is_returned_to_database_retry_policy(self) -> None:
     jobs = MagicMock()
-    jobs.claim.return_value = {"id": JOB_ID, "video_id": VIDEO_ID, "attempt_count": 1}
+    jobs.claim.return_value = {"id": JOB_ID, "video_id": VIDEO_ID, "status": "processing", "attempt_count": 1}
     jobs.fail.return_value = "retry_wait"
     analyzer = MagicMock(side_effect=RuntimeError("pose failed"))
     worker = AnalysisWorker(
@@ -153,6 +177,7 @@ class AnalysisWorkerTest(unittest.TestCase):
       JOB_ID,
       "worker-test",
       "pose failed",
+      attempt_count=1,
       failure_class="analysis_runtime",
       retryable=True,
     )
@@ -160,7 +185,7 @@ class AnalysisWorkerTest(unittest.TestCase):
 
   def test_deterministic_invalid_video_failure_does_not_retry(self) -> None:
     jobs = MagicMock()
-    jobs.claim.return_value = {"id": JOB_ID, "video_id": VIDEO_ID, "attempt_count": 1}
+    jobs.claim.return_value = {"id": JOB_ID, "video_id": VIDEO_ID, "status": "processing", "attempt_count": 1}
     jobs.fail.return_value = "failed"
     analyzer = MagicMock(side_effect=RuntimeError("Unable to open uploaded video."))
     worker = AnalysisWorker(jobs=jobs, analyzer=analyzer, worker_id="worker-test")
@@ -171,6 +196,7 @@ class AnalysisWorkerTest(unittest.TestCase):
       JOB_ID,
       "worker-test",
       "Unable to open uploaded video.",
+      attempt_count=1,
       failure_class="invalid_video",
       retryable=False,
     )
@@ -188,14 +214,17 @@ class AnalysisWorkerTest(unittest.TestCase):
 
   def test_worker_persists_runner_stages_and_uses_scaled_timeout(self) -> None:
     jobs = MagicMock()
-    jobs.claim.return_value = {"id": JOB_ID, "video_id": VIDEO_ID, "attempt_count": 1}
+    jobs.claim.return_value = {"id": JOB_ID, "video_id": VIDEO_ID, "status": "processing", "attempt_count": 1}
     jobs.video_duration_ms.return_value = 120_000
     jobs.progress.return_value = True
     jobs.complete.return_value = True
     runner = MagicMock()
 
-    def run(_video_id, *, job_id, timeout_seconds, on_stage):
+    def run(_video_id, *, job_id, worker_id, attempt_count, timeout_seconds, on_stage, cancel_event):
+      self.assertFalse(cancel_event.is_set())
       self.assertEqual(job_id, JOB_ID)
+      self.assertEqual(worker_id, "worker-test")
+      self.assertEqual(attempt_count, 1)
       self.assertEqual(timeout_seconds, 360)
       on_stage("pose")
       on_stage("barbell_tracking")
@@ -211,7 +240,7 @@ class AnalysisWorkerTest(unittest.TestCase):
       [call.args[2] for call in jobs.progress.call_args_list],
       ["downloading", "pose", "barbell_tracking", "saving"],
     )
-    jobs.complete.assert_called_once_with(JOB_ID, "worker-test")
+    jobs.complete.assert_called_once_with(JOB_ID, "worker-test", attempt_count=1)
 
   def test_idle_worker_does_not_run_analysis(self) -> None:
     jobs = MagicMock()

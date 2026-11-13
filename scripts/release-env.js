@@ -240,6 +240,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  RENDER_BETA_WEB_ORIGIN,
   approvedRenderBetaApi,
   approvedStudentApi,
   loadRenderBetaBinding,

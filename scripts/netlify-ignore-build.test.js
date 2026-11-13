@@ -39,7 +39,7 @@ test('Netlify skips changes confined to known non-web areas', () => {
 
 test('Netlify builds for web, shared application, asset, and configuration changes', () => {
   for (const filePath of [
-    'web/src/pages/index.astro',
+    'web/src/pages/index.html',
     'src/web/web-app.tsx',
     'assets/demo/peso-pose-overlay.mp4',
     'package.json',
@@ -68,7 +68,7 @@ test('changed-file discovery uses null-delimited paths and disables rename colla
   let invocation;
   const runGit = (...args) => {
     invocation = args;
-    return 'docs/usage notes.md\0web/src/pages/index.astro\0';
+    return 'docs/usage notes.md\0web/src/pages/index.html\0';
   };
 
   const changedFiles = listChangedFiles(
@@ -78,7 +78,7 @@ test('changed-file discovery uses null-delimited paths and disables rename colla
 
   assert.deepEqual(changedFiles, [
     'docs/usage notes.md',
-    'web/src/pages/index.astro',
+    'web/src/pages/index.html',
   ]);
   assert.deepEqual(invocation, [
     'git',

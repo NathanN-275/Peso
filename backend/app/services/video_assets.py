@@ -11,12 +11,14 @@ PLAYBACK_VERSION = "h264-720p-v1"
 THUMBNAIL_VERSION = "thumb-v3"
 
 
-def build_playback_storage_path(user_id: str, video_id: str) -> str:
-  return f"{user_id}/playback/{video_id}-{PLAYBACK_VERSION}.mp4"
+def build_playback_storage_path(user_id: str, video_id: str, attempt_id: str | None = None) -> str:
+  generation = f"{video_id}-{attempt_id}" if attempt_id else video_id
+  return f"{user_id}/playback/{generation}-{PLAYBACK_VERSION}.mp4"
 
 
-def build_thumbnail_storage_path(user_id: str, video_id: str) -> str:
-  return f"{user_id}/thumbnails/{video_id}-{THUMBNAIL_VERSION}.jpg"
+def build_thumbnail_storage_path(user_id: str, video_id: str, attempt_id: str | None = None) -> str:
+  generation = f"{video_id}-{attempt_id}" if attempt_id else video_id
+  return f"{user_id}/thumbnails/{generation}-{THUMBNAIL_VERSION}.jpg"
 
 
 def create_video_thumbnail(source_path: Path, output_path: Path, at_seconds: float = 1.0) -> Path:

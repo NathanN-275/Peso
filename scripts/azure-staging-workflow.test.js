@@ -53,3 +53,11 @@ test('Trivy report is retained when the blocking scan fails', () => {
 test('Retired West US deployment cannot run when main changes', () => {
   assert.doesNotMatch(source, /AZURE_STAGING_DEPLOY_ENABLED|rg-peso-staging-westus2|az resource update|azure\/login|id-token: write/);
 });
+
+
+test('Student publishing requires a manual run and is excluded from MVP main pushes', () => {
+  const triggers = source.split('on:\n')[1].split('\nconcurrency:')[0];
+  assert.match(triggers, /^  workflow_dispatch:/m);
+  assert.doesNotMatch(triggers, /^  (?:push|pull_request|schedule|workflow_run):/m);
+  assert.match(source, /if: github.event_name == 'workflow_dispatch' && github.ref == 'refs\/heads\/main'/);
+});

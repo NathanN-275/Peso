@@ -12,6 +12,7 @@ from app.services.config import get_settings
 from app.services.analyzed_video_renderer import _resolve_ffmpeg_binary
 from app.services.video_assets import (
   THUMBNAIL_VERSION,
+  build_playback_storage_path,
   build_thumbnail_storage_path,
   create_video_thumbnail,
 )
@@ -41,6 +42,12 @@ class VideoAssetsTest(unittest.TestCase):
     self.assertTrue(
       build_thumbnail_storage_path("user-1", "video-1").endswith("/video-1-thumb-v3.jpg")
     )
+
+  def test_attempt_keys_preserve_the_current_version_suffix(self) -> None:
+    self.assertEqual(build_thumbnail_storage_path("owner", "video", "attempt"),
+                     "owner/thumbnails/video-attempt-thumb-v3.jpg")
+    self.assertEqual(build_playback_storage_path("owner", "video", "attempt"),
+                     "owner/playback/video-attempt-h264-720p-v1.mp4")
 
   def test_thumbnail_generation_respects_mobile_rotation_metadata(self) -> None:
     with tempfile.TemporaryDirectory() as temp_dir:

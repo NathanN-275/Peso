@@ -5,7 +5,10 @@ on:
     paths:
       - render-beta.yaml
       - render-public-beta.yaml
+      - render-public-beta-staging.yaml
       - Dockerfile
+      - Dockerfile.mvp
+      - Dockerfile.mvp.dockerignore
       - backend/**
       - scripts/**
       - supabase/migrations/**
@@ -97,6 +100,7 @@ jobs:
           : "${RENDER_WORKSPACE_ID:?Configure the non-production Render workspace ID as a repository variable.}"
           render blueprints validate render-beta.yaml --workspace "$RENDER_WORKSPACE_ID"
           render blueprints validate render-public-beta.yaml --workspace "$RENDER_WORKSPACE_ID"
+          render blueprints validate render-public-beta-staging.yaml --workspace "$RENDER_WORKSPACE_ID"
 
       - name: Run policy and release-environment tests
         run: npm run test:policy
@@ -113,8 +117,8 @@ jobs:
           BACKEND_ALLOW_UNAUTHENTICATED_DEV_CLEANUP: "false"
         run: python -m unittest discover -s tests
 
-      - name: Build beta container from the root Dockerfile
-        run: docker build --pull --tag peso-render-beta:${{ github.sha }} .
+      - name: Build public MVP container without Azure
+        run: docker build --pull --file Dockerfile.mvp --tag peso-render-beta:${{ github.sha }} .
 
       - name: Run offline Docker runtime checks
         run: ./scripts/verify_container_runtime.sh peso-render-beta:${{ github.sha }}

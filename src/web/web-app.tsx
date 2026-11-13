@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useEffect, useMemo, useRef, useState,
+  type ComponentProps, type ComponentType, type KeyboardEventHandler,
+} from 'react';
 import {
   Image,
   Pressable,
@@ -23,14 +26,17 @@ import {
   useParams,
 } from 'react-router';
 import tokens from '../theme/tokens';
+import VideoThumbnail from '../components/VideoThumbnail';
 import { useAuth } from '../../context/AuthContext';
+import { getPrivateMediaEpoch, registerPrivateMediaRelease, releaseBrowserMedia } from '../../lib/privateMediaLifecycle';
+import { useVideoPlayback } from '../../lib/useVideoPlayback';
+import { issueBrowserPrivateDownload } from '../../lib/privateVideoPlayback';
 import { parseWebAuthRedirect } from '../../lib/auth-redirect';
 import {
   createSavedLiftExport,
   discardAnalyzedVideo,
   deleteSavedLifts,
   getSavedLiftExport,
-  getSavedVideoPlaybackUrl,
   getSavedVideos,
   triggerVideoAnalysis,
 } from '../../lib/backendApi';
@@ -58,6 +64,35 @@ import {
   WebVideoSetupRoute,
 } from './web-analysis-routes';
 import AuthChallenge from '../components/auth/AuthChallenge';
+
+// React Native Web exposes onKeyDown beyond the native Pressable typings.
+type WebPressableProps = ComponentProps<typeof Pressable> & {
+  onKeyDown?: KeyboardEventHandler<HTMLElement>;
+};
+const WebPressable = Pressable as ComponentType<WebPressableProps>;
+
+const radioKeyOffsets: Record<string, number> = {
+  ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1,
+};
+
+const handleCheckedControlKeyDown: KeyboardEventHandler<HTMLElement> = (event) => {
+  if (event.target !== event.currentTarget || event.altKey || event.ctrlKey || event.metaKey) return;
+  if (event.key === ' ') {
+    event.preventDefault();
+    if (!event.repeat) event.currentTarget.click();
+    return;
+  }
+  const offset = radioKeyOffsets[event.key];
+  if (typeof offset !== 'number' || event.currentTarget.getAttribute('role') !== 'radio') return;
+  const group = event.currentTarget.closest('[role="radiogroup"]');
+  const options = Array.from(group?.querySelectorAll<HTMLElement>('[role="radio"]:not([aria-disabled="true"])') ?? []);
+  const currentIndex = options.indexOf(event.currentTarget);
+  if (currentIndex < 0) return;
+  event.preventDefault();
+  const next = options[(currentIndex + offset + options.length) % options.length];
+  next.focus();
+  next.click();
+};
 
 const colors = {
   ...tokens.colors,
@@ -109,6 +144,8 @@ let savedLiftLibraryCache: {
 function invalidateSavedLiftLibraryCache() {
   savedLiftLibraryCache = null;
 }
+
+registerPrivateMediaRelease(invalidateSavedLiftLibraryCache);
 
 function getCachedSavedLifts(userId?: string): SavedVideo[] | null {
   const cache = savedLiftLibraryCache;
@@ -211,6 +248,25 @@ function Wordmark({ compact = false }: { compact?: boolean }) {
   );
 }
 
+function GeoAttribution() {
+  return (
+    <footer style={{
+      padding: '10px 16px',
+      textAlign: 'center',
+      fontFamily: 'Inter, system-ui, sans-serif',
+      fontSize: 12,
+      lineHeight: '20px',
+      color: '#A7B3C7',
+      backgroundColor: '#07090D',
+    }}>
+      IP Geolocation by{' '}
+      <a href="https://db-ip.com" target="_blank" rel="noopener noreferrer" aria-label="DB-IP (opens in a new tab)" style={{ color: '#8AB2FF', padding: 4 }}>DB-IP</a>
+      {' '}· US ranges adapted ·{' '}
+      <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer" aria-label="CC BY 4.0 license (opens in a new tab)" style={{ color: '#8AB2FF', padding: 4 }}>CC BY 4.0</a>
+    </footer>
+  );
+}
+
 function AuthLayout({
   eyebrow,
   title,
@@ -260,6 +316,7 @@ function AuthLayout({
           </Pressable>
         </View>
       </View>
+      <GeoAttribution />
     </ScrollView>
   );
 }
@@ -291,22 +348,6 @@ function Field({
         style={styles.input}
       />
     </View>
-  );
-}
-
-function CheckRow({ checked, label, onPress }: { checked: boolean; label: React.ReactNode; onPress: () => void }) {
-  return (
-    <Pressable
-      accessibilityRole="checkbox"
-      accessibilityState={{ checked }}
-      onPress={onPress}
-      style={styles.checkRow}
-    >
-      <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
-        {checked && <Text style={styles.checkboxMark}>✓</Text>}
-      </View>
-      <Text style={styles.checkLabel}>{label}</Text>
-    </Pressable>
   );
 }
 
@@ -353,7 +394,7 @@ function LoginScreen() {
         <Text style={styles.turnstileTitle}>Security check</Text>
         <AuthChallenge action="login" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
       </View>
-      {(error || captchaError || configError) && <Text selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
+      {(error || captchaError || configError) && <Text role="alert" aria-live="assertive" selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
       <Pressable accessibilityRole="link" onPress={() => navigate('/reset')}>
         <Text style={styles.inlineLink}>Forgot password?</Text>
       </Pressable>
@@ -401,15 +442,34 @@ function SignupScreen() {
   };
 
   return (
-    <AuthLayout eyebrow="Limited beta" title="Create your account" description="The free web beta is available through US IP addresses. IP location does not establish residency.">
+    <AuthLayout eyebrow="Limited beta" title="Create your account" description="Signup for the free web beta requires a US IP address. IP location does not establish residency.">
       <Field label="Email" placeholder="you@example.com" value={email} onChangeText={setEmail} />
       <Field label="Password" placeholder="At least 8 characters" secureTextEntry value={password} onChangeText={setPassword} />
-      <CheckRow checked={terms} onPress={() => setTerms(!terms)} label="I agree to the beta Terms and acknowledge the Privacy Policy." />
+      <label style={{
+        display: 'flex', alignItems: 'flex-start', gap: 10, minHeight: 40, cursor: 'pointer',
+        color: colors.secondaryText, fontFamily: fonts.regular, fontSize: 12, lineHeight: '19px',
+      }}>
+        <input
+          type="checkbox"
+          checked={terms}
+          onChange={(event) => setTerms(event.currentTarget.checked)}
+          style={{ width: 20, height: 20, margin: 0, flexShrink: 0, accentColor: colors.brand, colorScheme: 'dark' }}
+        />
+        I agree to the beta Terms and acknowledge the Privacy Policy.
+      </label>
+      <View style={styles.formFooterRow}>
+        <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ padding: 6 }}>
+          <Text style={styles.inlineLink}>Read beta Terms (opens in a new tab)</Text>
+        </a>
+        <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ padding: 6 }}>
+          <Text style={styles.inlineLink}>Read Privacy Policy (opens in a new tab)</Text>
+        </a>
+      </View>
       <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification">
         <Text style={styles.turnstileTitle}>Security check</Text>
         <AuthChallenge action="signup" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
       </View>
-      {(error || captchaError || configError) && <Text selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
+      {(error || captchaError || configError) && <Text role="alert" aria-live="assertive" selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
       <ActionButton label={submitting ? 'Creating account…' : error ? 'Retry account creation' : 'Create account'} disabled={submitting || !email.trim() || password.length < 8 || !terms || !captchaToken} onPress={() => void signUp()} />
       <View style={styles.formFooterRow}>
         <Text style={styles.mutedText}>Already have an account?</Text>
@@ -497,8 +557,8 @@ function ResetScreen() {
       <AuthLayout eyebrow="Account recovery" title="Choose a new password" description="Set a new password for your Peso Account.">
         <Field label="New password" placeholder="At least 8 characters" secureTextEntry value={password} onChangeText={setPassword} />
         <Field label="Confirm password" placeholder="Enter the same password again" secureTextEntry value={confirmPassword} onChangeText={setConfirmPassword} />
-        {(error || configError) && <Text selectable style={styles.formError}>{error ?? configError}</Text>}
-        {message && <Text selectable style={styles.formSuccess}>{message}</Text>}
+        {(error || configError) && <Text role="alert" aria-live="assertive" selectable style={styles.formError}>{error ?? configError}</Text>}
+        <Text role="status" aria-live="polite" selectable style={message ? styles.formSuccess : styles.emptyFormStatus}>{message}</Text>
         <ActionButton label={submitting ? 'Updating password…' : 'Update password'} disabled={submitting || !password || !confirmPassword} onPress={() => void completeRecovery()} />
         {message && <ActionButton label="Continue to Peso" variant="quiet" onPress={() => navigate('/')} />}
       </AuthLayout>
@@ -512,8 +572,8 @@ function ResetScreen() {
         <Text style={styles.turnstileTitle}>Security check</Text>
         <AuthChallenge action="reset_password" resetSignal={captchaReset} onTokenChange={setCaptchaToken} onError={setCaptchaError} />
       </View>
-      {(error || captchaError || configError) && <Text selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
-      {message && <Text selectable style={styles.formSuccess}>{message}</Text>}
+      {(error || captchaError || configError) && <Text role="alert" aria-live="assertive" selectable style={styles.formError}>{error ?? captchaError ?? configError}</Text>}
+      <Text role="status" aria-live="polite" selectable style={message ? styles.formSuccess : styles.emptyFormStatus}>{message}</Text>
       <ActionButton label={submitting ? 'Sending reset link…' : error ? 'Retry reset link' : 'Send reset link'} disabled={submitting || !email.trim() || !captchaToken} onPress={() => void reset()} />
       <ActionButton label="Back to sign in" variant="quiet" onPress={() => navigate('/login')} />
     </AuthLayout>
@@ -669,6 +729,7 @@ function AppShell() {
           <View style={styles.routeArea}>
             <Outlet />
           </View>
+          <GeoAttribution />
           {mobile && <Navigation mobile />}
         </View>
       </View>
@@ -677,7 +738,7 @@ function AppShell() {
 }
 
 function AccountRoute() {
-  const { session, initializing, configError } = useAuth();
+  const { session, mediaSessionKey, initializing, configError } = useAuth();
 
   if (initializing) {
     return (
@@ -695,7 +756,7 @@ function AccountRoute() {
     );
   }
 
-  return session ? <AppShell /> : <Navigate to="/login" replace />;
+  return session ? <WebAnalysisActivityProvider key={mediaSessionKey ?? session.user.id}><AppShell /></WebAnalysisActivityProvider> : <Navigate to="/login" replace />;
 }
 
 function PageScroll({ children }: { children: React.ReactNode }) {
@@ -874,8 +935,10 @@ function useSavedLiftLibrary() {
     if (!session?.access_token) return;
     setLoading(true);
     setError(null);
+    const epoch = getPrivateMediaEpoch();
     try {
       const nextLifts = await getSavedVideos(session.access_token, signal);
+      if (signal?.aborted || epoch !== getPrivateMediaEpoch()) return;
       if (user?.id) {
         savedLiftLibraryCache = {
           userId: user.id,
@@ -924,9 +987,10 @@ function LiftRow({
   const exercise = titleCase(lift.exercise_type);
   const reps = savedLiftRepCount(lift);
   return (
-    <Pressable
+    <WebPressable
       accessibilityRole={selectionMode ? 'checkbox' : 'link'}
-      accessibilityState={selectionMode ? { checked: selected } : undefined}
+      aria-checked={selectionMode ? selected : undefined}
+      onKeyDown={selectionMode ? handleCheckedControlKeyDown : undefined}
       accessibilityLabel={`${exercise}, ${savedLiftLoad(lift)}, ${reps} reps, ${formatSavedDate(lift.saved_at ?? lift.created_at)}`}
       onPress={onPress}
       style={({ pressed }) => [styles.liftRow, selected && styles.liftSelected, pressed && styles.liftRowPressed]}
@@ -936,7 +1000,8 @@ function LiftRow({
           {selected && <Text style={styles.checkboxMark}>✓</Text>}
         </View>
       )}
-      <Image source={lift.thumbnail_url ? { uri: lift.thumbnail_url } : previewImage} style={styles.liftThumbnail as ImageStyle} accessibilityIgnoresInvertColors />
+      <VideoThumbnail videoId={lift.id} available={lift.thumbnail_available === true && lift.storage_state !== 'pruned'} legacyUrl={lift.thumbnail_url}
+        style={styles.liftThumbnail as ImageStyle} placeholder={<Image source={previewImage} style={StyleSheet.absoluteFill} />} />
       <View style={styles.liftRowCopy}>
         <View style={styles.liftTitleRow}>
           <Text selectable style={styles.liftExercise}>{exercise}</Text>
@@ -945,7 +1010,7 @@ function LiftRow({
         <Text selectable style={styles.liftDate}>{formatSavedDate(lift.saved_at ?? lift.created_at)}</Text>
       </View>
       {!selectionMode && <Text style={styles.liftArrow}>›</Text>}
-    </Pressable>
+    </WebPressable>
   );
 }
 
@@ -1015,24 +1080,42 @@ function MetricCard({ label, value, detail }: { label: string; value: string; de
 
 function AnalyzedVideoPlayer({
   label,
-  sourceUri = '',
+  videoId,
+  accessToken,
   posterUri = '',
 }: {
   label: string;
-  sourceUri?: string;
+  videoId: string | null;
+  accessToken: string | undefined;
   posterUri?: string;
 }) {
+  const playback = useVideoPlayback(videoId, accessToken);
+  const sourceUri = typeof playback.source === 'object' && playback.source ? playback.source.uri : undefined;
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const resumeTime = useRef(0);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(18.933);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    const unregister = registerPrivateMediaRelease(() => {
+      setPlaying(false);
+      setCurrentTime(0);
+      resumeTime.current = 0;
+      releaseBrowserMedia(video);
+    });
+    return () => { unregister(); releaseBrowserMedia(video); };
+  }, [playback.revision, sourceUri]);
+
+  useEffect(() => { resumeTime.current = 0; }, [playback.scope]);
 
   const togglePlayback = async () => {
     const video = videoRef.current;
     if (!video) return;
 
     if (video.paused) {
-      await video.play();
+      try { await video.play(); } catch { playback.onPlaybackError(); }
     } else {
       video.pause();
     }
@@ -1054,19 +1137,31 @@ function AnalyzedVideoPlayer({
   return (
     <View accessibilityLabel={label}>
       <video
+        key={playback.revision}
         ref={videoRef}
         className="peso-analyzed-video"
+        crossOrigin={playback.privateRemote ? 'use-credentials' : undefined}
         src={sourceUri}
         poster={posterUri}
         playsInline
         preload="metadata"
         aria-label={label}
-        onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)}
-        onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+        onLoadedMetadata={(event) => {
+          setDuration(event.currentTarget.duration);
+          event.currentTarget.currentTime = Math.min(resumeTime.current, event.currentTarget.duration || 0);
+        }}
+        onTimeUpdate={(event) => {
+          if (event.currentTarget.currentSrc && event.currentTarget.readyState >= 1) {
+            resumeTime.current = event.currentTarget.currentTime; setCurrentTime(event.currentTarget.currentTime);
+          }
+        }}
+        onError={playback.onPlaybackError}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onEnded={() => setPlaying(false)}
       />
+      {playback.loading && <Text style={styles.mutedText}>Loading video…</Text>}
+      {playback.error && <View role="alert"><Text style={styles.formError}>{playback.error}</Text><ActionButton label="Retry playback" compact onPress={playback.retry} /></View>}
       <View style={styles.reviewControls}>
         <Pressable
           accessibilityRole="button"
@@ -1130,14 +1225,16 @@ function LiftGridCard({
 }) {
   const exercise = titleCase(lift.exercise_type);
   return (
-    <Pressable
+    <WebPressable
       accessibilityRole={selectionMode ? 'checkbox' : 'link'}
-      accessibilityState={selectionMode ? { checked: selected } : undefined}
+      aria-checked={selectionMode ? selected : undefined}
+      onKeyDown={selectionMode ? handleCheckedControlKeyDown : undefined}
       accessibilityLabel={`${exercise}, ${savedLiftLoad(lift)}, ${savedLiftRepCount(lift)} reps`}
       onPress={onPress}
       style={({ pressed }) => [styles.liftGridCard, selected && styles.liftSelected, pressed && styles.liftRowPressed]}
     >
-      <Image source={lift.thumbnail_url ? { uri: lift.thumbnail_url } : previewImage} style={styles.liftGridImage as ImageStyle} accessibilityIgnoresInvertColors />
+      <VideoThumbnail videoId={lift.id} available={lift.thumbnail_available === true && lift.storage_state !== 'pruned'} legacyUrl={lift.thumbnail_url}
+        style={styles.liftGridImage as ImageStyle} placeholder={<Image source={previewImage} style={StyleSheet.absoluteFill} />} />
       {selectionMode && (
         <View style={[styles.gridSelectionCheckbox, selected && styles.selectionCheckboxSelected]}>
           {selected && <Text style={styles.checkboxMark}>✓</Text>}
@@ -1148,7 +1245,88 @@ function LiftGridCard({
         <Text selectable style={styles.liftMeta}>{savedLiftLoad(lift)} · {savedLiftRepCount(lift)} reps</Text>
         <Text selectable style={styles.liftDate}>{formatSavedDate(lift.saved_at ?? lift.created_at)}</Text>
       </View>
-    </Pressable>
+    </WebPressable>
+  );
+}
+
+function PrivateArchiveDownload({ jobId, accessToken }: { jobId: string; accessToken: string }) {
+  const [lease, setLease] = useState<Awaited<ReturnType<typeof issueBrowserPrivateDownload>> | null>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState(false);
+  const request = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const release = () => {
+      request.current?.abort();
+      request.current = null;
+      setLease(null);
+      setPending(false);
+      setError(false);
+    };
+    const unregister = registerPrivateMediaRelease(release);
+    return () => {
+      request.current?.abort();
+      request.current = null;
+      unregister();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!lease) return;
+    const expiry = setTimeout(() => setLease(current => current === lease ? null : current),
+      Math.max(0, lease.expiresAt - Date.now()));
+    return () => clearTimeout(expiry);
+  }, [lease]);
+
+  const prepare = async () => {
+    if (request.current) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setPending(true);
+    setError(false);
+    try {
+      const next = await issueBrowserPrivateDownload({ kind: 'archive', id: jobId, asset: 'archive' },
+        accessToken, controller.signal);
+      if (controller.signal.aborted) return;
+      next.assertCurrent();
+      setLease(next);
+    } catch {
+      if (!controller.signal.aborted) setError(true);
+    } finally {
+      if (request.current === controller) {
+        request.current = null;
+        setPending(false);
+      }
+    }
+  };
+
+  let ready = lease;
+  try { ready?.assertCurrent(); } catch { ready = null; }
+  if (!ready) {
+    return (
+      <View>
+        {error && <Text role="alert" style={styles.formError}>Unable to prepare this download. Try again.</Text>}
+        <ActionButton label={pending ? 'Preparing download…' : error ? 'Retry ZIP download' : 'Prepare ZIP download'}
+          compact disabled={pending} onPress={() => void prepare()} />
+      </View>
+    );
+  }
+
+  const download = ready;
+  return (
+    <a href={download.href} referrerPolicy="origin"
+      style={{ color: colors.blueText, padding: 12, fontFamily: fonts.bold }}
+      onClick={event => {
+        try {
+          download.assertCurrent();
+        } catch {
+          event.preventDefault();
+          setLease(null);
+          setError(true);
+        }
+      }}>
+      Download ZIP
+    </a>
   );
 }
 
@@ -1179,6 +1357,7 @@ function SavedLiftsScreen() {
     [filter, lifts]
   );
   const exportStorageKey = user ? `peso.saved-lift-export-job:${user.id}` : null;
+  const privateMedia = process.env.EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED === 'true';
 
   useEffect(() => {
     if (typeof window !== 'undefined') window.localStorage.setItem('peso.saved-lifts.view', view);
@@ -1280,7 +1459,7 @@ function SavedLiftsScreen() {
   return (
     <PageScroll>
       <View style={styles.savedHeader}>
-        <View>
+        <View style={{ maxWidth: '100%' }}>
           <Text accessibilityRole="header" selectable style={styles.pageHeading}>Your Saved Lifts</Text>
           <Text selectable style={styles.pageSubheading}>One source-agnostic library shared by Peso web and mobile.</Text>
         </View>
@@ -1310,25 +1489,44 @@ function SavedLiftsScreen() {
                     : 'You can leave this page; preparation continues on the backend.'}
             </Text>
           </View>
-          {exportJob.status === 'completed' && <ActionButton label="Download ZIP" compact onPress={() => void downloadExport()} />}
+          {exportJob.status === 'completed' && (privateMedia
+            ? session?.access_token && <PrivateArchiveDownload key={exportJob.id} jobId={exportJob.id} accessToken={session.access_token} />
+            : <ActionButton label="Download ZIP" compact onPress={() => void downloadExport()} />)}
         </View>
       )}
 
       {actionError && <Text selectable style={styles.formError}>{actionError}</Text>}
 
       <View style={styles.savedControls}>
-        <View style={styles.filterRow} accessibilityRole="radiogroup">
+        <View style={styles.filterRow} accessibilityRole="radiogroup" accessibilityLabel="Filter Saved Lifts">
           {filters.map(({ value, label }) => (
-            <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: filter === value }} onPress={() => setFilter(value)} style={[styles.filterChip, filter === value && styles.filterChipActive]}>
+            <WebPressable
+              key={value}
+              accessibilityRole="radio"
+              aria-checked={filter === value}
+              tabIndex={filter === value ? 0 : -1}
+              onKeyDown={handleCheckedControlKeyDown}
+              onPress={() => setFilter(value)}
+              style={[styles.filterChip, filter === value && styles.filterChipActive]}
+            >
               <Text style={[styles.filterChipText, filter === value && styles.filterChipTextActive]}>{label}</Text>
-            </Pressable>
+            </WebPressable>
           ))}
         </View>
-        <View style={styles.viewToggle} accessibilityRole="radiogroup">
+        <View style={styles.viewToggle} accessibilityRole="radiogroup" accessibilityLabel="Saved Lift view">
           {(['list', 'grid'] as const).map((option) => (
-            <Pressable key={option} accessibilityRole="radio" accessibilityLabel={`${titleCase(option)} View`} accessibilityState={{ checked: view === option }} onPress={() => setView(option)} style={[styles.viewToggleButton, view === option && styles.viewToggleButtonActive]}>
+            <WebPressable
+              key={option}
+              accessibilityRole="radio"
+              accessibilityLabel={`${titleCase(option)} View`}
+              aria-checked={view === option}
+              tabIndex={view === option ? 0 : -1}
+              onKeyDown={handleCheckedControlKeyDown}
+              onPress={() => setView(option)}
+              style={[styles.viewToggleButton, view === option && styles.viewToggleButtonActive]}
+            >
               <Text style={[styles.filterChipText, view === option && styles.filterChipTextActive]}>{option === 'list' ? '☰' : '▦'} {titleCase(option)}</Text>
-            </Pressable>
+            </WebPressable>
           ))}
         </View>
       </View>
@@ -1385,22 +1583,7 @@ function SavedLiftDetailScreen() {
   const { liftId } = useParams();
   const { session } = useAuth();
   const { lifts, loading, error } = useSavedLiftLibrary();
-  const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
-  const [playbackError, setPlaybackError] = useState<string | null>(null);
   const lift = lifts.find((candidate) => candidate.id === liftId);
-
-  useEffect(() => {
-    if (!lift || !session?.access_token || lift.storage_state === 'pruned') return;
-    let active = true;
-    getSavedVideoPlaybackUrl(lift.id, session.access_token)
-      .then((response) => {
-        if (active) setPlaybackUrl(response.video_url);
-      })
-      .catch((loadError) => {
-        if (active) setPlaybackError(loadError instanceof Error ? loadError.message : 'Unable to load Saved Lift video.');
-      });
-    return () => { active = false; };
-  }, [lift?.id, lift?.storage_state, session?.access_token]);
 
   if (loading) return <PageScroll><Text selectable style={styles.mutedText}>Loading Saved Lift…</Text></PageScroll>;
   if (error) return <PageScroll><Text selectable style={styles.formError}>{error}</Text></PageScroll>;
@@ -1417,7 +1600,6 @@ function SavedLiftDetailScreen() {
   const detectedReps = lift.analysis?.result_json.rep_count ?? lift.analysis?.rep_data.length ?? 0;
   const performedReps = lift.performed_reps ?? lift.corrected_rep_count ?? detectedReps;
   const cue = lift.analysis?.coaching_feedback[0] ?? lift.analysis?.summary[0] ?? 'No saved coaching cue is available.';
-  const posterUri = lift.thumbnail_url ?? '';
 
   return (
     <PageScroll>
@@ -1426,13 +1608,13 @@ function SavedLiftDetailScreen() {
       </View>
       <View style={styles.reviewGrid}>
         <View style={styles.reviewMedia}>
-          {playbackUrl ? (
-            <AnalyzedVideoPlayer label="Saved Lift video controls" sourceUri={playbackUrl} posterUri={posterUri} />
+          {lift.storage_state !== 'pruned' ? (
+            <AnalyzedVideoPlayer label="Saved Lift video controls" videoId={lift.id} accessToken={session?.access_token} posterUri={process.env.EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED === 'true' ? '' : lift.thumbnail_url ?? ''} />
           ) : (
-            <Image source={lift.thumbnail_url ? { uri: lift.thumbnail_url } : previewImage} style={styles.reviewImage as ImageStyle} accessibilityLabel={`${exercise} Saved Lift preview`} />
+            <VideoThumbnail videoId={lift.id} available={false} legacyUrl={null} style={styles.reviewImage as ImageStyle}
+              label={`${exercise} Saved Lift preview`} placeholder={<Image source={previewImage} style={StyleSheet.absoluteFill} />} />
           )}
           {lift.storage_state === 'pruned' && <Text selectable style={styles.mediaNotice}>This Saved Lift video has expired; analysis insights remain available.</Text>}
-          {playbackError && <Text selectable style={styles.formError}>{playbackError}</Text>}
         </View>
         <View style={styles.reviewPanel}>
           <Text style={styles.eyebrow}>{formatSavedDate(lift.saved_at ?? lift.created_at).toUpperCase()}</Text>
@@ -1498,11 +1680,25 @@ function SettingsScreen() {
   const { signOut } = useAuth();
   const [analytics, setAnalytics] = useState(false);
   const [updates, setUpdates] = useState(true);
+  const [signingOut, setSigningOut] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+  const handleSignOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    setLogoutError(null);
+    try {
+      await signOut();
+      navigate('/login', { replace: true });
+    } catch {
+      setLogoutError('Unable to complete sign out. Check your connection and try again.');
+    } finally { setSigningOut(false); }
+  };
   return (
     <PageScroll>
       <View style={styles.settingsPage}>
         <Text accessibilityRole="header" selectable style={styles.pageHeading}>Settings</Text>
         <Text selectable style={styles.pageSubheading}>Control optional product data and account preferences.</Text>
+        {logoutError && <Text accessibilityRole="alert" style={styles.formError}>{logoutError}</Text>}
         <View style={styles.settingsCard}>
           <SettingRow title="Product analytics" description="Opt in to the limited event list. Session replay stays off." value={analytics} onChange={setAnalytics} />
           <SettingRow title="Beta updates" description="Receive important testing and availability updates." value={updates} onChange={setUpdates} />
@@ -1510,7 +1706,7 @@ function SettingsScreen() {
         <View style={styles.settingsCard}>
           <Pressable accessibilityRole="link" onPress={() => window.location.assign('/privacy')} style={styles.settingsLink}><Text style={styles.settingTitle}>Privacy Policy</Text><Text style={styles.liftArrow}>›</Text></Pressable>
           <Pressable accessibilityRole="link" onPress={() => window.location.assign('/terms')} style={styles.settingsLink}><Text style={styles.settingTitle}>Terms of Use</Text><Text style={styles.liftArrow}>›</Text></Pressable>
-          <Pressable accessibilityRole="link" onPress={() => { void signOut().then(() => navigate('/login', { replace: true })); }} style={styles.settingsLink}><Text style={[styles.settingTitle, { color: colors.red }]}>Sign out</Text><Text style={styles.liftArrow}>›</Text></Pressable>
+          <Pressable accessibilityRole="button" disabled={signingOut} accessibilityState={{ disabled: signingOut, busy: signingOut }} onPress={() => void handleSignOut()} style={styles.settingsLink}><Text style={[styles.settingTitle, { color: colors.red }]}>{signingOut ? 'Signing out…' : 'Sign out'}</Text><Text style={styles.liftArrow}>›</Text></Pressable>
         </View>
       </View>
     </PageScroll>
@@ -1519,7 +1715,6 @@ function SettingsScreen() {
 
 export default function WebApp() {
   return (
-    <WebAnalysisActivityProvider>
       <Routes>
         <Route path="/login" element={<LoginScreen />} />
         <Route path="/signup" element={<SignupScreen />} />
@@ -1540,7 +1735,6 @@ export default function WebApp() {
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </WebAnalysisActivityProvider>
   );
 }
 
@@ -1604,6 +1798,8 @@ const styles = StyleSheet.create({
   form: { gap: 16, paddingTop: 28 },
   formError: { color: colors.red, fontFamily: fonts.medium, fontSize: 11, lineHeight: 17 },
   formSuccess: { color: colors.green, fontFamily: fonts.medium, fontSize: 11, lineHeight: 17 },
+  // Keep the live status region mounted without adding an empty form gap.
+  emptyFormStatus: { position: 'absolute', width: 1, height: 1, overflow: 'hidden' },
   field: { gap: 7 },
   fieldLabel: { color: colors.secondaryText, fontFamily: fonts.semibold, fontSize: 11 },
   input: { width: '100%', height: 48, paddingHorizontal: 14, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 11, backgroundColor: colors.inputBg, color: colors.textPrimary, fontFamily: fonts.regular, fontSize: 14 },
@@ -1621,11 +1817,7 @@ const styles = StyleSheet.create({
   buttonDisabled: { opacity: 0.4 },
   buttonText: { color: '#FFFFFF', fontFamily: fonts.bold, fontSize: 12 },
   buttonQuietText: { color: colors.blueText },
-  checkRow: { minHeight: 40, flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  checkbox: { width: 20, height: 20, borderWidth: 1, borderColor: '#52617A', borderRadius: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.inputBg },
-  checkboxChecked: { borderColor: colors.brand, backgroundColor: colors.brand },
   checkboxMark: { color: '#FFFFFF', fontFamily: fonts.bold, fontSize: 12 },
-  checkLabel: { flex: 1, color: colors.secondaryText, fontFamily: fonts.regular, fontSize: 12, lineHeight: 19 },
   turnstileFixture: { padding: 14, borderWidth: 1, borderStyle: 'dashed', borderColor: '#44526A', borderRadius: 10, backgroundColor: '#0A0E15' },
   turnstileTitle: { color: colors.secondaryText, fontFamily: fonts.semibold, fontSize: 11 },
   turnstileWidget: { minHeight: 66, marginTop: 10 },

@@ -1,0 +1,118 @@
+# Fresh Public Web Beta staging services. Review the exact source before provisioning.
+services:
+  - type: web
+    name: peso-public-beta-staging-api
+    runtime: docker
+    plan: 0.5c-512mb
+    dockerfilePath: ./Dockerfile.mvp
+    dockerContext: .
+    healthCheckPath: /health/ready
+    autoDeployTrigger: "off"
+    envVars:
+      - key: PESO_RUNTIME_PROFILE
+        value: web-mvp
+      - key: BACKEND_ENV
+        value: production
+      - key: PESO_DEPLOYMENT_ENVIRONMENT
+        value: student
+      - key: BACKEND_CORS_ORIGINS
+        value: https://main.usepeso.com
+      - key: BACKEND_CORS_ALLOW_PRIVATE_NETWORK
+        value: "false"
+      - key: PRIVATE_MEDIA_ENABLED
+        sync: false
+      - key: PRIVATE_MEDIA_PUBLIC_ORIGIN
+        value: https://api-staging.usepeso.com
+      - key: PRIVATE_MEDIA_BROWSER_ORIGINS
+        value: https://main.usepeso.com
+      - key: SUPABASE_URL
+        value: https://iseqgaewjpjcxrndibep.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: CLEANUP_JOB_TOKEN
+        sync: false
+      - key: BUDGET_SHUTDOWN_TOKEN
+        sync: false
+      - key: INTAKE_STOP_PROJECTED_MONTHLY_USD
+        value: "50"
+      - key: SAVED_VIDEO_STORAGE_TTL_HOURS
+        value: "72"
+      - key: VIDEO_BUCKET
+        value: videos
+      - key: UPLOAD_RESERVATIONS_ENABLED
+        value: "true"
+      - key: UPLOAD_STORAGE_PROVIDER
+        value: supabase
+      - key: MAX_USER_IN_PROGRESS_VIDEOS
+        value: "3"
+      - key: ANALYSIS_PROFILE_MODE
+        value: legacy
+      - key: ANALYSIS_TRACE_ENABLED
+        value: "false"
+
+  - type: worker
+    name: peso-public-beta-staging-worker
+    runtime: docker
+    plan: 1c-2g
+    dockerfilePath: ./Dockerfile.mvp
+    dockerContext: .
+    dockerCommand: python -m app.jobs.analysis_worker
+    autoDeployTrigger: "off"
+    maxShutdownDelaySeconds: 300
+    envVars:
+      - key: PESO_RUNTIME_PROFILE
+        value: web-mvp
+      - key: BACKEND_ENV
+        value: production
+      - key: PESO_DEPLOYMENT_ENVIRONMENT
+        value: student
+      - key: BACKEND_CORS_ORIGINS
+        value: https://main.usepeso.com
+      - key: BACKEND_CORS_ALLOW_PRIVATE_NETWORK
+        value: "false"
+      - key: PRIVATE_MEDIA_ENABLED
+        sync: false
+      - key: PRIVATE_MEDIA_PUBLIC_ORIGIN
+        value: https://api-staging.usepeso.com
+      - key: PRIVATE_MEDIA_BROWSER_ORIGINS
+        value: https://main.usepeso.com
+      - key: SUPABASE_URL
+        value: https://iseqgaewjpjcxrndibep.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: CLEANUP_JOB_TOKEN
+        sync: false
+      - key: BUDGET_SHUTDOWN_TOKEN
+        sync: false
+      - key: INTAKE_STOP_PROJECTED_MONTHLY_USD
+        value: "50"
+      - key: SAVED_VIDEO_STORAGE_TTL_HOURS
+        value: "72"
+      - key: VIDEO_BUCKET
+        value: videos
+      - key: UPLOAD_RESERVATIONS_ENABLED
+        value: "true"
+      - key: UPLOAD_STORAGE_PROVIDER
+        value: supabase
+      - key: MAX_USER_IN_PROGRESS_VIDEOS
+        value: "3"
+      - key: ANALYSIS_PROFILE_MODE
+        value: legacy
+      - key: ANALYSIS_TRACE_ENABLED
+        value: "false"
+      - key: ANALYSIS_WORKER_LEASE_SECONDS
+        value: "3600"
+      - key: ANALYSIS_WORKER_POLL_SECONDS
+        value: "2"
+      - key: ANALYSIS_WORKER_RECOVERY_SECONDS
+        value: "60"
+      - key: ANALYSIS_NORMAL_TIMEOUT_SECONDS
+        value: "180"
+      - key: ANALYSIS_MAX_TIMEOUT_SECONDS
+        value: "600"
+      - key: ANALYSIS_LONG_CLIP_TIMEOUT_MULTIPLIER
+        value: "3"

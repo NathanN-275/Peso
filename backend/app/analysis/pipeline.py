@@ -35,10 +35,9 @@ from .pose_validator import is_body_point_occluded_by_plate, validate_squat_pose
 from .tracking_core import detect_tracking_objects, run_apache_v1_tracking, tracking_core_config_from_env
 from ..services.config import get_settings
 from ..services.analysis_trace import get_analysis_trace_service
-from ..services.storage_service import IMMUTABLE_CACHE_CONTROL_SECONDS, StorageService
+from ..services.storage_service import StorageService
+from ..services.generated_media_writes import write_generated_media
 from ..services.video_assets import (
-  build_playback_storage_path,
-  build_thumbnail_storage_path,
   compress_video_for_playback,
   create_video_thumbnail,
 )
@@ -922,33 +921,32 @@ def _finalize_storage_assets(
   if not user_id:
     logger.warning("Skipping storage asset finalization for video %s because user_id is missing.", video_id)
     return
+  if video.get("id") != video_id:
+    raise ValueError("Video identity does not match asset finalization.")
 
   thumbnail_temp: Path | None = None
   compressed_temp: Path | None = None
   thumbnail_path: str | None = None
   original_path = require_user_storage_path(str(video["storage_path"]), user_id, "storage_path")
+  analysis_lease = repository.analysis_write_binding()
 
   try:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_thumbnail:
       thumbnail_temp = Path(temp_thumbnail.name)
 
-    thumbnail_path = build_thumbnail_storage_path(user_id, video_id)
     create_video_thumbnail(source_path, thumbnail_temp)
-    storage.upload_file(
-      thumbnail_path,
-      thumbnail_temp,
-      "image/jpeg",
-      cache_control=IMMUTABLE_CACHE_CONTROL_SECONDS,
+    thumbnail_path = write_generated_media(
+      video=video, purpose="thumbnail", local_path=thumbnail_temp,
+      storage=storage, analysis_lease=analysis_lease,
     )
     try:
       repository.update_video(video_id, {"thumbnail_path": thumbnail_path})
     except Exception:
       logger.exception(
-        "Failed to save thumbnail metadata for video %s; deleting uploaded thumbnail %s.",
+        "Unable to confirm thumbnail metadata for video %s; keeping tracked upload %s pending.",
         video_id,
         thumbnail_path,
       )
-      storage.delete_storage_path(thumbnail_path)
       raise
     logger.info(
       "Uploaded thumbnail for video %s to %s size_bytes=%s.",
@@ -967,13 +965,10 @@ def _finalize_storage_assets(
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_compressed:
       compressed_temp = Path(temp_compressed.name)
 
-    playback_path = build_playback_storage_path(user_id, video_id)
     compress_video_for_playback(source_path, compressed_temp)
-    storage.upload_file(
-      playback_path,
-      compressed_temp,
-      "video/mp4",
-      cache_control=IMMUTABLE_CACHE_CONTROL_SECONDS,
+    playback_path = write_generated_media(
+      video=video, purpose="playback", local_path=compressed_temp,
+      storage=storage, analysis_lease=analysis_lease,
     )
     try:
       repository.update_video(
@@ -987,17 +982,16 @@ def _finalize_storage_assets(
       )
     except Exception:
       logger.exception(
-        "Failed to save playback metadata for video %s; deleting uploaded playback %s.",
+        "Unable to confirm playback metadata for video %s; keeping tracked upload %s pending.",
         video_id,
         playback_path,
       )
-      storage.delete_storage_path(playback_path)
       raise
 
     if original_path != playback_path:
       try:
         storage.delete_storage_path(original_path)
-        logger.info("Deleted original uploaded video for %s at %s.", video_id, original_path)
+        logger.info("Storage acknowledged original-source deletion for %s at %s.", video_id, original_path)
       except Exception as error:
         logger.warning("Unable to delete original uploaded video for %s at %s: %s", video_id, original_path, error)
 
@@ -1413,12 +1407,16 @@ def _refresh_pressing_result_from_barbell(
 def analyze_video(
   video_id: str,
   *,
+  job_id: str,
+  worker_id: str,
+  attempt_count: int,
   progress_callback: Callable[[str], None] | None = None,
 ) -> None:
   # The pipeline loads the video, estimates pose, then stores results.
   analysis_started = time.perf_counter()
   stage_timings_ms: dict[str, int] = {}
   repository = VideoRepository()
+  repository.bind_analysis_lease(job_id, worker_id, attempt_count)
   storage = StorageService()
   settings = get_settings()
   trace = None
@@ -1987,7 +1985,10 @@ def analyze_video(
     trace_call("complete", result, dict(stage_timings_ms))
   except Exception as error:
     trace_call("fail", error, dict(stage_timings_ms))
-    repository.update_video(video_id, {"status": "failed"})
+    try:
+      repository.update_video(video_id, {"status": "failed"})
+    except Exception:
+      logger.warning("Unable to publish analysis failure for video %s.", video_id)
     raise RuntimeError(
       f"Video analysis failed for {video_id}: {error}\n{traceback.format_exc()}"
     ) from error

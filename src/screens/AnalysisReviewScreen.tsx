@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEvent } from 'expo';
 import { VideoView, useVideoPlayer } from 'expo-video';
-import { useEffect, useMemo, useState } from 'react';
+import { attachPrivateMediaSource } from '../../lib/privateMediaLifecycle';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   LayoutChangeEvent,
@@ -12,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
+import { useVideoPlayback } from '../../lib/useVideoPlayback';
 import { discardAnalyzedVideo, saveAnalyzedVideo } from '../../lib/backendApi';
 import BarbellPathOverlay from '../components/BarbellPathOverlay';
 import ConfirmationDialog from '../components/ConfirmationDialog';
@@ -146,17 +148,24 @@ export default function AnalysisReviewScreen({
   const [showSavedDeleteSheet, setShowSavedDeleteSheet] = useState(false);
   const [showWorkoutDetailsSheet, setShowWorkoutDetailsSheet] = useState(false);
   const [wasPlayingBeforeScrub, setWasPlayingBeforeScrub] = useState(false);
-  const mediaAvailable = Boolean(videoUri);
+  const playback = useVideoPlayback(result.video_id, session?.access_token, videoUri);
+  const mediaAvailable = Boolean(playback.source);
+  const resumeTime = useRef(0);
   const showQualityWarning = shouldShowQualityAdvisory(qualityPreflight, mode)
     && !qualityAdvisoryAcknowledged
     && dismissedQualityAdvisoryVideoId !== result.video_id;
 
-  const player = useVideoPlayer(videoUri, (videoPlayer) => {
+  const player = useVideoPlayer(null, (videoPlayer) => {
     // Configure playback for review mode instead of normal video controls.
     videoPlayer.loop = false;
     videoPlayer.muted = true;
     videoPlayer.timeUpdateEventInterval = 0.05;
   });
+  useEffect(() => attachPrivateMediaSource(player, playback.source,
+    () => playback.lease?.assertCurrent(),
+    () => { player.currentTime = resumeTime.current; }, playback.onPlaybackError),
+  [player, playback.source, playback.lease, playback.revision, playback.onPlaybackError]);
+  useEffect(() => { resumeTime.current = 0; }, [result.video_id, videoUri, playback.scope]);
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
   const { status, error } = useEvent(player, 'statusChange', {
     status: player.status,
@@ -179,8 +188,11 @@ export default function AnalysisReviewScreen({
 
   useEffect(() => {
     // Keep the scrubber state in sync with the native player clock.
-    setCurrentTime(timeUpdate.currentTime);
-  }, [timeUpdate.currentTime]);
+    if (playback.source && status === 'readyToPlay') {
+      resumeTime.current = timeUpdate.currentTime;
+      setCurrentTime(timeUpdate.currentTime);
+    }
+  }, [timeUpdate.currentTime, status, playback.source]);
 
   useEffect(() => {
     const nextDuration = sourceLoad.duration || player.duration || result.duration || 0;
@@ -191,10 +203,8 @@ export default function AnalysisReviewScreen({
   }, [player.duration, result.duration, sourceLoad.duration]);
 
   useEffect(() => {
-    if (error?.message) {
-      setErrorMessage(error.message);
-    }
-  }, [error?.message]);
+    if (status === 'error') playback.onPlaybackError();
+  }, [status, error, playback.onPlaybackError]);
 
   const poseFrame = useMemo(
     () => findInterpolatedPoseFrame(result.poseFrames, currentTime),
@@ -508,6 +518,7 @@ export default function AnalysisReviewScreen({
               <>
                 <VideoView
                   player={player}
+                  crossOrigin={playback.privateRemote ? 'use-credentials' : undefined}
                   style={styles.video}
                   nativeControls={false}
                   contentFit="cover"
@@ -607,6 +618,8 @@ export default function AnalysisReviewScreen({
             />
           ) : null}
 
+          {playback.loading ? <ActivityIndicator accessibilityLabel="Loading video" color={tokens.colors.textPrimary} /> : null}
+          {playback.error ? <View accessibilityRole="alert"><Text style={styles.errorText}>{playback.error}</Text><Pressable accessibilityRole="button" onPress={playback.retry}><Text style={styles.topButtonText}>Retry playback</Text></Pressable></View> : null}
           {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 
           <View style={styles.bottomActions}>

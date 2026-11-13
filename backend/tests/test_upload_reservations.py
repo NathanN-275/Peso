@@ -149,20 +149,26 @@ class UploadReservationRoutesTest(unittest.TestCase):
     repository, supabase = MagicMock(), MagicMock()
     repository.reserve.return_value = {}
     bucket = supabase.storage.from_.return_value
+    app = FastAPI()
+    app.include_router(upload_reservation_router)
+    app.dependency_overrides[get_current_user_id] = lambda: USER_ID
 
     with patch("app.routes.upload_reservations.get_settings", return_value=settings), patch(
       "app.routes.upload_reservations.UploadReservationRepository", return_value=repository,
     ), patch("app.services.storage_service.get_settings", return_value=settings), patch(
       "app.services.storage_service.get_supabase_admin_client", return_value=supabase,
     ):
-      response = create_upload_reservation(self.request(), USER_ID)
+      response = TestClient(app).post("/upload-reservations", json=self.request().model_dump())
 
-    self.assertTrue(response.blob_path.startswith(f"{USER_ID}/source/"))
-    self.assertEqual(response.upload_url, f"/upload-reservations/{response.reservation_id}/content")
-    self.assertEqual(response.upload_method, "PUT")
-    self.assertEqual(response.upload_body_format, "raw")
-    self.assertEqual(response.upload_authentication, "bearer")
-    self.assertEqual(response.upload_headers, {"Content-Type": "video/mp4", "If-None-Match": "*"})
+    self.assertEqual(response.status_code, 201)
+    response = response.json()
+
+    self.assertTrue(response['blob_path'].startswith(f"{USER_ID}/source/"))
+    self.assertEqual(response['upload_url'], f"/upload-reservations/{response['reservation_id']}/content")
+    self.assertEqual(response['upload_method'], "PUT")
+    self.assertEqual(response['upload_body_format'], "raw")
+    self.assertEqual(response['upload_authentication'], "bearer")
+    self.assertEqual(response['upload_headers'], {"Content-Type": "video/mp4", "If-None-Match": "*"})
     bucket.create_signed_upload_url.assert_not_called()
 
   def test_expired_reservation_cannot_be_completed(self) -> None:

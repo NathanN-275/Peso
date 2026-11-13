@@ -1,0 +1,394 @@
+{
+  "schemaVersion": 1,
+  "evidenceBaseCommit": "98229d53aaf17571fe0b3583f7cd72fb2ec50b12",
+  "projectRef": "jfgiydtrskpqxyorvvbc",
+  "catalog": [
+    {
+      "file": "202604140001_video_analysis_pipeline.sql",
+      "sha256": "7f9954a59e74f7d9879e64edc5eafc9d02bcadcb846b1c4b0c68cdc99a0019e0"
+    },
+    {
+      "file": "202604140002_fix_videos_rls.sql",
+      "sha256": "1d2e0966217b0f633c1d9e4f9be6c9f419f86bf21b9197ab1d4dc6818a42950d"
+    },
+    {
+      "file": "202605110001_video_save_state.sql",
+      "sha256": "4112f830becc91e948be78c39ead97ef46c91b3d1540e1e3c921215ccfb3109c"
+    },
+    {
+      "file": "202605160001_video_save_state_v2.sql",
+      "sha256": "57f17742c5e9acf9b86d42fca11a69e796e81692011f6db2439a1fe86f9580e5"
+    },
+    {
+      "file": "202605240001_storage_egress_cleanup.sql",
+      "sha256": "8c7b8c27ab1477d8638dc638cdc0339cbc7a4c4f934dd73872c95048c0b1a959"
+    },
+    {
+      "file": "202605270001_storage_retention_metadata.sql",
+      "sha256": "7a201669e3cfbb4bea01a5e54a1bfd022bff58b8c49aaaa2ac5836358ab89cc1"
+    },
+    {
+      "file": "202606120001_tracking_setup.sql",
+      "sha256": "8380954a6e9e6df44e293b9ddb049fa717db41d4ef70f4cadde38af9cd90b35d"
+    },
+    {
+      "file": "20260630225059_user_profile.sql",
+      "sha256": "a5b0b561fdca409fad27fc86bbf2eafd03f61eae32d02320774db1c208c1ee7e"
+    },
+    {
+      "file": "202607080001_video_security_hardening.sql",
+      "sha256": "3517c127c5a7cf1779be2f207afb546408dcd910ba5f3340a773a8197e4a47c6"
+    },
+    {
+      "file": "202607080002_video_path_shape_hardening.sql",
+      "sha256": "999bc3e554fa3bfd6f7b95fd3d28e9f3691db5fcc1546735a56ae443e5530111"
+    },
+    {
+      "file": "202607120001_profile_infrastructure_repair.sql",
+      "sha256": "a5b0b561fdca409fad27fc86bbf2eafd03f61eae32d02320774db1c208c1ee7e"
+    },
+    {
+      "file": "20260713233319_durable_analysis_jobs.sql",
+      "sha256": "8b95ced7367f2a762b9ccc943668b630a79f5639221036f59d2afd1f7c8804a8"
+    },
+    {
+      "file": "202607150001_coaching_save_metadata.sql",
+      "sha256": "40687437ec262b65d5c02eb36cdd104a677831950b11af51fc0eb18883c3d73b"
+    },
+    {
+      "file": "202607250001_workout_save_metadata.sql",
+      "sha256": "61a63ddf80b12b3e844052c137e6484dda8eb7c143b0c47b94c87a959d269c33"
+    },
+    {
+      "file": "202608030001_optional_workout_save_metadata.sql",
+      "sha256": "99df65a1c0815555ed61d491094b7c940e1c9219961672c066eee1e283bdb639"
+    },
+    {
+      "file": "20260805055143_saved_lift_export_jobs.sql",
+      "sha256": "7c572245791414c4fe52d7544d4b162f2adef0373d69916393bbc5755f4573d5"
+    },
+    {
+      "file": "202608060001_side_squat_quality_preflight.sql",
+      "sha256": "2e42f6558782b3c98674beac9c4dae97d4e03ef7ff4a00a1896cfcc147aa394b"
+    },
+    {
+      "file": "202608170001_analysis_job_observability.sql",
+      "sha256": "884de4633baa0eef3eef3994cdbb19ce6b9daf151ee08bcdc02410f1906820f5"
+    },
+    {
+      "file": "20260825033422_harden_video_upload_object_policy.sql",
+      "sha256": "c79991fdcd21e0c792f27e1f59027ac0c85098afbcc6e385bba68ed52eeb9065"
+    },
+    {
+      "file": "202608260001_harden_public_api_privileges.sql",
+      "sha256": "ef94213becff73bec82614bc40ba2fd644c668874862ac4d76b422a132dc2b92"
+    },
+    {
+      "file": "202608270001_add_analysis_job_scaler_signal.sql",
+      "sha256": "0a4c8cea39964c581d7f7ee4c79361593e5ae01198747348699f2a37b759acd9"
+    },
+    {
+      "file": "202608300001_azure_analysis_queue_scaler.sql",
+      "sha256": "9f6064153d7efbd4a305b6595aa79742b7c5732f5a73744c93e275b9657a1c44"
+    },
+    {
+      "file": "202609030001_upload_reservations.sql",
+      "sha256": "3760e5bd9e3c0e9ac24cb8681407991764321eee216be9fa411972467fa134c5"
+    },
+    {
+      "file": "202609210001_unsaved_video_retention.sql",
+      "sha256": "6fd3cb0829d1546da85b88700754fb88c3e611f471cd575be2c914d0921f8cb7"
+    },
+    {
+      "file": "202609210002_retention_deletion_outbox.sql",
+      "sha256": "9ae45caa43ee7a7c0ff02e532241e2b974d7084317ccbf27625f6b3815cd1f70"
+    },
+    {
+      "file": "20260922002632_intake_stop_reason.sql",
+      "sha256": "aea00a3a76741c4dafb2b5dc5fd87bd94dc6808837a868ff2d8dbc8155de512b"
+    },
+    {
+      "file": "20260922003008_us_ip_beta_admission.sql",
+      "sha256": "11114eeaeb32bf5eb6294005acffc416a1b1dfdd26f1ee3a6b919275b9ce6a7c"
+    },
+    {
+      "file": "20260923224101_budget_alert_delivery.sql",
+      "sha256": "936786190d5b96d6d24385936c89226b325c3e9974e52b701a4209120026fa75"
+    },
+    {
+      "file": "20261026170415_atomic_video_media_revocation.sql",
+      "sha256": "e18418f30ac6bdcac39a234efb42c0a65296ab2eea8b00c7dafb28cb3442aaef"
+    },
+    {
+      "file": "20261026173152_private_media_provider_session_decision.sql",
+      "sha256": "fd7e09a635b9e1e4c5cff76f85036077b7bfbfd4cc49e77577e8927bc6152840"
+    },
+    {
+      "file": "20261026182051_private_media_grants.sql",
+      "sha256": "92dbebb3ee7f89e428d8a4765227550eb6b2468a418d8fc07c916fcd4d117734"
+    },
+    {
+      "file": "20261026185845_private_media_logout_receipts.sql",
+      "sha256": "d2fe38700a92b1b372ff20dcf4e5524fdd7f431a1b4439d97195b96a750a8e72"
+    },
+    {
+      "file": "20261027173544_complete_video_media_deletion.sql",
+      "sha256": "f68f28a2908634d72e473e5e30955f9c6164c65f2f6eba0e3548e71c12cdffe7"
+    },
+    {
+      "file": "20261027182727_queue_video_revocation_fence.sql",
+      "sha256": "a9aafb865c4a344a788be7a26c4ca7dd3e46c9ecd31a7f885eb0578d5b3469b2"
+    },
+    {
+      "file": "20261027194638_archive_publication_fence.sql",
+      "sha256": "24be81681f6a0821d38cd5bd9e12d789134b6bdd33c3aa592d12a1169f26c607"
+    },
+    {
+      "file": "20261027194652_analysis_publication_fence.sql",
+      "sha256": "7d757bbdc6f14287c0f5f076e44b2da09b4ec8b41d0b4a7405b54b68c9859982"
+    },
+    {
+      "file": "20261028190657_saved_lift_deletion_receipts.sql",
+      "sha256": "df3979e646ed95e99ce7067d4fa5d87b928af310ebb678e79e5f54dd9ffeeb7a"
+    },
+    {
+      "file": "20261029020225_us_ip_expiry_wall_clock.sql",
+      "sha256": "11cff17c44983fdadeb3337bcf4fd5c09c8757b7fd9f21a59a08811bf1c35702"
+    },
+    {
+      "file": "20261029173814_private_media_owner_deletion_fence.sql",
+      "sha256": "9b8dc60764cb44300b084a86aba5efdb42b4e2240e445bbc707a05288a314282"
+    },
+    {
+      "file": "20261029175000_owner_upload_publication_fence.sql",
+      "sha256": "bf38cb2431c6a5ecfeaa8b712c3d5eaa0293c6bc9cbfd8ea6aa53adeb9e6f9ff"
+    },
+    {
+      "file": "20261029180203_owner_analysis_admission.sql",
+      "sha256": "093b70d09e0fb035384d7ca5ba74e1afef130a64e898a074ea78f0536e52fff1"
+    },
+    {
+      "file": "20261029181358_owner_archive_publication_fence.sql",
+      "sha256": "fa6d256613854e4c660ff508619b3715ef09c1f61cb786397710d9d2da4b4d70"
+    },
+    {
+      "file": "20261029210252_owner_profile_storage_admission.sql",
+      "sha256": "217a626a5772eda76490fab1c324eee128c1c834094ebbaa958252150f86542e"
+    },
+    {
+      "file": "20261029211904_source_write_attempts.sql",
+      "sha256": "2e91fa8c4f0a21e23961f8467d0cde5f43212c59a2177770328377135f6b17dc"
+    },
+    {
+      "file": "20261029214355_generated_media_write_attempts.sql",
+      "sha256": "997753d397f276e07b3368c7a53bda9c24e332338f83ae9a38ba0b6d197d3bd3"
+    },
+    {
+      "file": "20261029221218_analyzed_export_write_attempts.sql",
+      "sha256": "c1b5c410ad3a8cad60c7d19490720c4ea11d5a27d2479185bc60dfdd82d06709"
+    },
+    {
+      "file": "20261029225507_archive_write_attempts.sql",
+      "sha256": "5f50656a4ebdebbb50f979fceb43e993b0e803636fd3ed723c296613d79152c0"
+    },
+    {
+      "file": "20261030000756_avatar_write_attempts.sql",
+      "sha256": "e59c3874405a05034f33adf4aad738740ed5ea747adf35225e81bb493bc42776"
+    },
+    {
+      "file": "20261030201615_auth_signup_hook_schema_access.sql",
+      "sha256": "a7c0eb8600d82581d1ad992d2215010f739acd6cb4993908ef33a126bd73d437"
+    },
+    {
+      "file": "20261030232852_session_replacement_cookie_paths.sql",
+      "sha256": "8431924e04a6108ef5b72dba51490584c32059b99cb34846362979790541a898"
+    },
+    {
+      "file": "20261101231506_avatar_reader_grants.sql",
+      "sha256": "63af5b00010fe225e8167da125c858990af29339f9d28ab552f41d48fad8eadb"
+    },
+    {
+      "file": "20261103022851_browser_media_cookie_inventory.sql",
+      "sha256": "1314432a1e90c424ddc213795132987eebeb9bdf4d24421f457190d0438cd9e0"
+    }
+  ],
+  "selectedMigrations": [
+    "202604140001_video_analysis_pipeline.sql",
+    "202604140002_fix_videos_rls.sql",
+    "202605110001_video_save_state.sql",
+    "202605160001_video_save_state_v2.sql",
+    "202605240001_storage_egress_cleanup.sql",
+    "202605270001_storage_retention_metadata.sql",
+    "202606120001_tracking_setup.sql",
+    "20260630225059_user_profile.sql",
+    "202607080001_video_security_hardening.sql",
+    "202607080002_video_path_shape_hardening.sql",
+    "202607120001_profile_infrastructure_repair.sql",
+    "20260713233319_durable_analysis_jobs.sql",
+    "202607150001_coaching_save_metadata.sql",
+    "202607250001_workout_save_metadata.sql",
+    "202608030001_optional_workout_save_metadata.sql",
+    "20260805055143_saved_lift_export_jobs.sql",
+    "202608060001_side_squat_quality_preflight.sql",
+    "202608170001_analysis_job_observability.sql",
+    "20260825033422_harden_video_upload_object_policy.sql",
+    "202608260001_harden_public_api_privileges.sql",
+    "202608270001_add_analysis_job_scaler_signal.sql",
+    "202609030001_upload_reservations.sql",
+    "202609210001_unsaved_video_retention.sql",
+    "202609210002_retention_deletion_outbox.sql",
+    "20260922002632_intake_stop_reason.sql",
+    "20260922003008_us_ip_beta_admission.sql",
+    "20260923224101_budget_alert_delivery.sql",
+    "20261026170415_atomic_video_media_revocation.sql",
+    "20261026173152_private_media_provider_session_decision.sql",
+    "20261026182051_private_media_grants.sql",
+    "20261026185845_private_media_logout_receipts.sql",
+    "20261027173544_complete_video_media_deletion.sql",
+    "20261027182727_queue_video_revocation_fence.sql",
+    "20261027194638_archive_publication_fence.sql",
+    "20261027194652_analysis_publication_fence.sql",
+    "20261028190657_saved_lift_deletion_receipts.sql",
+    "20261029020225_us_ip_expiry_wall_clock.sql",
+    "20261029173814_private_media_owner_deletion_fence.sql",
+    "20261029175000_owner_upload_publication_fence.sql",
+    "20261029180203_owner_analysis_admission.sql",
+    "20261029181358_owner_archive_publication_fence.sql",
+    "20261029210252_owner_profile_storage_admission.sql",
+    "20261029211904_source_write_attempts.sql",
+    "20261029214355_generated_media_write_attempts.sql",
+    "20261029221218_analyzed_export_write_attempts.sql",
+    "20261029225507_archive_write_attempts.sql",
+    "20261030000756_avatar_write_attempts.sql",
+    "20261030201615_auth_signup_hook_schema_access.sql",
+    "20261030232852_session_replacement_cookie_paths.sql",
+    "20261101231506_avatar_reader_grants.sql",
+    "20261103022851_browser_media_cookie_inventory.sql"
+  ],
+  "excludedMigrations": [
+    {
+      "file": "202608300001_azure_analysis_queue_scaler.sql",
+      "sha256": "9f6064153d7efbd4a305b6595aa79742b7c5732f5a73744c93e275b9657a1c44",
+      "reason": "Azure-only scaler is outside the Render and Supabase Web MVP; absent from observed hosted history."
+    }
+  ],
+  "observedHistory": [
+    {
+      "version": "202604140001",
+      "name": "video_analysis_pipeline"
+    },
+    {
+      "version": "202604140002",
+      "name": "fix_videos_rls"
+    },
+    {
+      "version": "202605110001",
+      "name": "video_save_state"
+    },
+    {
+      "version": "202605160001",
+      "name": "video_save_state_v2"
+    },
+    {
+      "version": "202605240001",
+      "name": "storage_egress_cleanup"
+    },
+    {
+      "version": "202605270001",
+      "name": "storage_retention_metadata"
+    },
+    {
+      "version": "202606120001",
+      "name": "tracking_setup"
+    },
+    {
+      "version": "20260630225059",
+      "name": "user_profile"
+    },
+    {
+      "version": "202607080001",
+      "name": "video_security_hardening"
+    },
+    {
+      "version": "202607080002",
+      "name": "video_path_shape_hardening"
+    },
+    {
+      "version": "202607120001",
+      "name": "profile_infrastructure_repair"
+    },
+    {
+      "version": "20260713233319",
+      "name": "durable_analysis_jobs"
+    },
+    {
+      "version": "202607150001",
+      "name": "coaching_save_metadata"
+    },
+    {
+      "version": "202607250001",
+      "name": "workout_save_metadata"
+    },
+    {
+      "version": "202608030001",
+      "name": "optional_workout_save_metadata"
+    },
+    {
+      "version": "20260805055143",
+      "name": "saved_lift_export_jobs"
+    },
+    {
+      "version": "202608060001",
+      "name": "side_squat_quality_preflight"
+    },
+    {
+      "version": "202608170001",
+      "name": "analysis_job_observability"
+    },
+    {
+      "version": "20260825033422",
+      "name": "harden_video_upload_object_policy"
+    },
+    {
+      "version": "202608260001",
+      "name": "harden_public_api_privileges"
+    },
+    {
+      "version": "202608270001",
+      "name": "add_analysis_job_scaler_signal"
+    }
+  ],
+  "expectedPendingMigrations": [
+    "202609030001_upload_reservations.sql",
+    "202609210001_unsaved_video_retention.sql",
+    "202609210002_retention_deletion_outbox.sql",
+    "20260922002632_intake_stop_reason.sql",
+    "20260922003008_us_ip_beta_admission.sql",
+    "20260923224101_budget_alert_delivery.sql",
+    "20261026170415_atomic_video_media_revocation.sql",
+    "20261026173152_private_media_provider_session_decision.sql",
+    "20261026182051_private_media_grants.sql",
+    "20261026185845_private_media_logout_receipts.sql",
+    "20261027173544_complete_video_media_deletion.sql",
+    "20261027182727_queue_video_revocation_fence.sql",
+    "20261027194638_archive_publication_fence.sql",
+    "20261027194652_analysis_publication_fence.sql",
+    "20261028190657_saved_lift_deletion_receipts.sql",
+    "20261029020225_us_ip_expiry_wall_clock.sql",
+    "20261029173814_private_media_owner_deletion_fence.sql",
+    "20261029175000_owner_upload_publication_fence.sql",
+    "20261029180203_owner_analysis_admission.sql",
+    "20261029181358_owner_archive_publication_fence.sql",
+    "20261029210252_owner_profile_storage_admission.sql",
+    "20261029211904_source_write_attempts.sql",
+    "20261029214355_generated_media_write_attempts.sql",
+    "20261029221218_analyzed_export_write_attempts.sql",
+    "20261029225507_archive_write_attempts.sql",
+    "20261030000756_avatar_write_attempts.sql",
+    "20261030201615_auth_signup_hook_schema_access.sql",
+    "20261030232852_session_replacement_cookie_paths.sql",
+    "20261101231506_avatar_reader_grants.sql",
+    "20261103022851_browser_media_cookie_inventory.sql"
+  ],
+  "sourceConfig": null
+}

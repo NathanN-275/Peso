@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const { approvedRenderBetaApi, validateReleaseEnv } = require('./release-env');
+const { buildEnvironment } = require('./netlify-build');
 
 // Public resource identifiers, not provider authentication credentials.
 const BETA_WEB_SERVICE_ID = 'srv-dak9ohfqj5pc73ac2ga0';
@@ -215,16 +216,26 @@ test('combined public beta binds the selected database, existing services and ex
     worker_service_id: 'srv-dak9ohfqj5pc73ac2g8g',
     source_commit: 'a'.repeat(40), blueprint_sha256: 'b'.repeat(64),
   };
-  const env = {
-    PESO_RELEASE_ENV: 'public-beta', SITE_ID: binding.site_id,
+  const configured = {
+    PESO_RELEASE_ENV: 'render-beta', SITE_ID: binding.site_id,
+    BRANCH: 'main', CONTEXT: 'deploy-preview',
     EXPO_PUBLIC_SUPABASE_URL: 'https://jfgiydtrskpqxyorvvbc.supabase.co',
     EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_fixture',
     EXPO_PUBLIC_TURNSTILE_SITE_KEY: 'real-site-key-fixture',
     EXPO_PUBLIC_AUTH_CHALLENGE_URL: `${binding.site_origin}/auth/turnstile/`,
     EXPO_PUBLIC_PRODUCTION_BACKEND_URL: binding.api_url,
   };
+  const env = buildEnvironment(configured, binding);
+  assert.equal(env.PESO_RELEASE_ENV, 'public-beta');
   assert.deepEqual(validateReleaseEnv(env, { combinedBinding: binding }).errors, []);
   assert.ok(validateReleaseEnv(env).errors.length, 'pending tracked binding blocks deployment');
+  for (const key of ['EXPO_PUBLIC_SUPABASE_URL', 'EXPO_PUBLIC_PRODUCTION_BACKEND_URL',
+    'EXPO_PUBLIC_AUTH_CHALLENGE_URL', 'EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY']) {
+    const missing = { ...configured }; delete missing[key];
+    const dispatched = buildEnvironment(missing, binding);
+    assert.equal(dispatched[key], undefined);
+    assert.ok(validateReleaseEnv(dispatched, { combinedBinding: binding }).errors.length, key);
+  }
   for (const change of [
     { SITE_ID: '230da8eb-f00e-45d4-ba54-95f2e26f21c4' },
     { EXPO_PUBLIC_SUPABASE_URL: 'https://iseqgaewjpjcxrndibep.supabase.co' },
@@ -232,7 +243,7 @@ test('combined public beta binds the selected database, existing services and ex
     { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://other-api.example.com' },
     { EXPO_PUBLIC_BACKEND_URL: 'https://override.example.com' },
     { EXPO_PUBLIC_TURNSTILE_SITE_KEY: '1x00000000000000000000AA' },
-  ]) assert.ok(validateReleaseEnv({ ...env, ...change }, { combinedBinding: binding }).errors.length);
+  ]) assert.ok(validateReleaseEnv(buildEnvironment({ ...env, ...change }, binding), { combinedBinding: binding }).errors.length);
   for (const change of [
     { status: 'pending' }, { source_commit: null }, { blueprint_sha256: null },
     { api_service_id: 'srv-other' }, { worker_service_id: 'srv-other' },
