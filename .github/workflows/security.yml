@@ -93,6 +93,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Install marketing renderer dependencies
+        run: npm --prefix web ci
+
       - name: Typecheck frontend
         run: npm run typecheck
 
