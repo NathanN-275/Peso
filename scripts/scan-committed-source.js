@@ -33,10 +33,10 @@ const REVIEWED_OCCURRENCES = [
   },
   {
     "file": "scripts/release-env.test.js",
-    "line": 215,
+    "line": 221,
     "startColumn": 6,
     "endColumn": 47,
-    "fileSha256": "29aed5fca15c211beeedc0e6256e9001d661c577cb66ad6508fd1292fee044a8",
+    "fileSha256": "e62f6f14366eca3a359c39751d66983c5012f5612098030c423819b65d585ce3",
     "lineSha256": "3057af47f29c1e45a9b0f25135916d359468fdaad7ea6d96721d3d51deebc36a",
     "redactedMatch": "api_service_id: 'REDACTED'",
     "classification": "reviewed-public-resource-id"
