@@ -7,7 +7,7 @@ const { assertStagingE2EEnvironment, assertStagingVerificationLink, recordStagin
 const valid = {
   PESO_E2E_ENV: 'staging', PESO_E2E_ALLOW_ADMIN_FIXTURES: 'true',
   PESO_E2E_SUPABASE_URL: 'https://iseqgaewjpjcxrndibep.supabase.co',
-  PESO_E2E_WEB_BASE_URL: 'https://main.usepeso.com',
+  PESO_E2E_WEB_BASE_URL: 'https://main--peso-webapp.netlify.app',
   PESO_E2E_SUPABASE_SERVICE_ROLE_KEY: 'fixture-only',
   PESO_E2E_SIGNUP_EMAIL: 'fixture@example.com', PESO_E2E_SIGNUP_PASSWORD: 'fixture-only',
 };
@@ -26,8 +26,8 @@ test('administrative E2E accepts only the exact isolated database and website', 
     'https://iseqgaewjpjcxrndibep.supabase.co/?redirect=other']) {
     assert.throws(() => assertStagingE2EEnvironment({ ...settings, PESO_E2E_SUPABASE_URL: url }));
   }
-  for (const url of ['http://main.usepeso.com', 'https://main--peso-webapp.netlify.app', 'https://usepeso.com',
-    'https://unrelated.example', 'https://user:password@main.usepeso.com',
+  for (const url of ['http://main--peso-webapp.netlify.app', 'https://main.usepeso.com', 'https://usepeso.com',
+    'https://unrelated.example', 'https://user:password@main--peso-webapp.netlify.app',
     `${valid.PESO_E2E_WEB_BASE_URL}:8443`, `${valid.PESO_E2E_WEB_BASE_URL}/app`,
     `${valid.PESO_E2E_WEB_BASE_URL}?redirect=other`]) {
     assert.throws(() => assertStagingE2EEnvironment({ ...settings, PESO_E2E_WEB_BASE_URL: url }));
@@ -54,7 +54,7 @@ test('generated links stay on staging and return to the intended Auth route', ()
   assert.throws(() => assertStagingVerificationLink(link.href, '/app/login'));
   assert.throws(() => assertStagingVerificationLink(link.href.replace(link.origin, 'https://unrelated.example'), '/app/reset'));
   assert.throws(() => assertStagingVerificationLink(link.href.replace('/auth/v1/verify', '/auth/v1/token'), '/app/reset'));
-  link.searchParams.set('redirect_to', 'https://main--peso-webapp.netlify.app/app/reset');
+  link.searchParams.set('redirect_to', 'https://main.usepeso.com/app/reset');
   assert.throws(() => assertStagingVerificationLink(link.href, '/app/reset'));
   link.searchParams.set('redirect_to', callback);
   link.searchParams.append('redirect_to', 'https://unrelated.example');

@@ -25,7 +25,7 @@ const RENDER_BETA_BINDING_PATH = require('node:path').resolve(
   '../config/render-beta-release-binding.json'
 );
 const RENDER_BETA_ORIGIN = 'https://api-staging.usepeso.com';
-const RENDER_BETA_WEB_ORIGIN = 'https://main.usepeso.com';
+const RENDER_BETA_WEB_ORIGIN = 'https://main--peso-webapp.netlify.app';
 
 function clean(value) {
   return typeof value === 'string' ? value.trim() : '';

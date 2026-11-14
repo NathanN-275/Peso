@@ -19,13 +19,13 @@ Prepare the existing isolated staging boundary in this order.
    settings and the separate approvals required for any hosted test changes.
 2. Verify the fresh staging Render pair and exact API/source binding at
    `https://api-staging.usepeso.com`. Verify the API allows
-   `https://main.usepeso.com` for the Web App.
-3. Verify the exact private candidate at `https://main.usepeso.com` and its
+   `https://main--peso-webapp.netlify.app` for the Web App.
+3. Verify the exact private candidate at `https://main--peso-webapp.netlify.app` and its
    Supabase binding before providing fixture credentials. The dispatcher uses
    `PESO_RELEASE_ENV=render-beta` and requires an accepted
    `config/render-beta-release-binding.json`. A pending binding stops the build.
 4. Verify the real staging Turnstile widget, provider CAPTCHA settings and
-   token acceptance for `https://main.usepeso.com/auth/turnstile/`. Verify the
+   token acceptance for `https://main--peso-webapp.netlify.app/auth/turnstile/`. Verify the
    widget hostname restrictions and use the source validator to check these
    values. Restrict Cloudflare test keys to isolated synthetic challenge tests.
 5. Configure the native preview with the same verified staging Auth, API and
@@ -44,8 +44,10 @@ test. Keep that value in the runner under its exact variable name.
 Supply `PRIVATE_MEDIA_ENABLED` explicitly when provisioning both staging
 services. The staging Blueprint binds `PRIVATE_MEDIA_PUBLIC_ORIGIN` to
 `https://api-staging.usepeso.com` and `PRIVATE_MEDIA_BROWSER_ORIGINS` to
-`https://main.usepeso.com`. Verify the custom API hostname and TLS before
-the controlled media test window.
+`https://main--peso-webapp.netlify.app`. Use `PRIVATE_MEDIA_ENABLED=false` for
+the initial login and backend smoke test. The current private-media routes
+accept only `usepeso.com` origins and use `SameSite=Strict` cookies. The selected
+Netlify address needs a compatible media transport before enabling that gate.
 
 That window requires the approved backend flag `PRIVATE_MEDIA_ENABLED=true`,
 the reviewed database provider-policy activation, and
@@ -89,7 +91,7 @@ Install Playwright's Chromium browser once on the release runner, then provide:
 ```text
 PESO_E2E_ENV=staging
 PESO_E2E_ALLOW_ADMIN_FIXTURES=true
-PESO_E2E_WEB_BASE_URL=https://main.usepeso.com
+PESO_E2E_WEB_BASE_URL=https://main--peso-webapp.netlify.app
 PESO_E2E_SUPABASE_URL=https://iseqgaewjpjcxrndibep.supabase.co
 PESO_E2E_SUPABASE_SERVICE_ROLE_KEY=<runner-secret>
 PESO_E2E_SIGNUP_EMAIL=<isolated-test-inbox>

@@ -27,7 +27,7 @@ function buildEnvironment(env, binding = combinedBinding) {
     return { ...env, PESO_RELEASE_ENV: 'render-beta',
       EXPO_PUBLIC_SUPABASE_URL: require('./student-environment').STUDENT_SUPABASE_URL,
       EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://api-staging.usepeso.com',
-      EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main.usepeso.com/auth/turnstile/' };
+      EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/' };
   }
   return env;
 }

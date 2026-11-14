@@ -158,7 +158,7 @@ test('Render beta builds require peso-staging, the exact beta API, and the priva
     EXPO_PUBLIC_SUPABASE_URL: 'https://iseqgaewjpjcxrndibep.supabase.co',
     EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test',
     EXPO_PUBLIC_TURNSTILE_SITE_KEY: 'test-site-key',
-    EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main.usepeso.com/auth/turnstile/',
+    EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/',
     EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://api-staging.usepeso.com',
   };
   const options = { renderBetaBinding: acceptedRenderBetaBinding() };
@@ -171,8 +171,8 @@ test('Render beta builds require peso-staging, the exact beta API, and the priva
     EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://peso-beta-api-attacker.onrender.com',
   })) assert.ok(validateReleaseEnv({...env, [name]: value}, options).errors.length, name);
   for (const change of [
-    { EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/' },
-    { EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main.usepeso.com.attacker.example/auth/turnstile/' },
+    { EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main.usepeso.com/auth/turnstile/' },
+    { EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app.attacker.example/auth/turnstile/' },
     { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://peso-beta-api.onrender.com' },
     { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://api-staging.usepeso.com/path' },
     { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://api-staging.usepeso.com?token=secret' },

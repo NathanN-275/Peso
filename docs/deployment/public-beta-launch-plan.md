@@ -115,8 +115,8 @@ Use `render-public-beta-staging.yaml` for the staging pair and
 `render-public-beta.yaml` for the production pair. Both use the MVP Dockerfile,
 manual deployments, and one Starter API and one 1 CPU / 2 GB worker. Bind
 staging only to `peso-staging` with its own credentials and
-`https://main.usepeso.com` as the allowed Web App origin. Keep signup disabled
-until the controlled Auth test window is separately approved. Confirm
+`https://main--peso-webapp.netlify.app` as the allowed Web App origin. Keep signup
+disabled until the controlled Auth test window is separately approved. Confirm
 `api-staging.usepeso.com` ownership and TLS before the staged Web App uses it.
 
 A new Git-backed service can build on creation. Before approving creation,
