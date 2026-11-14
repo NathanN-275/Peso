@@ -103,12 +103,13 @@ test('beta API readiness and Starter worker sizing are explicit', () => {
   assert.match(serviceBlock('peso-beta-analysis-worker'), /dockerCommand: python -m app\.jobs\.analysis_worker/);
 });
 
-test('only the historical private main deploy receives the pending Render beta environment', () => {
+test('only the historical private main deploy receives the bound Render beta environment', () => {
   const { APP_SITE_ID, buildEnvironment } = require('./netlify-build');
+  const stagingBinding = require('../config/render-beta-release-binding.json');
   assert.deepEqual(buildEnvironment({ SITE_ID: APP_SITE_ID, CONTEXT: 'branch-deploy', BRANCH: 'main' }), {
     SITE_ID: APP_SITE_ID, CONTEXT: 'branch-deploy', BRANCH: 'main', PESO_RELEASE_ENV: 'render-beta',
     EXPO_PUBLIC_SUPABASE_URL: 'https://iseqgaewjpjcxrndibep.supabase.co',
-    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: '',
+    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: stagingBinding.api_url,
     EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/',
     EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED: 'false',
   });

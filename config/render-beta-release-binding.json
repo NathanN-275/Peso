@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "status": "pending",
-  "api_url": null,
-  "blueprint_sha256": null,
-  "source_commit": null,
-  "api_service_id": null,
-  "worker_service_id": null
+  "status": "accepted",
+  "api_url": "https://peso-public-beta-staging-api-mo9c.onrender.com",
+  "blueprint_sha256": "73e7b3398b88ac8767dff9ddc7ed680c9100fcf03c960b7f9282e29d0a3dcfe9",
+  "source_commit": "a43705709d1c1652bed86ee190a2afdd3ea7fcab",
+  "api_service_id": "srv-dbrrjqjrjlhs73cbn6b0",
+  "worker_service_id": "srv-dbrrjqjrjlhs73cbn6bg"
 }

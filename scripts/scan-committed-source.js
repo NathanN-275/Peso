@@ -12,6 +12,16 @@ const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 // requires review; never reconstruct these pins from the current source.
 const REVIEWED_OCCURRENCES = [
   {
+    "file": "config/render-beta-release-binding.json",
+    "line": 7,
+    "startColumn": 5,
+    "endColumn": 47,
+    "fileSha256": "c462f9367ecaf422ecc3927b241d0658854965f11fb7bd1ff6b2dfd0248e3135",
+    "lineSha256": "247ff2f461b42d8eca2c173eac91fac5a8140cc5da4908fa2865947d530b8d42",
+    "redactedMatch": "api_service_id\": \"REDACTED\"",
+    "classification": "reviewed-public-resource-id"
+  },
+  {
     "file": "backend/tests/test_private_media_grants_postgres.py",
     "line": 60,
     "startColumn": 8,

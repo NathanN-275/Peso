@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { APP_SITE_ID, buildScript, buildEnvironment } = require('./netlify-build');
+const stagingBinding = require('../config/render-beta-release-binding.json');
 
 test('an explicitly bound new project builds both surfaces in production and previews', () => {
   const site = '11111111-2222-3333-4444-555555555555';
@@ -71,7 +72,7 @@ test('only the historical stable main deploy receives the exact staging environm
     EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'synthetic-project-key' };
   assert.deepEqual(buildEnvironment(input), { ...input, PESO_RELEASE_ENV: 'render-beta',
     EXPO_PUBLIC_SUPABASE_URL: 'https://iseqgaewjpjcxrndibep.supabase.co',
-    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: '',
+    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: stagingBinding.api_url,
     EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/',
     EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED: 'false' });
   assert.equal(input.PESO_RELEASE_ENV, 'production');
@@ -126,7 +127,7 @@ process.stdout.write(JSON.stringify({ args: process.argv.slice(2),
     assert.deepEqual(observed.args, ['run', SITE_ID === APP_SITE_ID ? 'web:build:release' : 'web:build:marketing']);
     assert.deepEqual(observed.env, SITE_ID === APP_SITE_ID ? {
       PESO_RELEASE_ENV: 'render-beta', EXPO_PUBLIC_SUPABASE_URL: 'https://iseqgaewjpjcxrndibep.supabase.co',
-      EXPO_PUBLIC_PRODUCTION_BACKEND_URL: '',
+      EXPO_PUBLIC_PRODUCTION_BACKEND_URL: stagingBinding.api_url,
       EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/',
       EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'synthetic-project-key',
     } : {

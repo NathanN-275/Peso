@@ -101,7 +101,7 @@ test('CLI accepts only reviewed non-secret findings while preserving raw failure
   assert.equal(scan.policy.findingsSha256, scan.coverage.findingsSha256);
   assert.equal(createHash('sha256').update(fs.readFileSync(path.join(scan.directory, 'policy.json'))).digest('hex'),
     scan.coverage.policySha256);
-  assert.equal(scan.policy.reviewedOccurrences.length, 4);
+  assert.equal(scan.policy.reviewedOccurrences.length, 5);
   assert.deepEqual(scan.policy.findings.map(f => [f.file, f.classification]).sort(), reviewedFiles.map(file => [file, file.includes('release-env') || file.includes('combined-web') ? 'reviewed-public-resource-id' : 'reviewed-public-source-revision']).sort());
   for (const name of ['coverage.json', 'findings.json', 'policy.json']) {
     assert.doesNotMatch(fs.readFileSync(path.join(scan.directory, name), 'utf8'), /"(?:Secret|Match)"/);
