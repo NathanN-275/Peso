@@ -49,17 +49,19 @@ test('fresh Render pairs have matched compute and isolated Supabase projects', (
       assert.ok(block.includes(`value: https://${projectRef}.supabase.co\n`));
       assert.ok(block.includes(`INTAKE_STOP_PROJECTED_MONTHLY_USD\n        value: "${preferences.stop_new_uploads_at_projected_monthly_usd}"`));
       assert.match(block, /SAVED_VIDEO_STORAGE_TTL_HOURS\n\s+value: "72"/);
-      assert.match(block, /PRIVATE_MEDIA_ENABLED\n\s+sync: false/);
       if (environment === 'student') {
-        assert.match(block, /PRIVATE_MEDIA_PUBLIC_ORIGIN\n\s+value: https:\/\/api-staging\.usepeso\.com\n/);
-        assert.match(block, /PRIVATE_MEDIA_BROWSER_ORIGINS\n\s+value: https:\/\/main--peso-webapp\.netlify\.app\n/);
+        assert.match(block, /PRIVATE_MEDIA_ENABLED\n\s+value: "false"\n/);
+        assert.doesNotMatch(block, /PRIVATE_MEDIA_PUBLIC_ORIGIN|PRIVATE_MEDIA_BROWSER_ORIGINS/);
+        assert.doesNotMatch(block, /SUPABASE_JWT_SECRET/);
       } else {
+        assert.match(block, /PRIVATE_MEDIA_ENABLED\n\s+sync: false/);
+        assert.match(block, /SUPABASE_JWT_SECRET\n\s+sync: false/);
         for (const key of ['PRIVATE_MEDIA_PUBLIC_ORIGIN', 'PRIVATE_MEDIA_BROWSER_ORIGINS']) {
           assert.match(block, new RegExp(`${key}\n\\s+sync: false`));
         }
       }
       assert.match(block, new RegExp(`BACKEND_CORS_ORIGINS\n\\s+${cors.source}\n`));
-      for (const key of ['BUDGET_SHUTDOWN_TOKEN', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_JWT_SECRET', 'CLEANUP_JOB_TOKEN']) {
+      for (const key of ['BUDGET_SHUTDOWN_TOKEN', 'SUPABASE_SERVICE_ROLE_KEY', 'CLEANUP_JOB_TOKEN']) {
         assert.match(block, new RegExp(`${key}\n\\s+sync: false`));
       }
       assert.ok(!block.includes(otherProjectRef));
@@ -106,8 +108,9 @@ test('only the historical private main deploy receives the pending Render beta e
   assert.deepEqual(buildEnvironment({ SITE_ID: APP_SITE_ID, CONTEXT: 'branch-deploy', BRANCH: 'main' }), {
     SITE_ID: APP_SITE_ID, CONTEXT: 'branch-deploy', BRANCH: 'main', PESO_RELEASE_ENV: 'render-beta',
     EXPO_PUBLIC_SUPABASE_URL: 'https://iseqgaewjpjcxrndibep.supabase.co',
-    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://api-staging.usepeso.com',
+    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: '',
     EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/',
+    EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED: 'false',
   });
   assert.doesNotMatch(netlify, /\[context\.[^\]]*environment\]/);
   assert.doesNotMatch(netlify, /EXPO_PUBLIC_|PESO_RELEASE_ENV/);

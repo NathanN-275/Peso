@@ -24,10 +24,12 @@ function buildEnvironment(env, binding = combinedBinding) {
   if (isCombinedProject(env, binding)) return { ...env, PESO_RELEASE_ENV: 'public-beta' };
   // Branch-only TOML settings would override every project's main build.
   if (env.SITE_ID === APP_SITE_ID && env.CONTEXT === 'branch-deploy' && env.BRANCH === 'main') {
+    const { RENDER_BETA_WEB_ORIGIN, approvedRenderBetaApi, loadRenderBetaBinding } = require('./release-env');
     return { ...env, PESO_RELEASE_ENV: 'render-beta',
       EXPO_PUBLIC_SUPABASE_URL: require('./student-environment').STUDENT_SUPABASE_URL,
-      EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://api-staging.usepeso.com',
-      EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/' };
+      EXPO_PUBLIC_PRODUCTION_BACKEND_URL: approvedRenderBetaApi(loadRenderBetaBinding()),
+      EXPO_PUBLIC_AUTH_CHALLENGE_URL: `${RENDER_BETA_WEB_ORIGIN}/auth/turnstile/`,
+      EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED: 'false' };
   }
   return env;
 }

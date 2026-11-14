@@ -17,8 +17,9 @@ Prepare the existing isolated staging boundary in this order.
    history, grants, geography dataset and Before User Created hook. Preserve
    existing users, rows and media. The live tracker records the current saved
    settings and the separate approvals required for any hosted test changes.
-2. Verify the fresh staging Render pair and exact API/source binding at
-   `https://api-staging.usepeso.com`. Verify the API allows
+2. Verify the fresh staging Render pair and save its provider-assigned HTTPS
+   `onrender.com` API origin, two service IDs, source commit and Blueprint hash
+   in the reviewed binding. Verify the API allows
    `https://main--peso-webapp.netlify.app` for the Web App.
 3. Verify the exact private candidate at `https://main--peso-webapp.netlify.app` and its
    Supabase binding before providing fixture credentials. The dispatcher uses
@@ -35,17 +36,27 @@ Prepare the existing isolated staging boundary in this order.
 [Candidate binding](public-beta-candidate-binding.md) ·
 [US admission requirements](us-ip-admission.md)
 
+For the initial smoke test, record the Render deploy commit for both services
+and the Netlify deploy ID and commit. Confirm that the API's `/health/ready`
+reports ready, that the Netlify login URL returns 401 without a visitor session,
+and that the API allows the exact Netlify origin on a CORS preflight to
+`/videos/capabilities`. Confirm that the same API route returns 401 without an
+app session. In the approved staging browser session, log in through Supabase
+and verify that the app's authenticated capabilities request returns 200 from
+the bound Render endpoint. Record statuses and origins without credentials.
+
+Enter only the staging Supabase service-role credential and the two staging-only
+cleanup and budget tokens in Render. The backend verifies user tokens through
+Supabase Auth and does not read a local Supabase JWT signing secret.
+
 The staging E2E process uses `PESO_E2E_SUPABASE_SERVICE_ROLE_KEY` to create
 isolated users and generate confirmation and recovery links during an approved
 test. Keep that value in the runner under its exact variable name.
 
 ## Private-media configuration
 
-Supply `PRIVATE_MEDIA_ENABLED` explicitly when provisioning both staging
-services. The staging Blueprint binds `PRIVATE_MEDIA_PUBLIC_ORIGIN` to
-`https://api-staging.usepeso.com` and `PRIVATE_MEDIA_BROWSER_ORIGINS` to
-`https://main--peso-webapp.netlify.app`. Use `PRIVATE_MEDIA_ENABLED=false` for
-the initial login and backend smoke test. The current private-media routes
+The staging Blueprint and Netlify dispatcher explicitly disable private media
+for the initial login and backend smoke test. The current private-media routes
 accept only `usepeso.com` origins and use `SameSite=Strict` cookies. The selected
 Netlify address needs a compatible media transport before enabling that gate.
 
@@ -108,7 +119,8 @@ approved test identities and run window. Review the exact IDs and obtain
 separate cleanup approval before deleting accounts.
 
 Set the required public Supabase URL/key, real staging Turnstile site key,
-bound Auth challenge URL and accepted Render API URL. Use
+bound Auth challenge URL, accepted Render API URL and
+`EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED=false`. Use
 `PESO_RELEASE_ENV=render-beta` for the staging website validation. Run
 `npm run release:env` before the separately approved hosted test window.
 The current pending Render binding must be resolved through its acceptance

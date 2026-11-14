@@ -71,8 +71,9 @@ test('only the historical stable main deploy receives the exact staging environm
     EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'synthetic-project-key' };
   assert.deepEqual(buildEnvironment(input), { ...input, PESO_RELEASE_ENV: 'render-beta',
     EXPO_PUBLIC_SUPABASE_URL: 'https://iseqgaewjpjcxrndibep.supabase.co',
-    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://api-staging.usepeso.com',
-    EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/' });
+    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: '',
+    EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/',
+    EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED: 'false' });
   assert.equal(input.PESO_RELEASE_ENV, 'production');
   assert.equal(input.EXPO_PUBLIC_SUPABASE_URL, 'https://wrong.invalid');
   for (const change of [
@@ -125,7 +126,7 @@ process.stdout.write(JSON.stringify({ args: process.argv.slice(2),
     assert.deepEqual(observed.args, ['run', SITE_ID === APP_SITE_ID ? 'web:build:release' : 'web:build:marketing']);
     assert.deepEqual(observed.env, SITE_ID === APP_SITE_ID ? {
       PESO_RELEASE_ENV: 'render-beta', EXPO_PUBLIC_SUPABASE_URL: 'https://iseqgaewjpjcxrndibep.supabase.co',
-      EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://api-staging.usepeso.com',
+      EXPO_PUBLIC_PRODUCTION_BACKEND_URL: '',
       EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/',
       EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'synthetic-project-key',
     } : {

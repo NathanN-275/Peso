@@ -20,16 +20,10 @@ services:
       - key: BACKEND_CORS_ALLOW_PRIVATE_NETWORK
         value: "false"
       - key: PRIVATE_MEDIA_ENABLED
-        sync: false
-      - key: PRIVATE_MEDIA_PUBLIC_ORIGIN
-        value: https://api-staging.usepeso.com
-      - key: PRIVATE_MEDIA_BROWSER_ORIGINS
-        value: https://main--peso-webapp.netlify.app
+        value: "false"
       - key: SUPABASE_URL
         value: https://iseqgaewjpjcxrndibep.supabase.co
       - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false
-      - key: SUPABASE_JWT_SECRET
         sync: false
       - key: CLEANUP_JOB_TOKEN
         sync: false
@@ -73,16 +67,10 @@ services:
       - key: BACKEND_CORS_ALLOW_PRIVATE_NETWORK
         value: "false"
       - key: PRIVATE_MEDIA_ENABLED
-        sync: false
-      - key: PRIVATE_MEDIA_PUBLIC_ORIGIN
-        value: https://api-staging.usepeso.com
-      - key: PRIVATE_MEDIA_BROWSER_ORIGINS
-        value: https://main--peso-webapp.netlify.app
+        value: "false"
       - key: SUPABASE_URL
         value: https://iseqgaewjpjcxrndibep.supabase.co
       - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false
-      - key: SUPABASE_JWT_SECRET
         sync: false
       - key: CLEANUP_JOB_TOKEN
         sync: false
