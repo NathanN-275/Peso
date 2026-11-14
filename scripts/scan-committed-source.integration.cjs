@@ -127,7 +127,7 @@ const controls = [
 const sourceRevision = '4eee58f296d9698a1c2c0ae14d7a0b379c7622d3';
 for (const file of reviewedFiles.filter(file => file !== bindingFile && file !== releaseTestFile)) {
   for (const [label, transform] of [
-    ['credential replacement', bytes => bytes.replace(sourceRevision, genericToken())],
+    ['credential replacement', bytes => bytes.replace(sourceRevision, githubToken())],
     ['different source revision', bytes => bytes.replace(sourceRevision, sourceRevision.slice(0, -1) + '4')],
     ['unrelated byte edit', bytes => bytes + '\n'],
     ['credential appended', bytes => bytes + '\napi_key = "' + githubToken() + '"\n'],
