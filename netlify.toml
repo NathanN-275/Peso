@@ -3,14 +3,7 @@
   ignore = "node scripts/netlify-ignore-build.js"
   publish = "dist"
 
-# Only the private main branch test deploy uses the isolated Render beta.
-# Its public Supabase key remains branch-specific in Netlify. The backend URL is
-# fixed here and must also match the reviewed tracked release binding.
-[context.main.environment]
-  PESO_RELEASE_ENV = "render-beta"
-  EXPO_PUBLIC_SUPABASE_URL = "https://iseqgaewjpjcxrndibep.supabase.co"
-  EXPO_PUBLIC_PRODUCTION_BACKEND_URL = "https://api-staging.usepeso.com"
-  EXPO_PUBLIC_AUTH_CHALLENGE_URL = "https://main.usepeso.com/auth/turnstile/"
+# Project-specific staging settings are scoped by site ID in netlify-build.js.
 
 [[redirects]]
   from = "/demo/peso-demo-video.gif"

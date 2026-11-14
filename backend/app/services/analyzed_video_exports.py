@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..analysis.versioning import annotate_analysis_freshness
+from .analyzed_export_writes import read_current_export, require_cached_export_object, write_analyzed_export
 from .analyzed_video_renderer import render_analyzed_video
 from .storage_service import StorageService
 from .video_storage_paths import require_user_storage_path
@@ -69,10 +70,14 @@ def ensure_analyzed_video_artifact(
     path = require_user_storage_path(playback_storage_path(video), user_id, "playback_path")
     return AnalyzedVideoArtifact(storage_path=path, variant=variant)
 
-  export_path = f"{user_id}/exports/{video_id}-{analysis_id}-{variant}-h264-v1.mp4"
-
-  if storage.storage_path_exists(export_path):
-    return AnalyzedVideoArtifact(storage_path=export_path, variant=variant)
+  require_user_storage_path(playback_storage_path(video), user_id, "playback_path")
+  if video.get("user_id") != user_id:
+    raise ValueError("An owned video is required for export.")
+  cached = read_current_export(storage.client, user_id=user_id, video_id=video_id, variant=variant,
+                               bucket=storage.bucket, analysis_id=analysis_id)
+  if cached is not None:
+    require_cached_export_object(storage, cached)
+    return AnalyzedVideoArtifact(storage_path=cached['storage_path'], variant=variant)
 
   enforce_export_cooldown(user_id, video_id, variant)
   record_export_attempt(user_id, video_id, variant)
@@ -94,7 +99,8 @@ def ensure_analyzed_video_artifact(
       include_pose=pose,
       include_barbell=barbell,
     )
-    storage.upload_file(export_path, output_file, "video/mp4")
+    export_path = write_analyzed_export(video=video, analysis=analysis, user_id=user_id,
+                                        variant=variant, output_path=output_file, storage=storage)
   finally:
     release_video_work_slot(video_work_slot)
     if source_file:

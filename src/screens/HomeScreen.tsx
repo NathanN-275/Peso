@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   AppState,
-  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -11,6 +10,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import VideoThumbnail from '../components/VideoThumbnail';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
 import { shouldPollAnalysisActivity } from '../../lib/analysisActivityPolicy';
@@ -84,25 +84,13 @@ function AnalysisActivityCard({
 }) {
   const copy = activityStatusCopy(activity);
   const ready = activity.status === 'ready';
-  const [thumbnailFailed, setThumbnailFailed] = useState(false);
   const [opening, setOpening] = useState(false);
   const [openFailed, setOpenFailed] = useState(false);
 
-  useEffect(() => setThumbnailFailed(false), [activity.thumbnail_url]);
-
   const content = (
     <>
-      {activity.thumbnail_url && !thumbnailFailed ? (
-        <Image
-          source={{ uri: activity.thumbnail_url }}
-          style={styles.activityThumbnail}
-          onError={() => setThumbnailFailed(true)}
-        />
-      ) : (
-        <View style={styles.activityThumbnailPlaceholder}>
-          <Ionicons name="barbell-outline" size={26} color={tokens.colors.textMuted} />
-        </View>
-      )}
+      <VideoThumbnail videoId={activity.video_id} available={activity.thumbnail_available === true} legacyUrl={activity.thumbnail_url}
+        style={styles.activityThumbnail} placeholder={<Ionicons name="barbell-outline" size={26} color={tokens.colors.textMuted} />} />
       <View style={styles.activityCopy}>
         <Text style={styles.activityExercise}>{formatExerciseLabel(activity.exercise_type)}</Text>
         <Text style={styles.activityMeta}>{formatExerciseLabel(activity.view_type)} view</Text>
@@ -201,24 +189,8 @@ function groupSavedOverview(overview: SavedVideoOverview | null): SavedVideoGrou
 }
 
 function PreviewTile({ video }: { video: SavedVideo }) {
-  const [thumbnailLoadFailed, setThumbnailLoadFailed] = useState(false);
-
-  useEffect(() => {
-    setThumbnailLoadFailed(false);
-  }, [video.thumbnail_url]);
-
-  if (video.thumbnail_url && !thumbnailLoadFailed) {
-    return (
-      <Image
-        source={{ uri: video.thumbnail_url }}
-        style={styles.previewImage}
-        resizeMode="cover"
-        onError={() => setThumbnailLoadFailed(true)}
-      />
-    );
-  }
-
-  return <View style={styles.previewPlaceholder} />;
+  return <VideoThumbnail videoId={video.id} available={video.thumbnail_available === true && video.storage_state !== 'pruned'} legacyUrl={video.thumbnail_url}
+    style={[styles.previewImage, { backgroundColor: '#D8D8D8' }]} />;
 }
 
 function LiftFolderCard({
@@ -700,14 +672,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: '#252525',
   },
-  activityThumbnailPlaceholder: {
-    width: 68,
-    height: 68,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 10,
-    backgroundColor: '#252525',
-  },
   activityCopy: {
     flex: 1,
     minWidth: 160,
@@ -824,10 +788,6 @@ const styles = StyleSheet.create({
   previewImage: {
     width: '100%',
     height: '100%',
-  },
-  previewPlaceholder: {
-    flex: 1,
-    backgroundColor: '#D8D8D8',
   },
   previewFacts: {
     position: 'absolute',

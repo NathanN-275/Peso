@@ -11,6 +11,8 @@ import type {
   QualityPreflightResult,
 } from '../src/types/videoAnalysis';
 import { Platform } from 'react-native';
+import { getPrivateMediaEpoch, getActivePrivateMediaSessionKey, registerPrivateMediaRelease } from './privateMediaLifecycle';
+import { getPrivateMediaSessionKey } from './privateMediaLogout';
 import {
   getBackendApiUrl,
   getBackendConnectionDiagnostics,
@@ -29,10 +31,19 @@ const HEALTH_CHECK_TIMEOUT_MS = __DEV__ ? 3_000 : 8_000;
 const EXPORT_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 const QUALITY_PREFLIGHT_TIMEOUT_MS = 90 * 1000;
 const playbackUrlCache = new Map<string, { url: string; expiresAt: number }>();
+registerPrivateMediaRelease(() => { playbackUrlCache.clear(); });
 
 type BackendRequestInit = RequestInit & {
   timeoutMs?: number;
+  allowLoopbackRetry?: boolean;
 };
+
+export class BackendHttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'BackendHttpError';
+  }
+}
 
 class BackendRequestTimeoutError extends Error {
   constructor(timeoutMs: number) {
@@ -199,10 +210,17 @@ function buildBackendUnreachableMessage({
 
 async function requestJson<T>(path: string, accessToken?: string, init: BackendRequestInit = {}): Promise<T> {
   // Every backend call flows through this helper.
+  const mediaEpoch = getPrivateMediaEpoch();
+  if (accessToken && process.env.EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED === 'true') {
+    const issuer = `${(process.env.EXPO_PUBLIC_SUPABASE_URL ?? '').replace(/\/$/, '')}/auth/v1`;
+    const key = getPrivateMediaSessionKey(accessToken, issuer);
+    if (!key || key !== getActivePrivateMediaSessionKey()) throw new Error('Your sign-in session changed. Please try again.');
+  }
   const backend = ensureBackendApiUrl();
   const requestUrl = `${backend.url}${path}`;
   const {
     timeoutMs = DEFAULT_BACKEND_REQUEST_TIMEOUT_MS,
+    allowLoopbackRetry = true,
     signal,
     headers: initHeaders,
     ...fetchInit
@@ -245,7 +263,7 @@ async function requestJson<T>(path: string, accessToken?: string, init: BackendR
       if (externalSignal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
         throw error;
       }
-      const fallbackUrl = getWebLoopbackFallbackUrl(requestUrl);
+      const fallbackUrl = allowLoopbackRetry ? getWebLoopbackFallbackUrl(requestUrl) : null;
 
       if (!fallbackUrl) {
         throw error;
@@ -267,7 +285,7 @@ async function requestJson<T>(path: string, accessToken?: string, init: BackendR
     }
     // Expand network failures with the exact URL and environment details.
     const message = summarizeError(error, 'Unknown network error.');
-    const fallbackUrl = getWebLoopbackFallbackUrl(requestUrl);
+    const fallbackUrl = allowLoopbackRetry ? getWebLoopbackFallbackUrl(requestUrl) : null;
     const diagnostics = getBackendConnectionDiagnostics();
 
     console.error('[BackendAPI] fetch failed', {
@@ -290,10 +308,51 @@ async function requestJson<T>(path: string, accessToken?: string, init: BackendR
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(getBackendErrorMessage(errorText, response.status));
+    throw new BackendHttpError(getBackendErrorMessage(errorText, response.status), response.status);
   }
 
-  return (await response.json()) as T;
+  const value = (await response.json()) as T;
+  if (accessToken && mediaEpoch !== getPrivateMediaEpoch()) throw new Error('Your sign-in session changed. Please try again.');
+  return value;
+}
+
+// Profile responses stay unknown until the profile boundary validates the complete record.
+export function fetchOwnProfileMetadata(accessToken: string): Promise<unknown> {
+  return requestJson('/profile', accessToken);
+}
+
+export function updateOwnProfileMetadata(
+  accessToken: string,
+  details: { profile_revision: string | null; username: string | null; display_name: string | null }
+): Promise<unknown> {
+  return requestJson('/profile', accessToken, {
+    method: 'PUT', body: JSON.stringify(details), allowLoopbackRetry: false,
+  });
+}
+
+export function uploadOwnProfileAvatar(
+  accessToken: string,
+  revision: string | null,
+  body: Blob,
+  contentType: string
+): Promise<unknown> {
+  return requestJson('/profile/avatar', accessToken, {
+    method: 'POST',
+    headers: { 'Content-Type': contentType, 'X-Peso-Profile-Revision': revision ?? 'absent' },
+    body,
+    // A transport failure can follow a successful write. Never dispatch these bytes again implicitly.
+    allowLoopbackRetry: false,
+  });
+}
+
+export function publishOwnProfileAvatar(
+  accessToken: string,
+  attemptId: string,
+  details: { username: string | null; display_name: string | null }
+): Promise<unknown> {
+  return requestJson(`/profile/avatar/${attemptId}/publish`, accessToken, {
+    method: 'POST', body: JSON.stringify(details), allowLoopbackRetry: false,
+  });
 }
 
 export { getBackendApiUrl, getBackendConnectionDiagnostics };
@@ -364,6 +423,182 @@ export async function describeBackendRequestFailure(error: unknown, fallbackMess
       `Health check failed for ${diagnostics.url}/health: ${healthMessage}`,
     ].join('\n');
   }
+}
+
+type MediaRevocationScope = 'global' | 'local';
+export type PrivateMediaRevocationPage<Scope extends MediaRevocationScope = MediaRevocationScope> = {
+  scope: Scope; owner_id: string; session_id: string;
+  completed_at: string; replayed: boolean; next_cursor: string | null;
+  cookie_cleanup_complete: boolean;
+  cookie_inventory_version?: 2;
+};
+export type PrivateMediaRevocationProgress<Scope extends MediaRevocationScope = MediaRevocationScope> = {
+  progress?: PrivateMediaRevocationPage<Scope> | null;
+  globalIntent?: { owner_id: string; session_id: string; backend: string; mode: 'global'; version: 2; inventory_version: 1 | 2 };
+  onProgress?: (page: PrivateMediaRevocationPage<Scope>) => Promise<void>;
+};
+
+const MEDIA_TRANSITION_FAILURE = 'Unable to confirm the previous media session ended. Check your connection and retry.';
+const COOKIE_UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const COOKIE_NIL = '00000000-0000-0000-0000-000000000000';
+const COOKIE_CURSOR = new RegExp(`^(archive|avatar|video):(${COOKIE_UUID})$`);
+const COOKIE_CURSOR_V2 = new RegExp(`^(archive|avatar|video):(${COOKIE_UUID}):(${COOKIE_UUID})$`);
+
+function validateRevocationPage<Scope extends MediaRevocationScope>(value: unknown, scope: Scope, identity: string, version?: 1 | 2): PrivateMediaRevocationPage<Scope> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(MEDIA_TRANSITION_FAILURE);
+  const page = value as PrivateMediaRevocationPage<Scope>;
+  const actualVersion = Object.hasOwn(page, 'cookie_inventory_version') ? 2 : 1;
+  const names = ['scope', 'owner_id', 'session_id', 'completed_at', 'replayed', 'next_cursor', 'cookie_cleanup_complete',
+    ...(actualVersion === 2 ? ['cookie_inventory_version'] : [])];
+  const match = typeof page.next_cursor === 'string' ? (actualVersion === 2 ? COOKIE_CURSOR_V2 : COOKIE_CURSOR).exec(page.next_cursor) : null;
+  if ((version !== undefined && actualVersion !== version) || (actualVersion === 2 && page.cookie_inventory_version !== 2)
+      || Object.keys(page).length !== names.length || names.some((name) => !Object.hasOwn(page, name))
+      || page.scope !== scope || `${page.owner_id}:${page.session_id}` !== identity
+      || typeof page.replayed !== 'boolean' || typeof page.completed_at !== 'string' || page.completed_at.length > 64
+      || !/^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:\d\d)$/.test(page.completed_at)
+      || !Number.isFinite(Date.parse(page.completed_at)) || typeof page.cookie_cleanup_complete !== 'boolean'
+      || (page.next_cursor !== null && (!match || match[2] === COOKIE_NIL))
+      || page.cookie_cleanup_complete !== (page.next_cursor === null)) throw new Error(MEDIA_TRANSITION_FAILURE);
+  return page;
+}
+
+async function revokePrivateMediaSessionPages<Scope extends MediaRevocationScope>(
+  accessToken: string, expectedBackendUrl: string, scope: Scope, options: PrivateMediaRevocationProgress<Scope> = {}
+): Promise<PrivateMediaRevocationPage<Scope>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const controller = new AbortController();
+  try {
+    const backend = new URL(expectedBackendUrl);
+    const actual = () => new URL(getBackendApiUrl()).href.replace(/\/$/, '');
+    if (backend.protocol !== 'https:' || backend.username || backend.password || backend.search || backend.hash
+        || backend.href.replace(/\/$/, '') !== expectedBackendUrl || actual() !== expectedBackendUrl) throw new Error(MEDIA_TRANSITION_FAILURE);
+    const issuer = `${(process.env.EXPO_PUBLIC_SUPABASE_URL ?? '').replace(/\/$/, '')}/auth/v1`;
+    const identity = getPrivateMediaSessionKey(accessToken, issuer);
+    if (!identity) throw new Error(MEDIA_TRANSITION_FAILURE);
+    let previous = options.progress == null ? null : validateRevocationPage(options.progress, scope, identity);
+    const browser = Platform.OS === 'web';
+    const targetVersion = browser ? 2 : 1;
+    if (!browser && previous?.cookie_inventory_version !== undefined) throw new Error(MEDIA_TRANSITION_FAILURE);
+    let inventoryVersion: 1 | 2 = previous && previous.cookie_inventory_version === undefined ? 1 : targetVersion;
+    const stableCompletedAt = previous?.completed_at;
+    const hasBoundGlobalProgress = previous !== null;
+    const requireGlobalIntent = () => {
+      if (scope !== 'global' || process.env.EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED !== 'true') return;
+      const active = getActivePrivateMediaSessionKey();
+      // A blocked transition may resume only a validated, durably retained global cookie page.
+      const intent = options.globalIntent;
+      const pendingIntent = intent && Object.keys(intent).sort().join(',') === 'backend,inventory_version,mode,owner_id,session_id,version'
+        && intent.version === 2 && intent.mode === 'global' && intent.inventory_version === targetVersion && intent.backend === expectedBackendUrl
+        && `${intent.owner_id}:${intent.session_id}` === identity;
+      if (active !== identity && !(active === null && (previous !== null || hasBoundGlobalProgress || pendingIntent))) throw new Error(MEDIA_TRANSITION_FAILURE);
+    };
+    requireGlobalIntent();
+    if (previous?.cookie_cleanup_complete && inventoryVersion === targetVersion) return previous;
+    if (previous?.cookie_cleanup_complete) { inventoryVersion = targetVersion; previous = null; }
+    const operationPath = scope === 'global' ? '/logout' : '/session-replacement';
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { controller.abort(); reject(new Error(MEDIA_TRANSITION_FAILURE)); }, 60_000);
+    });
+    for (let pageNumber = 0; pageNumber < 256; pageNumber += 1) {
+      if (controller.signal.aborted || actual() !== expectedBackendUrl) throw new Error(MEDIA_TRANSITION_FAILURE);
+      requireGlobalIntent();
+      const cursor = previous?.next_cursor ?? null;
+      const path = '/private-media' + (inventoryVersion === 2 ? '/v2' : '') + operationPath;
+      const readResponse = async () => {
+        const response = await fetch(`${expectedBackendUrl}${path}`, {
+          method: 'POST', credentials: Platform.OS === 'web' ? 'include' : 'omit',
+          redirect: 'error', cache: 'no-store', keepalive: false, signal: controller.signal,
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transport: Platform.OS === 'web' ? 'browser' : 'native', ...(cursor ? { cursor } : {}) }),
+        });
+        if (!response.ok) throw new Error(MEDIA_TRANSITION_FAILURE);
+        const raw = await response.text();
+        if (raw.length > 8192) throw new Error(MEDIA_TRANSITION_FAILURE);
+        return raw;
+      };
+      const raw = await Promise.race([readResponse(), deadline]);
+      const page = validateRevocationPage(JSON.parse(raw), scope, identity, inventoryVersion);
+      if ((stableCompletedAt && page.completed_at !== stableCompletedAt) || (previous && page.completed_at !== previous.completed_at)) throw new Error(MEDIA_TRANSITION_FAILURE);
+      if (page.next_cursor && cursor && page.next_cursor <= cursor) throw new Error(MEDIA_TRANSITION_FAILURE);
+      if (Platform.OS !== 'web' && !page.cookie_cleanup_complete) throw new Error(MEDIA_TRANSITION_FAILURE);
+      if (page.cookie_cleanup_complete) {
+        // Retain even the final global page if persisting its compact receipt fails afterward.
+        if (scope === 'global' && options.onProgress) {
+          await options.onProgress(page);
+          previous = page;
+        }
+        requireGlobalIntent();
+        if (actual() !== expectedBackendUrl) throw new Error(MEDIA_TRANSITION_FAILURE);
+        if (inventoryVersion !== targetVersion) {
+          if (!options.onProgress) throw new Error(MEDIA_TRANSITION_FAILURE);
+          if (scope !== 'global') await options.onProgress(page);
+          inventoryVersion = targetVersion; previous = null; continue;
+        }
+        return page;
+      }
+      // Persist each confirmed page before requesting another; retries resume without guessing.
+      if (!options.onProgress) throw new Error(MEDIA_TRANSITION_FAILURE);
+      await options.onProgress(page);
+      previous = page;
+    }
+    throw new Error(MEDIA_TRANSITION_FAILURE);
+
+  } catch {
+    throw new Error(MEDIA_TRANSITION_FAILURE);
+  } finally {
+    if (timer) clearTimeout(timer);
+    controller.abort();
+  }
+}
+
+export async function revokeGlobalPrivateMediaSession(
+  accessToken: string, expectedBackendUrl: string, options: PrivateMediaRevocationProgress<'global'> = {}
+) {
+  const receipt = await revokePrivateMediaSessionPages(accessToken, expectedBackendUrl, 'global', options);
+  return { scope: 'global' as const, completed_at: receipt.completed_at, replayed: receipt.replayed,
+    ...(receipt.cookie_inventory_version === 2 ? { cookie_inventory_version: 2 as const } : {}) };
+}
+
+export async function revokeReplacementPrivateMediaSession(
+  accessToken: string, expectedBackendUrl: string, options: PrivateMediaRevocationProgress<'local'> = {}
+) {
+  return revokePrivateMediaSessionPages(accessToken, expectedBackendUrl, 'local', options);
+}
+
+// This fixed decision seam authorizes no media and never adopts the candidate token itself.
+export async function verifyIncomingPrivateMediaSession(accessToken: string, expectedBackendUrl: string) {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const backend = new URL(expectedBackendUrl);
+    const currentBackend = () => new URL(getBackendApiUrl()).href.replace(/\/$/, '');
+    if (backend.protocol !== 'https:' || backend.username || backend.password || backend.search || backend.hash
+        || backend.href.replace(/\/$/, '') !== expectedBackendUrl || currentBackend() !== expectedBackendUrl) throw new Error(MEDIA_TRANSITION_FAILURE);
+    const issuer = `${(process.env.EXPO_PUBLIC_SUPABASE_URL ?? '').replace(/\/$/, '')}/auth/v1`;
+    const identity = getPrivateMediaSessionKey(accessToken, issuer);
+    if (!identity) throw new Error(MEDIA_TRANSITION_FAILURE);
+    const request = (async () => {
+      const response = await fetch(`${expectedBackendUrl}/private-media/session-acceptance`, {
+        method: 'POST', credentials: Platform.OS === 'web' ? 'include' : 'omit',
+        redirect: 'error', cache: 'no-store', signal: controller.signal,
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transport: Platform.OS === 'web' ? 'browser' : 'native' }),
+      });
+      if (!response.ok) throw new Error(MEDIA_TRANSITION_FAILURE);
+      const raw = await response.text();
+      if (raw.length > 8192 || currentBackend() !== expectedBackendUrl) throw new Error(MEDIA_TRANSITION_FAILURE);
+      const value = JSON.parse(raw) as { owner_id: string; session_id: string; accepted: true };
+      if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== 3
+          || !['owner_id', 'session_id', 'accepted'].every((name) => Object.hasOwn(value, name))
+          || value.accepted !== true || `${value.owner_id}:${value.session_id}` !== identity) throw new Error(MEDIA_TRANSITION_FAILURE);
+      return value;
+    })();
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { controller.abort(); reject(new Error(MEDIA_TRANSITION_FAILURE)); }, 30_000);
+    });
+    return await Promise.race([request, timeout]);
+  } catch { throw new Error(MEDIA_TRANSITION_FAILURE); }
+  finally { if (timer) clearTimeout(timer); controller.abort(); }
 }
 
 export async function fetchStorageUsage(uploadSizeBytes: number, accessToken: string) {
@@ -542,7 +777,9 @@ export async function getSavedVideoOverview(accessToken: string, signal?: AbortS
   return requestJson<SavedVideoOverview>('/videos/saved-overview', accessToken, { signal });
 }
 
-export async function getVideoPlaybackUrl(videoId: string, accessToken: string) {
+export async function getVideoPlaybackUrl(videoId: string, accessToken: string, signal?: AbortSignal) {
+  if (process.env.EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED === 'true') throw new Error('Use a private media session for video playback.');
+  const mediaEpoch = getPrivateMediaEpoch();
   const cacheKey = `${accessToken}:${videoId}`;
   const cached = playbackUrlCache.get(cacheKey);
 
@@ -558,8 +795,9 @@ export async function getVideoPlaybackUrl(videoId: string, accessToken: string) 
     video_id: string;
     video_url: string;
     expires_in: number;
-  }>(`/videos/${videoId}/playback-url`, accessToken);
+  }>(`/videos/${videoId}/playback-url`, accessToken, { signal });
 
+  if (mediaEpoch !== getPrivateMediaEpoch()) throw new Error('Your sign-in session changed. Please try again.');
   playbackUrlCache.set(cacheKey, {
     url: response.video_url,
     expiresAt: Date.now() + PLAYBACK_URL_CACHE_TTL_MS,
@@ -601,11 +839,13 @@ export async function saveAnalyzedVideo(
 export async function exportAnalyzedVideo(
   videoId: string,
   accessToken: string,
-  options: AnalyzedVideoExportOptions = { pose: true, barbell: false }
+  options: AnalyzedVideoExportOptions = { pose: true, barbell: false },
+  signal?: AbortSignal,
 ) {
+  if (process.env.EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED === 'true') {
+    throw new Error('Use private media to export this video.');
+  }
   const requestPayload = buildAnalyzedVideoExportPayload(options);
-
-  // Render and sign an analyzed copy with the requested overlays burned in.
   return requestJson<{
     video_id: string;
     analysis_id: string;
@@ -619,6 +859,7 @@ export async function exportAnalyzedVideo(
       method: 'POST',
       body: JSON.stringify(requestPayload),
       timeoutMs: EXPORT_REQUEST_TIMEOUT_MS,
+      signal,
     }
   );
 }
@@ -650,11 +891,8 @@ export async function deleteAccount(accessToken: string) {
   });
 }
 
-export async function getSavedVideoPlaybackUrl(videoId: string, accessToken: string) {
-  return requestJson<{
-    video_id: string;
-    video_url: string;
-  }>(`/videos/${videoId}/playback-url`, accessToken);
+export async function getSavedVideoPlaybackUrl(videoId: string, accessToken: string, signal?: AbortSignal) {
+  return getVideoPlaybackUrl(videoId, accessToken, signal);
 }
 
 export async function discardAnalyzedVideo(videoId: string, accessToken: string) {

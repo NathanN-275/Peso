@@ -1,0 +1,18 @@
+title = "Peso reviewed public source revision allowlist"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Reviewed public GoTrue source revision in two exact current-source lines; raw source scanning still applies immutable occurrence pins."
+targetRules = ["generic-api-key"]
+matchCondition = "AND"
+regexTarget = "line"
+paths = [
+  '''^backend/tests/test_private_media_grants_postgres\.py$''',
+  '''^supabase/migrations/20261026173152_private_media_provider_session_decision\.sql$''',
+]
+regexes = [
+  '''^      auth_source_commit='\x34\x65\x65\x65\x35\x38\x66\x32\x39\x36\x64\x39\x36\x39\x38\x61\x31\x63\x32\x63\x30\x61\x65\x31\x34\x64\x37\x61\x30\x62\x33\x37\x39\x63\x37\x36\x32\x32\x64\x33', timebox_seconds=0,inactivity_timeout_seconds=0,$''',
+  '''^      and p\.auth_source_commit = '\x34\x65\x65\x65\x35\x38\x66\x32\x39\x36\x64\x39\x36\x39\x38\x61\x31\x63\x32\x63\x30\x61\x65\x31\x34\x64\x37\x61\x30\x62\x33\x37\x39\x63\x37\x36\x32\x32\x64\x33'$''',
+]

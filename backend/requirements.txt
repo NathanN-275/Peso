@@ -12,3 +12,6 @@ onnxruntime==1.23.2
 protobuf==6.33.5
 azure-identity==1.25.3
 azure-storage-blob==12.30.1
+# Pin fixed transitive releases required by the complete image security scan.
+aiohttp==3.14.4
+certifi==2026.10.19

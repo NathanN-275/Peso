@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEvent } from 'expo';
 import { VideoView, useVideoPlayer } from 'expo-video';
+import { registerNativePrivateMedia } from '../../lib/privateMediaLifecycle';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   LayoutChangeEvent,
@@ -173,6 +174,7 @@ export default function TrackingPinSetupModal({
     videoPlayer.muted = true;
     videoPlayer.timeUpdateEventInterval = 0.05;
   });
+  useEffect(() => registerNativePrivateMedia(player), [player]);
   const sourceLoad = useEvent(player, 'sourceLoad', {
     videoSource: null,
     duration: 0,

@@ -62,3 +62,17 @@ fabricate an accepted binding or bypass visitor protection to break the loop.
 
 The implementation of revocable media transport/session checks and hosted
 authentication acceptance remain separate chunks. Gate 4 remains open.
+
+## October 28 successor: scope staging values by project
+
+The approved staging endpoints remain unchanged. Their four environment values
+now live in `scripts/netlify-build.js`, applied only to the historical app site
+ID plus branch-deploy/main. The shared `netlify.toml` branch environment block
+was removed because Netlify applies it to every project built from main and
+file values override provider settings. The new combined project must retain
+its own verified PesoDatabase/API/challenge inputs and public-beta validation.
+This supersedes only the source location/scoping described above; it does not
+change the historical checkpoint's test evidence or approve any hosted release.
+
+Primary references: [Netlify deploy contexts](https://docs.netlify.com/deploy/deploy-overview/#deploy-contexts)
+and [environment precedence](https://docs.netlify.com/build/environment-variables/get-started/).

@@ -15,6 +15,32 @@ NOW = datetime(2026, 9, 27, 12, 0, tzinfo=timezone.utc)
 COMMIT = "a" * 40
 SENTINEL = "sb_secret_PRIVATE_ROW_AND_CREDENTIAL_SENTINEL"
 
+# Frozen September fixture. Current migration additions must keep the historical
+# checker blocked; they do not silently expand this old acceptance contract.
+HISTORICAL_APPLIED_FILES = (
+    '202604140001_video_analysis_pipeline.sql',
+    '202604140002_fix_videos_rls.sql',
+    '202605110001_video_save_state.sql',
+    '202605160001_video_save_state_v2.sql',
+    '202605240001_storage_egress_cleanup.sql',
+    '202605270001_storage_retention_metadata.sql',
+    '202606120001_tracking_setup.sql',
+    '20260630225059_user_profile.sql',
+    '202607080001_video_security_hardening.sql',
+    '202607080002_video_path_shape_hardening.sql',
+    '202607120001_profile_infrastructure_repair.sql',
+    '20260713233319_durable_analysis_jobs.sql',
+    '202607150001_coaching_save_metadata.sql',
+    '202607250001_workout_save_metadata.sql',
+    '202608030001_optional_workout_save_metadata.sql',
+    '20260805055143_saved_lift_export_jobs.sql',
+    '202608060001_side_squat_quality_preflight.sql',
+    '202608170001_analysis_job_observability.sql',
+    '20260825033422_harden_video_upload_object_policy.sql',
+    '202608260001_harden_public_api_privileges.sql',
+    '202608270001_add_analysis_job_scaler_signal.sql',
+)
+
 
 def stamp(delta=0):
     return (NOW + timedelta(seconds=delta)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -29,7 +55,9 @@ class PrecutoverTests(unittest.TestCase):
         self.migrations = self.repo / "supabase/migrations"
         self.migrations.mkdir(parents=True)
         source = Path(__file__).resolve().parents[1] / "supabase/migrations"
-        self.names = sorted(p.name for p in source.glob("*.sql"))
+        self.names = sorted((*HISTORICAL_APPLIED_FILES, *checker.PENDING))
+        self.assertEqual(len(self.names), 28)
+        self.assertTrue(all((source / name).is_file() for name in self.names))
         for name in self.names:
             (self.migrations / name).write_text("-- fixture\n")
         self.link = self.repo / "supabase/.temp/project-ref"
@@ -119,6 +147,15 @@ class PrecutoverTests(unittest.TestCase):
             with self.subTest(files=files):
                 self.dry_run = "\n".join(" • " + name for name in files)
                 self.assert_blocked("live_migration_dry_run")
+
+    def test_current_migration_additions_keep_historical_checker_closed(self):
+        source = Path(__file__).resolve().parents[1] / "supabase/migrations"
+        added = [path.name for path in source.glob("*.sql") if path.name not in self.names]
+        self.assertTrue(added)
+        for name in added:
+            (self.migrations / name).write_text("-- later current migration fixture\n")
+        self.assert_blocked("repository_migration_chain")
+        self.assertFalse(any(call[0] == "supabase" for call in self.calls))
 
     def test_changed_history_prevents_dry_run(self):
         self.history = self.history.replace("202608270001 | 202608270001", "202608270001 | 202608270002")

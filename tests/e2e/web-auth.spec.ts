@@ -1,6 +1,10 @@
-const { assertStagingE2EEnvironment } = require('../../scripts/e2e-environment');
-import { expect, test, type Page } from '@playwright/test';
-import { createClient, type User } from '@supabase/supabase-js';
+import { expect, type Page } from '@playwright/test';
+import { createClient } from '@supabase/supabase-js';
+import { test } from './staging-test';
+
+const {
+  assertStagingE2EEnvironment, assertStagingVerificationLink, recordStagingFixture,
+} = require('../../scripts/e2e-environment');
 
 const webBaseUrl = process.env.PESO_E2E_WEB_BASE_URL ?? 'https://staging-required.invalid';
 const signupEmail = process.env.PESO_E2E_SIGNUP_EMAIL ?? 'staging-signup-required@example.com';
@@ -12,11 +16,10 @@ const admin = createClient(
 );
 
 const loginAccount = {
-  email: `peso-e2e-${Date.now()}@example.com`,
-  password: `Peso-E2E-${Date.now()}-Aa1!`,
+  email: `peso-e2e-${crypto.randomUUID()}@example.com`,
+  password: `Peso-E2E-${crypto.randomUUID()}-Aa1!`,
 };
-let loginUser: User | null = null;
-let signupUser: User | null = null;
+let loginUserId: string;
 
 async function findUser(email: string) {
   for (let page = 1; page <= 10; page += 1) {
@@ -28,12 +31,6 @@ async function findUser(email: string) {
   throw new Error(`Could not finish searching staging users for ${email}.`);
 }
 
-async function deleteUser(user: User | null) {
-  if (!user) return;
-  const { error } = await admin.auth.admin.deleteUser(user.id);
-  if (error && !/not found/i.test(error.message)) throw error;
-}
-
 async function completeChallengeAndSubmit(page: Page, buttonName: RegExp) {
   const button = page.getByRole('button', { name: buttonName });
   await expect(button).toBeEnabled({ timeout: 30_000 });
@@ -42,6 +39,7 @@ async function completeChallengeAndSubmit(page: Page, buttonName: RegExp) {
 
 async function signIn(page: Page, email = loginAccount.email, password = loginAccount.password) {
   await page.goto('/app/login');
+  await expect(page).toHaveURL(`${webBaseUrl}/app/login`);
   await page.getByRole('textbox', { name: 'Email' }).fill(email);
   await page.getByLabel('Password').fill(password);
   await completeChallengeAndSubmit(page, /sign in/i);
@@ -49,9 +47,7 @@ async function signIn(page: Page, email = loginAccount.email, password = loginAc
 
 test.beforeAll(async () => {
   assertStagingE2EEnvironment(process.env);
-  if (await findUser(signupEmail)) {
-    throw new Error('The signup fixture email already belongs to an account. Supply an unused test address.');
-  }
+  const recordCreated = recordStagingFixture(process.env.PESO_E2E_RECEIPT_DIR, 'login', loginAccount.email);
   const { data, error } = await admin.auth.admin.createUser({
     email: loginAccount.email,
     password: loginAccount.password,
@@ -59,12 +55,8 @@ test.beforeAll(async () => {
     user_metadata: { purpose: 'peso-release-e2e' },
   });
   if (error) throw error;
-  loginUser = data.user;
-});
-
-test.afterAll(async () => {
-  await deleteUser(signupUser);
-  await deleteUser(loginUser);
+  loginUserId = data.user.id;
+  recordCreated(loginUserId);
 });
 
 test('invalid credentials are distinct from connectivity and CAPTCHA errors', async ({ page }) => {
@@ -82,21 +74,30 @@ test('login restores the session after reload and logout clears it', async ({ pa
   await expect(page).toHaveURL(/\/app\/?$/);
 
   await page.goto('/app/settings');
-  await page.getByRole('link', { name: 'Sign out' }).click();
+  await page.getByRole('button', { name: 'Sign out' }).click();
   await expect(page).toHaveURL(/\/app\/login/);
 });
 
 test('signup, generated confirmation link, and login use one Peso account', async ({ page }) => {
+  if (await findUser(signupEmail)) {
+    throw new Error('The signup fixture email already belongs to an account. Supply an unused test address.');
+  }
   await page.goto('/app/signup');
+  await expect(page).toHaveURL(`${webBaseUrl}/app/signup`);
   await page.getByRole('textbox', { name: 'Email' }).fill(signupEmail);
   await page.getByLabel('Password').fill(signupPassword);
   await expect(page.getByRole('checkbox', { name: /reside in the United States/i })).toHaveCount(0);
-  await page.getByRole('checkbox', { name: /beta Terms/i }).check();
+  const terms = page.getByRole('checkbox', { name: /beta Terms/i });
+  await expect(terms).not.toBeChecked();
+  await terms.press('Space');
+  await expect(terms).toBeChecked();
+  const recordCreated = recordStagingFixture(process.env.PESO_E2E_RECEIPT_DIR, 'signup', signupEmail);
   await completeChallengeAndSubmit(page, /create account/i);
   await expect(page.getByRole('heading', { name: 'Verify your email' })).toBeVisible();
 
-  signupUser = await findUser(signupEmail);
-  expect(signupUser).not.toBeNull();
+  const signupUser = await findUser(signupEmail);
+  if (!signupUser) throw new Error('Staging signup fixture was not found.');
+  recordCreated(signupUser.id);
   const { data, error } = await admin.auth.admin.generateLink({
     type: 'signup',
     email: signupEmail,
@@ -104,10 +105,14 @@ test('signup, generated confirmation link, and login use one Peso account', asyn
     options: { redirectTo: `${webBaseUrl}/app/login` },
   });
   if (error) throw error;
+  expect(data.user.id).toBe(signupUser.id);
+  assertStagingVerificationLink(data.properties.action_link, '/app/login');
 
   await page.goto(data.properties.action_link);
-  await page.waitForURL(/\/app\/(login)?(?:[?#].*)?$/, { timeout: 30_000 });
-  if (/\/app\/login/.test(page.url())) {
+  await page.waitForURL((url) => url.origin === webBaseUrl && ['/app', '/app/', '/app/login'].includes(url.pathname), {
+    timeout: 30_000,
+  });
+  if (new URL(page.url()).pathname === '/app/login') {
     await signIn(page, signupEmail, signupPassword);
   }
   await expect(page).toHaveURL(/\/app\/?$/);
@@ -115,6 +120,7 @@ test('signup, generated confirmation link, and login use one Peso account', asyn
 
 test('reset request suppresses account enumeration', async ({ page }) => {
   await page.goto('/app/reset');
+  await expect(page).toHaveURL(`${webBaseUrl}/app/reset`);
   await page.getByRole('textbox', { name: 'Email' }).fill(`missing-${Date.now()}@example.com`);
   await completeChallengeAndSubmit(page, /send reset link/i);
   await expect(
@@ -130,8 +136,11 @@ test('generated recovery link updates the password', async ({ page }) => {
     options: { redirectTo: `${webBaseUrl}/app/reset` },
   });
   if (error) throw error;
+  expect(data.user.id).toBe(loginUserId);
+  assertStagingVerificationLink(data.properties.action_link, '/app/reset');
 
   await page.goto(data.properties.action_link);
+  await expect(page).toHaveURL((url) => url.origin === webBaseUrl && url.pathname === '/app/reset');
   await expect(page.getByRole('heading', { name: 'Choose a new password' })).toBeVisible({
     timeout: 30_000,
   });

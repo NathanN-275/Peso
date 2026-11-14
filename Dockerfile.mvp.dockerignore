@@ -1,0 +1,20 @@
+# Only files copied by Dockerfile may enter the build context.
+**
+!Dockerfile.mvp
+!backend/
+backend/**
+!backend/requirements-mvp.txt
+!backend/app/
+!backend/app/**
+backend/app/analysis/models/
+!scripts/
+scripts/**
+!scripts/fetch_pose_models.py
+!scripts/normalize_mediapipe_wheel.py
+backend/app/**/__pycache__/
+backend/app/**/*.pyc
+backend/app/**/.DS_Store
+backend/app/**/.env*
+
+# MVP runtime has no Azure storage adapter.
+backend/app/services/azure_blob_storage.py

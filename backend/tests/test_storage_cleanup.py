@@ -94,6 +94,7 @@ class FakeRepository:
     task = {'video_id': video_id, 'user_id': row['user_id'], 'storage_paths': [
       row[key] for key in ('storage_path', 'original_storage_path', 'playback_path', 'thumbnail_path') if row.get(key)
     ]}
+    task.update(archive_paths=[], export_prefixes=[], delete_metadata=False)
     self.pending_deletions[video_id] = task
     self.expired_videos.remove(row)
     return task
@@ -101,9 +102,11 @@ class FakeRepository:
   def list_pending_deletions(self) -> list[dict]:
     return list(self.pending_deletions.values())
 
-  def complete_deletion(self, video_id: str) -> None:
+  def complete_deletion(self, task: dict) -> bool:
+    video_id = task["video_id"]
     self.pending_deletions.pop(video_id, None)
     self.deleted_video_ids.append(video_id)
+    return True
 
   def list_expired_pending_videos(self) -> list[dict]:
     return self.expired_videos

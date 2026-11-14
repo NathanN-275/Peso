@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const projectRoot = path.resolve(__dirname, '..');
-const homePagePath = path.join(projectRoot, 'web/src/pages/index.astro');
+const homePagePath = path.join(projectRoot, 'web/src/pages/index.html');
 const globalStylesPath = path.join(projectRoot, 'web/src/styles/global.css');
 const netlifyConfigPath = path.join(projectRoot, 'netlify.toml');
 const demoVideoPath = path.join(projectRoot, 'assets/demo/peso-pose-overlay.mp4');
@@ -16,11 +16,15 @@ test('marketing home defers the optimized demo video and preserves accessible co
   const globalStyles = await readFile(globalStylesPath, 'utf8');
   const demoVideoStats = await stat(demoVideoPath);
   const demoScript = await readFile(path.join(projectRoot, 'web/src/scripts/demo-video.js'), 'utf8');
-  assert.match(homePage, /src=\{demoScriptUrl\}/);
+  const renderer = await readFile(path.join(projectRoot, 'web/build.mjs'), 'utf8');
+  assert.match(homePage, /src="\{\{DEMO_SCRIPT_URL\}\}"/);
+  assert.match(renderer, /const demoScript = asset\('demo-video\.js', readInput\('web\/src\/scripts\/demo-video\.js'\)\)/);
+  assert.match(renderer, /DEMO_SCRIPT_URL: escapeHtml\(demoScript\)/);
 
   assert.match(homePage, /src="\/demo\/peso-demo-thumbnail\.jpg"/);
-  assert.match(homePage, /peso-pose-overlay\.mp4\?url/);
-  assert.match(homePage, /data-src=\{demoVideoUrl\}/);
+  assert.match(renderer, /const video = asset\('peso-pose-overlay\.mp4', readInput\('assets\/demo\/peso-pose-overlay\.mp4'\)\)/);
+  assert.match(renderer, /DEMO_VIDEO_URL: escapeHtml\(video\)/);
+  assert.match(homePage, /data-src="\{\{DEMO_VIDEO_URL\}\}"/);
   assert.match(homePage, /poster="\/demo\/peso-pose-overlay\.jpg"/);
   assert.match(homePage, /\bcontrols\b/);
   assert.match(homePage, /\bloop\b/);

@@ -21,6 +21,11 @@ const releaseChecks = [
     command: process.execPath,
     args: ['scripts/release-env.js'],
   },
+  {
+    name: 'Marketing dependency audit',
+    command: process.execPath,
+    args: ['scripts/npm-audit-web-ci.js'],
+  },
   { name: 'App typecheck', command: 'npm', args: ['run', 'typecheck'] },
   { name: 'Policy tests', command: 'npm', args: ['run', 'test:policy'] },
   {

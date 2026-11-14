@@ -5,7 +5,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from fastapi.middleware.gzip import GZipMiddleware
+from app.routes.private_media import MediaAwareGZipMiddleware
 
 
 class ApiCompressionTest(unittest.TestCase):
@@ -29,7 +29,7 @@ class ApiCompressionTest(unittest.TestCase):
     gzip_middleware = [
       middleware
       for middleware in main.app.user_middleware
-      if middleware.cls is GZipMiddleware
+      if middleware.cls is MediaAwareGZipMiddleware
     ]
 
     self.assertEqual(len(gzip_middleware), 1)

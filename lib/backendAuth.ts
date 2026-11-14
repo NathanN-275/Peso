@@ -1,5 +1,5 @@
 import type { Session } from '@supabase/supabase-js';
-import { supabase, supabaseConfigError } from './supabase';
+import { supabase, supabaseConfigError, waitForAcceptedAuthSession } from './supabase';
 
 const TOKEN_REFRESH_BUFFER_SECONDS = 60;
 
@@ -34,8 +34,9 @@ export async function getFreshBackendAccessToken() {
     throw new Error(`Unable to read the current sign-in session.${formatAuthError(error)}`);
   }
 
-  if (session && !sessionNeedsRefresh(session)) {
-    return session.access_token;
+  const acceptedSession = await waitForAcceptedAuthSession(session);
+  if (acceptedSession && !sessionNeedsRefresh(acceptedSession)) {
+    return acceptedSession.access_token;
   }
 
   const {
@@ -47,7 +48,7 @@ export async function getFreshBackendAccessToken() {
     throw new Error(`Unable to refresh the current sign-in session.${formatAuthError(refreshError)}`);
   }
 
-  const nextSession = refreshedSession ?? session;
+  const nextSession = refreshedSession ? await waitForAcceptedAuthSession(refreshedSession) : null;
 
   if (!nextSession?.access_token) {
     throw new Error('You must be logged in to start analysis.');

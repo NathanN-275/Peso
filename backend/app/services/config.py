@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import re
 import math
-from ipaddress import ip_network
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -84,6 +83,9 @@ class Settings:
   export_storage_ttl_hours: int = DEFAULT_EXPORT_STORAGE_TTL_HOURS
   orphan_storage_min_age_hours: int = DEFAULT_ORPHAN_STORAGE_MIN_AGE_HOURS
   stale_processing_hours: int = DEFAULT_STALE_PROCESSING_HOURS
+  private_media_enabled: bool = False
+  private_media_public_origin: str = ""
+  private_media_browser_origins: tuple[str, ...] = ()
   cors_origins: tuple[str, ...] = ()
   cors_origin_regex: str | None = None
   cors_allow_private_network: bool = False
@@ -112,8 +114,6 @@ class Settings:
   azure_blob_source_container: str = "source-videos"
   azure_managed_identity_client_id: str | None = None
   budget_shutdown_token: str = ""
-  us_ip_beta_enabled: bool = False
-  trusted_proxy_cidrs: tuple[str, ...] = ()
   intake_stop_projected_monthly_usd: int | None = None
   signed_url_ttl_seconds: int = DEFAULT_SIGNED_URL_TTL_SECONDS
   storage_download_signed_url_ttl_seconds: int = DEFAULT_STORAGE_DOWNLOAD_SIGNED_URL_TTL_SECONDS
@@ -129,6 +129,7 @@ class Settings:
   analysis_trace_enabled: bool = False
   analysis_trace_dir: Path = Path(DEFAULT_ANALYSIS_TRACE_DIR)
   analysis_trace_max_runs: int = DEFAULT_ANALYSIS_TRACE_MAX_RUNS
+  runtime_profile: str = "legacy"
 
 
 def _parse_positive_int_env(name: str, default: int, *aliases: str) -> int:
@@ -225,6 +226,13 @@ def get_settings() -> Settings:
     raise RuntimeError("BACKEND_ENV must be explicitly configured in deployed environments.")
 
   backend_env = backend_env_raw or "development"
+  runtime_profile = os.getenv("PESO_RUNTIME_PROFILE", "legacy").strip().lower() or "legacy"
+  if runtime_profile not in {"legacy", "web-mvp"}:
+    raise RuntimeError("PESO_RUNTIME_PROFILE must be either legacy or web-mvp.")
+  if runtime_profile == "web-mvp" and any(
+    name.startswith("AZURE_") and value.strip() for name, value in os.environ.items()
+  ):
+    raise RuntimeError("AZURE_* settings are unavailable in the web-mvp runtime.")
   supabase_url = os.getenv("SUPABASE_URL", "").strip()
   deployment_environment = os.getenv("PESO_DEPLOYMENT_ENVIRONMENT", "").strip().lower()
   if deployment_environment:
@@ -307,7 +315,10 @@ def get_settings() -> Settings:
   max_video_height = _parse_positive_int_env("MAX_VIDEO_HEIGHT", DEFAULT_MAX_VIDEO_HEIGHT)
   max_video_fps = _parse_positive_float_env("MAX_VIDEO_FPS", DEFAULT_MAX_VIDEO_FPS)
   upload_reservations_enabled = _parse_bool_env("UPLOAD_RESERVATIONS_ENABLED", False)
-  upload_storage_provider = os.getenv("UPLOAD_STORAGE_PROVIDER", "azure").strip().lower() or "azure"
+  default_upload_provider = "supabase" if runtime_profile == "web-mvp" else "azure"
+  upload_storage_provider = os.getenv("UPLOAD_STORAGE_PROVIDER", default_upload_provider).strip().lower() or default_upload_provider
+  if runtime_profile == "web-mvp" and upload_storage_provider != "supabase":
+    raise RuntimeError("The web-mvp runtime requires Supabase upload storage.")
   if upload_storage_provider not in {"azure", "supabase"}:
     raise RuntimeError("UPLOAD_STORAGE_PROVIDER must be either azure or supabase.")
   upload_reservation_ttl_seconds = _parse_positive_int_env(
@@ -336,18 +347,6 @@ def get_settings() -> Settings:
     or None
   )
   budget_shutdown_token = os.getenv("BUDGET_SHUTDOWN_TOKEN", "").strip()
-  us_ip_beta_raw = os.getenv("US_IP_BETA_ENABLED", "false").strip().lower()
-  if us_ip_beta_raw not in {'true', 'false'}:
-    raise RuntimeError('US_IP_BETA_ENABLED must be explicitly true or false.')
-  us_ip_beta_enabled = us_ip_beta_raw == 'true'
-  trusted_proxy_cidrs = tuple(value.strip() for value in os.getenv("TRUSTED_PROXY_CIDRS", "").split(',') if value.strip())
-  for cidr in trusted_proxy_cidrs:
-    try:
-      network = ip_network(cidr)
-      if network.prefixlen == 0:
-        raise ValueError('Trusting every address is not permitted.')
-    except ValueError as error:
-      raise RuntimeError('TRUSTED_PROXY_CIDRS must contain explicit networks, never wildcard trust.') from error
   intake_stop_raw = os.getenv("INTAKE_STOP_PROJECTED_MONTHLY_USD", "").strip()
   intake_stop_projected_monthly_usd = None
   if intake_stop_raw:
@@ -510,6 +509,7 @@ def get_settings() -> Settings:
 
   return Settings(
     backend_env=backend_env,
+    runtime_profile=runtime_profile,
     supabase_url=supabase_url,
     supabase_service_role_key=supabase_service_role_key,
     cleanup_job_token=cleanup_job_token,
@@ -522,6 +522,9 @@ def get_settings() -> Settings:
     export_storage_ttl_hours=export_cache_ttl_hours,
     orphan_storage_min_age_hours=orphan_storage_min_age_hours,
     stale_processing_hours=stale_processing_hours,
+    private_media_enabled=_parse_bool_env("PRIVATE_MEDIA_ENABLED", False),
+    private_media_public_origin=os.getenv("PRIVATE_MEDIA_PUBLIC_ORIGIN", "").strip().rstrip("/"),
+    private_media_browser_origins=tuple(origin.strip() for origin in os.getenv("PRIVATE_MEDIA_BROWSER_ORIGINS", "").split(",") if origin.strip()),
     cors_origins=cors_origins,
     cors_origin_regex=cors_origin_regex,
     cors_allow_private_network=cors_allow_private_network,
@@ -550,8 +553,6 @@ def get_settings() -> Settings:
     azure_blob_source_container=azure_blob_source_container,
     azure_managed_identity_client_id=azure_managed_identity_client_id,
     budget_shutdown_token=budget_shutdown_token,
-    us_ip_beta_enabled=us_ip_beta_enabled,
-    trusted_proxy_cidrs=trusted_proxy_cidrs,
     intake_stop_projected_monthly_usd=intake_stop_projected_monthly_usd,
     signed_url_ttl_seconds=signed_url_ttl_seconds,
     storage_download_signed_url_ttl_seconds=storage_download_signed_url_ttl_seconds,

@@ -13,7 +13,7 @@
     "ios": "node scripts/dependency-patches.js verify && expo run:ios",
     "ios:simulator:build": "npx eas-cli@latest build --platform ios --profile development-simulator",
     "ios:simulator:run": "npx eas-cli@latest build:run --platform ios --latest",
-    "app:web:export": "node scripts/dependency-patches.js verify && EXPO_PUBLIC_WEB_SURFACE=web-app EXPO_PUBLIC_WEB_ROUTER_BASE=/app expo export --platform web --output-dir dist/app",
+    "app:web:export": "node scripts/dependency-patches.js verify && EXPO_PUBLIC_WEB_SURFACE=web-app EXPO_PUBLIC_WEB_ROUTER_BASE=/app expo export --platform web --clear --output-dir dist/app",
     "web:export": "npm run web:build",
     "web:build": "npm run web:build:private-beta",
     "web:build:release": "npm run release:env && npm run web:build",
@@ -81,5 +81,19 @@
   "private": true,
   "allowScripts": {
     "fsevents@2.3.3": true
+  },
+  "overrides": {
+    "@expo/cli": {
+      "zod": "4.6.7"
+    },
+    "metro": {
+      "image-size": "2.0.4"
+    },
+    "@expo/config": {
+      "glob": "14.0.3"
+    },
+    "@expo/config-plugins": {
+      "glob": "14.0.3"
+    }
   }
 }

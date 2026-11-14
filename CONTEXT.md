@@ -14,6 +14,13 @@ The current engineering blueprint: system boundaries, data flow, reliability, se
 
 The release gate for a defined scope. It records evidence, known limits, required checks, and exit criteria; it does not claim that out-of-scope capabilities are ready.
 
+**Gate 2: release security and offline runtime**
+
+The candidate-specific release gate for dependency/container security findings
+and offline runtime compatibility. Browser functionality and accessibility are
+accepted in Gates 11/12; historical diagnostics remain follow-up unless they
+show release security impact.
+
 ## Marketing Site
 
 The public-facing Peso homepage and supporting `/beta`, `/privacy`, and

@@ -1,17 +1,5 @@
 # Resolve this digest deliberately when updating Wolfi; CI also uses --pull.
-FROM cgr.dev/chainguard/wolfi-base@sha256:1d95114038f76513a9ace6fca107d5582b08c65981f81f61cb56bf7fd2ef216d AS base
-
-FROM base AS ffmpeg-build
-RUN apk add --no-cache build-base pkgconf nasm curl xz x264-dev
-WORKDIR /build
-# Official release source, verified before extraction and compilation.
-RUN curl --fail --location --retry 3 https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz -o ffmpeg.tar.xz \
-    && echo 'cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635  ffmpeg.tar.xz' | sha256sum -c - \
-    && tar -xJf ffmpeg.tar.xz --strip-components=1 \
-    && ./configure --prefix=/opt/ffmpeg --enable-gpl --enable-libx264 \
-      --disable-autodetect --disable-doc --disable-debug --disable-ffplay \
-    && make -j2 \
-    && make install
+FROM cgr.dev/chainguard/wolfi-base@sha256:360896efb0753a5701c48f860e17130c205eae5a264797aa3e7ea126ee2923a7 AS base
 
 FROM base AS python-build
 RUN apk add --no-cache python-3.11 py3.11-pip
@@ -33,14 +21,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     OPENCV_FFMPEG_THREADS=1 \
     OPENBLAS_NUM_THREADS=1 \
     OMP_NUM_THREADS=1 \
-    PATH=/opt/venv/bin:/opt/ffmpeg/bin:/usr/bin:/bin \
+    PATH=/opt/venv/bin:/usr/bin:/bin \
     HOME=/home/peso \
     PORT=10000
-RUN apk add --no-cache python-3.11-base libstdc++ libgomp x264-libs libglvnd glib \
+# Keep FFmpeg and its libraries in the signed package inventory used by scans.
+RUN apk add --no-cache python-3.11-base libstdc++ libgomp libglvnd glib libexpat1=2.10.0-r0 ffmpeg-9.0=9.0.2-r8 py3-pip-wheel=26.2.2-r2 \
     && rm -rf /usr/lib/python3.11/ensurepip /usr/share/python-wheels \
     && addgroup -g 10001 peso \
     && adduser -D -u 10001 -G peso -h /home/peso peso
-COPY --from=ffmpeg-build /opt/ffmpeg /opt/ffmpeg
 COPY --from=python-build /opt/venv /opt/venv
 WORKDIR /app
 COPY backend/app ./app
