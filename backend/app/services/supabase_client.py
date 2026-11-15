@@ -29,10 +29,13 @@ def get_supabase_admin_client() -> Client:
   settings = get_settings()
   options = _build_supabase_client_options(settings)
   if options is None:
-    return create_client(settings.supabase_url, settings.supabase_service_role_key)
-
-  return create_client(
-    settings.supabase_url,
-    settings.supabase_service_role_key,
-    options=options,
-  )
+    client = create_client(settings.supabase_url, settings.supabase_service_role_key)
+  else:
+    client = create_client(
+      settings.supabase_url,
+      settings.supabase_service_role_key,
+      options=options,
+    )
+  # Storage redirects can resend upload bodies after dispatch admission.
+  client.storage.session.follow_redirects = False
+  return client

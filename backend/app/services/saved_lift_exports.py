@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import logging
-import re
 import tempfile
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from fastapi import HTTPException, status
 
-from .analyzed_video_exports import analysis_export_options, ensure_analyzed_video_artifact
+from .analyzed_video_exports import ensure_analyzed_video_artifact
+from .archive_writes import file_sha256, plan_archive, read_published_archive, unavailable, write_archive
+from .analyzed_export_writes import require_cached_export_object
 from .config import Settings, get_settings
 from .saved_lift_export_repository import SavedLiftExportRepository
 from .storage_service import StorageService
@@ -50,12 +52,6 @@ def _parse_datetime(value: Any) -> datetime | None:
 
 def _deduplicate_ids(video_ids: list[str]) -> list[str]:
   return list(dict.fromkeys(str(video_id) for video_id in video_ids))
-
-
-def _archive_entry_name(index: int, video: dict) -> str:
-  exercise = re.sub(r"[^a-z0-9]+", "-", str(video.get("exercise_type") or "saved-lift").lower()).strip("-")
-  exercise = exercise or "saved-lift"
-  return f"{index:02d}-{exercise}-{video['id']}.mp4"
 
 
 class SavedLiftExportService:
@@ -112,15 +108,16 @@ class SavedLiftExportService:
       if remaining_seconds <= 0:
         self._expire_job(job)
         job = {**job, "status": "expired", "archive_path": None}
-      elif not self.archive_storage.storage_path_exists(archive_path):
-        self.jobs.mark_failed(str(job["id"]), "archive_missing")
-        job = {**job, "status": "failed", "archive_path": None, "failure_code": "archive_missing"}
       else:
-        download_expires_in = min(self.settings.signed_url_ttl_seconds, remaining_seconds)
-        download_url = self.archive_storage.create_signed_url(
-          archive_path,
-          expires_in=download_expires_in,
-        )
+        published = read_published_archive(self.archive_storage.client, user_id=user_id,
+                                           job_id=str(job["id"]), storage_path=archive_path)
+        require_cached_export_object(self.archive_storage, published)
+        if not self.settings.private_media_enabled:
+          download_expires_in = min(self.settings.signed_url_ttl_seconds, remaining_seconds)
+          download_url = self.archive_storage.create_signed_url(
+            archive_path,
+            expires_in=download_expires_in,
+          )
 
     return {
       "id": job["id"],
@@ -140,12 +137,17 @@ class SavedLiftExportService:
     uploaded_archive_path: str | None = None
 
     try:
-      if not self.jobs.mark_processing(job_id):
+      processing = self.jobs.mark_processing(job_id, user_id)
+      if not processing:
         return
+      if not isinstance(processing, dict) or processing.get("id") != job_id or processing.get("status") != "processing" or processing.get("user_id") != user_id:
+        raise RuntimeError("Unexpected Saved Lift export processing response.")
 
       job = self.jobs.require_owned(job_id, user_id)
       selected_ids = [str(video_id) for video_id in job.get("video_ids") or []]
-      videos, analyses = self._load_exportable_lifts(user_id, selected_ids)
+      videos = self._load_exportable_lifts(user_id, selected_ids)
+      plan = plan_archive(self.archive_storage, job)
+      members = []
 
       with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as temp_archive:
         archive_file = Path(temp_archive.name)
@@ -153,19 +155,34 @@ class SavedLiftExportService:
       with zipfile.ZipFile(archive_file, mode="w", compression=zipfile.ZIP_STORED) as archive:
         for index, video_id in enumerate(selected_ids, start=1):
           video = videos[video_id]
-          analysis = analyses[video_id]
-          overlay_options = analysis_export_options(analysis["result_json"])
+          member = plan["member_snapshots"][index - 1]
+          analysis = self.videos.get_analysis_result(video_id)
+          if (not isinstance(analysis, dict) or analysis.get("video_id") != video_id
+              or not isinstance(analysis.get("result_json"), dict)
+              or analysis.get("id") != member["analysis_id"]
+              or analysis.get("model_version") != member["analysis_model_version"]):
+            raise HTTPException(
+              status_code=status.HTTP_409_CONFLICT,
+              detail="A selected Saved Lift analysis is no longer available for export.",
+            )
           artifact = ensure_analyzed_video_artifact(
             video=video,
             analysis=analysis,
             user_id=user_id,
             storage=self.video_storage,
-            pose=overlay_options["pose"],
-            barbell=overlay_options["barbell"],
+            pose=member["variant"] in {"pose", "pose-barbell"},
+            barbell=member["variant"] in {"barbell", "pose-barbell"},
           )
+          del analysis
           artifact_file = self.video_storage.download_to_tempfile(artifact.storage_path)
           try:
-            archive.write(artifact_file, arcname=_archive_entry_name(index, video))
+            member_size = artifact_file.stat().st_size
+            if member_size <= 0:
+              raise unavailable()
+            members.append({**member, "artifact_bucket": self.video_storage.bucket,
+                            "artifact_path": artifact.storage_path, "artifact_size_bytes": member_size,
+                            "artifact_sha256": file_sha256(artifact_file)})
+            archive.write(artifact_file, arcname=member["entry_name"])
           finally:
             self.video_storage.remove_tempfile(artifact_file)
 
@@ -181,36 +198,29 @@ class SavedLiftExportService:
           detail="The selected Saved Lifts exceed the export bundle size limit.",
         )
 
-      uploaded_archive_path = require_user_storage_path(
-        f"{user_id}/{job_id}.zip",
-        user_id,
-        "archive_path",
-      )
-      self.archive_storage.upload_file(uploaded_archive_path, archive_file, "application/zip")
-
-      if not self.archive_storage.storage_path_exists(uploaded_archive_path):
-        raise HTTPException(
-          status_code=status.HTTP_502_BAD_GATEWAY,
-          detail="Unable to persist Saved Lift export archive.",
-        )
-
-      completed_at = datetime.now(timezone.utc)
-      expires_at = completed_at + timedelta(hours=self.settings.export_cache_ttl_hours)
-      self.jobs.mark_completed(
-        job_id,
-        archive_path=uploaded_archive_path,
-        completed_at=completed_at.isoformat(),
-        expires_at=expires_at.isoformat(),
-      )
+      attempt_id = str(uuid4())
+      uploaded_archive_path = f"{user_id}/{job_id}-{attempt_id}.zip"
+      path = write_archive(plan=plan, members=members, attempt_id=attempt_id,
+                           output_path=archive_file, storage=self.archive_storage, settings=self.settings)
+      completed = self.jobs.require_owned(job_id, user_id)
+      if (path != uploaded_archive_path or not isinstance(completed, dict)
+          or completed.get("id") != job_id or completed.get("user_id") != user_id
+          or completed.get("status") != "completed" or completed.get("archive_path") != path):
+        raise unavailable()
     except Exception as error:
       logger.exception("Saved Lift export job failed job_id=%s user_id=%s", job_id, user_id)
       if uploaded_archive_path:
         try:
-          self.archive_storage.delete_storage_path(uploaded_archive_path)
+          current = self.jobs.require_owned(job_id, user_id)
+          if (isinstance(current, dict) and current.get("id") == job_id
+              and current.get("user_id") == user_id):
+            if current.get("status") == "completed" and current.get("archive_path") == uploaded_archive_path:
+              # A lost completion response must not delete the committed artifact.
+              return
         except Exception:
-          logger.exception("Unable to remove failed Saved Lift archive path=%s", uploaded_archive_path)
+          logger.exception("Unable to confirm archive publication job_id=%s; preserving uploaded bytes", job_id)
       try:
-        self.jobs.mark_failed(job_id, self._failure_code(error))
+        self.jobs.mark_failed(job_id, user_id, self._failure_code(error))
       except Exception:
         logger.exception("Unable to mark Saved Lift export failed job_id=%s", job_id)
     finally:
@@ -251,7 +261,7 @@ class SavedLiftExportService:
           continue
 
         self.archive_storage.delete_storage_path(owned_path)
-        self.jobs.mark_expired(str(job["id"]))
+        self.jobs.mark_expired(str(job["id"]), user_id)
         deleted += 1
       except Exception as error:
         message = f"Unable to expire Saved Lift export {job.get('id')}: {error}"
@@ -272,7 +282,7 @@ class SavedLiftExportService:
     self,
     user_id: str,
     selected_ids: list[str],
-  ) -> tuple[dict[str, dict], dict[str, dict]]:
+  ) -> dict[str, dict]:
     videos = self.videos.get_owned_videos(selected_ids, user_id)
     videos_by_id = {str(video["id"]): video for video in videos}
 
@@ -295,14 +305,14 @@ class SavedLiftExportService:
           detail="One or more selected Saved Lift videos are no longer available for export.",
         )
 
-    analyses_by_video_id = self.videos.get_latest_analysis_results(selected_ids)
+    analyses_by_video_id = self.videos.get_latest_analysis_results(selected_ids, include_result_json=False)
     if set(analyses_by_video_id) != set(selected_ids):
       raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,
         detail="One or more selected Saved Lifts do not have an analysis available for export.",
       )
 
-    return videos_by_id, analyses_by_video_id
+    return videos_by_id
 
   def _expire_job(self, job: dict[str, Any]) -> None:
     archive_path = job.get("archive_path")
@@ -313,10 +323,12 @@ class SavedLiftExportService:
         self.archive_storage.delete_storage_path(owned_path)
       except Exception:
         logger.warning("Unable to remove expired Saved Lift archive path=%s", owned_path)
-    self.jobs.mark_expired(str(job["id"]))
+    self.jobs.mark_expired(str(job["id"]), user_id)
 
   @staticmethod
   def _failure_code(error: Exception) -> str:
+    if str(getattr(error, "code", "")) in {"55P03", "40P01", "40001"}:
+      return "capacity_unavailable"
     if isinstance(error, HTTPException):
       if error.status_code == status.HTTP_413_CONTENT_TOO_LARGE:
         return "archive_too_large"

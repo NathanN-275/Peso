@@ -16,6 +16,7 @@ const run = (args) => execFileSync('npm', args, {
 // Never publish stale app exports, redirects, or authentication assets.
 rmSync(dist, { recursive: true, force: true });
 try {
+  execFileSync(process.execPath, ['scripts/npm-audit-web-ci.js'], { cwd: root, stdio: 'inherit' });
   run(['--prefix', 'web', 'run', 'build']);
   if (mode === 'private-beta') {
     run(['run', 'app:web:export']);

@@ -3,6 +3,9 @@
 # dependencies
 node_modules/
 
+# Netlify state and automatically installed build plugins
+.netlify/
+
 # Expo
 .expo/
 dist/

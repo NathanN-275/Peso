@@ -26,22 +26,47 @@ test('Render beta is isolated from the unchanged production Blueprint', () => {
   assert.doesNotMatch(beta, /name: Peso-backend|name: peso-analysis-worker\n/);
 });
 
-test('public candidate selects PesoDatabase and owner budget without increasing service plans', () => {
+test('fresh Render pairs have matched compute and isolated Supabase projects', () => {
   const preferences = require('../config/public-beta-owner-preferences.json');
-  const blocks = publicBeta.split(/  - type: /).slice(1);
-  assert.equal(blocks.length, 2);
-  for (const block of blocks) {
-    assert.match(block, /plan: starter/);
-    assert.match(block, /autoDeployTrigger: "off"/);
-    assert.match(block, /PESO_DEPLOYMENT_ENVIRONMENT\n\s+value: production/);
-    assert.ok(block.includes(`value: https://${preferences.supabase_project_ref}.supabase.co`));
-    assert.ok(block.includes(`INTAKE_STOP_PROJECTED_MONTHLY_USD\n        value: "${preferences.stop_new_uploads_at_projected_monthly_usd}"`));
-    assert.match(block, /SAVED_VIDEO_STORAGE_TTL_HOURS\n\s+value: "72"/);
-    assert.match(block, /US_IP_BETA_ENABLED\n\s+value: "true"/);
-    for (const key of ['BACKEND_CORS_ORIGINS', 'TRUSTED_PROXY_CIDRS', 'BUDGET_SHUTDOWN_TOKEN', 'SUPABASE_SERVICE_ROLE_KEY']) {
-      assert.match(block, new RegExp(`${key}\\n\\s+sync: false`));
+  const staging = fs.readFileSync(path.join(root, 'render-public-beta-staging.yaml'), 'utf8');
+  for (const [blueprint, suffix, workerName, environment, projectRef, otherProjectRef, cors] of [
+    [publicBeta, '', 'analysis-worker', 'production', preferences.supabase_project_ref, 'iseqgaewjpjcxrndibep', /sync: false/],
+    [staging, '-staging', 'worker', 'student', 'iseqgaewjpjcxrndibep', preferences.supabase_project_ref, /value: https:\/\/main--peso-webapp\.netlify\.app/],
+  ]) {
+    const [api, worker, ...extra] = blueprint.split(/  - type: /).slice(1);
+    assert.equal(extra.length, 0);
+    assert.ok(api.includes(`name: peso-public-beta${suffix}-api\n`));
+    assert.ok(worker.includes(`name: peso-public-beta${suffix}-${workerName}\n`));
+    assert.match(api, /plan: 0\.5c-512mb/);
+    assert.match(api, /healthCheckPath: \/health\/ready/);
+    assert.match(worker, /plan: 1c-2g/);
+    assert.match(worker, /dockerCommand: python -m app\.jobs\.analysis_worker/);
+    for (const block of [api, worker]) {
+      assert.match(block, /autoDeployTrigger: "off"/);
+      assert.match(block, /dockerfilePath: \.\/Dockerfile\.mvp/);
+      assert.match(block, /UPLOAD_STORAGE_PROVIDER\n\s+value: supabase/);
+      assert.ok(block.includes(`PESO_DEPLOYMENT_ENVIRONMENT\n        value: ${environment}\n`));
+      assert.ok(block.includes(`value: https://${projectRef}.supabase.co\n`));
+      assert.ok(block.includes(`INTAKE_STOP_PROJECTED_MONTHLY_USD\n        value: "${preferences.stop_new_uploads_at_projected_monthly_usd}"`));
+      assert.match(block, /SAVED_VIDEO_STORAGE_TTL_HOURS\n\s+value: "72"/);
+      if (environment === 'student') {
+        assert.match(block, /PRIVATE_MEDIA_ENABLED\n\s+value: "false"\n/);
+        assert.doesNotMatch(block, /PRIVATE_MEDIA_PUBLIC_ORIGIN|PRIVATE_MEDIA_BROWSER_ORIGINS/);
+        assert.doesNotMatch(block, /SUPABASE_JWT_SECRET/);
+      } else {
+        assert.match(block, /PRIVATE_MEDIA_ENABLED\n\s+sync: false/);
+        assert.match(block, /SUPABASE_JWT_SECRET\n\s+sync: false/);
+        for (const key of ['PRIVATE_MEDIA_PUBLIC_ORIGIN', 'PRIVATE_MEDIA_BROWSER_ORIGINS']) {
+          assert.match(block, new RegExp(`${key}\n\\s+sync: false`));
+        }
+      }
+      assert.match(block, new RegExp(`BACKEND_CORS_ORIGINS\n\\s+${cors.source}\n`));
+      for (const key of ['BUDGET_SHUTDOWN_TOKEN', 'SUPABASE_SERVICE_ROLE_KEY', 'CLEANUP_JOB_TOKEN']) {
+        assert.match(block, new RegExp(`${key}\n\\s+sync: false`));
+      }
+      assert.ok(!block.includes(otherProjectRef));
+      assert.doesNotMatch(block, /US_IP_BETA_ENABLED|TRUSTED_PROXY_CIDRS|main\.usepeso\.com|name: peso-beta-/);
     }
-    assert.doesNotMatch(block, /iseqgaewjpjcxrndibep|main--peso-webapp/);
   }
 });
 
@@ -78,16 +103,23 @@ test('beta API readiness and Starter worker sizing are explicit', () => {
   assert.match(serviceBlock('peso-beta-analysis-worker'), /dockerCommand: python -m app\.jobs\.analysis_worker/);
 });
 
-test('private main Netlify branch is bound only to the pending Render beta release', () => {
-  assert.match(netlify, /\[context\.main\.environment\][\s\S]*PESO_RELEASE_ENV = "render-beta"/);
-  assert.match(netlify, /\[context\.main\.environment\][\s\S]*EXPO_PUBLIC_SUPABASE_URL = "https:\/\/iseqgaewjpjcxrndibep\.supabase\.co"/);
-  assert.match(netlify, /\[context\.main\.environment\][\s\S]*EXPO_PUBLIC_PRODUCTION_BACKEND_URL = "https:\/\/api-staging\.usepeso\.com"/);
-  assert.match(netlify, /\[context\.main\.environment\][\s\S]*EXPO_PUBLIC_AUTH_CHALLENGE_URL = "https:\/\/main\.usepeso\.com\/auth\/turnstile\/"/);
-  assert.doesNotMatch(netlify, /\[context\.production\.environment\]/);
+test('only the historical private main deploy receives the bound Render beta environment', () => {
+  const { APP_SITE_ID, buildEnvironment } = require('./netlify-build');
+  const stagingBinding = require('../config/render-beta-release-binding.json');
+  assert.deepEqual(buildEnvironment({ SITE_ID: APP_SITE_ID, CONTEXT: 'branch-deploy', BRANCH: 'main' }), {
+    SITE_ID: APP_SITE_ID, CONTEXT: 'branch-deploy', BRANCH: 'main', PESO_RELEASE_ENV: 'render-beta',
+    EXPO_PUBLIC_SUPABASE_URL: 'https://iseqgaewjpjcxrndibep.supabase.co',
+    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: stagingBinding.api_url,
+    EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/',
+    EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED: 'false',
+  });
+  assert.doesNotMatch(netlify, /\[context\.[^\]]*environment\]/);
+  assert.doesNotMatch(netlify, /EXPO_PUBLIC_|PESO_RELEASE_ENV/);
 });
 
 test('beta validation runs Blueprint, policy, runtime, and peso-staging migration gates without deploying', () => {
   assert.match(workflow, /render blueprints validate render-beta\.yaml --workspace "\$RENDER_WORKSPACE_ID"/);
+  assert.match(workflow, /render blueprints validate render-public-beta-staging\.yaml --workspace "\$RENDER_WORKSPACE_ID"/);
   assert.match(workflow, /RENDER_API_KEY: \$\{\{ secrets\.RENDER_API_KEY \}\}/);
   assert.match(workflow, /npm run test:policy/);
   assert.match(workflow, /npm run typecheck/);

@@ -3,13 +3,15 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
+from uuid import UUID
 
 import httpx
 from fastapi import HTTPException, status
 
 from .supabase_client import get_supabase_admin_client
-from .video_storage_paths import VIDEO_STORAGE_PATH_FIELDS, require_user_storage_path
+from .video_storage_paths import VIDEO_STORAGE_PATH_FIELDS, require_user_storage_path, storage_path_belongs_to_user
 
 
 logger = logging.getLogger(__name__)
@@ -31,14 +33,75 @@ VIDEO_STORAGE_COLUMNS_WITH_PREFLIGHT = (
   f"{VIDEO_STORAGE_COLUMNS},quality_preflight,quality_preflight_required"
 )
 ANALYSIS_RESULT_COLUMNS = "id,video_id,model_version,result_json,created_at"
+ANALYSIS_RESULT_METADATA_COLUMNS = "id,video_id,model_version,created_at"
 ANALYSIS_RESULT_SAVE_MAX_ATTEMPTS = 3
 ANALYSIS_RESULT_SAVE_RETRY_BACKOFF_SECONDS = 0.5
+
+
+def validate_media_deletion_task(task: dict[str, Any]) -> None:
+  # Treat database response shape and cleanup paths as a boundary before Storage I/O.
+  if not isinstance(task, dict):
+    raise ValueError("Unsafe cleanup snapshot")
+  video_id, user_id = task["video_id"], task["user_id"]
+  for value in (video_id, user_id):
+    if not isinstance(value, str) or str(UUID(value)) != value or UUID(value).int == 0:
+      raise ValueError("Unsafe cleanup identity")
+  paths, archives, prefixes = task["storage_paths"], task["archive_paths"], task["export_prefixes"]
+  if (type(task["delete_metadata"]) is not bool
+      or not all(isinstance(items, list) for items in (paths, archives, prefixes))
+      or any(not storage_path_belongs_to_user(path, user_id) for path in paths + archives)
+      or any(prefix != f"{user_id}/exports/{video_id}-" for prefix in prefixes)):
+    raise ValueError("Unsafe cleanup snapshot")
 
 
 class VideoRepository:
   def __init__(self) -> None:
     # All video persistence goes through the Supabase admin client.
     self.client = get_supabase_admin_client()
+
+  def bind_analysis_lease(self, job_id: str, worker_id: str, attempt_count: int) -> None:
+    if (not isinstance(job_id, str) or str(UUID(job_id)) != job_id or UUID(job_id).int == 0
+        or not isinstance(worker_id, str) or not worker_id or worker_id.strip() != worker_id
+        or type(attempt_count) is not int or attempt_count < 1):
+      raise ValueError("A claimed analysis attempt is required.")
+    self._analysis_lease = {"p_job_id": job_id, "p_worker_id": worker_id, "p_attempt_count": attempt_count}
+
+  def analysis_write_binding(self) -> dict[str, Any]:
+    lease = getattr(self, "_analysis_lease", None)
+    if lease is None:
+      raise RuntimeError("A claimed analysis attempt is required for generated media.")
+    return dict(lease)
+
+  def _publish_analysis(self, video_id: str, fields: dict[str, Any], *,
+                        model_version: str | None = None, result_json: dict[str, Any] | None = None) -> dict[str, Any]:
+    lease = getattr(self, "_analysis_lease", None)
+    if lease is None:
+      raise RuntimeError("A claimed analysis attempt is required for publication.")
+    response = self.client.rpc("publish_video_analysis", {
+      **lease, "p_video_id": video_id, "p_fields": fields,
+      "p_model_version": model_version, "p_result_json": result_json,
+    }).execute()
+    data = response.data
+    if (not isinstance(data, dict) or not isinstance(data.get("video"), dict)
+        or data["video"].get("id") != video_id):
+      raise RuntimeError("Analysis publication is unavailable.")
+    for field, expected in fields.items():
+      if field not in data["video"]:
+        raise RuntimeError("Analysis publication is unavailable.")
+      actual = data["video"][field]
+      if field == "fps":
+        # The production column is numeric(8,2); Postgres rounds its value.
+        matches = (type(actual) in (int, float) and type(expected) in (int, float)
+                   and Decimal(str(actual)) == Decimal(str(expected)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+      elif field == "duration_ms":
+        matches = type(actual) is int and type(expected) is int and actual == expected
+      elif field == "storage_optimized_at" and expected is not None:
+        matches = self._parse_timestamp(expected) is not None and self._parse_timestamp(actual) == self._parse_timestamp(expected)
+      else:
+        matches = actual == expected
+      if not matches:
+        raise RuntimeError("Analysis publication is unavailable.")
+    return data
 
   def get_video(self, video_id: str) -> dict[str, Any] | None:
     # Load one uploaded video row by ID.
@@ -172,7 +235,8 @@ class VideoRepository:
     return response.data or []
 
   def update_video(self, video_id: str, fields: dict[str, Any]) -> dict[str, Any]:
-    # Update any video metadata in place.
+    if getattr(self, "_analysis_lease", None) is not None:
+      return self._publish_analysis(video_id, fields)["video"]
     self._validate_storage_path_update(video_id, fields)
     response = (
       self.client.table("videos")
@@ -310,16 +374,31 @@ class VideoRepository:
       "save_state": "saved",
       "is_saved": True,
       "saved_at": saved_at,
-      "discarded_at": None,
       "expires_at": None,
       "performed_reps": performed_reps,
       "load_value": load_value,
       "load_unit": load_unit,
     }
     if metadata:
+      if metadata.keys() - {"user_notes", "weight", "weight_unit", "corrected_rep_count"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported save metadata.")
       fields.update(metadata)
 
-    return self.update_video(video_id, fields)
+    self._validate_storage_path_update(video_id, fields)
+    # Check the tombstone in the write so a concurrent discard cannot be undone.
+    response = (
+      self.client.table("videos")
+      .update(fields)
+      .eq("id", video_id)
+      .is_("discarded_at", "null")
+      .execute()
+    )
+    if not response.data:
+      raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Video is no longer available to save.",
+      )
+    return response.data[0]
 
   def mark_discarded(self, video_id: str) -> dict[str, Any]:
     # Discarded rows remain as metadata, but they leave the saved library.
@@ -330,17 +409,7 @@ class VideoRepository:
       "expires_at": None,
     }
 
-    try:
-      return self.update_video(video_id, fields)
-    except Exception as error:
-      logger.warning("Falling back to legacy discard metadata for video %s: %s", video_id, error)
-      return self.update_video(
-        video_id,
-        {
-          "save_state": "pending",
-          "expires_at": None,
-        },
-      )
+    return self.update_video(video_id, fields)
 
   def delete_video(self, video_id: str) -> None:
     # Deleted videos are removed entirely from the table.
@@ -376,13 +445,78 @@ class VideoRepository:
     response = self.client.rpc("claim_expired_video_deletion", {"p_video_id": video_id}).execute()
     return response.data[0] if response.data else None
 
+  def revoke_for_discard(self, video_id: str, user_id: str) -> dict[str, Any]:
+    response = self.client.rpc("revoke_video_media", {
+      "p_user_id": user_id, "p_video_ids": [video_id], "p_delete_metadata": False,
+    }).execute()
+    rows = response.data
+    if not isinstance(rows, list) or len(rows) != 1:
+      raise ValueError("Missing discard revocation snapshot")
+    task = rows[0]
+    validate_media_deletion_task(task)
+    if (task["video_id"] != video_id or task["user_id"] != user_id
+        or task["delete_metadata"] is not False
+        or task["export_prefixes"] != [f"{user_id}/exports/{video_id}-"]):
+      raise ValueError("Mismatched discard revocation snapshot")
+    return task
+
+  def revoke_saved_lifts(self, video_ids: list[str], user_id: str) -> list[dict[str, Any]]:
+    response = self.client.rpc("revoke_saved_lifts", {
+      "p_user_id": user_id, "p_video_ids": video_ids,
+    }).execute()
+    return self._saved_deletion_rows(response.data, video_ids, user_id)
+
+  def saved_lift_deletion_complete(self, video_ids: list[str], user_id: str) -> bool:
+    response = self.client.rpc("read_saved_lift_deletion_receipts", {
+      "p_user_id": user_id, "p_video_ids": video_ids,
+    }).execute()
+    rows = self._saved_deletion_rows(response.data, video_ids, user_id, readback=True)
+    return all(row["completed"] for row in rows)
+
+  @staticmethod
+  def _saved_deletion_rows(data: Any, video_ids: list[str], user_id: str, *, readback: bool = False) -> list[dict[str, Any]]:
+    if not isinstance(data, list) or len(data) != len(video_ids) or not video_ids:
+      raise ValueError("Incomplete Saved Lift deletion proof")
+    seen: set[str] = set()
+    for row in data:
+      if (not isinstance(row, dict) or set(row) != {"video_id", "user_id", "completed", "task"}
+          or row["video_id"] not in video_ids or row["video_id"] in seen
+          or row["user_id"] != user_id or type(row["completed"]) is not bool):
+        raise ValueError("Mismatched Saved Lift deletion proof")
+      for identity in (row["video_id"], row["user_id"]):
+        if not isinstance(identity, str) or str(UUID(identity)) != identity or UUID(identity).int == 0:
+          raise ValueError("Invalid Saved Lift deletion identity")
+      seen.add(row["video_id"])
+      if row["completed"] or readback:
+        if row["task"] is not None:
+          raise ValueError("Conflicting Saved Lift deletion proof")
+      else:
+        task = row["task"]
+        validate_media_deletion_task(task)
+        if (task["video_id"] != row["video_id"] or task["user_id"] != user_id
+            or task["delete_metadata"] is not True
+            or task["export_prefixes"] != [f"{user_id}/exports/{row['video_id']}-"]):
+          raise ValueError("Mismatched Saved Lift cleanup snapshot")
+    if seen != set(video_ids):
+      raise ValueError("Incomplete Saved Lift deletion proof")
+    return data
+
   def list_pending_deletions(self) -> list[dict[str, Any]]:
-    response = (self.client.table("video_deletion_outbox").select("video_id,user_id,storage_paths")
+    response = (self.client.table("video_deletion_outbox").select("video_id,user_id,storage_paths,archive_paths,export_prefixes,delete_metadata")
                 .order("created_at").limit(200).execute())
     return response.data or []
 
-  def complete_deletion(self, video_id: str) -> None:
-    self.client.table("video_deletion_outbox").delete().eq("video_id", video_id).execute()
+  def complete_deletion(self, task: dict[str, Any]) -> bool:
+    response = self.client.rpc("complete_video_media_deletion", {
+      "p_video_id": task["video_id"],
+      "p_user_id": task["user_id"],
+      "p_storage_paths": task["storage_paths"],
+      "p_archive_paths": task["archive_paths"],
+      "p_export_prefixes": task["export_prefixes"],
+      "p_delete_metadata": task["delete_metadata"],
+    }).execute()
+    # A stale snapshot is a retry, never permission to drop a newer task.
+    return response.data is True
 
   def list_stale_pending_in_progress_videos(self, cutoff_iso: str) -> list[dict[str, Any]]:
     try:
@@ -591,19 +725,18 @@ class VideoRepository:
     # before its connection was interrupted.
     for attempt in range(ANALYSIS_RESULT_SAVE_MAX_ATTEMPTS):
       try:
-        response = (
-          self.client.table("analysis_results")
-          .upsert(
-            {
-              "video_id": video_id,
-              "model_version": model_version,
-              "result_json": result_json,
-            },
-            on_conflict="video_id,model_version",
-          )
-          .execute()
-        )
-        return response.data[0]
+        publication = self._publish_analysis(video_id, {}, model_version=model_version, result_json=result_json)
+        analysis = publication.get("analysis")
+        try:
+          analysis_id = analysis["id"]
+          valid = (isinstance(analysis_id, str) and str(UUID(analysis_id)) == analysis_id and UUID(analysis_id).int != 0
+                   and analysis.get("video_id") == video_id and analysis.get("model_version") == model_version
+                   and isinstance(analysis.get("result_json"), dict) and analysis["result_json"] == result_json)
+        except (KeyError, TypeError, ValueError, AttributeError):
+          valid = False
+        if not valid:
+          raise RuntimeError("Analysis publication is unavailable.")
+        return analysis
       except httpx.TransportError as error:
         if attempt == ANALYSIS_RESULT_SAVE_MAX_ATTEMPTS - 1:
           raise
@@ -628,20 +761,24 @@ class VideoRepository:
       .select(ANALYSIS_RESULT_COLUMNS)
       .eq("video_id", video_id)
       .order("created_at", desc=True)
+      .order("id", desc=True)
       .limit(1)
       .execute()
     )
     return response.data[0] if response.data else None
 
-  def get_latest_analysis_results(self, video_ids: list[str]) -> dict[str, dict[str, Any]]:
+  def get_latest_analysis_results(
+    self, video_ids: list[str], *, include_result_json: bool = True,
+  ) -> dict[str, dict[str, Any]]:
     if not video_ids:
       return {}
 
     response = (
       self.client.table("analysis_results")
-      .select(ANALYSIS_RESULT_COLUMNS)
+      .select(ANALYSIS_RESULT_COLUMNS if include_result_json else ANALYSIS_RESULT_METADATA_COLUMNS)
       .in_("video_id", video_ids)
       .order("created_at", desc=True)
+      .order("id", desc=True)
       .execute()
     )
     latest_by_video_id: dict[str, dict[str, Any]] = {}

@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .storage_service import IMMUTABLE_CACHE_CONTROL_SECONDS, StorageService
+from .storage_service import StorageService
+from .generated_media_writes import write_generated_media
 from .video_assets import THUMBNAIL_VERSION, build_thumbnail_storage_path, create_video_thumbnail
 from .video_repository import VIDEO_BASE_COLUMNS, VIDEO_STORAGE_COLUMNS, VideoRepository
 from .video_storage_paths import require_user_storage_path
@@ -90,21 +91,16 @@ def backfill_saved_video_thumbnails(
         thumbnail_file = Path(temp_thumbnail.name)
 
       create_video_thumbnail(source_file, thumbnail_file)
-      logger.info("Uploading saved thumbnail path=%s", thumbnail_path)
-      storage.upload_file(
-        thumbnail_path,
-        thumbnail_file,
-        "image/jpeg",
-        cache_control=IMMUTABLE_CACHE_CONTROL_SECONDS,
+      thumbnail_path = write_generated_media(
+        video=video, purpose="thumbnail_backfill", local_path=thumbnail_file, storage=storage,
       )
       try:
         repository.update_video(video_id, {"thumbnail_path": thumbnail_path})
       except Exception:
         logger.exception(
-          "Failed to update saved thumbnail metadata; deleting uploaded thumbnail path=%s",
+          "Unable to confirm saved thumbnail metadata; keeping tracked upload pending path=%s",
           thumbnail_path,
         )
-        storage.delete_storage_path(thumbnail_path)
         raise
       result.generated_count += 1
     except Exception:

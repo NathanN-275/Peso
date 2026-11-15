@@ -4,13 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "ASTRO_TELEMETRY_DISABLED=1 astro dev",
-    "build": "ASTRO_TELEMETRY_DISABLED=1 astro build --outDir ../dist",
-    "check": "ASTRO_TELEMETRY_DISABLED=1 astro check"
+    "dev": "npm --prefix .. run web:build:marketing && node ../scripts/serve-web-preview.js",
+    "build": "node build.mjs",
+    "check": "node build.mjs --check"
   },
   "dependencies": {
-    "@fontsource/archivo-black": "^5.2.7",
-    "@fontsource/inter": "^5.2.8",
-    "astro": "^7.1.6"
+    "@fontsource/archivo-black": "5.3.0",
+    "@fontsource/inter": "5.3.0"
   }
 }

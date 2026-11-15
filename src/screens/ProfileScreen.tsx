@@ -1,3 +1,4 @@
+import { subscribeProfileAvatarRelease } from '../../lib/avatarReader';
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -9,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { getPrivateMediaEpoch, registerPrivateMediaRelease } from '../../lib/privateMediaLifecycle';
 import { useAuth } from '../../context/AuthContext';
 import { describeBackendRequestFailure, getSavedVideoOverview } from '../../lib/backendApi';
 import { deriveUsernameFromUser, getProfileDisplayName, loadOwnProfile } from '../../lib/profile';
@@ -174,8 +176,9 @@ export default function ProfileScreen({
   savedOverviewLoaded = false,
   onSavedOverviewLoaded,
 }: ProfileScreenProps) {
-  const { session, user } = useAuth();
+  const { session, user, mediaSessionKey } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profileSessionKey, setProfileSessionKey] = useState<string | null>(null);
   const [savedOverview, setSavedOverview] = useState<SavedVideoOverview | null>(cachedSavedOverview);
   const [profileLoading, setProfileLoading] = useState(true);
   const [videosLoading, setVideosLoading] = useState(!savedOverviewLoaded);
@@ -183,11 +186,24 @@ export default function ProfileScreen({
   const [videosErrorMessage, setVideosErrorMessage] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
+  useEffect(() => subscribeProfileAvatarRelease(() => {
+    setProfile((current) => current ? { ...current, avatar_data_uri: null } : null);
+  }), []);
+
+  useEffect(() => registerPrivateMediaRelease(() => {
+    setProfile((current) => current ? { ...current, avatar_data_uri: null } : null);
+    setProfileLoading(false);
+  }), []);
+
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
+    const epoch = getPrivateMediaEpoch();
+    setProfile(null);
+    setProfileSessionKey(null);
 
     const loadProfile = async () => {
-      if (!session?.access_token || !user) {
+      if (!session?.access_token || !user || !mediaSessionKey) {
         setProfileLoading(false);
         return;
       }
@@ -196,19 +212,20 @@ export default function ProfileScreen({
       setProfileErrorMessage(null);
 
       try {
-        const nextProfile = await loadOwnProfile(user);
+        const nextProfile = await loadOwnProfile(user, session.access_token, controller.signal);
 
-        if (cancelled) {
+        if (cancelled || epoch !== getPrivateMediaEpoch()) {
           return;
         }
 
         setProfile(nextProfile);
+        setProfileSessionKey(mediaSessionKey);
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && epoch === getPrivateMediaEpoch()) {
           setProfileErrorMessage(error instanceof Error ? error.message : 'Unable to load profile.');
         }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && epoch === getPrivateMediaEpoch()) {
           setProfileLoading(false);
         }
       }
@@ -217,9 +234,9 @@ export default function ProfileScreen({
     void loadProfile();
 
     return () => {
-      cancelled = true;
+      cancelled = true; controller.abort();
     };
-  }, [session?.access_token, user, reloadKey]);
+  }, [mediaSessionKey, user?.id, reloadKey]);
 
   useEffect(() => {
     if (!savedOverviewLoaded) {
@@ -290,8 +307,9 @@ export default function ProfileScreen({
   }, [session?.access_token, reloadKey, savedOverviewLoaded]);
 
   const stats = useMemo(() => buildProfileStats(savedOverview), [savedOverview]);
-  const displayName = getProfileDisplayName(profile, user);
-  const username = profile?.username || deriveUsernameFromUser(user) || 'username';
+  const visibleProfile = profileSessionKey === mediaSessionKey ? profile : null;
+  const displayName = getProfileDisplayName(visibleProfile, user);
+  const username = visibleProfile?.username || deriveUsernameFromUser(user) || 'username';
   const shouldAppendUsername = Boolean(
     username &&
       displayName.trim().split(/\s+/).length === 1 &&
@@ -312,8 +330,8 @@ export default function ProfileScreen({
           <View style={styles.profileTop}>
             <View style={styles.identityRow}>
               <View style={styles.avatar}>
-                {profile?.avatar_url ? (
-                  <Image source={{ uri: profile.avatar_url }} style={styles.avatarImage} resizeMode="cover" />
+                {visibleProfile?.avatar_data_uri ? (
+                  <Image source={{ uri: visibleProfile.avatar_data_uri }} style={styles.avatarImage} resizeMode="cover" />
                 ) : (
                   <Ionicons name="person" size={44} color="#AEB7C6" />
                 )}
@@ -335,6 +353,15 @@ export default function ProfileScreen({
 
           {profileLoading ? (
             <ProfileLoadingSkeleton />
+          ) : null}
+
+          {!profileLoading && visibleProfile?.avatar_error ? (
+            <View style={styles.stateBlock}>
+              <Text accessibilityRole="alert" style={styles.errorText}>{visibleProfile.avatar_error}</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Reload profile picture" onPress={() => setReloadKey((key) => key + 1)}>
+                <Text style={styles.retryText}>Try Again</Text>
+              </Pressable>
+            </View>
           ) : null}
 
           {!profileLoading && profileErrorMessage ? (

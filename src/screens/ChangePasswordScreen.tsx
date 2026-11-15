@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { useAuth } from '../../context/AuthContext';
-import { supabase } from '../../lib/supabase';
+import { supabase, waitForAcceptedAuthSession } from '../../lib/supabase';
 import Button from '../components/Button';
 import Input from '../components/Input';
 import tokens from '../theme/tokens';
@@ -84,9 +84,9 @@ export default function ResetPasswordFormScreen({
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      console.log('[ResetPassword] getSession result before submit', { hasSession: !!session });
+      const acceptedSession = await waitForAcceptedAuthSession(session);
 
-      if (!session) {
+      if (!acceptedSession) {
         setErrorMessage('Reset link session expired or was not loaded. Please request a new reset link.');
         return;
       }

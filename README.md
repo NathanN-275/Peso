@@ -68,7 +68,7 @@ Current infrastructure work defines an isolated, non-production Render beta back
 
 ### Marketing Site
 
-* Astro
+* Node static Marketing Site renderer
 * Static HTML and CSS
 * Netlify hosting
 
@@ -309,7 +309,7 @@ For Expo Go on a physical phone, the backend must bind to `0.0.0.0` so another d
 
 The public beta website is split into two browser surfaces:
 
-* Astro owns `/`, `/privacy`, and `/terms` under `web/`.
+* The Node renderer under `web/` owns `/`, `/beta`, `/privacy`, `/terms`, and the private challenge page.
 * `App.web.tsx` selects either the Expo Web App or the reusable native root,
   while `App.tsx` remains the native entry point.
 
@@ -319,6 +319,10 @@ Start the marketing site while editing public pages:
 npm run web:marketing
 ```
 
+This builds the guarded marketing artifact, then previews it on loopback port
+4173. Rebuild and refresh after edits. See [the renderer notes](web/README.md)
+for its fixed page/asset inputs and the isolated draft's pending lock/test work.
+
 Build both surfaces and preview the combined Netlify output locally:
 
 ```bash
@@ -327,19 +331,18 @@ npm run web:budget
 npm run web:preview
 ```
 
-The build writes the static Astro pages to `dist/` and the Expo single-page app
+The build writes static HTML pages to `dist/` and the Expo single-page app
 to `dist/app/`. `netlify.toml` serves existing marketing files first and rewrites
 only unknown `/app/*` paths to `/app/index.html`. The authenticated Web App uses
 durable real analysis keyed by `videoId`; fixture analysis is not part of the
 beta. Peso Account authentication, Analysis Activity, the shared Saved Lift
 Library, deletion, and export jobs use the authenticated backend.
 
-The website stays on Netlify and continues using the current non-Azure backend.
-Supabase remains responsible for auth, database records, and private video
-storage. The Azure Students work is an isolated West US 3 test backend candidate
-in the legacy-named `peso-student-centralus-rg`; it is not production and does
-not replace the current hosted backend until its acceptance gate passes. See
-`docs/deployment/azure-student-setup.md` for its scope and acceptance gate.
+The current Public Web Beta uses Netlify for the website, Render for the API
+and analysis worker, and Supabase for Auth, database records and private video
+storage. The November 5 MVP scope keeps historical Azure Student resources
+outside the active release. Follow the [MVP runtime boundary](docs/deployment/web-mvp-runtime.md)
+and [approved deployment gates](docs/deployment/public-beta-launch-plan.md).
 
 ## Backend API overview
 
@@ -432,7 +435,7 @@ The current version demonstrates the core product idea: upload a lifting video, 
 ├── lib/                    # Shared frontend utilities
 ├── scripts/                # Development scripts
 ├── src/                    # Native app and Web App source code
-├── web/                    # Astro Marketing Site
+├── web/                    # Static Marketing Site
 ├── supabase/migrations/    # Database migrations
 ├── App.tsx                 # Native app entry point
 ├── App.web.tsx             # Web App entry point
@@ -443,3 +446,11 @@ The current version demonstrates the core product idea: upload a lifting video, 
 ## Notes
 
 Peso is a coaching and analysis tool, not a medical or professional training replacement. The app is meant to help lifters review movement patterns and better understand their own training videos.
+
+## Reviewed dependency adapters
+
+The root Metro override uses official image-size 2.0.4 with a pinned one-file
+Metro 0.84.4 buffer/file API adapter. The old image-size local parser backport
+is retired; Braces and Forge backports remain. See
+[dependency patch verification](patches/dependencies/README.md). Existing root
+audit policy, expired treatment and public-launch requirements remain in force.

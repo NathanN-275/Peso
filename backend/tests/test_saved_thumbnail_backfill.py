@@ -15,7 +15,8 @@ VIDEO_ID = "11111111-1111-1111-1111-111111111111"
 USER_ID = "33333333-3333-3333-3333-333333333333"
 OTHER_USER_ID = "44444444-4444-4444-4444-444444444444"
 SOURCE_PATH = f"{USER_ID}/uploads/{VIDEO_ID}.mov"
-THUMBNAIL_PATH = f"{USER_ID}/thumbnails/{VIDEO_ID}-thumb-v3.jpg"
+ATTEMPT_ID = "77777777-7777-7777-7777-777777777777"
+THUMBNAIL_PATH = f"{USER_ID}/thumbnails/{VIDEO_ID}-{ATTEMPT_ID}-thumb-v3.jpg"
 
 
 class SavedThumbnailBackfillTest(unittest.TestCase):
@@ -38,6 +39,7 @@ class SavedThumbnailBackfillTest(unittest.TestCase):
     self.assertFalse(video_needs_saved_thumbnail_backfill(self._video(save_state="pending", is_saved=False)))
     self.assertTrue(video_needs_saved_thumbnail_backfill(self._video(thumbnail_path=f"{USER_ID}/thumbnails/{VIDEO_ID}-thumb-v2.jpg")))
     self.assertFalse(video_needs_saved_thumbnail_backfill(self._video(thumbnail_path=THUMBNAIL_PATH)))
+    self.assertFalse(video_needs_saved_thumbnail_backfill(self._video(thumbnail_path=f"{USER_ID}/thumbnails/{VIDEO_ID}-thumb-v3.jpg")))
     self.assertTrue(video_needs_saved_thumbnail_backfill(self._video(thumbnail_path=THUMBNAIL_PATH), force=True))
     self.assertFalse(video_needs_saved_thumbnail_backfill(self._video(discarded_at="2026-05-25T12:00:00+00:00")))
 
@@ -101,7 +103,9 @@ class SavedThumbnailBackfillTest(unittest.TestCase):
     storage = MagicMock()
     storage.download_to_tempfile.return_value = "/tmp/source.mov"
 
-    with patch("app.services.saved_thumbnail_backfill.create_video_thumbnail") as create_thumbnail:
+    with patch("app.services.saved_thumbnail_backfill.create_video_thumbnail") as create_thumbnail, patch(
+      "app.services.saved_thumbnail_backfill.write_generated_media", return_value=THUMBNAIL_PATH,
+    ) as generated:
       result = backfill_saved_video_thumbnails(
         repository=repository,
         storage=storage,
@@ -113,9 +117,11 @@ class SavedThumbnailBackfillTest(unittest.TestCase):
     self.assertEqual(result.generated_count, 1)
     create_thumbnail.assert_called_once()
     storage.download_to_tempfile.assert_called_once_with(SOURCE_PATH)
-    storage.upload_file.assert_called_once()
-    self.assertEqual(storage.upload_file.call_args.args[0], THUMBNAIL_PATH)
-    self.assertEqual(storage.upload_file.call_args.args[2], "image/jpeg")
+    generated.assert_called_once()
+    self.assertEqual(generated.call_args.kwargs["video"], self._video())
+    self.assertEqual(generated.call_args.kwargs["purpose"], "thumbnail_backfill")
+    self.assertNotIn("analysis_lease", generated.call_args.kwargs)
+    storage.upload_file.assert_not_called()
     repository.update_video.assert_called_once_with(VIDEO_ID, {"thumbnail_path": THUMBNAIL_PATH})
     storage.delete_storage_path.assert_not_called()
 
@@ -142,7 +148,7 @@ class SavedThumbnailBackfillTest(unittest.TestCase):
     repository.update_video.assert_not_called()
     storage.delete_storage_path.assert_not_called()
 
-  def test_confirm_deletes_uploaded_thumbnail_when_metadata_update_fails(self) -> None:
+  def test_confirm_preserves_tracked_thumbnail_when_metadata_update_is_uncertain(self) -> None:
     repository = MagicMock()
     repository.client.table.return_value.select.return_value.execute.return_value = SimpleNamespace(
       data=[self._video()]
@@ -151,7 +157,9 @@ class SavedThumbnailBackfillTest(unittest.TestCase):
     storage = MagicMock()
     storage.download_to_tempfile.return_value = "/tmp/source.mov"
 
-    with patch("app.services.saved_thumbnail_backfill.create_video_thumbnail"):
+    with patch("app.services.saved_thumbnail_backfill.create_video_thumbnail"), patch(
+      "app.services.saved_thumbnail_backfill.write_generated_media", return_value=THUMBNAIL_PATH,
+    ) as generated:
       result = backfill_saved_video_thumbnails(
         repository=repository,
         storage=storage,
@@ -159,9 +167,9 @@ class SavedThumbnailBackfillTest(unittest.TestCase):
       )
 
     self.assertEqual(result.failed_count, 1)
-    storage.upload_file.assert_called_once()
+    generated.assert_called_once()
     repository.update_video.assert_called_once_with(VIDEO_ID, {"thumbnail_path": THUMBNAIL_PATH})
-    storage.delete_storage_path.assert_called_once_with(THUMBNAIL_PATH)
+    storage.delete_storage_path.assert_not_called()
 
   def test_confirm_rejects_saved_video_source_outside_owner_folder(self) -> None:
     repository = MagicMock()

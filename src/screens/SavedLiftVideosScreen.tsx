@@ -5,7 +5,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Image,
   Modal,
   Platform,
   Pressable,
@@ -14,11 +13,13 @@ import {
   View,
 } from 'react-native';
 import type { ListRenderItemInfo } from 'react-native';
+import VideoThumbnail from '../components/VideoThumbnail';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
 import { describeBackendRequestFailure, exportAnalyzedVideo, getSavedVideosPage } from '../../lib/backendApi';
 import type { AnalyzedVideoExportOptions } from '../../lib/backendApi';
 import type { SavedVideo } from '../../lib/backendApi';
+import { savePrivateVideoExports } from '../../lib/nativePrivateVideoExport';
 import { SkeletonBlock } from '../components/Skeleton';
 import tokens from '../theme/tokens';
 import {
@@ -76,24 +77,8 @@ function selectedExportAvailability(videos: SavedVideo[]) {
 }
 
 function SavedVideoThumb({ video }: { video: SavedVideo }) {
-  const [thumbnailLoadFailed, setThumbnailLoadFailed] = useState(false);
-
-  useEffect(() => {
-    setThumbnailLoadFailed(false);
-  }, [video.thumbnail_url]);
-
-  if (video.thumbnail_url && !thumbnailLoadFailed) {
-    return (
-      <Image
-        source={{ uri: video.thumbnail_url }}
-        style={styles.thumbnailImage}
-        resizeMode="cover"
-        onError={() => setThumbnailLoadFailed(true)}
-      />
-    );
-  }
-
-  return <View style={styles.thumbnailPlaceholder} />;
+  return <VideoThumbnail videoId={video.id} available={video.thumbnail_available === true && video.storage_state !== 'pruned'} legacyUrl={video.thumbnail_url}
+    style={styles.thumbnailImage} />;
 }
 
 function SavedVideoRowsSkeleton() {
@@ -139,6 +124,8 @@ export default function SavedLiftVideosScreen({
     barbell: false,
   });
   const [exporting, setExporting] = useState(false);
+  const exportRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => exportRequest.current?.abort(), []);
   const [deleting, setDeleting] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
@@ -320,9 +307,10 @@ export default function SavedLiftVideosScreen({
   };
 
   const handleExportSelected = async () => {
-    if (exporting || selectedVideos.length === 0) {
-      return;
-    }
+    if (exportRequest.current || selectedVideos.length === 0) return;
+    const controller = new AbortController();
+    exportRequest.current = controller;
+    const privateMedia = process.env.EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED === 'true';
 
     setExporting(true);
     setActionMessage(null);
@@ -335,12 +323,15 @@ export default function SavedLiftVideosScreen({
       const variant = getExportVariant(exportOptions);
 
       if (Platform.OS === 'web') {
+        if (privateMedia) throw new Error('Use the Saved Lifts page to export a ZIP on the web.');
         const webGlobal = globalThis as typeof globalThis & {
           open?: (url?: string | URL, target?: string) => Window | null;
         };
 
         for (const video of selectedVideos) {
-          const exportResponse = await exportAnalyzedVideo(video.id, session.access_token, exportOptions);
+          const exportResponse = await exportAnalyzedVideo(video.id, session.access_token, exportOptions, controller.signal);
+          if (controller.signal.aborted) return;
+          if (!exportResponse.export_url) throw new Error('Unable to open this export.');
           webGlobal.open?.(exportResponse.export_url, '_blank');
         }
 
@@ -365,28 +356,43 @@ export default function SavedLiftVideosScreen({
         throw new Error('Peso needs permission to save videos to your photo library.');
       }
 
-      for (const [index, video] of selectedVideos.entries()) {
-        const exportResponse = await exportAnalyzedVideo(video.id, session.access_token, exportOptions);
-        const destination = new File(Paths.cache, getExportFileName(video, index, variant));
-        const downloadedFile = await File.downloadFileAsync(exportResponse.export_url, destination, {
-          idempotent: true,
-        });
+      if (controller.signal.aborted) return;
+      if (privateMedia) {
+        await savePrivateVideoExports(selectedVideos.map(video => video.id), session.access_token,
+          exportOptions, variant, uri => MediaLibrary.saveToLibraryAsync(uri), videoId => {
+            setSelectedIds(current => {
+              const remaining = new Set(current);
+              remaining.delete(videoId);
+              return remaining;
+            });
+          }, controller.signal);
+      } else {
+        for (const [index, video] of selectedVideos.entries()) {
+          const exportResponse = await exportAnalyzedVideo(video.id, session.access_token, exportOptions, controller.signal);
+          if (controller.signal.aborted) return;
+          if (!exportResponse.export_url) throw new Error('Unable to download this export.');
+          const destination = new File(Paths.cache, getExportFileName(video, index, variant));
+          const downloadedFile = await File.downloadFileAsync(exportResponse.export_url, destination, {
+            idempotent: true,
+          });
 
-        await MediaLibrary.saveToLibraryAsync(downloadedFile.uri);
-
-        try {
-          downloadedFile.delete();
-        } catch {
-          // Cache cleanup is best-effort after the video is in the media library.
+          try {
+            if (controller.signal.aborted) return;
+            await MediaLibrary.saveToLibraryAsync(downloadedFile.uri);
+          } finally {
+            try { downloadedFile.delete(); } catch { /* Legacy cache cleanup is best effort. */ }
+          }
         }
       }
+      if (controller.signal.aborted) return;
 
       setShowExportModal(false);
       setActionMessage(`Saved ${selectedVideos.length} ${selectedVideos.length === 1 ? 'video' : 'videos'} to your device.`);
     } catch (error) {
-      setActionMessage(error instanceof Error ? error.message : 'Unable to export selected videos.');
+      if (!controller.signal.aborted) setActionMessage(error instanceof Error ? error.message : 'Unable to export selected videos.');
     } finally {
-      setExporting(false);
+      exportRequest.current = null;
+      if (!controller.signal.aborted) setExporting(false);
     }
   };
 
@@ -853,14 +859,6 @@ const styles = StyleSheet.create({
   thumbnailImage: {
     width: 82,
     height: 94,
-    borderRadius: 12,
-    backgroundColor: '#5C5C5C',
-  },
-  thumbnailPlaceholder: {
-    width: 82,
-    height: 94,
-    alignItems: 'center',
-    justifyContent: 'center',
     borderRadius: 12,
     backgroundColor: '#5C5C5C',
   },

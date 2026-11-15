@@ -1,16 +1,16 @@
-# Public beta candidate for the EXISTING suspended beta services.
-# Do not sync this blueprint or resume services without Nathan's approval.
-# Verify existing service IDs and use the reviewed environment update procedure.
+# Fresh Public Web Beta production services. Review the exact source before provisioning.
 services:
   - type: web
-    name: peso-beta-api
+    name: peso-public-beta-api
     runtime: docker
-    plan: starter
-    dockerfilePath: ./Dockerfile
+    plan: 0.5c-512mb
+    dockerfilePath: ./Dockerfile.mvp
     dockerContext: .
     healthCheckPath: /health/ready
     autoDeployTrigger: "off"
     envVars:
+      - key: PESO_RUNTIME_PROFILE
+        value: web-mvp
       - key: BACKEND_ENV
         value: production
       - key: PESO_DEPLOYMENT_ENVIRONMENT
@@ -19,6 +19,12 @@ services:
         sync: false
       - key: BACKEND_CORS_ALLOW_PRIVATE_NETWORK
         value: "false"
+      - key: PRIVATE_MEDIA_ENABLED
+        sync: false
+      - key: PRIVATE_MEDIA_PUBLIC_ORIGIN
+        sync: false
+      - key: PRIVATE_MEDIA_BROWSER_ORIGINS
+        sync: false
       - key: SUPABASE_URL
         value: https://jfgiydtrskpqxyorvvbc.supabase.co
       - key: SUPABASE_SERVICE_ROLE_KEY
@@ -33,10 +39,6 @@ services:
         value: "50"
       - key: SAVED_VIDEO_STORAGE_TTL_HOURS
         value: "72"
-      - key: US_IP_BETA_ENABLED
-        value: "true"
-      - key: TRUSTED_PROXY_CIDRS
-        sync: false
       - key: VIDEO_BUCKET
         value: videos
       - key: UPLOAD_RESERVATIONS_ENABLED
@@ -51,15 +53,17 @@ services:
         value: "false"
 
   - type: worker
-    name: peso-beta-analysis-worker
+    name: peso-public-beta-analysis-worker
     runtime: docker
-    plan: starter
-    dockerfilePath: ./Dockerfile
+    plan: 1c-2g
+    dockerfilePath: ./Dockerfile.mvp
     dockerContext: .
     dockerCommand: python -m app.jobs.analysis_worker
     autoDeployTrigger: "off"
     maxShutdownDelaySeconds: 300
     envVars:
+      - key: PESO_RUNTIME_PROFILE
+        value: web-mvp
       - key: BACKEND_ENV
         value: production
       - key: PESO_DEPLOYMENT_ENVIRONMENT
@@ -68,6 +72,12 @@ services:
         sync: false
       - key: BACKEND_CORS_ALLOW_PRIVATE_NETWORK
         value: "false"
+      - key: PRIVATE_MEDIA_ENABLED
+        sync: false
+      - key: PRIVATE_MEDIA_PUBLIC_ORIGIN
+        sync: false
+      - key: PRIVATE_MEDIA_BROWSER_ORIGINS
+        sync: false
       - key: SUPABASE_URL
         value: https://jfgiydtrskpqxyorvvbc.supabase.co
       - key: SUPABASE_SERVICE_ROLE_KEY
@@ -82,10 +92,6 @@ services:
         value: "50"
       - key: SAVED_VIDEO_STORAGE_TTL_HOURS
         value: "72"
-      - key: US_IP_BETA_ENABLED
-        value: "true"
-      - key: TRUSTED_PROXY_CIDRS
-        sync: false
       - key: VIDEO_BUCKET
         value: videos
       - key: UPLOAD_RESERVATIONS_ENABLED

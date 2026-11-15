@@ -1,9 +1,7 @@
 name: Verify and publish Student candidate
 
+# Historical Student publishing is separate from the Render/Supabase Web MVP.
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 concurrency:
@@ -83,7 +81,7 @@ jobs:
 
   publish:
     name: Publish immutable backend image
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     needs: verify
     runs-on: ubuntu-latest
     permissions:

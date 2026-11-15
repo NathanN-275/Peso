@@ -208,7 +208,11 @@ test('Student database identity is validated before migration or credential writ
   assert.ok(deployStart < approvalStart, 'human approvals must happen only after preview artifacts exist');
   assert.match(studentBicep, /name: 'PESO_DEPLOYMENT_ENVIRONMENT'[\s\S]*value: 'student'/);
   assert.match(read('docs/adr/0012-define-student-environment.md'), /iseqgaewjpjcxrndibep/);
-  assert.match(read('netlify.toml'), /\[context.main.environment\][\s\S]*PESO_RELEASE_ENV = "render-beta"/);
+  const { APP_SITE_ID, buildEnvironment } = require('./netlify-build');
+  const historical = buildEnvironment({ SITE_ID: APP_SITE_ID, CONTEXT: 'branch-deploy', BRANCH: 'main' });
+  assert.equal(historical.PESO_RELEASE_ENV, 'render-beta');
+  assert.equal(historical.EXPO_PUBLIC_SUPABASE_URL, 'https://iseqgaewjpjcxrndibep.supabase.co');
+  assert.doesNotMatch(read('netlify.toml'), /\[context\.[^\]]*environment\]/);
 });
 
 test('Student release binds credentials, API origin, and migrations to independently verified evidence', () => {

@@ -1,0 +1,15 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.pesoprivateexport'
+version = '1.0.0'
+
+android {
+  namespace 'expo.modules.pesoprivateexport'
+}
+
+dependencies {
+  implementation 'com.squareup.okhttp3:okhttp:4.9.2'
+}

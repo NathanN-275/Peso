@@ -63,147 +63,230 @@ function cli(dir, mode) {
   });
 }
 
-test('installer applies both pinned security patches to published packages', t => {
+const changedFile = pkg => Object.keys(pkg.files).find(file => pkg.files[file].original !== pkg.files[file].patched);
+const packageHashes = dir => manifest.packages.flatMap(pkg =>
+  Object.keys(pkg.files).map(file => hash(fs.readFileSync(path.join(dir, pkg.path, file)))));
+
+function assertOriginalFiles(dir, except) {
+  for (const pkg of manifest.packages) {
+    for (const [file, pin] of Object.entries(pkg.files)) {
+      if (`${pkg.path}/${file}` !== except) {
+        assert.equal(hash(fs.readFileSync(path.join(dir, pkg.path, file))), pin.original, `${pkg.name}/${file}`);
+      }
+    }
+  }
+}
+
+test('installer applies both pinned security and compatibility patches to published packages', t => {
   const dir = fixture(t);
   const result = cli(dir, 'apply');
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /braces@3\.0\.3/);
-  assert.match(result.stdout, /node-forge@1\.4\.0/);
+  assert.deepEqual(manifest.packages.map(pkg => `${pkg.name}@${pkg.version}`),
+    ['braces@3.0.3', 'metro@0.84.4']);
+  for (const pkg of manifest.packages) {
+    assert.ok(result.stdout.includes(`${pkg.name}@${pkg.version}`));
+    for (const [file, pin] of Object.entries(pkg.files)) {
+      assert.equal(hash(fs.readFileSync(path.join(dir, pkg.path, file))), pin.patched, `${pkg.name}/${file}`);
+    }
+  }
 });
 
-test('read-only verifier accepts the exact installed patched packages', t => {
+test('read-only verifier accepts exact patched packages without changing bytes', t => {
   const dir = fixture(t);
   assert.equal(cli(dir, 'apply').status, 0);
+  const before = packageHashes(dir);
   const result = cli(dir, 'verify');
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Verified/);
+  assert.deepEqual(packageHashes(dir), before);
 });
 
 test('reinstalling already verified patches succeeds without changing package bytes', t => {
   const dir = fixture(t);
   assert.equal(cli(dir, 'apply').status, 0);
-  const filename = path.join(dir, 'node_modules/braces/lib/parse.js');
-  const before = fs.readFileSync(filename);
+  const before = packageHashes(dir);
   const result = cli(dir, 'apply');
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(fs.readFileSync(filename), before);
+  assert.deepEqual(packageHashes(dir), before);
   assert.equal(cli(dir, 'verify').status, 0);
 });
 
 test('verifier rejects additional executable files inside a patched package', t => {
-  const dir = fixture(t);
-  assert.equal(cli(dir, 'apply').status, 0);
-  fs.writeFileSync(path.join(dir, 'node_modules/braces/lib/extra.js'), 'module.exports = true;\n');
-  const result = cli(dir, 'verify');
-  assert.equal(result.status, 1, result.stderr);
-  assert.match(result.stderr, /inventory/);
-});
-
-test('installer rejects changed lockfile identity before touching either package', t => {
-  const dir = fixture(t);
-  const lockPath = path.join(dir, 'package-lock.json');
-  const lock = JSON.parse(fs.readFileSync(lockPath));
-  lock.packages['node_modules/node-forge'].version = '1.4.1';
-  fs.writeFileSync(lockPath, JSON.stringify(lock));
-  const result = cli(dir, 'apply');
-  assert.equal(result.status, 1, result.stderr);
-  assert.match(result.stderr, /lockfile/);
-  assert.equal(hash(fs.readFileSync(path.join(dir, 'node_modules/braces/lib/parse.js'))),
-    manifest.packages[0].files['lib/parse.js'].original);
-});
-
-test('installer rejects a symlinked package file even when its bytes match', t => {
-  const dir = fixture(t);
-  const filename = path.join(dir, 'node_modules/braces/lib/parse.js');
-  const outside = path.join(dir, 'original-parse.js');
-  fs.renameSync(filename, outside);
-  fs.symlinkSync(outside, filename);
-  const result = cli(dir, 'apply');
-  assert.equal(result.status, 1, result.stderr);
-  assert.match(result.stderr, /symbolic/);
-  assert.equal(hash(fs.readFileSync(outside)), manifest.packages[0].files['lib/parse.js'].original);
-});
-
-test('verifier rejects an untracked nested copy of a vulnerable package', t => {
-  const dir = fixture(t);
-  assert.equal(cli(dir, 'apply').status, 0);
-  fs.cpSync(path.join(dir, 'node_modules/braces'), path.join(dir, 'node_modules/example/node_modules/braces'), { recursive: true });
-  const result = cli(dir, 'verify');
-  assert.equal(result.status, 1, result.stderr);
-  assert.match(result.stderr, /package paths/);
-});
-
-test('installer and verifier reject the previously accepted element-count-only Forge backport', t => {
-  const dir = fixture(t);
-  assert.equal(cli(dir, 'apply').status, 0);
-  const filename = path.join(dir, 'node_modules/node-forge/lib/rsa.js');
-  // Fault injection reconstructs the exact independently assessed former bytes.
-  const previous = fs.readFileSync(filename, 'utf8')
-    .replace('          // ASN.1 NULL parameters must also be empty, not unchecked bytes.\n', '')
-    .replace("(('parameters' in capture) ? 2 : 1) ||\n            ('parameters' in capture && capture.parameters !== '')) {",
-      "(('parameters' in capture) ? 2 : 1)) {");
-  assert.equal(hash(Buffer.from(previous)), 'acc22e5d36e27832c34e02dd3933aad7977d45b047eead5016520735efedc9c5');
-  fs.writeFileSync(filename, previous);
-  for (const mode of ['verify', 'apply']) {
-    const result = cli(dir, mode);
+  for (const pkg of manifest.packages) {
+    const dir = fixture(t);
+    assert.equal(cli(dir, 'apply').status, 0);
+    fs.writeFileSync(path.join(dir, pkg.path, 'extra.js'), 'module.exports = true;\n');
+    const result = cli(dir, 'verify');
     assert.equal(result.status, 1, result.stderr);
-    assert.match(result.stderr, /Installed integrity mismatch: node-forge\/lib\/rsa.js/);
-    assert.equal(fs.readFileSync(filename, 'utf8'), previous);
+    assert.match(result.stderr, /inventory/);
   }
 });
 
-for (const [name, change, error] of [
-  ['unpatched installation', () => {}, /Missing or partial patch/],
-  ['missing installed file', d => fs.unlinkSync(path.join(d, 'node_modules/braces/lib/parse.js')), /inventory/],
-  ['altered package bytes', d => fs.appendFileSync(path.join(d, 'node_modules/node-forge/lib/rsa.js'), '\n// modified\n'), /integrity/],
-  ['altered patch artifact', d => fs.appendFileSync(path.join(d, 'patches/dependencies/braces-3.0.3.patch'), '\n'), /Patch integrity/],
-  ['missing patch artifact', d => fs.unlinkSync(path.join(d, 'patches/dependencies/node-forge-1.4.0.patch')), /ENOENT/],
-  ['altered integrity manifest', d => fs.appendFileSync(path.join(d, 'patches/dependencies/manifest.json'), '\n'), /Manifest integrity/],
-]) {
-  test(`verifier rejects ${name}`, t => {
+test('installer rejects changed lockfile identities before touching any package', t => {
+  for (const pkg of manifest.packages) {
     const dir = fixture(t);
-    if (name !== 'unpatched installation') assert.equal(cli(dir, 'apply').status, 0);
-    change(dir);
+    const lockPath = path.join(dir, 'package-lock.json');
+    const lock = JSON.parse(fs.readFileSync(lockPath));
+    lock.packages[pkg.path].version = '0.0.0';
+    fs.writeFileSync(lockPath, JSON.stringify(lock));
+    const result = cli(dir, 'apply');
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /lockfile/);
+    assertOriginalFiles(dir);
+  }
+});
+
+test('installer rejects a symlinked package file even when its bytes match', t => {
+  for (const pkg of manifest.packages) {
+    const dir = fixture(t);
+    const file = changedFile(pkg);
+    const filename = path.join(dir, pkg.path, file);
+    const outside = path.join(dir, 'original.js');
+    fs.renameSync(filename, outside);
+    fs.symlinkSync(outside, filename);
+    const result = cli(dir, 'apply');
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /symbolic/);
+    assert.equal(hash(fs.readFileSync(outside)), pkg.files[file].original);
+    assertOriginalFiles(dir);
+  }
+});
+
+test('verifier rejects an untracked nested copy of a vulnerable package', t => {
+  for (const pkg of manifest.packages) {
+    const dir = fixture(t);
+    assert.equal(cli(dir, 'apply').status, 0);
+    fs.cpSync(path.join(dir, pkg.path), path.join(dir, 'node_modules/example', pkg.path), { recursive: true });
     const result = cli(dir, 'verify');
     assert.equal(result.status, 1, result.stderr);
-    assert.match(result.stderr, error);
+    assert.match(result.stderr, /package paths/);
+  }
+});
+
+test('installer and verifier reject corrupted remaining patch bytes without overwriting them', t => {
+  for (const pkg of manifest.packages) {
+    const dir = fixture(t);
+    assert.equal(cli(dir, 'apply').status, 0);
+    const filename = path.join(dir, pkg.path, changedFile(pkg));
+    const corrupted = fs.readFileSync(filename, 'utf8') + '\n// corrupted installed patch\n';
+    fs.writeFileSync(filename, corrupted);
+    const before = packageHashes(dir);
+    for (const mode of ['verify', 'apply']) {
+      const result = cli(dir, mode);
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.stderr, /Installed integrity mismatch/);
+      assert.deepEqual(packageHashes(dir), before);
+    }
+  }
+});
+
+test('verifier rejects an unpatched installation', t => {
+  const dir = fixture(t);
+  const result = cli(dir, 'verify');
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /Missing or partial patch/);
+  assertOriginalFiles(dir);
+});
+
+for (const [name, change, error] of [
+  ['missing installed file', (d, pkg) => fs.unlinkSync(path.join(d, pkg.path, changedFile(pkg))), /inventory/],
+  ['altered package bytes', (d, pkg) => fs.appendFileSync(path.join(d, pkg.path, changedFile(pkg)), '\n// modified\n'), /integrity/],
+  ['altered patch artifact', (d, pkg) => fs.appendFileSync(path.join(d, 'patches/dependencies', pkg.patch.file), '\n'), /Patch integrity/],
+  ['missing patch artifact', (d, pkg) => fs.unlinkSync(path.join(d, 'patches/dependencies', pkg.patch.file)), /ENOENT/],
+]) {
+  test(`verifier rejects ${name}`, t => {
+    for (const pkg of manifest.packages) {
+      const dir = fixture(t);
+      assert.equal(cli(dir, 'apply').status, 0);
+      change(dir, pkg);
+      const result = cli(dir, 'verify');
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.stderr, error);
+    }
   });
 }
 
-test('installer refuses a partial brace patch rather than hiding an interrupted install', t => {
+test('verifier rejects an altered integrity manifest', t => {
   const dir = fixture(t);
-  const file = path.join(dir, 'node_modules/braces/lib/parse.js');
-  const original = fs.readFileSync(file);
   assert.equal(cli(dir, 'apply').status, 0);
-  fs.writeFileSync(file, original);
-  const result = cli(dir, 'apply');
+  fs.appendFileSync(path.join(dir, 'patches/dependencies/manifest.json'), '\n');
+  const result = cli(dir, 'verify');
   assert.equal(result.status, 1, result.stderr);
-  assert.match(result.stderr, /partial patch/);
+  assert.match(result.stderr, /Manifest integrity/);
 });
 
-test('installer checks both packages before writing the first patch', t => {
-  const dir = fixture(t);
-  fs.appendFileSync(path.join(dir, 'node_modules/node-forge/lib/rsa.js'), '\n// modified\n');
-  assert.equal(cli(dir, 'apply').status, 1);
-  assert.equal(hash(fs.readFileSync(path.join(dir, 'node_modules/braces/lib/parse.js'))),
-    manifest.packages[0].files['lib/parse.js'].original);
+test('installer refuses partial patches rather than hiding an interrupted install', t => {
+  for (const pkg of manifest.packages.filter(pkg =>
+    Object.values(pkg.files).filter(pin => pin.original !== pin.patched).length > 1)) {
+    const dir = fixture(t);
+    const file = path.join(dir, pkg.path, changedFile(pkg));
+    const original = fs.readFileSync(file);
+    assert.equal(cli(dir, 'apply').status, 0);
+    fs.writeFileSync(file, original);
+    const before = packageHashes(dir);
+    const result = cli(dir, 'apply');
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /partial patch/);
+    assert.deepEqual(packageHashes(dir), before);
+  }
+});
+
+test('installer checks all packages before writing the first patch', t => {
+  for (const pkg of manifest.packages.slice(1)) {
+    const dir = fixture(t);
+    const file = `${pkg.path}/${changedFile(pkg)}`;
+    fs.appendFileSync(path.join(dir, file), '\n// modified\n');
+    const result = cli(dir, 'apply');
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /integrity/);
+    assertOriginalFiles(dir, file);
+  }
 });
 
 test('npm postinstall applies the patches and the explicit verification command accepts them', t => {
   const dir = fixture(t);
-  const run = script => spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', script], {
+  const run = script => spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', '--offline', '--ignore-scripts', script], {
     cwd: dir, encoding: 'utf8', timeout: 15000,
   });
   const install = run('postinstall');
   assert.equal(install.status, 0, install.stderr);
-  assert.equal(run('deps:verify').status, 0);
+  const verification = run('deps:verify');
+  assert.equal(verification.status, 0, verification.stderr);
+  for (const pkg of manifest.packages) {
+    assert.ok(verification.stdout.includes(`${pkg.name}@${pkg.version}`));
+  }
 });
 
 test('typecheck rejects skipped postinstall even when npm lifecycle hooks are disabled', t => {
   const dir = fixture(t);
-  const result = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', '--ignore-scripts', 'typecheck'], {
+  const packagePath = path.join(dir, 'package.json');
+  const packageJson = JSON.parse(fs.readFileSync(packagePath));
+  assert.equal(packageJson.scripts.typecheck, 'node scripts/dependency-patches.js verify && tsc --noEmit');
+  // A broken guard must never launch the real compiler from this fault fixture.
+  packageJson.scripts.typecheck = packageJson.scripts.typecheck.replace('tsc --noEmit', 'node scripts/compiler-sentinel.js');
+  fs.writeFileSync(packagePath, JSON.stringify(packageJson));
+  fs.writeFileSync(path.join(dir, 'scripts/compiler-sentinel.js'),
+    "require('node:fs').writeFileSync('compiler-executed', 'unexpected'); process.exitCode = 97;\n");
+  const result = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', '--offline', '--ignore-scripts', 'typecheck'], {
     cwd: dir, encoding: 'utf8', timeout: 15000,
   });
   assert.equal(result.status, 1);
   assert.match(result.stdout + result.stderr, /Missing or partial patch/);
+  assert.equal(fs.existsSync(path.join(dir, 'compiler-executed')), false);
+  assertOriginalFiles(dir);
+});
+
+// A scope is part of the package name: @expo/metro is not another metro copy.
+test('installer distinguishes scoped packages with a matching unscoped basename', t => {
+  const dir = fixture(t);
+  const scoped = path.join(dir, 'node_modules/@fixture/metro');
+  fs.mkdirSync(scoped, { recursive: true });
+  fs.writeFileSync(path.join(scoped, 'package.json'), JSON.stringify({ name: '@fixture/metro', version: '1.0.0' }));
+  const result = cli(dir, 'apply');
+  assert.equal(result.status, 0, result.stderr);
+  fs.cpSync(path.join(dir, 'node_modules/metro'),
+    path.join(scoped, 'node_modules/metro'), { recursive: true });
+  const duplicate = cli(dir, 'verify');
+  assert.equal(duplicate.status, 1);
+  assert.match(duplicate.stderr, /Unexpected installed package paths: metro/);
 });

@@ -51,6 +51,45 @@ class UploadReservationRepository:
       raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload reservation not found.")
     return row
 
+  def admit_source_write(
+    self, attempt_id: str, user_id: str, reservation_id: str, *,
+    bucket: str, storage_path: str, content_type: str, size_bytes: int,
+  ) -> None:
+    fields = {
+      "attempt_id": attempt_id, "user_id": user_id, "reservation_id": reservation_id,
+      "bucket": bucket, "storage_path": storage_path,
+      "content_type": content_type, "size_bytes": size_bytes,
+    }
+    response = self.client.rpc(
+      "admit_private_media_source_write", {"p_" + key: value for key, value in fields.items()},
+    ).execute()
+    # Only a fresh exact admission permits dispatch. Never replay an uncertain RPC.
+    if not isinstance(response.data, list) or len(response.data) != 1:
+      raise RuntimeError("Source write admission did not return an exact receipt.")
+    row = response.data[0]
+    if (not isinstance(row, dict) or row.get("state") != "dispatching"
+        or any(type(row.get(key)) is not type(value) or row[key] != value for key, value in fields.items())):
+      raise RuntimeError("Source write admission receipt does not match this upload.")
+    # A separate read also denies dispatch if the API rolls back write transactions.
+    persisted = (self.client.table("private_media_write_attempts").select(
+      ",".join((*fields, "state")),
+    ).eq("attempt_id", attempt_id).limit(2).execute()).data
+    if (persisted != [row]
+        or any(type(persisted[0].get(key)) is not type(value) for key, value in fields.items())):
+      raise RuntimeError("Source write admission was not durably observed.")
+
+  def observe_source_write_success(
+    self, attempt_id: str, user_id: str, reservation_id: str, *,
+    bucket: str, storage_path: str, content_type: str, size_bytes: int,
+  ) -> None:
+    response = self.client.rpc("observe_private_media_source_write_success", {
+      "p_attempt_id": attempt_id, "p_user_id": user_id, "p_reservation_id": reservation_id,
+      "p_bucket": bucket, "p_storage_path": storage_path,
+      "p_content_type": content_type, "p_size_bytes": size_bytes,
+    }).execute()
+    if response.data is not True:
+      raise RuntimeError("Source write success observation was not acknowledged.")
+
   def mark_uploaded(self, reservation_id: str, user_id: str, validation_owner: str) -> dict[str, Any]:
     response = self.client.rpc(
       "mark_video_upload_received",
@@ -94,14 +133,23 @@ class UploadReservationRepository:
     response = self.client.rpc("expire_video_upload_reservations", {"p_limit": limit}).execute()
     return response.data if isinstance(response.data, list) else []
 
-  def mark_blob_deleted(self, blob_path: str, *, confirmed_after_expiry: bool = False) -> None:
+  def mark_blob_deleted(self, blob_path: str, *, confirmed_after_expiry: bool = False) -> bool:
     from datetime import timezone
 
     timestamp = datetime.now(timezone.utc).isoformat()
     fields = {"blob_deleted_at": timestamp}
+    confirmed = False
     if confirmed_after_expiry:
-      fields["cleanup_confirmed_at"] = timestamp
+      response = (self.client.table("private_media_write_attempts").select("attempt_id")
+                  .eq("storage_path", blob_path).limit(1).execute())
+      if not isinstance(response.data, list):
+        raise RuntimeError("Unable to establish whether source writes remain pending.")
+      # API deletion is an observation. An admitted write still needs provider settlement.
+      confirmed = not response.data
+      if confirmed:
+        fields["cleanup_confirmed_at"] = timestamp
     self.client.table("upload_reservations").update(fields).eq("blob_path", blob_path).execute()
+    return confirmed
 
   def purge_cleaned_tombstones(self) -> None:
     from datetime import timedelta, timezone

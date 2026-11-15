@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import httpx
 from fastapi import HTTPException
@@ -40,6 +40,38 @@ class DatabaseError(RuntimeError):
 
 
 class VideoRepositoryCapabilitiesTest(unittest.TestCase):
+  def test_latest_analysis_metadata_projection_excludes_pose_payloads(self) -> None:
+    repository = VideoRepository.__new__(VideoRepository)
+    repository.client = MagicMock()
+    query = repository.client.table.return_value
+    for method in ("select", "in_", "order"):
+      getattr(query, method).return_value = query
+    query.execute.return_value.data = [
+      {"id": "newer", "video_id": "video-1"},
+      {"id": "older", "video_id": "video-1"},
+      {"id": "other", "video_id": "video-2"},
+    ]
+
+    rows = repository.get_latest_analysis_results(["video-1", "video-2"], include_result_json=False)
+
+    self.assertEqual(rows["video-1"]["id"], "newer")
+    self.assertEqual(set(rows), {"video-1", "video-2"})
+    query.select.assert_called_once_with("id,video_id,model_version,created_at")
+    self.assertEqual(query.order.call_args_list, [call("created_at", desc=True), call("id", desc=True)])
+
+  def test_latest_analysis_default_still_loads_results_for_existing_callers(self) -> None:
+    repository = VideoRepository.__new__(VideoRepository)
+    repository.client = MagicMock()
+    query = repository.client.table.return_value
+    for method in ("select", "in_", "order"):
+      getattr(query, method).return_value = query
+    query.execute.return_value.data = [{"id": "analysis", "video_id": "video", "result_json": {"rep_count": 1}}]
+
+    rows = repository.get_latest_analysis_results(["video"])
+
+    self.assertEqual(rows["video"]["result_json"], {"rep_count": 1})
+    query.select.assert_called_once_with("id,video_id,model_version,result_json,created_at")
+
   def repository(self, error: Exception | None = None) -> VideoRepository:
     repository = VideoRepository.__new__(VideoRepository)
     repository.client = Client(error)
@@ -105,8 +137,9 @@ class VideoRepositoryCapabilitiesTest(unittest.TestCase):
   def test_save_analysis_result_retries_a_transient_supabase_transport_error(self) -> None:
     repository = VideoRepository.__new__(VideoRepository)
     repository.client = MagicMock()
-    response = type("Response", (), {"data": [{"id": "analysis-1"}]})()
-    execute = repository.client.table.return_value.upsert.return_value.execute
+    repository.bind_analysis_lease("55555555-5555-5555-5555-555555555555", "worker-test", 1)
+    response = type("Response", (), {"data": {"video": {"id": "11111111-1111-1111-1111-111111111111"}, "analysis": {"id": "66666666-6666-6666-6666-666666666666", "video_id": "11111111-1111-1111-1111-111111111111", "model_version":"model-v1", "result_json":{"rep_count":1}}}})()
+    execute = repository.client.rpc.return_value.execute
     execute.side_effect = [httpx.RemoteProtocolError("Server disconnected"), response]
 
     with patch("app.services.video_repository.time.sleep") as sleep:
@@ -116,14 +149,15 @@ class VideoRepositoryCapabilitiesTest(unittest.TestCase):
         {"rep_count": 1},
       )
 
-    self.assertEqual(result["id"], "analysis-1")
+    self.assertEqual(result["id"], "66666666-6666-6666-6666-666666666666")
     self.assertEqual(execute.call_count, 2)
     sleep.assert_called_once_with(0.5)
 
   def test_save_analysis_result_stops_after_bounded_transport_retries(self) -> None:
     repository = VideoRepository.__new__(VideoRepository)
     repository.client = MagicMock()
-    execute = repository.client.table.return_value.upsert.return_value.execute
+    repository.bind_analysis_lease("55555555-5555-5555-5555-555555555555", "worker-test", 1)
+    execute = repository.client.rpc.return_value.execute
     execute.side_effect = httpx.RemoteProtocolError("Server disconnected")
 
     with patch("app.services.video_repository.time.sleep") as sleep:

@@ -1,7 +1,8 @@
+import { subscribeProfileAvatarRelease } from '../../lib/avatarReader';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import type { ReactNode } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -15,7 +16,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
-import { deleteAccount } from '../../lib/backendApi';
+import { BackendHttpError, deleteAccount } from '../../lib/backendApi';
+import { getPrivateMediaEpoch, registerPrivateMediaRelease } from '../../lib/privateMediaLifecycle';
 import {
   getProfileDisplayName,
   loadOwnProfile,
@@ -23,7 +25,7 @@ import {
   uploadProfileAvatar,
 } from '../../lib/profile';
 import type { UserProfile } from '../../lib/profile';
-import { supabase } from '../../lib/supabase';
+import { supabase, updateUserWithPrivateMedia } from '../../lib/supabase';
 import BottomNav, { NAV_HEIGHT } from '../components/BottomNav';
 import Button from '../components/Button';
 import Input from '../components/Input';
@@ -111,20 +113,6 @@ function PlaceholderPanel({
   );
 }
 
-function validateUsername(username: string) {
-  const trimmedUsername = username.trim();
-
-  if (!trimmedUsername) {
-    return null;
-  }
-
-  if (!/^[A-Za-z0-9_]{3,30}$/.test(trimmedUsername)) {
-    return 'Username must be 3-30 letters, numbers, or underscores.';
-  }
-
-  return null;
-}
-
 export default function SettingsScreen({
   onBack,
   onHomePress,
@@ -133,9 +121,16 @@ export default function SettingsScreen({
   onManageSavedVideos,
   onAccountDeleted,
 }: SettingsScreenProps) {
-  const { session, user, signOut } = useAuth();
+  const { session, user, mediaSessionKey, signOut } = useAuth();
+  const mounted = useRef(true);
+  const profileImageAbort = useRef<AbortController | null>(null);
+  const currentSessionKey = useRef(mediaSessionKey);
+  currentSessionKey.current = mediaSessionKey;
   const [panel, setPanel] = useState<SettingsPanel>('main');
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profileSessionKey, setProfileSessionKey] = useState<string | null>(null);
+  const [profileConflict, setProfileConflict] = useState(false);
+  const [profileReloadKey, setProfileReloadKey] = useState(0);
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState(user?.email ?? '');
@@ -151,46 +146,71 @@ export default function SettingsScreen({
   const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
 
+  useEffect(() => subscribeProfileAvatarRelease(() => {
+    setProfile((current) => current ? { ...current, avatar_data_uri: null } : null);
+  }), []);
+
+  useEffect(() => {
+    mounted.current = true;
+    const unregister = registerPrivateMediaRelease(() => {
+      setProfile((current) => current ? { ...current, avatar_data_uri: null } : null);
+      setSavingProfile(false);
+      setUpdatingEmail(false);
+      setUpdatingPassword(false);
+      setPassword('');
+      setConfirmPassword('');
+      setLoading(false);
+      setProfileConflict(true);
+    });
+    return () => { mounted.current = false; profileImageAbort.current?.abort(); unregister(); };
+  }, []);
+
+  const beginProfileOperation = () => {
+    const key = mediaSessionKey;
+    const epoch = getPrivateMediaEpoch();
+    return () => mounted.current && key !== null && key === currentSessionKey.current
+      && epoch === getPrivateMediaEpoch();
+  };
+
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
+    const isCurrent = beginProfileOperation();
+    setProfile(null);
+    setProfileSessionKey(null);
+    setProfileConflict(false);
+    setSavingProfile(false);
+    setUsername('');
+    setDisplayName('');
+    setMessage(null);
+    setErrorMessage(null);
 
     const loadProfile = async () => {
-      if (!user) {
+      if (!user || !session?.access_token || !mediaSessionKey) {
         setLoading(false);
         return;
       }
-
       setLoading(true);
-      setErrorMessage(null);
-
       try {
-        const nextProfile = await loadOwnProfile(user);
-
-        if (cancelled) {
-          return;
-        }
-
+        const nextProfile = await loadOwnProfile(user, session.access_token, controller.signal);
+        if (cancelled || !isCurrent()) return;
         setProfile(nextProfile);
+        setProfileSessionKey(mediaSessionKey);
         setUsername(nextProfile.username ?? '');
         setDisplayName(nextProfile.display_name ?? '');
         setEmail(user.email ?? '');
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && isCurrent()) {
           setErrorMessage(error instanceof Error ? error.message : 'Unable to load settings.');
         }
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        if (!cancelled && isCurrent()) setLoading(false);
       }
     };
-
     void loadProfile();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [user]);
+    return () => { cancelled = true; controller.abort(); };
+    // A routine JWT refresh in the same Auth session must preserve unsaved fields.
+  }, [mediaSessionKey, user?.id, profileReloadKey]);
 
   const clearMessages = () => {
     setMessage(null);
@@ -213,58 +233,58 @@ export default function SettingsScreen({
   };
 
   const handleSaveProfile = async () => {
-    if (!user) {
+    if (!user || !session?.access_token || !profile || profileSessionKey !== mediaSessionKey || savingProfile) {
       return;
     }
-
-    const usernameError = validateUsername(username);
-
-    if (usernameError) {
-      setErrorMessage(usernameError);
-      setMessage(null);
-      return;
-    }
-
-    if (displayName.trim().length > 80) {
-      setErrorMessage('Display name must be 80 characters or less.');
-      setMessage(null);
-      return;
-    }
+    const isCurrent = beginProfileOperation();
+    const imageController = new AbortController();
+    profileImageAbort.current = imageController;
 
     setSavingProfile(true);
     clearMessages();
 
     try {
-      const nextProfile = await saveOwnProfile(user, {
+      const nextProfile = await saveOwnProfile(user, session.access_token, profile.profile_revision, {
         username,
         display_name: displayName,
-        avatar_path: profile?.avatar_path ?? null,
-      });
+      }, imageController.signal);
+      if (!isCurrent()) return;
 
       setProfile(nextProfile);
       setUsername(nextProfile.username ?? '');
       setDisplayName(nextProfile.display_name ?? '');
       setMessage('Profile updated.');
+      setProfileConflict(false);
     } catch (error) {
+      if (!isCurrent()) return;
+      setProfileConflict(error instanceof BackendHttpError && error.status === 409);
       setErrorMessage(error instanceof Error ? error.message : 'Unable to update profile.');
     } finally {
-      setSavingProfile(false);
+      if (profileImageAbort.current === imageController) profileImageAbort.current = null;
+      imageController.abort();
+      if (isCurrent()) setSavingProfile(false);
     }
   };
 
   const handleChooseAvatar = async () => {
-    if (!user || savingProfile) {
+    if (!user || !session?.access_token || !profile || profileSessionKey !== mediaSessionKey || savingProfile) {
       return;
     }
 
+    const isCurrent = beginProfileOperation();
+    const imageController = new AbortController();
+    profileImageAbort.current = imageController;
     clearMessages();
+    setSavingProfile(true);
 
     try {
       if (Platform.OS !== 'web') {
         let permission = await ImagePicker.getMediaLibraryPermissionsAsync();
 
+        if (!isCurrent()) return;
         if (!permission.granted) {
           permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (!isCurrent()) return;
         }
 
         if (!permission.granted) {
@@ -280,27 +300,28 @@ export default function SettingsScreen({
         quality: 0.72,
       });
 
-      if (result.canceled || !result.assets[0]) {
+      if (!isCurrent() || result.canceled || !result.assets[0]) {
         return;
       }
 
-      setSavingProfile(true);
-      const uploadResult = await uploadProfileAvatar(user, result.assets[0], profile?.avatar_path);
-      const nextProfile = await saveOwnProfile(user, {
-        username,
-        display_name: displayName,
-        avatar_path: uploadResult.avatarPath,
-      });
-
-      setProfile({
-        ...nextProfile,
-        avatar_url: uploadResult.avatarUrl,
-      });
+      const nextProfile = await uploadProfileAvatar(
+        user, session.access_token, result.assets[0], profile.profile_revision,
+        { username, display_name: displayName }, imageController.signal
+      );
+      if (!isCurrent()) return;
+      setProfile(nextProfile);
+      setUsername(nextProfile.username ?? '');
+      setDisplayName(nextProfile.display_name ?? '');
+      setProfileConflict(false);
       setMessage('Profile picture updated.');
     } catch (error) {
+      if (!isCurrent()) return;
+      setProfileConflict(error instanceof BackendHttpError && error.status === 409);
       setErrorMessage(error instanceof Error ? error.message : 'Unable to update profile picture.');
     } finally {
-      setSavingProfile(false);
+      if (profileImageAbort.current === imageController) profileImageAbort.current = null;
+      imageController.abort();
+      if (isCurrent()) setSavingProfile(false);
     }
   };
 
@@ -319,21 +340,27 @@ export default function SettingsScreen({
       return;
     }
 
+    const epoch = getPrivateMediaEpoch();
+    const expectedKey = mediaSessionKey;
+    const isCurrent = () => mounted.current && expectedKey === currentSessionKey.current
+      && epoch === getPrivateMediaEpoch();
     setUpdatingEmail(true);
     clearMessages();
 
     try {
-      const { error } = await supabase.auth.updateUser({ email: trimmedEmail });
+      const { error } = await updateUserWithPrivateMedia(mediaSessionKey, { email: trimmedEmail });
 
+      if (!isCurrent()) return;
       if (error) {
         throw error;
       }
 
       setMessage('Email update started. Check your inbox.');
     } catch (error) {
+      if (!isCurrent()) return;
       setErrorMessage(error instanceof Error ? error.message : 'Unable to update email.');
     } finally {
-      setUpdatingEmail(false);
+      if (isCurrent()) setUpdatingEmail(false);
     }
   };
 
@@ -359,12 +386,17 @@ export default function SettingsScreen({
       return;
     }
 
+    const epoch = getPrivateMediaEpoch();
+    const expectedKey = mediaSessionKey;
+    const isCurrent = () => mounted.current && expectedKey === currentSessionKey.current
+      && epoch === getPrivateMediaEpoch();
     setUpdatingPassword(true);
     clearMessages();
 
     try {
-      const { error } = await supabase.auth.updateUser({ password: trimmedPassword });
+      const { error } = await updateUserWithPrivateMedia(mediaSessionKey, { password: trimmedPassword });
 
+      if (!isCurrent()) return;
       if (error) {
         throw error;
       }
@@ -373,9 +405,10 @@ export default function SettingsScreen({
       setConfirmPassword('');
       setMessage('Password updated.');
     } catch (error) {
+      if (!isCurrent()) return;
       setErrorMessage(error instanceof Error ? error.message : 'Unable to update password.');
     } finally {
-      setUpdatingPassword(false);
+      if (isCurrent()) setUpdatingPassword(false);
     }
   };
 
@@ -441,6 +474,8 @@ export default function SettingsScreen({
     </>
   );
 
+  const visibleProfile = profileSessionKey === mediaSessionKey ? profile : null;
+
   const renderProfilePanel = () => (
     <>
       <View style={styles.profileHeader}>
@@ -449,10 +484,10 @@ export default function SettingsScreen({
           accessibilityLabel="Change profile picture"
           onPress={handleChooseAvatar}
           style={styles.avatarButton}
-          disabled={savingProfile}
+          disabled={savingProfile || !visibleProfile}
         >
-          {profile?.avatar_url ? (
-            <Image source={{ uri: profile.avatar_url }} style={styles.avatarImage} resizeMode="cover" />
+          {visibleProfile?.avatar_data_uri ? (
+            <Image source={{ uri: visibleProfile.avatar_data_uri }} style={styles.avatarImage} resizeMode="cover" />
           ) : (
             <Ionicons name="person" size={52} color="#AEB7C6" />
           )}
@@ -460,13 +495,22 @@ export default function SettingsScreen({
             <Ionicons name="camera" size={15} color={tokens.colors.textPrimary} />
           </View>
         </Pressable>
-        <Text style={styles.profileName}>{getProfileDisplayName(profile, user)}</Text>
+        <Text style={styles.profileName}>{getProfileDisplayName(visibleProfile, user)}</Text>
       </View>
 
+      {visibleProfile?.avatar_reupload_required ? (
+        <Text accessibilityRole="alert" style={styles.profileName}>Re-upload your profile picture to finish the security update.</Text>
+      ) : visibleProfile?.avatar_error ? (
+        <Text accessibilityRole="alert" style={styles.profileName}>{visibleProfile.avatar_error}</Text>
+      ) : null}
       {renderMessageBlock()}
+      {profileConflict || !visibleProfile || visibleProfile.avatar_error ? (
+        <Button label="Reload Profile" onPress={() => setProfileReloadKey((key) => key + 1)} disabled={savingProfile} />
+      ) : null}
 
       <View style={styles.formStack}>
         <Input
+          editable={!savingProfile}
           label="Display Name"
           placeholder="Name"
           value={displayName}
@@ -474,6 +518,7 @@ export default function SettingsScreen({
           autoCapitalize="words"
         />
         <Input
+          editable={!savingProfile}
           label="Username"
           placeholder="username"
           value={username}
@@ -482,7 +527,7 @@ export default function SettingsScreen({
         <Button
           label={savingProfile ? 'Saving...' : 'Save Profile'}
           onPress={handleSaveProfile}
-          disabled={savingProfile}
+          disabled={savingProfile || !visibleProfile}
           style={styles.fullButton}
         />
       </View>

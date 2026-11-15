@@ -5,16 +5,17 @@ import logging
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
 
 from .routes.videos import router as videos_router
+from .routes.private_media import router as private_media_router, MediaAwareGZipMiddleware, PrivateMediaHeadersMiddleware
 from .routes.analysis_runs import router as analysis_runs_router
 from .routes.saved_lift_exports import router as saved_lift_exports_router
 from .routes.upload_reservations import router as upload_reservations_router
 from .routes.budget_admission import router as budget_admission_router
+from .routes.profile import router as profile_router
 from .services.security_logging import configure_security_logging
 from .services.config import get_settings
-from .services.http_client import close_pooled_http_client
+from .services.http_client import close_pooled_async_http_client, close_pooled_http_client
 from .services.analysis_job_repository import AnalysisJobRepository
 
 
@@ -58,15 +59,19 @@ app.add_middleware(
   allow_credentials=True,
   allow_methods=["*"],
   allow_headers=["*"],
+  expose_headers=["Content-Range", "Accept-Ranges", "Content-Length", "Content-Disposition"],
 )
-app.add_middleware(GZipMiddleware, minimum_size=1024)
+app.add_middleware(MediaAwareGZipMiddleware, minimum_size=1024)
 app.add_middleware(LocalDevPrivateNetworkMiddleware)
+app.add_middleware(PrivateMediaHeadersMiddleware)
 
 app.include_router(videos_router)
+app.include_router(private_media_router)
 app.include_router(analysis_runs_router)
 app.include_router(saved_lift_exports_router)
 app.include_router(upload_reservations_router)
 app.include_router(budget_admission_router)
+app.include_router(profile_router)
 
 
 @app.get("/health")
@@ -89,5 +94,8 @@ def readinesscheck() -> dict[str, str]:
 
 
 @app.on_event("shutdown")
-def shutdown_http_clients() -> None:
-  close_pooled_http_client()
+async def shutdown_http_clients() -> None:
+  try:
+    await close_pooled_async_http_client()
+  finally:
+    close_pooled_http_client()

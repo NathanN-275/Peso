@@ -87,3 +87,43 @@ test('PR and deployment scans explicitly select the same Trivy release and block
   });
   assert.deepEqual(scans[0], scans[1], 'PR and deployment gates must use the same scanner');
 });
+
+
+test('required database security waits for every private media SQL suite', () => {
+  const workflow = read('.github/workflows/security.yml');
+  const reservation = workflow.split('\n  reservation-database-security:\n')[1].split('\n  private-media-database-security:\n')[0];
+  assert.match(reservation, /needs: private-media-database-security/);
+  assert.match(reservation, /if: \$\{\{ always\(\) \}\}/);
+  assert.match(reservation, /MEDIA_DATABASE_RESULT: \$\{\{ needs\.private-media-database-security\.result \}\}/);
+  assert.match(reservation, /run: test "\$MEDIA_DATABASE_RESULT" = success/);
+  assert.doesNotMatch(reservation, /continue-on-error|\|\| true/);
+  const media = workflow.split('\n  private-media-database-security:\n')[1].split('\n  container-security:\n')[0];
+  for (const suite of ['test_us_signup_hook_postgres.py', 'test_private_media_sessions_postgres.py', 'test_private_media_grants_postgres.py', 'test_private_media_session_replacement_postgres.py', 'test_profile_owner_postgres.py', 'test_source_write_attempts_postgres.py', 'test_generated_media_writes_postgres.py', 'test_analyzed_export_writes_postgres.py', 'test_avatar_writes_postgres.py', 'test_avatar_reads_postgres.py', 'test_browser_media_cookie_inventory_postgres.py', 'test_archive_writes_postgres.py', 'test_video_revocation_postgres.py', 'test_archive_publication_postgres.py', 'test_analysis_publication_postgres.py', 'test_saved_deletion_postgres.py']) {
+    assert.match(media, new RegExp(`suite: ${suite.replaceAll('.', '\\.')}\\s`));
+  }
+  assert.match(media, /fail-fast: false/);
+  assert.match(media, /--health-cmd "pg_isready -h 127\.0\.0\.1"/);
+  assert.match(media, /env "\$DATABASE_ENV=.*127\.0\.0\.1:5432\/\$DATABASE_NAME" python - <<'PYTHON'/);
+  assert.match(media, /suite\.countTestCases\(\) == 0/);
+  assert.match(media, /result\.wasSuccessful\(\) and not result\.skipped else 1/);
+  for (const [suite, database, environment] of [
+    ['us_signup_hook', 'peso_us_signup_hook_test', 'US_SIGNUP_HOOK_TEST_DATABASE_URL'],
+    ['private_media_sessions', 'peso_private_media_session_test', 'PRIVATE_MEDIA_SESSION_TEST_DATABASE_URL'],
+    ['private_media_grants', 'peso_media_grants_test', 'PRIVATE_MEDIA_GRANT_TEST_DATABASE_URL'],
+    ['private_media_session_replacement', 'peso_media_grants_test', 'PRIVATE_MEDIA_GRANT_TEST_DATABASE_URL'],
+    ['profile_owner', 'peso_revocation_test', 'VIDEO_REVOCATION_TEST_DATABASE_URL'],
+    ['source_write_attempts', 'peso_revocation_test', 'VIDEO_REVOCATION_TEST_DATABASE_URL'],
+    ['generated_media_writes', 'peso_revocation_test', 'VIDEO_REVOCATION_TEST_DATABASE_URL'],
+    ['analyzed_export_writes', 'peso_revocation_test', 'VIDEO_REVOCATION_TEST_DATABASE_URL'],
+    ['avatar_writes', 'peso_revocation_test', 'VIDEO_REVOCATION_TEST_DATABASE_URL'],
+    ['browser_media_cookie_inventory', 'peso_revocation_test', 'VIDEO_REVOCATION_TEST_DATABASE_URL'],
+    ['archive_writes', 'peso_revocation_test', 'VIDEO_REVOCATION_TEST_DATABASE_URL'],
+    ['video_revocation', 'peso_revocation_test', 'VIDEO_REVOCATION_TEST_DATABASE_URL'],
+    ['archive_publication', 'peso_revocation_test', 'VIDEO_REVOCATION_TEST_DATABASE_URL'],
+    ['analysis_publication', 'peso_revocation_test', 'VIDEO_REVOCATION_TEST_DATABASE_URL'],
+    ['saved_deletion', 'peso_revocation_test', 'VIDEO_REVOCATION_TEST_DATABASE_URL'],
+  ]) {
+    assert.ok(media.includes(`suite: test_${suite}_postgres.py\n            database: ${database}\n            database_env: ${environment}`), `${suite}: isolated database and environment mapping`);
+  }
+  assert.doesNotMatch(media, /continue-on-error|if:|\|\| true/);
+});

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 from .supabase_client import get_supabase_admin_client
 from .config import get_settings
@@ -22,7 +23,8 @@ class AnalysisJobRepository:
 
   def check_readiness(self) -> None:
     """Fail when the deployed queue schema is older than this API contract."""
-    self.client.table("video_deletion_outbox").select("video_id,user_id,storage_paths").limit(1).execute()
+    self.client.table("video_deletion_outbox").select("video_id,user_id,storage_paths,archive_paths,export_prefixes,delete_metadata").limit(1).execute()
+    self.client.table("saved_lift_deletion_receipts").select("video_id,user_id,created_at,completed_at").limit(1).execute()
     (
       self.client.table("analysis_jobs")
       .select(ANALYSIS_JOB_COLUMNS)
@@ -54,39 +56,80 @@ class AnalysisJobRepository:
         "p_lease_seconds": lease_seconds,
       },
     ).execute()
-    return self._first_row(response.data)
+    if response.data is None or response.data == []:
+      return None
+    if isinstance(response.data, list) and len(response.data) != 1:
+      raise RuntimeError("Invalid claimed analysis attempt.")
+    return self.validate_claim(self._first_row(response.data))
 
-  def renew(self, job_id: str, worker_id: str, *, lease_seconds: int) -> bool:
+  @staticmethod
+  def validate_claim(row: Any) -> dict[str, Any]:
+    try:
+      if not isinstance(row, dict) or row.get("status") != "processing":
+        raise ValueError()
+      for field in ("id", "video_id"):
+        value = row[field]
+        if not isinstance(value, str) or str(UUID(value)) != value or UUID(value).int == 0:
+          raise ValueError()
+      if type(row.get("attempt_count")) is not int or row["attempt_count"] < 1:
+        raise ValueError()
+    except (KeyError, ValueError, TypeError, AttributeError) as error:
+      raise RuntimeError("Invalid claimed analysis attempt.") from error
+    return row
+
+  @staticmethod
+  def _lease_scalar(data: Any, rpc_name: str) -> Any:
+    if isinstance(data, list):
+      if len(data) != 1:
+        raise RuntimeError("Invalid analysis lease response.")
+      data = data[0]
+    if isinstance(data, dict):
+      if set(data) != {rpc_name}:
+        raise RuntimeError("Invalid analysis lease response.")
+      data = data[rpc_name]
+    return data
+
+  @classmethod
+  def _boolean(cls, data: Any, rpc_name: str) -> bool:
+    value = cls._lease_scalar(data, rpc_name)
+    if type(value) is not bool:
+      raise RuntimeError("Invalid analysis lease response.")
+    return value
+
+  def renew(self, job_id: str, worker_id: str, *, attempt_count: int, lease_seconds: int) -> bool:
     response = self.client.rpc(
       "renew_video_analysis_job_lease",
       {
         "p_job_id": job_id,
         "p_worker_id": worker_id,
+        "p_attempt_count": attempt_count,
         "p_lease_seconds": lease_seconds,
       },
     ).execute()
-    return bool(self._scalar(response.data))
+    return self._boolean(response.data, "renew_video_analysis_job_lease")
 
-  def complete(self, job_id: str, worker_id: str) -> bool:
+  def complete(self, job_id: str, worker_id: str, *, attempt_count: int) -> bool:
     response = self.client.rpc(
       "complete_video_analysis_job",
       {
         "p_job_id": job_id,
         "p_worker_id": worker_id,
+        "p_attempt_count": attempt_count,
       },
     ).execute()
-    return bool(self._scalar(response.data))
+    return self._boolean(response.data, "complete_video_analysis_job")
 
-  def progress(self, job_id: str, worker_id: str, stage: str) -> bool:
+  def progress(self, job_id: str, worker_id: str, stage: str, *, attempt_count: int) -> bool:
     response = self.client.rpc(
       "report_video_analysis_job_progress",
       {
         "p_job_id": job_id,
         "p_worker_id": worker_id,
+        "p_attempt_count": attempt_count,
         "p_stage": stage,
       },
     ).execute()
-    return bool(self._scalar(response.data))
+    return self._boolean(response.data, "report_video_analysis_job_progress")
 
   def fail(
     self,
@@ -94,6 +137,7 @@ class AnalysisJobRepository:
     worker_id: str,
     error: str,
     *,
+    attempt_count: int,
     failure_class: str,
     retryable: bool,
   ) -> str | None:
@@ -102,13 +146,16 @@ class AnalysisJobRepository:
       {
         "p_job_id": job_id,
         "p_worker_id": worker_id,
+        "p_attempt_count": attempt_count,
         "p_error": redact_sensitive_text(error),
         "p_failure_class": failure_class,
         "p_retryable": retryable,
       },
     ).execute()
-    value = self._scalar(response.data)
-    return str(value) if value is not None else None
+    value = self._lease_scalar(response.data, "record_video_analysis_job_failure")
+    if value is not None and (not isinstance(value, str) or value not in {"failed", "retry_wait"}):
+      raise RuntimeError("Invalid analysis failure response.")
+    return value
 
   def recover_expired(self) -> dict[str, int]:
     response = self.client.rpc("recover_expired_video_analysis_jobs", {}).execute()

@@ -3,7 +3,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Navigate, useNavigate, useParams } from 'react-router';
 import { useAuth } from '../../context/AuthContext';
-import { fetchAnalysisResult, getVideoPlaybackUrl } from '../../lib/backendApi';
+import { fetchAnalysisResult } from '../../lib/backendApi';
 import { getFreshBackendAccessToken } from '../../lib/backendAuth';
 import type { AnalysisActivityItem, VideoAnalysisResult } from '../types/videoAnalysis';
 import { useWebAnalysisActivity } from './web-analysis-activity';
@@ -15,6 +15,11 @@ const WebVideoRecorderScreen = lazy(() => import('../screens/WebVideoRecorderScr
 const AnalysisReviewScreen = lazy(() => import('../screens/AnalysisReviewScreen'));
 
 const SIDE_SQUAT_SETUP = { exercise: 'Squat', angle: 'Side' } as const;
+const WEB_SETUP_MESSAGE = 'The web beta currently supports Side-view Squat only.';
+
+function isSupportedWebVideoSetup(selection: VideoSetupSelection) {
+  return selection.exercise === SIDE_SQUAT_SETUP.exercise && selection.angle === SIDE_SQUAT_SETUP.angle;
+}
 
 function RouteLoading({ label = 'Loading analysis…' }: { label?: string }) {
   return (
@@ -66,6 +71,8 @@ export function WebUploadRoute() {
         sourceMode={pendingRecordedAsset ? 'camera' : 'library'}
         initialSelectedVideo={pendingRecordedAsset}
         initialVideoSetup={pendingVideoSetup}
+        isSelectionSupported={isSupportedWebVideoSetup}
+        unsupportedSelectionMessage={WEB_SETUP_MESSAGE}
         onBack={() => {
           setPendingRecordedAsset(null);
           navigate('/submit');
@@ -95,6 +102,7 @@ export function WebRecordRoute() {
       <WebVideoRecorderScreen
         setup={pendingVideoSetup}
         onBack={() => navigate('/submit')}
+        onEditSetup={() => navigate('/setup')}
         onUseRecording={(asset: ImagePicker.ImagePickerAsset) => {
           setPendingRecordedAsset(asset);
           navigate('/upload');
@@ -117,10 +125,8 @@ export function WebVideoSetupRoute() {
         setPendingVideoSetup(selection);
         navigate('/submit');
       }}
-      isSelectionSupported={(selection) => (
-        selection.exercise === SIDE_SQUAT_SETUP.exercise && selection.angle === SIDE_SQUAT_SETUP.angle
-      )}
-      unsupportedSelectionMessage="The web beta currently supports Side-view Squat only."
+      isSelectionSupported={isSupportedWebVideoSetup}
+      unsupportedSelectionMessage={WEB_SETUP_MESSAGE}
     />
   );
 }
@@ -197,7 +203,6 @@ export function WebReviewRoute({ onLibraryChanged }: { onLibraryChanged: () => v
   const { videoId } = useParams();
   const { session } = useAuth();
   const { removeActivity } = useWebAnalysisActivity();
-  const [videoUri, setVideoUri] = useState<string | null>(null);
   const [result, setResult] = useState<VideoAnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -209,16 +214,11 @@ export function WebReviewRoute({ onLibraryChanged }: { onLibraryChanged: () => v
     const controller = new AbortController();
     setError(null);
     setResult(null);
-    setVideoUri(null);
 
     getFreshBackendAccessToken()
-      .then((accessToken) => Promise.all([
-        getVideoPlaybackUrl(videoId, accessToken),
-        fetchAnalysisResult(videoId, accessToken, controller.signal),
-      ]))
-      .then(([playback, analysis]) => {
+      .then((accessToken) => fetchAnalysisResult(videoId, accessToken, controller.signal))
+      .then((analysis) => {
         if (!active) return;
-        setVideoUri(playback.video_url);
         setResult(analysis.result_json);
       })
       .catch((loadError) => {
@@ -254,7 +254,7 @@ export function WebReviewRoute({ onLibraryChanged }: { onLibraryChanged: () => v
     <Suspense fallback={<RouteLoading label="Loading the review tools…" />}>
       <AnalysisReviewScreen
         mode="pending"
-        videoUri={videoUri}
+        videoUri={null}
         result={result}
         onBack={() => navigate('/')}
         onDiscarded={() => {

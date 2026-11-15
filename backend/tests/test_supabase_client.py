@@ -45,7 +45,7 @@ class SupabaseClientTest(unittest.TestCase):
 
   def test_admin_client_reuses_single_configured_client(self) -> None:
     supabase_client.get_supabase_admin_client.cache_clear()
-    fake_client = SimpleNamespace()
+    fake_client = SimpleNamespace(storage=SimpleNamespace(session=SimpleNamespace(follow_redirects=True)))
     fake_options = SimpleNamespace()
 
     with (
@@ -58,6 +58,7 @@ class SupabaseClientTest(unittest.TestCase):
 
     self.assertIs(first, fake_client)
     self.assertIs(second, fake_client)
+    self.assertFalse(fake_client.storage.session.follow_redirects)
     create_client.assert_called_once_with(
       "https://example.supabase.co",
       "service-role",

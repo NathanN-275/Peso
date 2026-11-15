@@ -486,6 +486,7 @@ export type AnalysisActivityItem = {
   updated_at: string;
   expires_at: string | null;
   thumbnail_url: string | null;
+  thumbnail_available?: boolean;
   stage_started_at: string | null;
   stage_timestamps: Partial<Record<AnalysisActivityStage, string>>;
   last_heartbeat_at: string | null;
@@ -526,6 +527,7 @@ export type SavedVideo = {
   thumbnail_path: string | null;
   video_url: string | null;
   thumbnail_url: string | null;
+  thumbnail_available?: boolean;
   save_state: SaveState;
   storage_state: StorageState;
   saved_at: string | null;

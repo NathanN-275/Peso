@@ -6,7 +6,22 @@ import re
 from datetime import datetime, timezone
 
 
+_CREDENTIAL_HEADER = r"(?:authorization|proxy-authorization|cookie|set-cookie|x-peso-media-grant)"
+_QUOTED_VALUE = r'''(?:b)?(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')'''
+_CREDENTIAL_FIELD = re.compile(
+  rf'''(?i)((?<![\w-])(?:(?:b)?["']?{_CREDENTIAL_HEADER}["']?\s*[:=]\s*|(?:b)?["']{_CREDENTIAL_HEADER}["']\s*,\s*))'''
+  rf'''({_QUOTED_VALUE}|\[\s*{_QUOTED_VALUE}(?:\s*,\s*{_QUOTED_VALUE})*\s*\]|[^\r\n]*)''',
+)
+
+
 def redact_sensitive_text(value: str) -> str:
+  # Raw HTTP fields can contain spaces and semicolon-separated cookie values.
+  value = re.sub(
+    rf'''(?i)((?<![\w'"-]){_CREDENTIAL_HEADER}\s*[:=]\s*)[^\r\n]*(?:\r?\n[ \t]+[^\r\n]*)*''',
+    r'\1"<redacted>"',
+    value,
+  )
+  value = _CREDENTIAL_FIELD.sub(lambda match: match[1] + '"<redacted>"', value)
   # Uvicorn logs root-relative request targets, not just absolute URLs.
   value = re.sub(r"((?:https?://|/)[^\s?\"']*)\?[^\s\"']+", r"\1?<redacted>", value)
   value = re.sub(

@@ -87,5 +87,17 @@ Auth/Storage in the hosted dashboard. If object metadata is nonempty, restore
 the separately backed-up bytes and read each sample back. Only then consider
 a service rebind, with the correct project URL **and matching keys**.
 
+The [November 8 rehearsal](pesodatabase-hosted-recovery-rehearsal-20261108.md)
+found a further acceptance requirement: source-equivalent counts and policies
+can coexist with extra client grants on a new target. Capture target default
+privileges before restoration, then read back the full application schema and
+compare definitions, owners, RLS, object grants and default privileges with the
+immutable source. A narrower source GRANT does not remove a target's existing
+broader grant. Keep signup and Data API disabled until permissions match; stop
+on drift, retain the failed comparison and obtain separate approval for a
+concrete repair. Do not edit the backup or activate API tests to work around
+the mismatch. This supplements the historical result above; it does not turn
+that result into full hosted recovery acceptance.
+
 The original private backup remains outside Git. Do not commit the dumps, the
 adjusted role script, a password, an API key, or a row sample.

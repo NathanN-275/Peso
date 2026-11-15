@@ -28,3 +28,28 @@ def close_pooled_http_client() -> None:
   client = get_pooled_http_client()
   client.close()
   get_pooled_http_client.cache_clear()
+
+
+@lru_cache(maxsize=1)
+def get_pooled_async_http_client() -> httpx.AsyncClient:
+  settings = get_settings()
+  return httpx.AsyncClient(
+    follow_redirects=True,
+    limits=httpx.Limits(
+      max_connections=settings.supabase_http_max_connections,
+      max_keepalive_connections=settings.supabase_http_max_keepalive_connections,
+      keepalive_expiry=settings.supabase_http_keepalive_expiry_seconds,
+    ),
+    timeout=settings.supabase_storage_timeout_seconds,
+  )
+
+
+async def close_pooled_async_http_client() -> None:
+  if get_pooled_async_http_client.cache_info().currsize == 0:
+    return
+
+  client = get_pooled_async_http_client()
+  try:
+    await client.aclose()
+  finally:
+    get_pooled_async_http_client.cache_clear()

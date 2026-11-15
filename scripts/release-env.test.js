@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const { approvedRenderBetaApi, validateReleaseEnv } = require('./release-env');
+const { buildEnvironment } = require('./netlify-build');
 
 // Public resource identifiers, not provider authentication credentials.
 const BETA_WEB_SERVICE_ID = 'srv-dak9ohfqj5pc73ac2ga0';
@@ -16,14 +17,15 @@ const approvedBinding = (apiUrl) => ({
   source_workflow_run_id: '123456789',
 });
 
-const acceptedRenderBetaBinding = (apiUrl = 'https://api-staging.usepeso.com') => ({
+const STAGING_API = 'https://peso-public-beta-staging-api-fixture.onrender.com';
+const acceptedRenderBetaBinding = (apiUrl = STAGING_API) => ({
   schema_version: 1,
   status: 'accepted',
   api_url: apiUrl,
   blueprint_sha256: 'c'.repeat(64),
   source_commit: 'd'.repeat(40),
-  api_service_id: BETA_WEB_SERVICE_ID,
-  worker_service_id: BETA_WORKER_SERVICE_ID,
+  api_service_id: 'srv-00000000000000000001',
+  worker_service_id: 'srv-00000000000000000002',
 });
 
 test('release auth configuration rejects a missing Turnstile site key', () => {
@@ -157,8 +159,9 @@ test('Render beta builds require peso-staging, the exact beta API, and the priva
     EXPO_PUBLIC_SUPABASE_URL: 'https://iseqgaewjpjcxrndibep.supabase.co',
     EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test',
     EXPO_PUBLIC_TURNSTILE_SITE_KEY: 'test-site-key',
-    EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main.usepeso.com/auth/turnstile/',
-    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://api-staging.usepeso.com',
+    EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/',
+    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: STAGING_API,
+    EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED: 'false',
   };
   const options = { renderBetaBinding: acceptedRenderBetaBinding() };
 
@@ -170,12 +173,13 @@ test('Render beta builds require peso-staging, the exact beta API, and the priva
     EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://peso-beta-api-attacker.onrender.com',
   })) assert.ok(validateReleaseEnv({...env, [name]: value}, options).errors.length, name);
   for (const change of [
-    { EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app/auth/turnstile/' },
-    { EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main.usepeso.com.attacker.example/auth/turnstile/' },
+    { EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main.usepeso.com/auth/turnstile/' },
+    { EXPO_PUBLIC_AUTH_CHALLENGE_URL: 'https://main--peso-webapp.netlify.app.attacker.example/auth/turnstile/' },
     { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://peso-beta-api.onrender.com' },
-    { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://api-staging.usepeso.com/path' },
-    { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://api-staging.usepeso.com?token=secret' },
-    { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://user:secret@api-staging.usepeso.com' },
+    { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://peso-public-beta-staging-api-other.onrender.com' },
+    { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: `${STAGING_API}/path` },
+    { EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED: 'true' },
+    { EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED: '' },
     { EXPO_PUBLIC_BACKEND_URL: 'https://override.example.com' },
   ]) assert.ok(validateReleaseEnv({ ...env, ...change }, options).errors.length, JSON.stringify(change));
 });
@@ -184,13 +188,14 @@ test('Render beta binding fails closed on pending, malformed, or non-beta eviden
   assert.equal(approvedRenderBetaApi({ status: 'pending' }), '');
   for (const apiUrl of [
     'https://peso-beta-api.onrender.com',
-    'https://api-staging.usepeso.com/path',
-    'https://api-staging.usepeso.com?token=secret',
-    'https://api-staging.usepeso.com#fragment',
-    'https://user:secret@api-staging.usepeso.com',
-    'https://api-staging.usepeso.com:8443',
-    'https://api-staging.usepeso.com.attacker.example',
-    'http://api-staging.usepeso.com',
+    'https://api-staging.usepeso.com',
+    `${STAGING_API}/path`,
+    `${STAGING_API}?token=secret`,
+    `${STAGING_API}#fragment`,
+    STAGING_API.replace('https://', 'https://user:secret@'),
+    `${STAGING_API}:8443`,
+    `${STAGING_API}.attacker.example`,
+    STAGING_API.replace('https:', 'http:'),
   ]) assert.equal(approvedRenderBetaApi(acceptedRenderBetaBinding(apiUrl)), '', apiUrl);
   assert.equal(approvedRenderBetaApi({
     ...acceptedRenderBetaBinding(),
@@ -199,10 +204,12 @@ test('Render beta binding fails closed on pending, malformed, or non-beta eviden
   for (const change of [
     { status: 'pending' }, { source_commit: null }, { source_commit: 'not-a-sha' },
     { api_service_id: 'srv-other' }, { worker_service_id: 'srv-other' },
+    { api_service_id: BETA_WEB_SERVICE_ID }, { worker_service_id: BETA_WORKER_SERVICE_ID },
+    { worker_service_id: acceptedRenderBetaBinding().api_service_id },
   ]) assert.equal(approvedRenderBetaApi({ ...acceptedRenderBetaBinding(), ...change }), '');
   assert.equal(
     approvedRenderBetaApi(acceptedRenderBetaBinding()),
-    'https://api-staging.usepeso.com',
+    STAGING_API,
   );
 });
 
@@ -215,16 +222,26 @@ test('combined public beta binds the selected database, existing services and ex
     worker_service_id: 'srv-dak9ohfqj5pc73ac2g8g',
     source_commit: 'a'.repeat(40), blueprint_sha256: 'b'.repeat(64),
   };
-  const env = {
-    PESO_RELEASE_ENV: 'public-beta', SITE_ID: binding.site_id,
+  const configured = {
+    PESO_RELEASE_ENV: 'render-beta', SITE_ID: binding.site_id,
+    BRANCH: 'main', CONTEXT: 'deploy-preview',
     EXPO_PUBLIC_SUPABASE_URL: 'https://jfgiydtrskpqxyorvvbc.supabase.co',
     EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_fixture',
     EXPO_PUBLIC_TURNSTILE_SITE_KEY: 'real-site-key-fixture',
     EXPO_PUBLIC_AUTH_CHALLENGE_URL: `${binding.site_origin}/auth/turnstile/`,
     EXPO_PUBLIC_PRODUCTION_BACKEND_URL: binding.api_url,
   };
+  const env = buildEnvironment(configured, binding);
+  assert.equal(env.PESO_RELEASE_ENV, 'public-beta');
   assert.deepEqual(validateReleaseEnv(env, { combinedBinding: binding }).errors, []);
   assert.ok(validateReleaseEnv(env).errors.length, 'pending tracked binding blocks deployment');
+  for (const key of ['EXPO_PUBLIC_SUPABASE_URL', 'EXPO_PUBLIC_PRODUCTION_BACKEND_URL',
+    'EXPO_PUBLIC_AUTH_CHALLENGE_URL', 'EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY']) {
+    const missing = { ...configured }; delete missing[key];
+    const dispatched = buildEnvironment(missing, binding);
+    assert.equal(dispatched[key], undefined);
+    assert.ok(validateReleaseEnv(dispatched, { combinedBinding: binding }).errors.length, key);
+  }
   for (const change of [
     { SITE_ID: '230da8eb-f00e-45d4-ba54-95f2e26f21c4' },
     { EXPO_PUBLIC_SUPABASE_URL: 'https://iseqgaewjpjcxrndibep.supabase.co' },
@@ -232,7 +249,7 @@ test('combined public beta binds the selected database, existing services and ex
     { EXPO_PUBLIC_PRODUCTION_BACKEND_URL: 'https://other-api.example.com' },
     { EXPO_PUBLIC_BACKEND_URL: 'https://override.example.com' },
     { EXPO_PUBLIC_TURNSTILE_SITE_KEY: '1x00000000000000000000AA' },
-  ]) assert.ok(validateReleaseEnv({ ...env, ...change }, { combinedBinding: binding }).errors.length);
+  ]) assert.ok(validateReleaseEnv(buildEnvironment({ ...env, ...change }, binding), { combinedBinding: binding }).errors.length);
   for (const change of [
     { status: 'pending' }, { source_commit: null }, { blueprint_sha256: null },
     { api_service_id: 'srv-other' }, { worker_service_id: 'srv-other' },

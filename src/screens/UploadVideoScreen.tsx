@@ -77,6 +77,8 @@ type UploadVideoScreenProps = {
   sourceMode?: 'camera' | 'library';
   initialSelectedVideo?: ImagePicker.ImagePickerAsset | null;
   initialVideoSetup?: VideoSetupSelection | null;
+  isSelectionSupported?: (selection: VideoSetupSelection) => boolean;
+  unsupportedSelectionMessage?: string;
   onBack?: () => void;
   onRecordVideoPress?: () => void;
   onAnalysisQueued?: (activity: {
@@ -141,6 +143,8 @@ export default function UploadVideoScreen({
   sourceMode = 'library',
   initialSelectedVideo = null,
   initialVideoSetup = null,
+  isSelectionSupported = () => true,
+  unsupportedSelectionMessage = 'This video setup is not supported yet.',
   onBack,
   onRecordVideoPress,
   onAnalysisQueued,
@@ -156,6 +160,7 @@ export default function UploadVideoScreen({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [setupModalVisible, setSetupModalVisible] = useState(!initialVideoSetup);
   const [videoSetup, setVideoSetup] = useState<VideoSetupSelection | null>(initialVideoSetup);
+  const setupSupported = videoSetup !== null && isSelectionSupported(videoSetup);
   const [selectedVideo, setSelectedVideo] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [resolvedVideoDurationMs, setResolvedVideoDurationMs] = useState<number | null>(null);
   const [trackingSetup, setTrackingSetup] = useState<TrackingSetup | null>(null);
@@ -354,10 +359,12 @@ export default function UploadVideoScreen({
       return;
     }
 
-    if (!videoSetup) {
+    if (!videoSetup || !setupSupported) {
       setSetupModalVisible(true);
       setStatusMessage(null);
-      setErrorMessage('Select an exercise and camera angle before starting analysis.');
+      setErrorMessage(videoSetup
+        ? unsupportedSelectionMessage
+        : 'Select an exercise and camera angle before starting analysis.');
       return;
     }
 
@@ -1173,7 +1180,7 @@ export default function UploadVideoScreen({
     : [];
   const canStartAnalysis =
     // Only a fully configured, idle upload can be sent to analysis.
-    Boolean(selectedVideo && videoSetup) &&
+    Boolean(selectedVideo && setupSupported) &&
     !uploading &&
     !analysisRunning &&
     !isAnalysisInProgress(analysisStatus) &&
@@ -1247,6 +1254,8 @@ export default function UploadVideoScreen({
       <VideoSetupModal
         visible={setupModalVisible}
         initialSelection={videoSetup}
+        isSelectionSupported={isSelectionSupported}
+        unsupportedSelectionMessage={unsupportedSelectionMessage}
         availableWidth={screenLayout.width || undefined}
         availableHeight={screenLayout.height || undefined}
         onContinue={(selection) => {

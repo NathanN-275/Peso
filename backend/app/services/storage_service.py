@@ -13,7 +13,7 @@ from fastapi import HTTPException, status
 from .config import get_settings
 from .http_client import get_pooled_http_client
 from .supabase_client import get_supabase_admin_client
-from .azure_blob_storage import get_azure_blob_storage, is_azure_source_path
+from .legacy_storage import get_azure_blob_storage, is_azure_source_path
 
 
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm"}
@@ -475,15 +475,16 @@ class StorageService:
     content_type: str,
     cache_control: str = DEFAULT_CACHE_CONTROL_SECONDS,
   ) -> None:
-    self.client.storage.from_(self.bucket).upload(
-      storage_path,
-      local_path,
-      {
-        "content-type": content_type,
-        "cache-control": cache_control,
-        "upsert": "false",
-      },
-    )
+    with local_path.open("rb") as source:
+      self.client.storage.from_(self.bucket).upload(
+        storage_path,
+        source,
+        {
+          "content-type": content_type,
+          "cache-control": cache_control,
+          "upsert": "false",
+        },
+      )
 
   def create_signed_url(self, storage_path: str, expires_in: int = 3600) -> str:
     expires_in = min(expires_in, get_settings().signed_url_ttl_seconds)

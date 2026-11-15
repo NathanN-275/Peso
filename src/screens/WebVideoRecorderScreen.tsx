@@ -544,6 +544,7 @@ export default function WebVideoRecorderScreen({
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
   const playbackVideoRef = useRef<HTMLVideoElement | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
+  const cameraRequestIdRef = useRef(0);
   const correctedRecordingCleanupRef = useRef<(() => void) | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
@@ -577,6 +578,7 @@ export default function WebVideoRecorderScreen({
   }, []);
 
   const stopCameraTracks = useCallback(() => {
+    cameraRequestIdRef.current += 1;
     cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
     cameraStreamRef.current = null;
     setCameraNeedsHorizontalCorrection(false);
@@ -600,6 +602,7 @@ export default function WebVideoRecorderScreen({
   }, []);
 
   const startCamera = useCallback(async () => {
+    const requestId = ++cameraRequestIdRef.current;
     setErrorMessage(null);
     setPhase('initializing');
 
@@ -633,6 +636,11 @@ export default function WebVideoRecorderScreen({
         },
       });
 
+      if (requestId !== cameraRequestIdRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
       cameraStreamRef.current = stream;
       setCameraNeedsHorizontalCorrection(shouldCorrectCameraHorizontally(stream));
 
@@ -641,8 +649,9 @@ export default function WebVideoRecorderScreen({
         await previewVideoRef.current.play();
       }
 
-      setPhase('ready');
+      if (requestId === cameraRequestIdRef.current) setPhase('ready');
     } catch (error) {
+      if (requestId !== cameraRequestIdRef.current) return;
       setErrorMessage(error instanceof Error ? error.message : 'Unable to access the camera.');
       setPhase('ready');
       stopCameraTracks();
@@ -920,7 +929,7 @@ export default function WebVideoRecorderScreen({
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.screen}>
         <View style={styles.headerRow}>
-          <Pressable onPress={cancelRecording} style={styles.backButton}>
+          <Pressable accessibilityRole="button" onPress={cancelRecording} style={styles.backButton}>
             <Text style={styles.backButtonText}>Back</Text>
           </Pressable>
           <Text numberOfLines={1} adjustsFontSizeToFit style={styles.title}>
@@ -1004,6 +1013,7 @@ export default function WebVideoRecorderScreen({
           {phase === 'review' || phase === 'exporting' ? (
             <>
               <Pressable
+                accessibilityRole="button"
                 onPress={recordAgain}
                 disabled={phase === 'exporting'}
                 style={[styles.secondaryBarButton, phase === 'exporting' && styles.disabledButton]}
@@ -1011,6 +1021,7 @@ export default function WebVideoRecorderScreen({
                 <Text style={styles.secondaryBarButtonText}>Record Again</Text>
               </Pressable>
               <Pressable
+                accessibilityRole="button"
                 onPress={useRecording}
                 disabled={phase === 'exporting'}
                 style={[styles.useButton, phase === 'exporting' && styles.disabledButton]}
@@ -1023,6 +1034,7 @@ export default function WebVideoRecorderScreen({
           ) : (
             <>
               <Pressable
+                accessibilityRole="button"
                 onPress={editSetup}
                 disabled={phase === 'recording'}
                 style={[styles.editSetupButton, phase === 'recording' && styles.disabledButton]}

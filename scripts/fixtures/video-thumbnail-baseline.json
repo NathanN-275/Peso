@@ -1,0 +1,12 @@
+{
+  "width": 720,
+  "height": 720,
+  "sha256": "028c39708ac68ce60809b0fadc656d334fb0649418c995d5d13a7ad08c65fccc",
+  "bytes": 36887,
+  "fixtureOnly": true,
+  "image": "sha256:6b5580d05ce11b4eb8fc1be0646f06057c99258e330095e76150d17d9cb20c2d",
+  "durationSeconds": 1.5721624340003473,
+  "syntheticTestPattern": true,
+  "providersContacted": false,
+  "generatorSourceSha256": "851ad785b97d6c664e2596e439916eeeb95d8e47fae258712e23d34c0421904c"
+}

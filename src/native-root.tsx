@@ -1,7 +1,8 @@
 import '../global.css';
 
 import * as ImagePicker from 'expo-image-picker';
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import { getPrivateMediaEpoch, getActivePrivateMediaSessionKey, registerPrivateMediaRelease } from '../lib/privateMediaLifecycle';
 import {
   Alert,
   Linking,
@@ -28,13 +29,14 @@ import VideoSetupModal from './components/VideoSetupModal';
 import WelcomeScreen from './screens/WelcomeScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import SettingsScreen from './screens/SettingsScreen';
-import { supabase } from '../lib/supabase';
+import { supabase, supabaseAuthUrl, waitForAcceptedAuthSession } from '../lib/supabase';
+import { getPrivateMediaSessionKey } from '../lib/privateMediaLogout';
 import {
   parseNativeAuthRedirect,
   parseWebAuthRedirect,
   redactAuthParams,
 } from '../lib/auth-redirect';
-import { deleteSavedVideo, fetchAnalysisResult, getVideoPlaybackUrl } from '../lib/backendApi';
+import { deleteSavedVideo, fetchAnalysisResult } from '../lib/backendApi';
 import type { SavedVideo } from '../lib/backendApi';
 import type { VideoSetupSelection } from './constants/videoSetup';
 import type { SavedVideoOverview, VideoAnalysisResult } from './types/videoAnalysis';
@@ -217,13 +219,17 @@ async function hydrateAuthRedirectSession(parsedRoute: ParsedNativeAuthRoute) {
   }
 
   if (parsedRoute.code) {
-    const { error } = await supabase.auth.exchangeCodeForSession(parsedRoute.code);
+    const { data, error } = await supabase.auth.exchangeCodeForSession(parsedRoute.code);
 
     if (error) {
       throw error;
     }
 
-    return 'code';
+    const accepted = await waitForAcceptedAuthSession(data.session);
+    const sessionKey = getPrivateMediaSessionKey(accepted?.access_token, supabaseAuthUrl);
+    if (!sessionKey) throw new Error('Recovery session is unavailable.');
+
+    return { method: 'code' as const, sessionKey };
   }
 
   return null;
@@ -233,6 +239,7 @@ function AppContent() {
   // This app switches screens manually instead of using a router.
   const {
     session,
+    mediaSessionKey,
     user,
     initializing,
     configError,
@@ -284,15 +291,30 @@ function AppContent() {
   const [recordingLauncherOpen, setRecordingLauncherOpen] = useState(false);
   const [savedOverview, setSavedOverview] = useState<SavedVideoOverview | null>(null);
   const [savedOverviewLoaded, setSavedOverviewLoaded] = useState(false);
+  const [savedOverviewSessionKey, setSavedOverviewSessionKey] = useState<string | null>(null);
   const [selectedSavedExerciseType, setSelectedSavedExerciseType] = useState<string | null>(null);
   const [selectedSavedVideo, setSelectedSavedVideo] = useState<SavedVideo | null>(null);
-  const [selectedSavedVideoPlaybackUri, setSelectedSavedVideoPlaybackUri] = useState<string | null>(null);
   const [selectedSavedVideoAnalysisResult, setSelectedSavedVideoAnalysisResult] =
     useState<VideoAnalysisResult | null>(null);
-  const [pendingAnalysisPlaybackUri, setPendingAnalysisPlaybackUri] = useState<string | null>(null);
   const [pendingAnalysisResult, setPendingAnalysisResult] = useState<VideoAnalysisResult | null>(null);
   const routeRef = useRef(route);
   const hadSessionRef = useRef(false);
+
+  useEffect(() => registerPrivateMediaRelease(() => {
+    setSavedOverview(null);
+    setSavedOverviewLoaded(false);
+    setSavedOverviewSessionKey(null);
+    setSelectedSavedExerciseType(null);
+    setSelectedSavedVideo(null);
+    setSelectedSavedVideoAnalysisResult(null);
+
+    setPendingAnalysisResult(null);
+    setRecordedUploadVideo(null);
+    setRecordedUploadSetup(null);
+    setPendingRecordingSetup(null);
+    setRecordingSetupModalVisible(false);
+    setQueuedAnalysisConfirmation(null);
+  }), []);
 
   useEffect(() => {
     // Keep the current route in a ref for async deep-link handlers.
@@ -347,24 +369,26 @@ function AppContent() {
           const exchangeMethod = parsedRoute.errorMessage
             ? null
             : await hydrateAuthRedirectSession(parsedRoute);
-          console.log('[Recovery] session exchange success', { method: exchangeMethod });
+          console.log('[Recovery] session exchange success', { method: exchangeMethod?.method ?? null });
 
           let hasSession = false;
-          if (supabase) {
+          let callbackSessionKey: string | null = null;
+          if (supabase && exchangeMethod) {
             const {
               data: { session: currentSession },
             } = await supabase.auth.getSession();
-            hasSession = !!currentSession;
+            const accepted = await waitForAcceptedAuthSession(currentSession);
+            callbackSessionKey = getPrivateMediaSessionKey(accepted?.access_token, supabaseAuthUrl);
+            hasSession = callbackSessionKey !== null && callbackSessionKey === exchangeMethod.sessionKey;
 
             setRecoverySessionReady(hasSession);
             console.log('[Recovery] getSession after exchange', { hasSession });
           }
 
           if (parsedRoute.isRecoveryResetLink && !parsedRoute.errorMessage) {
-            if (hasSession) {
+            if (hasSession && activatePasswordRecoveryMode(callbackSessionKey)) {
               console.log('[Recovery] mode on', { reason: 'verified-deep-link' });
               setIsRecoveryMode(true);
-              activatePasswordRecoveryMode();
             } else {
               setAuthLinkErrorMessage(
                 'Reset link session expired or was not loaded. Please request a new reset link.'
@@ -473,6 +497,8 @@ function AppContent() {
   };
 
   const launchRecordingCamera = async (setup: VideoSetupSelection | null = pendingRecordingSetup) => {
+    if (mediaSessionKey !== getActivePrivateMediaSessionKey()) return;
+    const epoch = getPrivateMediaEpoch();
     if (recordingLauncherOpen) {
       return;
     }
@@ -494,6 +520,7 @@ function AppContent() {
           : {}),
       });
 
+      if (epoch !== getPrivateMediaEpoch()) return;
       if (result.canceled) {
         return;
       }
@@ -617,13 +644,13 @@ function AppContent() {
     authNavigation.toAddVideo();
   };
   const handleSavedOverviewLoaded = (overview: SavedVideoOverview) => {
+    setSavedOverviewSessionKey(mediaSessionKey);
     setSavedOverview(overview);
     setSavedOverviewLoaded(true);
   };
   const handleAnalysisSaved = (_videoId?: string) => {
     setRecordedUploadVideo(null);
     setRecordedUploadSetup(null);
-    setPendingAnalysisPlaybackUri(null);
     setPendingAnalysisResult(null);
     invalidateSavedVideoCaches();
     authNavigation.toHome();
@@ -637,16 +664,15 @@ function AppContent() {
     authNavigation.toHome();
   };
   const handleOpenAnalysisActivity = async (videoId: string) => {
+    if (mediaSessionKey !== getActivePrivateMediaSessionKey()) return;
+    const epoch = getPrivateMediaEpoch();
     if (!session?.access_token) {
       return;
     }
 
     try {
-      const [playbackResponse, analysisResponse] = await Promise.all([
-        getVideoPlaybackUrl(videoId, session.access_token),
-        fetchAnalysisResult(videoId, session.access_token),
-      ]);
-      setPendingAnalysisPlaybackUri(playbackResponse.video_url);
+      const analysisResponse = await fetchAnalysisResult(videoId, session.access_token);
+      if (epoch !== getPrivateMediaEpoch()) return;
       setPendingAnalysisResult(analysisResponse.result_json);
       navigateToAuthRoute(AUTH_ROUTES.pendingAnalysisReview);
     } catch (error) {
@@ -658,7 +684,6 @@ function AppContent() {
     }
   };
   const handlePendingAnalysisDiscarded = () => {
-    setPendingAnalysisPlaybackUri(null);
     setPendingAnalysisResult(null);
     setHomeRefreshKey((key) => key + 1);
     authNavigation.toHome();
@@ -666,23 +691,21 @@ function AppContent() {
   const handleOpenSavedLiftFolder = (exerciseType: string) => {
     setSelectedSavedExerciseType(exerciseType);
     setSelectedSavedVideo(null);
-    setSelectedSavedVideoPlaybackUri(null);
     setSelectedSavedVideoAnalysisResult(null);
     navigateToAuthRoute(AUTH_ROUTES.savedLiftVideos);
   };
   const handleOpenSavedVideo = async (video: SavedVideo) => {
+    if (mediaSessionKey !== getActivePrivateMediaSessionKey()) return;
+    const epoch = getPrivateMediaEpoch();
     if (!session?.access_token) {
       throw new Error('You need to be signed in to open saved videos.');
     }
 
-    const [playbackResponse, analysisResponse] = await Promise.all([
-      getVideoPlaybackUrl(video.id, session.access_token),
-      fetchAnalysisResult(video.id, session.access_token),
-    ]);
+    const analysisResponse = await fetchAnalysisResult(video.id, session.access_token);
 
+    if (epoch !== getPrivateMediaEpoch()) return;
     setSelectedSavedVideo(video);
     setSelectedSavedExerciseType(video.exercise_type);
-    setSelectedSavedVideoPlaybackUri(playbackResponse.video_url);
     setSelectedSavedVideoAnalysisResult(analysisResponse.result_json);
     navigateToAuthRoute(AUTH_ROUTES.savedVideoReview);
   };
@@ -709,7 +732,6 @@ function AppContent() {
     if (deletedIds.size > 0) {
       invalidateSavedVideoCaches();
       setSelectedSavedVideo((currentVideo) => currentVideo && deletedIds.has(currentVideo.id) ? null : currentVideo);
-      setSelectedSavedVideoPlaybackUri((currentUri) => deletedIds.has(selectedSavedVideo?.id ?? '') ? null : currentUri);
       setSelectedSavedVideoAnalysisResult((currentResult) =>
         deletedIds.has(selectedSavedVideo?.id ?? '') ? null : currentResult
       );
@@ -726,44 +748,32 @@ function AppContent() {
   const handleHomeRoute = () => {
     setSelectedSavedExerciseType(null);
     setSelectedSavedVideo(null);
-    setSelectedSavedVideoPlaybackUri(null);
     setSelectedSavedVideoAnalysisResult(null);
     authNavigation.toHome();
   };
   const handleProfileRoute = () => {
     setSelectedSavedExerciseType(null);
     setSelectedSavedVideo(null);
-    setSelectedSavedVideoPlaybackUri(null);
     setSelectedSavedVideoAnalysisResult(null);
     authNavigation.toProfile();
   };
   const handleWelcomeLoginPress = authNavigation.toLogin;
   const handleWelcomeCreateAccountPress = authNavigation.toCreateAccount;
-  const handleResetPasswordBack = () => {
-    console.log('[Recovery] mode off', { reason: 'back-pressed' });
-    setIsHandlingRecoveryLink(false);
-    setIsRecoveryMode(false);
-    setRecoverySessionReady(false);
-    signOut()
-      .catch((error) => {
-        console.error('[DeepLink] failed to clear recovery session before leaving reset screen', error);
-      })
-      .finally(authNavigation.toWelcome);
+  const finishRecoverySignOut = async (target: 'welcome' | 'login') => {
+    setAuthLinkErrorMessage(null);
+    try {
+      await signOut();
+      setIsHandlingRecoveryLink(false);
+      setIsRecoveryMode(false);
+      setRecoverySessionReady(false);
+      if (target === 'login') authNavigation.toLogin();
+      else authNavigation.toWelcome();
+    } catch {
+      setAuthLinkErrorMessage('Unable to complete sign out. Check your connection, then use Back to retry.');
+    }
   };
-  const handleResetPasswordSuccess = () => {
-    console.log('[Recovery] mode off', { reason: 'password-update-succeeded' });
-    setIsHandlingRecoveryLink(false);
-    setIsRecoveryMode(false);
-    setRecoverySessionReady(false);
-    signOut()
-      .catch((error) => {
-        console.error('[ResetPassword] failed to clear recovery session after password update', error);
-      })
-      .finally(() => {
-        console.log('[ResetPassword] route chosen after reset submit', AUTH_ROUTES.login);
-        authNavigation.toLogin();
-      });
-  };
+  const handleResetPasswordBack = () => { void finishRecoverySignOut('welcome'); };
+  const handleResetPasswordSuccess = () => { void finishRecoverySignOut('login'); };
 
   useEffect(() => {
     // Web needs explicit hash handling to keep reset links stable.
@@ -787,12 +797,7 @@ function AppContent() {
       setAuthLinkErrorMessage(parsedWebLink.errorMessage);
 
       if (parsedWebLink.route) {
-        if (!parsedWebLink.supabaseAuthErrorDetected) {
-          console.log('[Recovery] mode on', { reason: 'web-reset-link-detected' });
-          setIsRecoveryMode(true);
-          activatePasswordRecoveryMode();
-        }
-
+        // URL markers choose a route; accepted PASSWORD_RECOVERY establishes the session.
         setRoute(parsedWebLink.route);
         console.log('[Route] final route chosen', parsedWebLink.route);
         return true;
@@ -993,13 +998,12 @@ function AppContent() {
 
       if (
         route === AUTH_ROUTES.pendingAnalysisReview
-        && pendingAnalysisPlaybackUri
         && pendingAnalysisResult
       ) {
         return (
           <AnalysisReviewScreen
             mode="pending"
-            videoUri={pendingAnalysisPlaybackUri}
+            videoUri={null}
             result={pendingAnalysisResult}
             onDiscarded={handlePendingAnalysisDiscarded}
             onSaved={handleAnalysisSaved}
@@ -1010,13 +1014,12 @@ function AppContent() {
       if (
         route === AUTH_ROUTES.savedVideoReview
         && selectedSavedVideo
-        && selectedSavedVideoPlaybackUri
         && selectedSavedVideoAnalysisResult
       ) {
         return (
           <AnalysisReviewScreen
             mode="saved"
-            videoUri={selectedSavedVideoPlaybackUri}
+            videoUri={null}
             result={selectedSavedVideoAnalysisResult}
             workoutDetails={
               selectedSavedVideo.performed_reps !== null
@@ -1068,8 +1071,8 @@ function AppContent() {
             onHomePress={handleHomeRoute}
             onAddPress={authNavigation.toAddVideo}
             onSettingsPress={authNavigation.toSettings}
-            cachedSavedOverview={savedOverview}
-            savedOverviewLoaded={savedOverviewLoaded}
+            cachedSavedOverview={savedOverviewSessionKey === mediaSessionKey ? savedOverview : null}
+            savedOverviewLoaded={savedOverviewLoaded && savedOverviewSessionKey === mediaSessionKey}
             onSavedOverviewLoaded={handleSavedOverviewLoaded}
           />
         );
@@ -1098,8 +1101,8 @@ function AppContent() {
           onNavigateToProfile={handleProfileRoute}
           onOpenAnalysisActivity={handleOpenAnalysisActivity}
           onOpenSavedLiftFolder={handleOpenSavedLiftFolder}
-          cachedSavedOverview={savedOverview}
-          savedOverviewLoaded={savedOverviewLoaded}
+          cachedSavedOverview={savedOverviewSessionKey === mediaSessionKey ? savedOverview : null}
+          savedOverviewLoaded={savedOverviewLoaded && savedOverviewSessionKey === mediaSessionKey}
           onSavedOverviewLoaded={handleSavedOverviewLoaded}
         />
       );
@@ -1149,7 +1152,7 @@ function AppContent() {
   })();
 
   const appContent = (
-    <>
+    <Fragment key={mediaSessionKey ?? 'anonymous'}>
       {screenContent}
       {session && user ? (
         <VideoSetupModal
@@ -1159,7 +1162,7 @@ function AppContent() {
           onCancel={handleRecordingSetupCancel}
         />
       ) : null}
-    </>
+    </Fragment>
   );
 
   if (Platform.OS !== 'web') {

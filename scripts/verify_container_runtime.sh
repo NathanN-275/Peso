@@ -26,3 +26,16 @@ docker run --rm --platform linux/amd64 --network none --read-only \
   -v "$fixture_dir/pose.jpg:/checks/pose.jpg:ro" \
   -v "$root/backend/tests/fixtures/media/portrait-vp9.webm:/checks/upload.webm:ro" \
   "$image" python /checks/runtime.py
+
+docker run --rm --platform linux/amd64 --network none --read-only \
+  --cap-drop ALL --security-opt no-new-privileges \
+  --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+  -v "$root/backend/tests:/checks/tests:ro" \
+  "$image" python -c '
+import sys
+import unittest
+sys.path.insert(0, "/checks/tests")
+suite = unittest.defaultTestLoader.loadTestsFromName("test_avatar_writes.AvatarNormalizerTests")
+result = unittest.TextTestRunner(verbosity=2).run(suite)
+raise SystemExit(not result.wasSuccessful())
+'

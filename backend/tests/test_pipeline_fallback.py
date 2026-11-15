@@ -584,7 +584,7 @@ class PipelineFallbackTest(unittest.TestCase):
       patch("app.analysis.pipeline.PoseEstimator", return_value=estimator) as estimator_factory,
       patch("app.analysis.pipeline._analyze_squat_result", return_value=self._uncertain_result()),
     ):
-      pipeline.analyze_video("video-1", progress_callback=reported_stages.append)
+      pipeline.analyze_video("video-1", job_id="55555555-5555-5555-5555-555555555555", worker_id="test-worker", attempt_count=1, progress_callback=reported_stages.append)
 
     estimator_factory.assert_called_once()
     saved_result = repository.save_analysis_result.call_args.args[2]
@@ -618,7 +618,7 @@ class PipelineFallbackTest(unittest.TestCase):
       patch("app.analysis.pipeline.PoseEstimator", side_effect=[mediapipe_estimator, rtmpose_estimator]),
       patch("app.analysis.pipeline._analyze_squat_result", return_value=self._uncertain_result()),
     ):
-      pipeline.analyze_video("video-1")
+      pipeline.analyze_video("video-1", job_id="55555555-5555-5555-5555-555555555555", worker_id="test-worker", attempt_count=1)
 
     saved_result = repository.save_analysis_result.call_args.args[2]
     self.assertTrue(saved_result["fallback_recommended"])
@@ -647,7 +647,7 @@ class PipelineFallbackTest(unittest.TestCase):
       patch("app.analysis.pipeline.PoseEstimator", side_effect=[mediapipe_estimator, rtmpose_estimator]),
       patch("app.analysis.pipeline._analyze_squat_result", return_value=self._uncertain_result()),
     ):
-      pipeline.analyze_video("video-1")
+      pipeline.analyze_video("video-1", job_id="55555555-5555-5555-5555-555555555555", worker_id="test-worker", attempt_count=1)
 
     saved_result = repository.save_analysis_result.call_args.args[2]
     self.assertTrue(saved_result["fallback_recommended"])
@@ -681,7 +681,7 @@ class PipelineFallbackTest(unittest.TestCase):
         side_effect=[self._uncertain_result(), fallback_result],
       ),
     ):
-      pipeline.analyze_video("video-1")
+      pipeline.analyze_video("video-1", job_id="55555555-5555-5555-5555-555555555555", worker_id="test-worker", attempt_count=1)
 
     saved_result = repository.save_analysis_result.call_args.args[2]
     self.assertTrue(saved_result["fallback_recommended"])
@@ -724,7 +724,7 @@ class PipelineFallbackTest(unittest.TestCase):
       patch("app.analysis.pipeline.BarbellTracker", return_value=tracker),
       patch("app.analysis.pipeline._analyze_squat_result", return_value=self._depth_result(status="hit_depth", delta_px=12.0)),
     ):
-      pipeline.analyze_video("video-1")
+      pipeline.analyze_video("video-1", job_id="55555555-5555-5555-5555-555555555555", worker_id="test-worker", attempt_count=1)
 
     saved_result = repository.save_analysis_result.call_args.args[2]
     self.assertTrue(saved_result["barbellPath"]["available"])
@@ -769,7 +769,7 @@ class PipelineFallbackTest(unittest.TestCase):
       patch("app.analysis.pipeline._finalize_storage_assets", side_effect=finalize_assets),
       patch("app.analysis.pipeline._analyze_squat_result", return_value=self._depth_result(status="hit_depth", delta_px=12.0)),
     ):
-      pipeline.analyze_video("video-1")
+      pipeline.analyze_video("video-1", job_id="55555555-5555-5555-5555-555555555555", worker_id="test-worker", attempt_count=1)
 
     saved_result = repository.save_analysis_result.call_args.args[2]
     timings = saved_result["analysis_stage_timings_ms"]
@@ -803,7 +803,7 @@ class PipelineFallbackTest(unittest.TestCase):
       patch("app.analysis.pipeline.PoseEstimator", return_value=estimator),
       patch("app.analysis.pipeline.BarbellTracker", return_value=tracker),
     ):
-      pipeline.analyze_video("video-1")
+      pipeline.analyze_video("video-1", job_id="55555555-5555-5555-5555-555555555555", worker_id="test-worker", attempt_count=1)
 
     saved_result = repository.save_analysis_result.call_args.args[2]
     self.assertNotIn("barbellPath", saved_result)
@@ -846,7 +846,7 @@ class PipelineFallbackTest(unittest.TestCase):
       patch("app.analysis.pipeline.PoseEstimator", return_value=estimator),
       patch("app.analysis.pipeline.BarbellTracker", return_value=tracker),
     ):
-      pipeline.analyze_video("video-1")
+      pipeline.analyze_video("video-1", job_id="55555555-5555-5555-5555-555555555555", worker_id="test-worker", attempt_count=1)
 
     saved_result = repository.save_analysis_result.call_args.args[2]
     self.assertEqual(saved_result["barbellPath"]["target"], "bar_center")
@@ -878,7 +878,7 @@ class PipelineFallbackTest(unittest.TestCase):
         side_effect=[primary_result, fallback_result],
       ),
     ):
-      pipeline.analyze_video("video-1")
+      pipeline.analyze_video("video-1", job_id="55555555-5555-5555-5555-555555555555", worker_id="test-worker", attempt_count=1)
 
     saved_result = repository.save_analysis_result.call_args.args[2]
     rep = saved_result["reps"][0]

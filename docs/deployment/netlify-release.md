@@ -8,7 +8,7 @@ credits in every deploy context.
 ## Public marketing release (current launch)
 
 The public marketing launch is information-only and does not clear public-beta
-blockers. `npm run web:build:marketing` cleans `dist`, builds Astro, removes
+blockers. `npm run web:build:marketing` cleans `dist`, builds marketing pages, removes
 all authentication output, generates forced temporary app/auth redirects, and
 verifies the final artifact. It needs no app/backend credentials. The dedicated `peso-marketing` project uses `web/netlify.toml` in every context.
 Set its package directory to `web` in Netlify UI, base to repository root,
@@ -18,9 +18,14 @@ variables, auth configuration, functions, forms, snippets, or app rewrites.
 The separate configuration preserves marketing cache/security headers and
 blocks browser connections and form submissions with CSP.
 
-The shared dispatcher selects `web:build:release` only for app project
-`230da8eb-f00e-45d4-ba54-95f2e26f21c4`, `CONTEXT=branch-deploy`, and `BRANCH=main`.
-All other selections fail closed to marketing, including previews from `main`.
+For the historical app, the shared dispatcher selects `web:build:release` only
+for project `230da8eb-f00e-45d4-ba54-95f2e26f21c4`, `CONTEXT=branch-deploy`, and
+`BRANCH=main`. Only that exact tuple receives the fixed staging database/API/
+challenge and render-beta scope. Main-branch previews and historical production
+remain marketing-only. A separately bound new combined project uses the public
+beta release validator in every context and preserves its provider-supplied
+endpoint/key settings. See [combined candidate binding](public-beta-candidate-binding.md).
+The shared TOML contains no project-wide staging environment overrides.
 The app project's ignore command skips production builds for this release;
 private branch/preview builds retain change filtering. Generated `_redirects`
 force temporary 302 redirects from `/app`, `/app/*`, `/auth`, and `/auth/*` to
@@ -51,6 +56,12 @@ baseline below is not a current launch baseline.
 
 The following app-specific configuration and acceptance applies to the beta,
 not the information-only marketing launch.
+
+The steps below describe the historical app branch setup. For the active combined
+public beta, follow [the combined candidate binding](public-beta-candidate-binding.md)
+and the 14-gate launch plan; do not assign render-beta or peso-staging to the new
+combined project. Keep build logs private on both historical projects and the
+new project. Project visibility alone does not establish log privacy.
 
 ### One-time configuration
 

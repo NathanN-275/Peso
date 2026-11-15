@@ -113,8 +113,11 @@ class AnalysisRunner(Protocol):
     video_id: str,
     *,
     job_id: str,
+    worker_id: str,
+    attempt_count: int,
     timeout_seconds: int,
     on_stage: Callable[[str], None],
+    cancel_event: threading.Event,
   ) -> AnalysisRunOutcome: ...
 
 
@@ -129,19 +132,33 @@ class InlineAnalysisRunner:
     video_id: str,
     *,
     job_id: str,
+    worker_id: str,
+    attempt_count: int,
     timeout_seconds: int,
     on_stage: Callable[[str], None],
+    cancel_event: threading.Event,
   ) -> AnalysisRunOutcome:
-    del job_id, timeout_seconds, on_stage
+    del job_id, worker_id, attempt_count, timeout_seconds, on_stage
+    if cancel_event.is_set():
+      return AnalysisRunOutcome(False, "Analysis lease is unavailable.", "analysis_lease_lost", False)
     try:
       self.analyzer(video_id)
     except Exception as error:
       failure_class, retryable = classify_analysis_failure(type(error).__name__, str(error))
       return AnalysisRunOutcome(False, str(error), failure_class, retryable)
+    if cancel_event.is_set():
+      return AnalysisRunOutcome(False, "Analysis lease is unavailable.", "analysis_lease_lost", False)
     return AnalysisRunOutcome(True)
 
 
-def _run_analysis_child(video_id: str, job_id: str, messages: Any) -> None:
+def _run_analysis_child(video_id: str, job_id: str, worker_id: str, attempt_count: int, messages: Any, startup: Any) -> None:
+  if os.name == "posix":
+    os.setsid()
+  messages.put({"type": "ready", "pid": os.getpid(),
+                "pgid": os.getpgrp() if os.name == "posix" else None})
+  # Do not create subprocesses before the supervisor confirms our owned group.
+  if not startup.wait(10):
+    return
   from ..services.security_logging import configure_security_logging
   configure_security_logging()
   # Keep the worker supervisor small: import native analysis dependencies only
@@ -152,7 +169,7 @@ def _run_analysis_child(video_id: str, job_id: str, messages: Any) -> None:
     messages.put({"type": "stage", "stage": stage, "job_id": job_id})
 
   try:
-    analyze_video(video_id, progress_callback=report_stage)
+    analyze_video(video_id, job_id=job_id, worker_id=worker_id, attempt_count=attempt_count, progress_callback=report_stage)
   except BaseException as error:
     messages.put({
       "type": "failed",
@@ -183,17 +200,51 @@ class InterruptibleAnalysisRunner:
     video_id: str,
     *,
     job_id: str,
+    worker_id: str,
+    attempt_count: int,
     timeout_seconds: int,
     on_stage: Callable[[str], None],
+    cancel_event: threading.Event,
   ) -> AnalysisRunOutcome:
+    if cancel_event.is_set():
+      return AnalysisRunOutcome(False, "Analysis lease is unavailable.", "analysis_lease_lost", False)
     context = multiprocessing.get_context("spawn")
     messages = context.Queue()
+    startup = context.Event()
     process = context.Process(
       target=_run_analysis_child,
-      args=(video_id, job_id, messages),
+      args=(video_id, job_id, worker_id, attempt_count, messages, startup),
       name=f"analysis-{video_id}",
     )
     process.start()
+    cancellation_finished = threading.Event()
+    owned_group: int | None = None
+
+    def signal_child(*, kill: bool = False) -> None:
+      # The child owns this process group; FFmpeg descendants share it.
+      if owned_group is not None:
+        try:
+          os.killpg(owned_group, signal.SIGKILL if kill else signal.SIGTERM)
+          return
+        except ProcessLookupError:
+          pass
+      if process.is_alive():
+        if kill:
+          process.kill()
+        else:
+          process.terminate()
+
+    def watch_cancellation() -> None:
+      while not cancellation_finished.is_set():
+        if cancel_event.wait(0.05):
+          signal_child()
+          if not cancellation_finished.wait(2.0):
+            signal_child(kill=True)
+          return
+
+    cancellation_thread = threading.Thread(
+      target=watch_cancellation, name=f"cancel-{job_id}", daemon=True)
+    cancellation_thread.start()
     deadline = time.monotonic() + timeout_seconds
     next_memory_sample_at = time.monotonic()
     outcome: AnalysisRunOutcome | None = None
@@ -219,17 +270,15 @@ class InterruptibleAnalysisRunner:
 
     try:
       while process.is_alive() and outcome is None:
+        if cancel_event.is_set():
+          return with_memory(AnalysisRunOutcome(
+            False, "Analysis lease is unavailable.", "analysis_lease_lost", False))
         now = time.monotonic()
         if now >= next_memory_sample_at:
           sample_memory()
           next_memory_sample_at = now + self.memory_sample_seconds
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-          process.terminate()
-          process.join(timeout=5.0)
-          if process.is_alive():
-            process.kill()
-            process.join(timeout=2.0)
           return with_memory(AnalysisRunOutcome(
             False,
             f"Analysis exceeded its {timeout_seconds}-second deadline.",
@@ -243,10 +292,25 @@ class InterruptibleAnalysisRunner:
           )
         except queue.Empty:
           continue
+        if message.get("type") == "ready":
+          if message.get("pid") != process.pid:
+            raise RuntimeError("Analysis child readiness did not match its process.")
+          if os.name == "posix":
+            if message.get("pgid") != process.pid or os.getpgid(process.pid) != process.pid:
+              raise RuntimeError("Analysis child did not establish its owned process group.")
+            owned_group = process.pid
+          startup.set()
+          continue
         if message.get("type") == "stage":
           current_stage = str(message.get("stage") or current_stage)
         outcome = self._handle_message(message, on_stage)
+        if cancel_event.is_set():
+          return with_memory(AnalysisRunOutcome(
+            False, "Analysis lease is unavailable.", "analysis_lease_lost", False))
 
+      if cancel_event.is_set():
+        return with_memory(AnalysisRunOutcome(
+          False, "Analysis lease is unavailable.", "analysis_lease_lost", False))
       sample_memory()
       process.join(timeout=2.0)
       while outcome is None:
@@ -255,6 +319,9 @@ class InterruptibleAnalysisRunner:
         except queue.Empty:
           break
         outcome = self._handle_message(message, on_stage)
+      if cancel_event.is_set():
+        return with_memory(AnalysisRunOutcome(
+          False, "Analysis lease is unavailable.", "analysis_lease_lost", False))
       if outcome is not None:
         return with_memory(outcome)
       return with_memory(AnalysisRunOutcome(
@@ -264,9 +331,13 @@ class InterruptibleAnalysisRunner:
         True,
       ))
     finally:
-      if process.is_alive():
-        process.terminate()
-        process.join(timeout=2.0)
+      cancellation_finished.set()
+      cancellation_thread.join(timeout=0.1)
+      signal_child()
+      process.join(timeout=2.0)
+      # Escalate for a child or descendant that ignored termination.
+      signal_child(kill=True)
+      process.join(timeout=2.0)
       messages.close()
       messages.join_thread()
 
@@ -298,14 +369,17 @@ class _LeaseHeartbeat:
     jobs: AnalysisJobRepository,
     job_id: str,
     worker_id: str,
+    attempt_count: int,
     lease_seconds: int,
   ) -> None:
     self.jobs = jobs
     self.job_id = job_id
     self.worker_id = worker_id
+    self.attempt_count = attempt_count
     self.lease_seconds = lease_seconds
     self.interval_seconds = max(30.0, min(300.0, lease_seconds / 3))
     self.stop_event = threading.Event()
+    self.cancel_event = threading.Event()
     self.thread = threading.Thread(target=self._run, name=f"lease-{job_id}", daemon=True)
 
   def start(self) -> None:
@@ -321,13 +395,17 @@ class _LeaseHeartbeat:
         renewed = self.jobs.renew(
           self.job_id,
           self.worker_id,
+          attempt_count=self.attempt_count,
           lease_seconds=self.lease_seconds,
         )
         if not renewed:
+          self.cancel_event.set()
           logger.error("Worker %s lost lease for analysis job %s.", self.worker_id, self.job_id)
           return
       except Exception:
+        self.cancel_event.set()
         logger.exception("Unable to renew lease for analysis job %s.", self.job_id)
+        return
 
 
 class AnalysisWorker:
@@ -345,6 +423,10 @@ class AnalysisWorker:
     max_timeout_seconds: int = DEFAULT_MAX_TIMEOUT_SECONDS,
     long_clip_timeout_multiplier: float = DEFAULT_LONG_CLIP_TIMEOUT_MULTIPLIER,
   ) -> None:
+    if worker_id is not None:
+      if not isinstance(worker_id, str) or not worker_id.strip():
+        raise ValueError("Worker ID must contain a nonblank name.")
+      worker_id = worker_id.strip()
     self.jobs = jobs or AnalysisJobRepository()
     self.runner = runner or (
       InlineAnalysisRunner(analyzer) if analyzer is not None else InterruptibleAnalysisRunner()
@@ -369,15 +451,18 @@ class AnalysisWorker:
 
   def run_once(self) -> bool:
     job = self.jobs.claim(self.worker_id, lease_seconds=self.lease_seconds)
-    if not job:
+    if job is None:
       return False
 
-    job_id = str(job["id"])
-    video_id = str(job["video_id"])
+    AnalysisJobRepository.validate_claim(job)
+    job_id = job["id"]
+    video_id = job["video_id"]
+    attempt_count = job["attempt_count"]
     heartbeat = _LeaseHeartbeat(
       jobs=self.jobs,
       job_id=job_id,
       worker_id=self.worker_id,
+      attempt_count=attempt_count,
       lease_seconds=self.lease_seconds,
     )
     logger.info("Worker %s claimed analysis job %s for video %s.", self.worker_id, job_id, video_id)
@@ -393,20 +478,27 @@ class AnalysisWorker:
       )
 
       def report_stage(stage: str) -> None:
-        if stage not in PUBLIC_ANALYSIS_STAGES:
+        if stage not in PUBLIC_ANALYSIS_STAGES or heartbeat.cancel_event.is_set():
           return
         try:
-          if not self.jobs.progress(job_id, self.worker_id, stage):
+          if not self.jobs.progress(job_id, self.worker_id, stage, attempt_count=attempt_count):
+            heartbeat.cancel_event.set()
             logger.error("Worker %s lost analysis job %s while reporting %s.", self.worker_id, job_id, stage)
         except Exception:
+          heartbeat.cancel_event.set()
           logger.exception("Unable to persist stage %s for analysis job %s.", stage, job_id)
 
       report_stage("downloading")
+      if heartbeat.cancel_event.is_set():
+        return True
       outcome = self.runner.run(
         video_id,
         job_id=job_id,
+        worker_id=self.worker_id,
+        attempt_count=attempt_count,
         timeout_seconds=timeout_seconds,
         on_stage=report_stage,
+        cancel_event=heartbeat.cancel_event,
       )
       logger.info(
         "Analysis process memory event=analysis_process_memory job_id=%s video_id=%s "
@@ -421,11 +513,15 @@ class AnalysisWorker:
         json.dumps(outcome.stage_peak_rss_bytes or {}, sort_keys=True, separators=(",", ":")),
         json.dumps(outcome.stage_peak_rss_mb or {}, sort_keys=True, separators=(",", ":")),
       )
+      if heartbeat.cancel_event.is_set():
+        logger.warning("Analysis stopped without updating job %s after lease uncertainty.", job_id)
+        return True
       if not outcome.succeeded:
         next_status = self.jobs.fail(
           job_id,
           self.worker_id,
           outcome.error or "Unknown analysis failure.",
+          attempt_count=attempt_count,
           failure_class=outcome.failure_class or "analysis_runtime",
           retryable=outcome.retryable,
         )
@@ -433,17 +529,22 @@ class AnalysisWorker:
         return True
     except Exception as error:
       logger.exception("Analysis worker failed while supervising job %s for video %s.", job_id, video_id)
+      if heartbeat.cancel_event.is_set():
+        return True
       failure_class, retryable = classify_analysis_failure(type(error).__name__, str(error))
       next_status = self.jobs.fail(
         job_id,
         self.worker_id,
         str(error),
+        attempt_count=attempt_count,
         failure_class=failure_class,
         retryable=retryable,
       )
       logger.warning("Analysis job failure event=analysis_job_failure job_id=%s next_status=%s failure_class=%s", job_id, next_status or "unknown", failure_class)
     else:
-      if not self.jobs.complete(job_id, self.worker_id):
+      if heartbeat.cancel_event.is_set():
+        return True
+      if not self.jobs.complete(job_id, self.worker_id, attempt_count=attempt_count):
         logger.error("Analysis job %s completed work after losing its lease.", job_id)
       else:
         logger.info("Analysis job %s completed.", job_id)

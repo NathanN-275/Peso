@@ -12,9 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..analysis.manual_tracking import validate_tracking_setup
 from ..services.auth import get_current_user_id
-from ..services.azure_blob_storage import AzureBlobConfigurationError, get_azure_blob_storage
+from ..services.legacy_storage import get_azure_blob_storage
 from ..services.config import get_settings
-from ..services.ip_admission import enforce_us_ip
 from ..services.media_metadata import MediaValidationError, enforce_video_limits, probe_video_metadata
 from ..services.storage_service import (
   ALLOWED_VIDEO_EXTENSIONS,
@@ -106,11 +105,11 @@ def _get_upload_storage(settings):
     return StorageService()
   try:
     return get_azure_blob_storage()
-  except AzureBlobConfigurationError as error:
+  except RuntimeError as error:
     raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Private upload storage is not configured.") from error
 
 
-@router.post("", response_model=UploadReservationResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(enforce_us_ip)])
+@router.post("", response_model=UploadReservationResponse, status_code=status.HTTP_201_CREATED)
 def create_upload_reservation(
   request: CreateUploadReservationRequest,
   user_id: str = Depends(get_current_user_id),
@@ -252,7 +251,14 @@ async def upload_reserved_content(
         temporary.write(chunk)
     if uploaded_bytes <= 0:
       raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Upload body is empty.")
+    write = {
+      "bucket": settings.video_bucket, "storage_path": blob_path,
+      "content_type": content_type, "size_bytes": uploaded_bytes,
+    }
+    attempt_id = str(uuid4())
+    repository.admit_source_write(attempt_id, user_id, str(reservation_id), **write)
     StorageService().create_file(blob_path, temp_path, content_type)
+    repository.observe_source_write_success(attempt_id, user_id, str(reservation_id), **write)
   except HTTPException:
     raise
   except Exception as error:

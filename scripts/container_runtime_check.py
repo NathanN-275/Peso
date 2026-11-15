@@ -27,9 +27,20 @@ def main():
   assert os.getuid() == 10001 and os.getgid() == 10001
   for module in ['app.main', 'app.jobs.analysis_worker', 'rtmlib', 'onnxruntime']:
     importlib.import_module(module)
+  if os.environ.get('PESO_RUNTIME_PROFILE') == 'web-mvp':
+    from app.services.config import get_settings
+    assert get_settings().upload_storage_provider == 'supabase'
+    assert importlib.util.find_spec('azure') is None, 'Azure SDK namespace in MVP runtime'
+    assert importlib.util.find_spec('app.services.azure_blob_storage') is None, 'Azure adapter in MVP runtime'
+    assert not any(d.metadata['Name'].lower().startswith('azure-') for d in importlib.metadata.distributions())
+    importlib.import_module('app.jobs.upload_reservation_cleanup')
   assert importlib.metadata.version('mediapipe') == '0.10.30'
   assert importlib.metadata.version('protobuf') == '6.33.5'
-  assert command('ffmpeg', '-version').startswith('ffmpeg version 9.0.1')
+  assert command('ffmpeg', '-version').startswith('ffmpeg version n9.0.2 ')
+  assert command('apk', 'info', '--who-owns', '/usr/bin/ffmpeg', '/usr/bin/ffprobe').splitlines() == [
+    '/usr/bin/ffmpeg is owned by ffmpeg-9.0-9.0.2-r8',
+    '/usr/bin/ffprobe is owned by ffmpeg-9.0-9.0.2-r8',
+  ]
   for tool in ['pip', 'setuptools', 'wheel']:
     assert shutil.which(tool) is None, f'Unexpected runtime executable: {tool}'
     assert importlib.util.find_spec(tool) is None, f'Unexpected runtime module: {tool}'

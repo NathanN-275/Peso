@@ -74,6 +74,10 @@ it is distinct from the SQL-file digest. Local image ID:
    target acknowledgement. Do not apply it after security cutover, because it
    restores direct client writes. Validate definitions and actual owner/non-owner
    Auth/Storage access before any separately approved service rebind.
+   Before API tests, require full schema/grant equality as described by the
+   [November 8 counterexample](pesodatabase-hosted-recovery-rehearsal-20261108.md):
+   capture target default privileges, detect extra client grants, and keep
+   signup/Data API disabled while a separately approved repair is pending.
 5. For nonempty Storage, restore separately backed-up bytes, compare inventory,
    lengths and checksums, then read back through the API. SQL metadata alone
    cannot restore bytes. Keep failed-state evidence and stop on discrepancies.
