@@ -40,6 +40,14 @@ exposure, destructive data changes and new costs for final approval. Required
 provider sign-in or protected human actions still need Nathan when unavailable
 to the agent. See [the current execution contract](autonomous-public-beta-execution-20261025.md).
 
+## Current evidence
+
+Use the [November 16 readiness refresh](public-beta-readiness-20261116.md)
+for the current source/CI reconciliation and all-14-gate status. Daybreak login
+is not a prerequisite: repository-enforced CI, complete raw audit reports,
+image identity and offline runtime evidence provide the Gate 2 evidence path.
+The existing thresholds and candidate/artifact matching requirements still apply.
+
 ## Gates
 
 1. **Freeze candidate:** reconcile working changes and PR #47, select a source

@@ -1,0 +1,76 @@
+{
+  "source_commit": "e9370d9f6675be3fe5567043b458ab51afae0933",
+  "run_id": 43968645784,
+  "run_url": "https://github.com/NathanN-275/Peso/actions/runs/43968645784",
+  "input_sha256": {
+    "package-lock.json": "d0e8cce43bf5ed163f78bac352f693586c447c7f795e741eebe24449250430a0",
+    "web/package-lock.json": "ae5bb8955d9a5b552fe090b3b22a7a7c5b287cc6f11d85e1e42a2a83d3e24cae",
+    "backend/requirements.txt": "2af6455db388a6b111932e432851a647a9f09733552554a5ac3b3b181bc5ce11",
+    "Dockerfile.mvp": "2287dc975d3ae9d9bccde3b0545cbffb5f1e107501649aaba4a7d1fbc0aa1f02",
+    "scripts/verify_container_runtime.sh": "1fa100914018dacdeefe0449d99b202c97d27716954d612af72b2b39bfee0ace"
+  },
+  "artifacts": [
+    {
+      "id": 14276718007,
+      "archive_sha256": "848cbde79c55db1429bf55a4f6a6075d9138f9d12a3f67a6a2ee0c4106b5684e",
+      "decisions": [
+        {
+          "exit_code": 0,
+          "source_commit": "e9370d9f6675be3fe5567043b458ab51afae0933",
+          "registry_vulnerabilities": {
+            "info": 0,
+            "low": 0,
+            "moderate": 7,
+            "high": 0,
+            "critical": 0,
+            "total": 7
+          }
+        }
+      ]
+    },
+    {
+      "id": 14276668058,
+      "archive_sha256": "569875d60fe855caf741ce632fa5c3e1cac2d72cf1471b64b27ffd0a3df2ec5e",
+      "decisions": [
+        {
+          "exit_code": 0,
+          "source_commit": "e9370d9f6675be3fe5567043b458ab51afae0933",
+          "registry_vulnerabilities": {
+            "info": 0,
+            "low": 0,
+            "moderate": 0,
+            "high": 0,
+            "critical": 0,
+            "total": 0
+          }
+        },
+        {
+          "exit_code": 0,
+          "source_commit": "e9370d9f6675be3fe5567043b458ab51afae0933",
+          "registry_vulnerabilities": {
+            "info": 0,
+            "low": 0,
+            "moderate": 0,
+            "high": 0,
+            "critical": 0,
+            "total": 0
+          }
+        },
+        {
+          "exit_code": 0,
+          "source_commit": "e9370d9f6675be3fe5567043b458ab51afae0933",
+          "registry_vulnerabilities": {
+            "info": 0,
+            "low": 0,
+            "moderate": 0,
+            "high": 0,
+            "critical": 0,
+            "total": 0
+          }
+        }
+      ]
+    }
+  ],
+  "container_log_sha256": "8f780bcc9484b8c4038421af927af383ecdb5f64a216b969ce1da379a9c1f11e",
+  "container_image_config": "sha256:95cdd6db467287226853e5dacc114e08f743a2a39f6b2ca2ffa6a3f50cc568ff"
+}
