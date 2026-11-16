@@ -76,8 +76,11 @@ The existing thresholds and candidate/artifact matching requirements still apply
    continuous isolation. Browser functionality and accessibility belong to
    Gates 11/12; historical exhaustive diagnostics are follow-up unless they
    establish release security impact. Preserve current CI jobs and enforcement.
-3. **Credential history:** finish rotation, provider verification and GitHub
-   history-purge work; verify secret scans.
+3. **Credential history:** finish credential rotation or verified retirement,
+   provider verification and documented GitHub Support disposition; verify
+   secret scans. The [November 16 disposition](gate-3-support-disposition-20261116.md)
+   resolves history removal for the documented revoked New Relic key; it does
+   not establish a purge or close remaining credential work.
 4. **Staging authentication:** dedicated staging Render services bound to
    `peso-staging` during approved test windows, with isolated test users,
    redirects, email, Turnstile, browser and required native authentication tests.

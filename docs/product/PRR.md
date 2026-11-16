@@ -128,9 +128,11 @@ See [marketing release evidence](../deployment/marketing-release-20260920.md).
 - [ ] Verify signed URL expiration, upload limits, per-user quotas, and cleanup jobs.
 - [ ] Confirm logs do not expose tokens, raw media, or unnecessary personal data.
 - [ ] Review dependency and secret-scan results; resolve or document exceptions.
-- [ ] Complete outstanding credential rotations, GitHub Support history-purge
-      confirmation, and GitGuardian verification. A clean local Gitleaks scan
-      does not prove cached pull-request history was purged.
+- [ ] Complete outstanding credential rotations or verified retirement, provider
+      verification, documented GitHub Support disposition, and GitGuardian
+      verification. The [November 16 disposition](../deployment/gate-3-support-disposition-20261116.md)
+      resolves history removal for the documented revoked New Relic key. It
+      does not establish that cached history was purged or close other credentials.
 
 ### Observability and support
 

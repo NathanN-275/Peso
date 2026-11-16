@@ -71,3 +71,11 @@ production service binding, guardrails and private-build acceptance in order.
 Provider-only credential verification and the private GitHub Support response
 cannot be inferred from clean scanners. No credentials, hosted data, domains,
 service plans, visibility or production deployment were changed here.
+
+## GitHub Support follow-up
+
+Nathan supplied the October 8 response to ticket #4813900. Reviewed alongside
+existing provider-confirmed New Relic key deletion, it resolves the historical
+purge blocker for that revoked key. See [the disposition and remaining work](gate-3-support-disposition-20261116.md).
+Gate 3 remains open for the other credential/provider checks. Earlier references
+to awaiting this private response are superseded by this follow-up.

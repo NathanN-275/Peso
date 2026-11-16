@@ -65,7 +65,7 @@ This table is the live all-14-gate tracker; partial passes do not close a gate.
 | --- | --- | --- |
 | 1. Freeze candidate | Open | Current main is published and its Security Checks pass. Final production candidate/artifact reconciliation remains. |
 | 2. Security and offline runtime | Current CI passes; evidence completion open | Run 43968645784: 22 successful jobs, one expected production-PR-only skip. Downloaded root/web reports match source and checksums; no HIGH/CRITICAL findings. Container/offline logs pass. New Python/container JSON and image/runtime retention must run in hosted CI before accepting the replacement evidence packet. |
-| 3. Credential history | Blocked | Current Gitleaks job passes. Provider revocation/disposition and GitHub Support ticket #4813900 determination remain unverified. Retired Azure credentials require disposition, not revival of Azure runtime. |
+| 3. Credential history | Blocked | Current Gitleaks and PR #52 GitGuardian checks pass for the earlier code checkpoint. Nathan supplied GitHub Support ticket #4813900 response: revocation is the remedy. Existing provider-confirmed New Relic deletion resolves that key's history-removal subitem; no purge claimed. [Disposition](gate-3-support-disposition-20261116.md). Remaining credential/provider/consumer disposition is still open; retired Azure credentials require verified retirement or rotation if used. |
 | 4. Staging authentication | Open | Supabase staging is ACTIVE_HEALTHY with 52 recorded migrations through 20261103022851. Source contains accepted staging Render binding at a4370570. Exact deployed-source, Auth/email/Turnstile/browser/native and normal application revocation acceptance need current evidence. |
 | 5. Hosted recovery | Passed for November 6 snapshot scope | November 8 hosted restore report and November 9 rehearsal preserve the scoped pass. Current recovery project uhivjkfpfqtpicyjtmie is INACTIVE; this does not invalidate the historical rehearsal or prove new candidate recovery. |
 | 6. Fresh recovery point | Open | Protected copy and rehearsal succeeded for old snapshot; fresh writer freeze/export/protected copy required at cutover. |
@@ -132,7 +132,7 @@ Start these tracks after baseline inspection; they may progress while recovery a
 - Do not deploy the Gate 1 fixture build. Any later source change receives fresh applicable checks and a new recorded SHA.
 
 **B. Credentials and history (Gate 3)**
-- Inventory outstanding rotation, provider verification, Git history purge, and secret-scan requirements from the canonical evidence.
+- Inventory outstanding rotation or verified retirement, provider verification, Support disposition and secret-scan requirements from the canonical evidence.
 - Prepare a credential disposition matrix without exposing secret values. Complete only actions already authorized; record provider confirmations and exact scope.
 - Keep any unavailable provider or human action as a named blocker with the smallest specific request required.
 
@@ -140,7 +140,7 @@ Credential disposition prepared from the September 13 provider follow-up and cur
 
 | Item | Available evidence | Required next evidence / action |
 | --- | --- | --- |
-| Exposed New Relic license key | September 13 note records provider deletion without replacement. | Preserve that deletion confirmation; obtain current GitGuardian result and GitHub Support purge confirmation for retained PR #38 history. Do not recreate its deleted branch. |
+| Exposed New Relic license key | September 13 note records provider deletion without replacement. | History-removal subitem resolved by the existing deletion confirmation and Nathan-supplied October 8 Support response; [review](gate-3-support-disposition-20261116.md). PR #52 earlier code checkpoint passed GitGuardian. No purge claimed; recheck scanners on final source. |
 | Student scaler database password | Rotation script was tested locally; no current production rotation receipt exists. | Review the current consumer inventory, separately approve provider credential changes, rotate the role and dependent GitHub/Key Vault connection secrets, and verify every remaining deployed consumer. Historical local tests do not establish current revocation. |
 | Render API/worker Supabase credentials | Combined binding is pending; existing services were historically bound to staging. | Read current provider settings privately and verify both credentials identify the chosen project before any separately approved rebind/resumption. A URL-only edit is insufficient. |
 | Cleanup, intake-stop, geography and alert-delivery credentials | Activation and delivery acceptance remain open. | Verify purpose, scope, provider storage and recipients at the applicable activation gate; retain identifiers/results without values. New credential creation and hosted activation require their action-time approval. |
