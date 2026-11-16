@@ -54,11 +54,26 @@ The [Netlify staff guide](https://answers.netlify.com/t/support-guide-how-to-use
 requires a successful branch deploy, correctly named CNAME and a Support request
 to extend branch TLS. The first two prerequisites are now observed.
 
-## Prepared Netlify Support request — not sent
+## Netlify Support request — submitted, ticket #1196583
 
-Destination: Netlify Support forum, Support category, via the existing account.
-The draft contains public site/domain/deployment identifiers only, no credentials.
-Sending it requires Nathan's explicit authorization for external communication.
+Nathan explicitly authorized sending this request on November 16. It was
+submitted through Netlify's direct support form under Something else, using the
+existing account's contact identity and the exact subject/body below. The forum
+SSO screen requested project-management access despite narrower description
+text; that authorization was left untouched. The direct form avoided that grant.
+
+Netlify's `/support/thanks/` page confirmed receipt. The reply email assigned
+ticket **#1196583**, accurately summarized the TLS-only request and asked for
+confirmation before routing to an agent. Sent the routine confirmation reply:
+“Yes, this is correct. Please route this TLS certificate request to an agent.”
+Gmail displayed Message sent. No duplicate forum topic was posted.
+
+Status: submitted and confirmation sent; agent response and TLS provisioning
+remain pending. No plan upgrade, DNS change, service resume or access-control
+change was performed. Submission confirmation screenshot is retained outside Git
+in the chat's visualization directory as `netlify-support-submitted.jpg`.
+
+Submitted subject and body:
 
 Subject: Extend branch TLS for main.usepeso.com on peso-webapp
 
