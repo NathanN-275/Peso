@@ -284,7 +284,7 @@ test('password reset cannot mutate credentials using a raw unaccepted recovery s
     '../components/Button': { __esModule: true, default: 'Button' },
     '../components/Input': { __esModule: true, default: 'Input' },
     '../theme/tokens': { __esModule: true, default: { spacing: { screenX: 20 } } },
-    '../../ResetPassword.png': 'synthetic-image',
+    '../../assets/images/ResetPassword.png': 'synthetic-image',
   }, { onBack() {}, onReset() {} });
   let tree = h.render();
   for (const input of nodes(tree).filter((node) => node.type === 'Input')) input.props.onChangeText('synthetic-password');
