@@ -59,3 +59,7 @@ PESO_UI_EXPORT=/tmp/peso-ui-fixture node tests/offline/web-analysis-ui.cjs
 ```
 
 The harness requires FFmpeg and a Playwright Chromium install. `PESO_CHROMIUM` can select a local executable. Use `--clear` when changing inlined Expo environment variables. The fixture hostnames are intercepted, never contacted. This is not a deployable app artifact.
+
+## Merge verification
+
+The first PR run caught an activity metadata test whose repository mock lacked the new optional filename result, and an existing scanner control whose random value sometimes fell below Gitleaks' detection threshold. The metadata fixture now returns the legacy empty-name map and asserts owner-scoped lookup without media signing. The generic credential control now uses deterministic high-entropy synthetic bytes and explicitly asserts a blocking `generic-api-key` finding. Scanner policy and reviewed occurrence pins are unchanged. The affected backend checks passed 64 tests; all 27 real-Gitleaks integration cases passed.

@@ -50,11 +50,14 @@ class PrivateThumbnailMetadataTest(unittest.TestCase):
   def test_actual_activity_endpoint_does_not_sign_a_preview(self):
     repository, jobs = MagicMock(), MagicMock()
     repository.list_analysis_activity_videos.return_value = [{**self.video, 'save_state':'pending'}]
+    repository.analysis_source_file_names.return_value = {}
     repository.count_user_in_progress_videos.return_value = 0
     jobs.latest_for_videos.return_value = {VIDEO:dict(id=JOB, video_id=VIDEO, status='completed', stage='ready', created_at=self.video['created_at'])}
     with patch.object(videos, 'VideoRepository', return_value=repository), patch.object(videos, 'AnalysisJobRepository', return_value=jobs), patch.object(videos, 'StorageService', return_value=self.storage):
       result = videos.get_analysis_activity(OWNER)
     self.assertEqual(len(result.items), 1); self.assertTrue(result.items[0].thumbnail_available)
+    self.assertIsNone(result.items[0].source_file_name)
+    repository.analysis_source_file_names.assert_called_once_with(OWNER, [VIDEO])
     self.assertIsNone(result.items[0].thumbnail_url); self.assertEqual(self.storage.mock_calls, [])
 
 
