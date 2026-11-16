@@ -16,7 +16,7 @@ import Button from '../components/Button';
 import Input from '../components/Input';
 import tokens from '../theme/tokens';
 
-const titleImage = require('../../ResetPassword.png');
+const titleImage = require('../../assets/images/ResetPassword.png');
 
 type ResetPasswordFormScreenProps = {
   onBack: () => void;

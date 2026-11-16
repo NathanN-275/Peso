@@ -11,7 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Button from '../components/Button';
 import tokens from '../theme/tokens';
 
-const logo = require('../../AppLogo.png');
+const logo = require('../../assets/images/AppLogo.png');
 
 type WelcomeScreenProps = {
   onLogin: () => void;

@@ -34,35 +34,11 @@ The goal is to make lifting analysis easier to understand without requiring expe
 
 ## Current focus
 
-Peso is moving from a working mobile-first prototype toward a product that lifters can use through the web. The immediate goal is to launch a focused web beta while continuing to strengthen the analysis behind every result.
+Peso is preparing a combined public Web Beta: the Marketing Site and authenticated Web App at `/app`, with US-only signup and upload admission. The supported workflow is side-view squat analysis, from video upload through processing, review, and saving results.
 
-### Launch the web beta
+Current work focuses on release readiness and making that workflow dependable. The [public beta launch plan](docs/deployment/public-beta-launch-plan.md) describes the release sequence, and the [Production Readiness Review](docs/product/PRR.md) records acceptance requirements and remaining work.
 
-The web beta is the clearest path to getting Peso into users' hands and learning from real lifting videos. Current work is focused on turning the browser experience into a complete product flow: introducing Peso through the public Marketing Site, bringing users into the Web App, accepting side-view squat videos, showing analysis progress, and making results easy to review and save.
-
-The first release is intentionally narrow. It is designed to make one supported workflow dependable before expanding to more exercises, camera angles, and coaching features.
-
-### Improve tracking reliability
-
-Peso currently works best with side-view squat videos. The analysis pipeline is being improved to preserve the identity of the lifter's joints and visible barbell collar across frames, especially when gym equipment, motion blur, or partial occlusion makes tracking difficult.
-
-Current tracking priorities include:
-
-* making pin-assisted tracking more reliable
-* keeping the upper-back marker stable across frames
-* smoothing the barbell path overlay without hiding uncertain observations
-* improving pose landmark consistency throughout each squat
-* returning a clear limited-analysis result when a video cannot be analyzed confidently
-
-Front-view videos are also supported, but that analysis is still in development and needs further accuracy improvements.
-
-### Continue developing the mobile app
-
-Launching the web beta does not replace the mobile app. The Expo app remains in active development and will continue to evolve alongside the web product. The web beta provides a practical way to ship Peso and validate the core experience, while mobile development continues to improve recording, uploading, and reviewing lifts directly from a phone.
-
-### Validate the Azure Student backend candidate
-
-Current infrastructure work defines an isolated, non-production Render beta backed only by `peso-staging` and the private Netlify `main` branch. Azure Student compute is paused; absent Student workloads count as verified zero compute, and every existing supporting resource remains provisioned. Production Render, production Netlify, the production Supabase project, and `peso-rg` remain unchanged.
+Tracking reliability continues to improve, while front-view analysis remains in development. The Expo mobile app continues to evolve alongside the web product.
 
 ## Tech stack
 

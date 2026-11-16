@@ -17,7 +17,7 @@ import Input from '../components/Input';
 import AuthChallenge from '../components/auth/AuthChallenge';
 import tokens from '../theme/tokens';
 
-const titleImage = require('../../CreateAccount.png');
+const titleImage = require('../../assets/images/CreateAccount.png');
 
 type CreateAccountScreenProps = {
   onBack: () => void;

@@ -17,7 +17,7 @@ import Input from '../components/Input';
 import AuthChallenge from '../components/auth/AuthChallenge';
 import tokens from '../theme/tokens';
 
-const titleImage = require('../../Login.png');
+const titleImage = require('../../assets/images/Login.png');
 
 type LoginScreenProps = {
   onBack: () => void;
