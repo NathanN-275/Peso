@@ -2,6 +2,7 @@ import {
   useEffect, useMemo, useRef, useState,
   type ComponentProps, type ComponentType, type KeyboardEventHandler,
 } from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import {
   Image,
   Pressable,
@@ -334,19 +335,36 @@ function Field({
   value?: string;
   onChangeText?: (value: string) => void;
 }) {
+  const [passwordVisible, setPasswordVisible] = useState(false);
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
-      <TextInput
-        accessibilityLabel={label}
-        autoCapitalize="none"
-        placeholder={placeholder}
-        placeholderTextColor="#66738A"
-        secureTextEntry={secureTextEntry}
-        value={value}
-        onChangeText={onChangeText}
-        style={styles.input}
-      />
+      <View style={styles.fieldInputWrap}>
+        <TextInput
+          accessibilityLabel={label}
+          autoCapitalize="none"
+          placeholder={placeholder}
+          placeholderTextColor="#66738A"
+          secureTextEntry={secureTextEntry && !passwordVisible}
+          value={value}
+          onChangeText={onChangeText}
+          style={[styles.input, secureTextEntry && styles.passwordInput]}
+        />
+        {secureTextEntry ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={passwordVisible ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
+            onPress={() => setPasswordVisible((visible) => !visible)}
+            style={styles.passwordToggle}
+          >
+            <Ionicons
+              name={passwordVisible ? 'eye-off-outline' : 'eye-outline'}
+              size={22}
+              color={colors.textMuted}
+            />
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -1803,6 +1821,9 @@ const styles = StyleSheet.create({
   field: { gap: 7 },
   fieldLabel: { color: colors.secondaryText, fontFamily: fonts.semibold, fontSize: 11 },
   input: { width: '100%', height: 48, paddingHorizontal: 14, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 11, backgroundColor: colors.inputBg, color: colors.textPrimary, fontFamily: fonts.regular, fontSize: 14 },
+  fieldInputWrap: { position: 'relative' },
+  passwordInput: { paddingRight: 52 },
+  passwordToggle: { position: 'absolute', top: 0, right: 4, bottom: 0, width: 44, alignItems: 'center', justifyContent: 'center' },
   inlineLink: { color: colors.blueText, fontFamily: fonts.semibold, fontSize: 12, textDecorationLine: 'underline' },
   authBackLink: { alignSelf: 'flex-start', paddingTop: 22 },
   formFooterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center' },
