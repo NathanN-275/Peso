@@ -64,6 +64,7 @@ import {
   VideoAnalysisStatus,
 } from '../types/videoAnalysis';
 import tokens from '../theme/tokens';
+import { measureSubmissionPhase } from '../../lib/submissionTiming';
 import type { TrackingSetup } from '../types/trackingSetup';
 import { createLocalVideoThumbnail, getUriScheme } from '../utils/localVideoThumbnail';
 import { resolveVideoDurationMs } from '../../lib/videoDurationPolicy';
@@ -85,6 +86,7 @@ type UploadVideoScreenProps = {
     videoId: string;
     jobId: string | null;
     status: VideoAnalysisStatus;
+    sourceFileName?: string | null;
   }) => void;
   onAnalysisSaved?: (videoId: string) => void | Promise<void>;
 };
@@ -315,6 +317,13 @@ export default function UploadVideoScreen({
     jobId: string | null;
     status: VideoAnalysisStatus;
   }) => {
+    if (isWeb && onAnalysisQueued) {
+      setUploading(false);
+      setAnalysisRunning(false);
+      setStatusMessage(null);
+      onAnalysisQueued({ ...activity, sourceFileName: selectedVideo?.fileName ?? null });
+      return;
+    }
     // Keep the successful queue state visible long enough for people to
     // understand why the app is returning to Home.
     setUploading(false);
@@ -446,11 +455,11 @@ export default function UploadVideoScreen({
       if (requiresQualityPreflight(videoSetup)) {
         failurePhase = 'quality_preflight';
         setStatusMessage('Checking recording quality...');
-        const preflight = await runVideoQualityPreflight(
+        const preflight = await measureSubmissionPhase('quality_check', () => runVideoQualityPreflight(
           uploadResult.videoId,
           accessToken,
           run.controller.signal
-        );
+        ));
         if (!analysisRunIsCurrent(run)) {
           if (activeUploadedVideoRef.current?.videoId === uploadResult.videoId) {
             activeUploadedVideoRef.current = null;
@@ -501,11 +510,11 @@ export default function UploadVideoScreen({
       setStatusMessage('Starting analysis...');
       failurePhase = 'queue_analysis';
       console.log('[analysis] starting backend analysis', uploadResult.videoId);
-      const queuedResponse = await triggerVideoAnalysis(
+      const queuedResponse = await measureSubmissionPhase('queue_submission', () => triggerVideoAnalysis(
         uploadResult.videoId,
         accessToken,
         run.controller.signal
-      );
+      ));
       if (!analysisRunIsCurrent(run)) {
         if (activeUploadedVideoRef.current?.videoId === uploadResult.videoId) {
           activeUploadedVideoRef.current = null;
@@ -618,11 +627,11 @@ export default function UploadVideoScreen({
         }
         return;
       }
-      const queuedResponse = await triggerVideoAnalysis(
+      const queuedResponse = await measureSubmissionPhase('queue_submission', () => triggerVideoAnalysis(
         pendingUpload.videoId,
         accessToken,
         run.controller.signal
-      );
+      ));
       if (!analysisRunIsCurrent(run)) {
         if (activeUploadedVideoRef.current?.videoId === pendingUpload.videoId) {
           activeUploadedVideoRef.current = null;
@@ -1619,7 +1628,15 @@ export default function UploadVideoScreen({
             </Text>
             <Text style={styles.analysisOverlayHelper}>
               {uploading
-                ? 'Peso checks a small set of frames before full analysis.'
+                ? statusMessage?.includes('Uploading')
+                  ? 'Sending your video securely. Keep this page open until it is queued.'
+                  : statusMessage?.includes('Verifying')
+                    ? 'Checking that the video is readable and within the supported limits.'
+                    : statusMessage?.includes('quality support')
+                      ? 'Confirming that recording quality checks are available.'
+                    : statusMessage?.includes('quality')
+                      ? 'Checking sampled frames for camera angle, visibility, and recording quality.'
+                      : 'Preparing your video for the analysis queue.'
                 : 'We’re processing your lift. This may take a minute.'}
             </Text>
             <Button

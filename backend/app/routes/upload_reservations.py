@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import tempfile
+import time
+from ..services.phase_timing import video_phase_timing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
@@ -239,6 +241,7 @@ async def upload_reserved_content(
 
   temp_path: Path | None = None
   uploaded_bytes = 0
+  transfer_started = time.perf_counter()
   try:
     with tempfile.NamedTemporaryFile(delete=False, suffix=Path(blob_path).suffix) as temporary:
       temp_path = Path(temporary.name)
@@ -249,6 +252,7 @@ async def upload_reserved_content(
         if uploaded_bytes > requested_bytes:
           raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Uploaded bytes exceed the reservation.")
         temporary.write(chunk)
+    logger.info("Video phase event=video_phase_timing phase=api_receive resource_id=%s duration_ms=%s", reservation_id, round((time.perf_counter() - transfer_started) * 1000))
     if uploaded_bytes <= 0:
       raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Upload body is empty.")
     write = {
@@ -257,7 +261,8 @@ async def upload_reserved_content(
     }
     attempt_id = str(uuid4())
     repository.admit_source_write(attempt_id, user_id, str(reservation_id), **write)
-    StorageService().create_file(blob_path, temp_path, content_type)
+    with video_phase_timing("storage_write", str(reservation_id)):
+      StorageService().create_file(blob_path, temp_path, content_type)
     repository.observe_source_write_success(attempt_id, user_id, str(reservation_id), **write)
   except HTTPException:
     raise
@@ -332,13 +337,15 @@ def complete_upload_reservation(
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=Path(blob_path).suffix) as temporary:
       temp_path = Path(temporary.name)
-    downloaded_bytes = storage.download_to_path(blob_path, temp_path, max_bytes=settings.max_video_upload_bytes)
+    with video_phase_timing("verification_download", str(reservation_id)):
+      downloaded_bytes = storage.download_to_path(blob_path, temp_path, max_bytes=settings.max_video_upload_bytes)
     if downloaded_bytes != actual_bytes:
       raise MediaValidationError("byte_mismatch", "Uploaded video size changed during verification.")
     with temp_path.open("rb") as source:
       if not _has_expected_video_signature(blob_path, source.read(4096)):
         raise MediaValidationError("format_mismatch", "Uploaded file contents do not match the video format.")
-    metadata = probe_video_metadata(temp_path, timeout_seconds=settings.ffmpeg_timeout_seconds)
+    with video_phase_timing("verification_probe", str(reservation_id)):
+      metadata = probe_video_metadata(temp_path, timeout_seconds=settings.ffmpeg_timeout_seconds)
     enforce_video_limits(
       metadata,
       max_duration_ms=settings.max_video_duration_ms,

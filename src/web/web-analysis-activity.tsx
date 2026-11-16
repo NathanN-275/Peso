@@ -27,6 +27,7 @@ type QueuedAnalysis = {
   videoId: string;
   jobId: string | null;
   status: VideoAnalysisStatus;
+  sourceFileName?: string | null;
 };
 
 type WebAnalysisActivityContextValue = {
@@ -92,6 +93,7 @@ function optimisticActivity(activity: QueuedAnalysis): AnalysisActivityItem {
     last_heartbeat_at: null,
     failure_class: null,
     recovery_action: null,
+    source_file_name: activity.sourceFileName ?? null,
   };
 }
 
@@ -110,7 +112,7 @@ export function WebAnalysisActivityProvider({ children }: { children: React.Reac
   const [items, setItems] = useState<AnalysisActivityItem[]>([]);
   const [activeCount, setActiveCount] = useState(0);
   const [activeLimit, setActiveLimit] = useState(DEFAULT_ACTIVE_LIMIT);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [surfaceActive, setSurfaceActive] = useState(
     Platform.OS !== 'web' || typeof document === 'undefined' || document.visibilityState === 'visible'
@@ -119,8 +121,12 @@ export function WebAnalysisActivityProvider({ children }: { children: React.Reac
   const [pendingVideoSetup, setPendingVideoSetup] = useState<VideoSetupSelection | null>(null);
   const optimisticItemsRef = useRef<AnalysisActivityItem[]>([]);
   const itemsRef = useRef<AnalysisActivityItem[]>([]);
+  const observedActive = useRef(new Set<string>());
+  const observedReady = useRef(new Set<string>());
 
   useEffect(() => {
+    observedActive.current.clear();
+    observedReady.current.clear();
     if (!user?.id) {
       optimisticItemsRef.current = [];
       itemsRef.current = [];
@@ -128,6 +134,7 @@ export function WebAnalysisActivityProvider({ children }: { children: React.Reac
       setActiveCount(0);
       setActiveLimit(DEFAULT_ACTIVE_LIMIT);
       setError(null);
+      setLoading(false);
       return;
     }
 
@@ -137,6 +144,18 @@ export function WebAnalysisActivityProvider({ children }: { children: React.Reac
     setItems(optimisticItems);
     setActiveCount(optimisticItems.filter((item) => item.status === 'queued' || item.status === 'processing').length);
   }, [user?.id]);
+
+  useEffect(() => {
+    for (const item of items) {
+      if (item.status === 'queued' || item.status === 'processing') observedActive.current.add(item.video_id);
+      if (item.status !== 'ready' || !observedActive.current.has(item.video_id) || observedReady.current.has(item.video_id)) continue;
+      const readyAt = Date.parse(item.stage_timestamps?.ready || item.updated_at);
+      if (Number.isFinite(readyAt)) {
+        console.info('[analysis-metric] ui_ready_delay_ms', { duration_ms: Math.max(0, Date.now() - readyAt) });
+        observedReady.current.add(item.video_id);
+      }
+    }
+  }, [items]);
 
   useEffect(() => {
     if (Platform.OS === 'web') {
@@ -160,6 +179,7 @@ export function WebAnalysisActivityProvider({ children }: { children: React.Reac
     try {
       const accessToken = await getFreshBackendAccessToken();
       const response: AnalysisActivityResponse = await getAnalysisActivity(accessToken, signal);
+      if (signal?.aborted) return itemsRef.current;
       const mergedItems = mergeAnalysisActivity(response.items, optimisticItemsRef.current, Date.now());
       const serverVideoIds = new Set(response.items.map((item) => item.video_id));
       const optimisticVideoIds = new Set(optimisticItemsRef.current.map((item) => item.video_id));
@@ -199,6 +219,7 @@ export function WebAnalysisActivityProvider({ children }: { children: React.Reac
     }
   }, [session?.access_token, user?.id]);
 
+  const hasActiveWork = items.some((item) => item.status === 'queued' || item.status === 'processing');
   useEffect(() => {
     if (!session?.access_token || !user?.id || !surfaceActive) return;
 
@@ -221,7 +242,7 @@ export function WebAnalysisActivityProvider({ children }: { children: React.Reac
       controller.abort();
       if (timer) clearTimeout(timer);
     };
-  }, [refresh, session?.access_token, surfaceActive, user?.id]);
+  }, [refresh, session?.access_token, surfaceActive, user?.id, hasActiveWork]);
 
   const recordQueued = useCallback((activity: QueuedAnalysis) => {
     if (!user?.id) return;

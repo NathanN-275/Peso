@@ -27,6 +27,7 @@ from ..services.analyzed_video_exports import (
 )
 from ..services.analysis_trace import get_analysis_trace_service
 from ..services.analysis_job_repository import AnalysisJobRepository
+from ..services.phase_timing import video_phase_timing
 from ..services.auth import get_current_user_id
 from ..services.config import get_settings
 from ..services.saved_lift_exports import ARCHIVE_BUCKET, SavedLiftExportService
@@ -84,6 +85,7 @@ class AnalyzeResponse(BaseModel):
 class AnalysisActivityItemResponse(BaseModel):
   job_id: UUID
   video_id: UUID
+  source_file_name: str | None = None
   status: Literal["queued", "processing", "ready", "failed"]
   stage: Literal["queued", "downloading", "pose", "barbell_tracking", "saving", "ready", "failed"]
   exercise_type: str
@@ -985,11 +987,13 @@ def run_quality_preflight(
   temp_file = None
 
   try:
-    temp_file = storage.download_to_tempfile(playback_path)
-    preflight = SideSquatQualityPreflight().evaluate_file(
-      temp_file,
-      exercise_type=exercise_type,
-    )
+    with video_phase_timing("quality_download", video_id_str):
+      temp_file = storage.download_to_tempfile(playback_path)
+    with video_phase_timing("quality_evaluation", video_id_str):
+      preflight = SideSquatQualityPreflight().evaluate_file(
+        temp_file,
+        exercise_type=exercise_type,
+      )
     repository.update_video(video_id_str, {"quality_preflight": preflight})
     _record_quality_preflight_trace(video, preflight)
   except RuntimeError as error:
@@ -1155,6 +1159,7 @@ def get_analysis_activity(
 
   try:
     videos = repository.list_analysis_activity_videos(user_id)
+    source_file_names = repository.analysis_source_file_names(user_id, [str(video["id"]) for video in videos])
     jobs_by_video_id = jobs.latest_for_videos([str(video["id"]) for video in videos])
     active_count = repository.count_user_in_progress_videos(user_id)
   except Exception as error:
@@ -1193,6 +1198,7 @@ def get_analysis_activity(
       AnalysisActivityItemResponse(
         job_id=job["id"],
         video_id=video_id,
+        source_file_name=source_file_names.get(video_id),
         status=public_status,
         stage=_analysis_activity_stage(video, job),
         exercise_type=str(video.get("exercise_type") or "unknown"),

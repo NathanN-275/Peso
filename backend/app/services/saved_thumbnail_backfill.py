@@ -90,7 +90,8 @@ def backfill_saved_video_thumbnails(
       with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_thumbnail:
         thumbnail_file = Path(temp_thumbnail.name)
 
-      create_video_thumbnail(source_file, thumbnail_file)
+      create_video_thumbnail(source_file, thumbnail_file,
+                             duration_seconds=(video.get("duration_ms") or 0) / 1000)
       thumbnail_path = write_generated_media(
         video=video, purpose="thumbnail_backfill", local_path=thumbnail_file, storage=storage,
       )

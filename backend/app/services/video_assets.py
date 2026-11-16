@@ -21,17 +21,23 @@ def build_thumbnail_storage_path(user_id: str, video_id: str, attempt_id: str | 
   return f"{user_id}/thumbnails/{generation}-{THUMBNAIL_VERSION}.jpg"
 
 
-def create_video_thumbnail(source_path: Path, output_path: Path, at_seconds: float = 1.0) -> Path:
+def create_video_thumbnail(source_path: Path, output_path: Path, at_seconds: float = 1.0,
+                           *, duration_seconds: float | None = None) -> Path:
   ffmpeg_binary = _resolve_ffmpeg_binary()
   timeout_seconds = get_settings().ffmpeg_timeout_seconds
   output_path.parent.mkdir(parents=True, exist_ok=True)
+  # Verified duration lets short clips choose a real interior frame rather than
+  # seeking past their last frame. Keep the existing one-second default.
+  selected_time = max(at_seconds, 0)
+  if duration_seconds is not None and duration_seconds > 0:
+    selected_time = min(selected_time, duration_seconds / 2)
   command = [
     ffmpeg_binary,
     "-y",
     "-i",
     str(source_path),
     "-ss",
-    str(max(at_seconds, 0)),
+    str(selected_time),
     "-frames:v",
     "1",
     "-an",

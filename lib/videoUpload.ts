@@ -12,6 +12,7 @@ import {
   getBackendApiUrl,
   markVideoUploadFailed,
 } from './backendApi';
+import { measureSubmissionPhase } from './submissionTiming';
 import { getFreshBackendAccessToken } from './backendAuth';
 import {
   shouldCheckPinTrackingCapability,
@@ -686,12 +687,12 @@ export async function uploadVideoForAnalysis({
         getBackendApiUrl(),
         reservation.upload_authentication
       );
-      uploadResponse = await fetch(uploadUrl, {
+      uploadResponse = await measureSubmissionPhase('transfer', () => fetch(uploadUrl, {
         ...uploadRequest,
         signal: controller.signal,
         credentials: 'omit',
         redirect: 'error',
-      });
+      }));
     } catch {
       throw new Error('Private video upload could not complete. Check your connection and try again.');
     } finally {
@@ -701,7 +702,7 @@ export async function uploadVideoForAnalysis({
       throw new Error('Private video upload failed or expired. Please try again.');
     }
     onStatusChange?.('Verifying video limits...');
-    const registeredVideo = await completeUploadReservation(reservation.reservation_id, accessToken);
+    const registeredVideo = await measureSubmissionPhase('verification', () => completeUploadReservation(reservation.reservation_id, accessToken!));
     logVideoUploadDebug('Video upload registration completed.', {
       videoId: registeredVideo.video_id,
       storagePath: registeredVideo.storage_path,

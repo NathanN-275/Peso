@@ -29,3 +29,11 @@ test('timeout and transient failures offer retry', () => {
     assert.equal(canRetryAnalysis(activity), true);
   }
 });
+
+test('an earlier saving attempt does not mislabel a later processing failure', () => {
+  const activity = { failure_class: 'analysis_runtime', stage_timestamps: {
+    saving: '2026-11-16T01:00:00Z', pose: '2026-11-16T01:01:00Z', failed: '2026-11-16T01:02:00Z',
+  } };
+  assert.match(failureCopy(activity), /processing error/);
+  assert.doesNotMatch(failureCopy(activity), /finish saving/);
+});

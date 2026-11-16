@@ -654,6 +654,7 @@ class VideoRoutesTest(unittest.TestCase):
 
   def test_analysis_activity_is_owner_scoped_and_maps_retry_to_queued(self) -> None:
     repository = MagicMock()
+    repository.analysis_source_file_names.return_value = {str(VIDEO_ID): "IMG_0013.MOV"}
     repository.list_analysis_activity_videos.return_value = [
       {
         "id": str(VIDEO_ID),
@@ -697,6 +698,8 @@ class VideoRoutesTest(unittest.TestCase):
       response = get_analysis_activity(USER_ID)
 
     repository.list_analysis_activity_videos.assert_called_once_with(USER_ID)
+    repository.analysis_source_file_names.assert_called_once_with(USER_ID, [str(VIDEO_ID)])
+    self.assertEqual(response.items[0].source_file_name, "IMG_0013.MOV")
     repository.count_user_in_progress_videos.assert_called_once_with(USER_ID)
     jobs.latest_for_videos.assert_called_once_with([str(VIDEO_ID)])
     self.assertEqual(response.active_count, 1)
@@ -714,6 +717,7 @@ class VideoRoutesTest(unittest.TestCase):
 
   def test_analysis_activity_returns_replace_upload_for_invalid_video(self) -> None:
     repository = MagicMock()
+    repository.analysis_source_file_names.return_value = {}
     repository.list_analysis_activity_videos.return_value = [{
       "id": str(VIDEO_ID),
       "status": "failed",
@@ -745,6 +749,7 @@ class VideoRoutesTest(unittest.TestCase):
 
   def test_analysis_activity_corrects_historical_invalid_stream_timeout(self) -> None:
     repository = MagicMock()
+    repository.analysis_source_file_names.return_value = {}
     repository.list_analysis_activity_videos.return_value = [{
       "id": str(VIDEO_ID),
       "status": "failed",
@@ -781,6 +786,7 @@ class VideoRoutesTest(unittest.TestCase):
 
   def test_analysis_activity_returns_retry_for_timeout(self) -> None:
     repository = MagicMock()
+    repository.analysis_source_file_names.return_value = {}
     repository.list_analysis_activity_videos.return_value = [{
       "id": str(VIDEO_ID),
       "status": "failed",
@@ -812,6 +818,7 @@ class VideoRoutesTest(unittest.TestCase):
 
   def test_analysis_activity_returns_service_unavailable_when_queue_schema_is_missing(self) -> None:
     repository = MagicMock()
+    repository.analysis_source_file_names.return_value = {}
     repository.list_analysis_activity_videos.return_value = [
       {
         "id": str(VIDEO_ID),

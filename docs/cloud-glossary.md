@@ -31,3 +31,9 @@
 | Media Validation Job | The bounded verification work performed by upload completion before analysis admission. |
 | Create-only SAS | A short-lived, HTTPS-only capability for one new blob; it grants no read, list, delete, or overwrite permission. |
 | Admission shutdown | A persistent refusal of new Upload Reservations; existing processing and owner-checked retrieval remain available. |
+| Analysis activity item | One owner-scoped lift/job shown independently, identified by video ID, original filename and queued timestamp. Duplicate filenames remain separate items. |
+| Queue confirmation | The untimed acknowledgement shown only after server admission; it does not mean processing or saving has completed. |
+| Analysis stage | A server-reported step: queued, downloading, pose, barbell tracking, saving, ready or failed. Stage labels and elapsed time are not percentages or ETAs. |
+| Playback session expiry | Expiration of the short-lived private playback lease; it does not establish deletion or expiry of the recording. |
+| Fitted video rectangle | The aspect-preserving contain rectangle shared by web video and every tracking overlay. |
+| Genuine thumbnail | An automatically generated frame from that lift's video; never the marketing screenshot or another lift's frame. |

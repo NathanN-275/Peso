@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { LayoutChangeEvent, StyleSheet, Text, View } from 'react-native';
+import { LayoutChangeEvent, Platform, StyleSheet, Text, View } from 'react-native';
 import tokens from '../theme/tokens';
 import { formatSeconds, getTimeFromTrackX } from '../utils/videoReview';
 
@@ -70,6 +70,28 @@ export default function TimelineScrubber({
   const handleTrackLayout = ({ nativeEvent }: LayoutChangeEvent) => {
     setTrackWidth(nativeEvent.layout.width);
   };
+
+  if (Platform.OS === 'web') return (
+    <View style={styles.container}>
+      <Text style={styles.timeText}>{formatSeconds(currentTime)}</Text>
+      <input type="range" aria-label="Video position" min={0} max={Math.max(0, duration)} step={0.05}
+        value={Math.min(Math.max(currentTime, 0), Math.max(0, duration))}
+        aria-valuetext={`${formatSeconds(currentTime)} of ${formatSeconds(duration)}`}
+        disabled={duration <= 0} style={{ flex: 1, minWidth: 0, height: 44, accentColor: tokens.colors.brand, cursor: 'pointer' }}
+        onPointerDown={() => { setIsDragging(true); onScrubStart?.(); }}
+        onChange={event => onSeek(Number(event.currentTarget.value))}
+        onPointerUp={event => { setIsDragging(false); onScrubEnd?.(Number(event.currentTarget.value)); }}
+        onPointerCancel={event => { setIsDragging(false); onScrubEnd?.(Number(event.currentTarget.value)); }}
+        onBlur={event => { if (isDragging) { setIsDragging(false); onScrubEnd?.(Number(event.currentTarget.value)); } }}
+        onKeyDown={event => {
+          const offset = { ArrowLeft: -5, ArrowDown: -5, ArrowRight: 5, ArrowUp: 5 }[event.key];
+          if (offset === undefined && event.key !== 'Home' && event.key !== 'End') return;
+          event.preventDefault();
+          onSeek(event.key === 'Home' ? 0 : event.key === 'End' ? duration : Math.max(0, Math.min(duration, currentTime + offset!)));
+        }} />
+      <Text style={styles.timeText}>{formatSeconds(duration)}</Text>
+    </View>
+  );
 
   return (
     <View style={styles.container}>

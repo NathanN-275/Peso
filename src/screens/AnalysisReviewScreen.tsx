@@ -1,12 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEvent } from 'expo';
-import { VideoView, useVideoPlayer } from 'expo-video';
+import { VideoView, useVideoPlayer } from '../components/ReviewVideo';
 import { attachPrivateMediaSource } from '../../lib/privateMediaLifecycle';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   LayoutChangeEvent,
   Pressable,
+  Platform,
   StyleSheet,
   Text,
   View,
@@ -150,6 +151,8 @@ export default function AnalysisReviewScreen({
   const [wasPlayingBeforeScrub, setWasPlayingBeforeScrub] = useState(false);
   const playback = useVideoPlayback(result.video_id, session?.access_token, videoUri);
   const mediaAvailable = Boolean(playback.source);
+  const isWeb = Platform.OS === 'web';
+  const reviewFit = isWeb ? 'contain' : 'cover';
   const resumeTime = useRef(0);
   const showQualityWarning = shouldShowQualityAdvisory(qualityPreflight, mode)
     && !qualityAdvisoryAcknowledged
@@ -290,7 +293,7 @@ export default function AnalysisReviewScreen({
     const points = Array.isArray(barbellPath?.points) ? barbellPath.points : [];
     const firstPoint = points[0] ?? null;
     const lastPoint = points[points.length - 1] ?? null;
-    const rect = calculateVideoRect(videoLayout, videoSize, 'cover');
+    const rect = calculateVideoRect(videoLayout, videoSize, reviewFit);
     const firstMappedPoint = firstPoint
       ? {
         x: rect.x + (firstPoint.x * rect.width),
@@ -463,7 +466,7 @@ export default function AnalysisReviewScreen({
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} testID="review-screen">
+    <SafeAreaView style={[styles.safeArea, isWeb && styles.webSafeArea]} testID="review-screen">
       <View style={styles.container}>
         <ConfirmationDialog
           visible={showQualityWarning}
@@ -512,8 +515,8 @@ export default function AnalysisReviewScreen({
           )}
         </View>
 
-        <View style={styles.videoArea} onLayout={handleVideoLayout}>
-          <Pressable style={styles.videoPressable} onPress={handleTogglePlayback}>
+        <View style={[styles.videoArea, isWeb && styles.webVideoArea]} onLayout={handleVideoLayout}>
+          <Pressable style={styles.videoPressable} accessibilityRole="button" accessibilityLabel="Toggle video playback" onPress={handleTogglePlayback}>
             {mediaAvailable ? (
               <>
                 <VideoView
@@ -521,7 +524,7 @@ export default function AnalysisReviewScreen({
                   crossOrigin={playback.privateRemote ? 'use-credentials' : undefined}
                   style={styles.video}
                   nativeControls={false}
-                  contentFit="cover"
+                  contentFit={reviewFit}
                   allowsPictureInPicture={false}
                   onFirstFrameRender={() => setErrorMessage(null)}
                 />
@@ -531,7 +534,7 @@ export default function AnalysisReviewScreen({
                     currentTime={currentTime}
                     containerSize={videoLayout}
                     videoSize={videoSize}
-                    contentFit="cover"
+                    contentFit={reviewFit}
                     exercise={result.exercise}
                     cameraView={cameraView}
                   />
@@ -541,7 +544,7 @@ export default function AnalysisReviewScreen({
                     frame={poseFrame}
                     containerSize={videoLayout}
                     videoSize={videoSize}
-                    contentFit="cover"
+                    contentFit={reviewFit}
                     exercise={result.exercise}
                     cameraView={cameraView}
                     selectedSide={selectedPoseSide}
@@ -554,7 +557,7 @@ export default function AnalysisReviewScreen({
                     currentTime={currentTime}
                     containerSize={videoLayout}
                     videoSize={videoSize}
-                    contentFit="cover"
+                    contentFit={reviewFit}
                   />
                 ) : null}
                 {showReferencePins && trackingReference ? (
@@ -562,7 +565,7 @@ export default function AnalysisReviewScreen({
                     reference={trackingReference}
                     containerSize={videoLayout}
                     videoSize={videoSize}
-                    contentFit="cover"
+                    contentFit={reviewFit}
                   />
                 ) : null}
                 {trackingAssistanceLabel ? (
@@ -586,9 +589,9 @@ export default function AnalysisReviewScreen({
             ) : (
               <View style={styles.mediaUnavailable}>
                 <Ionicons name="analytics-outline" size={46} color={tokens.colors.brand} />
-                <Text style={styles.mediaUnavailableTitle}>Analysis saved</Text>
+                <Text style={styles.mediaUnavailableTitle}>{playback.loading ? 'Loading your video' : playback.expired ? 'Playback session expired' : playback.error ? 'Video could not load' : 'Video unavailable'}</Text>
                 <Text style={styles.mediaUnavailableText}>
-                  The source video has expired to reduce storage usage.
+                  {playback.loading ? 'Preparing secure playback…' : playback.expired ? 'Retry playback to request a fresh session. Your analysis remains available.' : playback.error ? 'Retry playback below. Your analysis remains available.' : 'This video is currently unavailable. Your analysis remains available.'}
                 </Text>
               </View>
             )}
@@ -608,6 +611,12 @@ export default function AnalysisReviewScreen({
         </View>
 
         <View style={styles.bottomPanel}>
+          {isWeb && mediaAvailable && <Pressable accessibilityRole="button" accessibilityLabel={isPlaying ? 'Pause video' : 'Play video'}
+            accessibilityState={{ disabled: status !== 'readyToPlay' }} disabled={status !== 'readyToPlay'}
+            onPress={handleTogglePlayback} style={styles.webPlaybackButton}>
+            <Ionicons name={isPlaying ? 'pause' : 'play'} size={22} color={tokens.colors.textPrimary} />
+            <Text style={styles.topButtonText}>{isPlaying ? 'Pause' : 'Play'}</Text>
+          </Pressable>}
           {mediaAvailable ? (
             <TimelineScrubber
               currentTime={currentTime}
@@ -845,6 +854,9 @@ export default function AnalysisReviewScreen({
 }
 
 const styles = StyleSheet.create({
+  webSafeArea: { minHeight: 0, overflow: 'hidden' },
+  webVideoArea: { minHeight: 100, minWidth: 0, overflow: 'hidden' },
+  webPlaybackButton: { minHeight: 44, alignSelf: 'center', flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, borderRadius: 8, backgroundColor: '#173B82', marginBottom: 8 },
   safeArea: {
     flex: 1,
     backgroundColor: '#000',
