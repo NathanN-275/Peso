@@ -3,8 +3,8 @@
 ## Evidence and conclusion
 
 Nathan supplied the October 8, 2026, 23:42 UTC response from GitHub Support
-for ticket #4813900 in this chat on November 16. The private ticket was not
-independently accessed. Support recommends revocation/rotation as the primary
+for ticket #4813900 in this chat on November 16. A subsequent signed-in browser read independently confirmed the archived
+ticket and matching October 8 response. Support recommends revocation/rotation as the primary
 remedy and says history removal is generally unnecessary once access is
 revoked. It does not confirm that any GitHub object or cached view was removed.
 
@@ -35,3 +35,12 @@ that does not prove credential revocation. Recheck scanners on the final source.
 This disposition applies to the documented New Relic credential only. New
 exposures or data whose risk cannot be mitigated by revocation need their own
 remediation review. No credentials or provider settings changed in this update.
+
+## Credential inventory follow-up
+
+[November 16 provider preflight](staging-next-actions-20261116.md) confirms
+that the custom Student scaler role is absent in both selected Supabase
+projects and the generic scaler role is NOLOGIN. Old GitHub Student scaler
+secrets remain stored and their manual historical consumers remain in source.
+Azure resource inventory needs renewed operator authentication. No old secret
+was deleted or new credential created; Gate 3 is not marked complete.
