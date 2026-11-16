@@ -1,12 +1,14 @@
 import type * as ImagePicker from 'expo-image-picker';
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Navigate, useNavigate, useParams } from 'react-router';
 import { useAuth } from '../../context/AuthContext';
 import { fetchAnalysisResult } from '../../lib/backendApi';
 import { getFreshBackendAccessToken } from '../../lib/backendAuth';
-import type { AnalysisActivityItem, VideoAnalysisResult } from '../types/videoAnalysis';
+import type { VideoAnalysisResult } from '../types/videoAnalysis';
 import { useWebAnalysisActivity } from './web-analysis-activity';
+import { AnalysisIdentity, AnalysisProgress } from './web-analysis-progress';
+import { analysisStageCopy } from '../../lib/analysisActivityPresentation';
 import VideoSetupModal from '../components/VideoSetupModal';
 import type { VideoSetupSelection } from '../constants/videoSetup';
 
@@ -28,27 +30,6 @@ function RouteLoading({ label = 'Loading analysis…' }: { label?: string }) {
       <Text style={styles.muted}>{label}</Text>
     </View>
   );
-}
-
-function stageCopy(activity: AnalysisActivityItem | null) {
-  switch (activity?.stage) {
-    case 'queued':
-      return { title: 'Squat set is queued', detail: 'Waiting for an analysis worker.' };
-    case 'downloading':
-      return { title: 'Preparing your video', detail: 'Downloading the uploaded source.' };
-    case 'pose':
-      return { title: 'Estimating pose', detail: 'Tracking the lifter through the set.' };
-    case 'barbell_tracking':
-      return { title: 'Tracking the barbell', detail: 'Building the visible bar path.' };
-    case 'saving':
-      return { title: 'Saving your analysis', detail: 'Preparing the result for review.' };
-    case 'ready':
-      return { title: 'Analysis ready', detail: 'Your real result is ready to review.' };
-    case 'failed':
-      return { title: 'Analysis could not finish', detail: 'Try another side-view squat video.' };
-    default:
-      return { title: 'Loading analysis activity', detail: 'Checking the durable queue.' };
-  }
 }
 
 export function WebUploadRoute() {
@@ -82,7 +63,7 @@ export function WebUploadRoute() {
           recordQueued(activity);
           setPendingRecordedAsset(null);
           setPendingVideoSetup(null);
-          navigate(`/processing/${activity.videoId}`);
+          navigate(`/queued/${activity.videoId}`, { replace: true });
         }}
       />
     </Suspense>
@@ -156,27 +137,43 @@ export function WebSubmissionChoiceRoute() {
   );
 }
 
+export function WebQueuedRoute() {
+  const navigate = useNavigate();
+  const { videoId } = useParams();
+  const { items, activeCount, activeLimit, loading } = useWebAnalysisActivity();
+  const activity = items.find((item) => item.video_id === videoId);
+  if (!videoId) return <Navigate to="/" replace />;
+  if (!activity && loading) return <RouteLoading />;
+  if (!activity) return <Navigate to="/" replace />;
+  return <ScrollView contentContainerStyle={styles.processingPage}>
+    <Text accessibilityRole="header" style={styles.heading}>Video queued for analysis</Text>
+    {activity && <AnalysisIdentity activity={activity} />}
+    <Text style={styles.body}>Your video was submitted. Analysis continues when you leave this page.</Text>
+    <Text style={styles.body}>{activeCount < activeLimit
+      ? 'You can upload or record another video while this one runs.'
+      : `All ${activeLimit} analysis slots are busy. Follow each video’s progress on Home.`}</Text>
+    <Pressable accessibilityRole="button" onPress={() => navigate('/', { replace: true })} style={styles.primaryButton}>
+      <Text style={styles.primaryButtonText}>Back to Home</Text>
+    </Pressable>
+  </ScrollView>;
+}
+
 export function WebProcessingRoute() {
   const navigate = useNavigate();
   const { videoId } = useParams();
   const { items, loading, error, refresh } = useWebAnalysisActivity();
   const activity = items.find((item) => item.video_id === videoId) ?? null;
-  const copy = stageCopy(activity);
+  const copy = analysisStageCopy(activity);
 
   if (!videoId) return <Navigate to="/" replace />;
 
   return (
-    <View style={styles.processingPage}>
-      <View style={styles.stageMark}>
-        <Text style={styles.stageMarkText}>{activity?.stage === 'ready' ? '✓' : 'P'}</Text>
-      </View>
+    <ScrollView contentContainerStyle={styles.processingPage}>
+      {activity && <AnalysisIdentity activity={activity} />}
       <Text accessibilityRole="header" style={styles.heading}>{copy.title}</Text>
       <Text style={styles.body}>{copy.detail}</Text>
-      <View style={styles.stageList} accessibilityLabel="Analysis stages">
-        {['Queued', 'Downloading', 'Pose', 'Barbell tracking', 'Saving', 'Ready'].map((stage) => (
-          <Text key={stage} style={styles.stageText}>{stage}</Text>
-        ))}
-      </View>
+      {activity && <AnalysisProgress activity={activity} />}
+      {!activity && !loading && !error && <Text style={styles.muted}>This activity is no longer available. Check Home for your current lifts.</Text>}
       {loading ? <ActivityIndicator color="#1F6BFF" /> : null}
       {error ? (
         <View style={styles.errorCard} role="alert">
@@ -194,7 +191,7 @@ export function WebProcessingRoute() {
       <Pressable accessibilityRole="button" onPress={() => navigate('/')} style={styles.secondaryButton}>
         <Text style={styles.secondaryButtonText}>Back to Home</Text>
       </Pressable>
-    </View>
+    </ScrollView>
   );
 }
 
@@ -289,8 +286,8 @@ const styles = StyleSheet.create({
   },
   processingPage: {
     flex: 1,
-    minHeight: 560,
-    padding: 40,
+    flexGrow: 1,
+    padding: 24,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 18,

@@ -99,6 +99,18 @@ class VideoAssetsTest(unittest.TestCase):
       height, width = image.shape[:2]
       self.assertGreater(height, width)
 
+  def test_automatic_thumbnail_uses_an_interior_frame_for_a_short_clip(self) -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+      source = Path(temp_dir) / "short.mp4"
+      output = Path(temp_dir) / "preview.jpg"
+      subprocess.run([_resolve_ffmpeg_binary(), "-y", "-f", "lavfi", "-i",
+                      "color=c=blue:s=90x160:r=30", "-t", "0.3", "-c:v", "mpeg4", str(source)],
+                     capture_output=True, check=True)
+      create_video_thumbnail(source, output, duration_seconds=0.3)
+      image = cv2.imread(str(output))
+      self.assertIsNotNone(image)
+      self.assertGreater(image.shape[0], image.shape[1])
+
 
 if __name__ == "__main__":
   unittest.main()

@@ -478,6 +478,7 @@ export type AnalysisActivityStage =
 export type AnalysisActivityItem = {
   job_id: string;
   video_id: string;
+  source_file_name?: string | null;
   status: AnalysisActivityStatus;
   stage: AnalysisActivityStage;
   exercise_type: string;

@@ -2,6 +2,7 @@ import {
   useEffect, useMemo, useRef, useState,
   type ComponentProps, type ComponentType, type KeyboardEventHandler,
 } from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import {
   Image,
   Pressable,
@@ -50,13 +51,14 @@ import {
   toggleSavedLiftSelection,
   type SavedLiftView,
 } from '../../lib/savedLiftSelectionPolicy';
-import type { SavedLiftExportJob, SavedVideo, VideoAnalysisRep } from '../types/videoAnalysis';
+import type { AnalysisActivityItem, SavedLiftExportJob, SavedVideo, VideoAnalysisRep } from '../types/videoAnalysis';
 import {
   WebAnalysisActivityProvider,
   useWebAnalysisActivity,
 } from './web-analysis-activity';
 import {
   WebProcessingRoute,
+  WebQueuedRoute,
   WebRecordRoute,
   WebReviewRoute,
   WebSubmissionChoiceRoute,
@@ -64,6 +66,8 @@ import {
   WebVideoSetupRoute,
 } from './web-analysis-routes';
 import AuthChallenge from '../components/auth/AuthChallenge';
+import { AnalysisIdentity, AnalysisProgress } from './web-analysis-progress';
+import { analysisStageCopy } from '../../lib/analysisActivityPresentation';
 
 // React Native Web exposes onKeyDown beyond the native Pressable typings.
 type WebPressableProps = ComponentProps<typeof Pressable> & {
@@ -130,8 +134,6 @@ function currentWebAuthLinkError() {
   ).errorMessage;
 }
 
-const previewImageAsset = require('../../assets/demo/peso-pose-overlay.jpg') as number;
-const previewImage = previewImageAsset as ImageSourcePropType;
 const logoImage = require('../../assets/peso-logo.png') as ImageSourcePropType;
 const SAVED_LIFT_CACHE_TTL_MS = 60_000;
 
@@ -237,6 +239,7 @@ function ActionButton({
 }
 
 function Wordmark({ compact = false }: { compact?: boolean }) {
+  if (compact) return <View style={styles.wordmarkPlaceholder} accessibilityLabel="Peso logo placeholder" />;
   return (
     <View style={[styles.wordmark, compact && styles.wordmarkCompact]} accessibilityLabel="Peso">
       <Image
@@ -334,19 +337,36 @@ function Field({
   value?: string;
   onChangeText?: (value: string) => void;
 }) {
+  const [passwordVisible, setPasswordVisible] = useState(false);
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
-      <TextInput
-        accessibilityLabel={label}
-        autoCapitalize="none"
-        placeholder={placeholder}
-        placeholderTextColor="#66738A"
-        secureTextEntry={secureTextEntry}
-        value={value}
-        onChangeText={onChangeText}
-        style={styles.input}
-      />
+      <View style={styles.fieldInputWrap}>
+        <TextInput
+          accessibilityLabel={label}
+          autoCapitalize="none"
+          placeholder={placeholder}
+          placeholderTextColor="#66738A"
+          secureTextEntry={secureTextEntry && !passwordVisible}
+          value={value}
+          onChangeText={onChangeText}
+          style={[styles.input, secureTextEntry && styles.passwordInput]}
+        />
+        {secureTextEntry ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={passwordVisible ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
+            onPress={() => setPasswordVisible((visible) => !visible)}
+            style={styles.passwordToggle}
+          >
+            <Ionicons
+              name={passwordVisible ? 'eye-off-outline' : 'eye-outline'}
+              size={22}
+              color={colors.textMuted}
+            />
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -581,11 +601,11 @@ function ResetScreen() {
 }
 
 const desktopNavItems = [
-  { path: '/', label: 'Home', short: 'H' },
-  { path: '/setup', label: 'Analyze', short: 'A' },
-  { path: '/saved-lifts', label: 'Saved Lifts', short: 'S' },
-  { path: '/profile', label: 'Profile', short: 'P' },
-];
+  { path: '/', label: 'Home', icon: 'home-outline' },
+  { path: '/setup', label: 'Analyze', icon: 'barbell-outline' },
+  { path: '/saved-lifts', label: 'Saved Lifts', icon: 'folder-outline' },
+  { path: '/profile', label: 'Profile', icon: 'person-outline' },
+] as const;
 
 const mobileNavItems = desktopNavItems;
 
@@ -621,8 +641,8 @@ function Navigation({
   return (
     <View style={mobile ? styles.bottomNav : [styles.sidebar, compact && styles.sidebarCompact]} accessibilityLabel="Primary navigation">
       {!mobile && (
-        <View style={styles.sidebarHeader}>
-          <Pressable accessibilityRole="link" onPress={() => navigate('/')} style={styles.sidebarWordmark}>
+        <View style={[styles.sidebarHeader, compact && styles.sidebarHeaderCompact]}>
+          <Pressable accessibilityRole="link" onPress={() => navigate('/')} style={[styles.sidebarWordmark, compact && styles.sidebarWordmarkCompact]}>
             <Wordmark compact={compact} />
           </Pressable>
           <Pressable
@@ -653,7 +673,7 @@ function Navigation({
               ]}
             >
               <View style={[styles.navIcon, active && styles.navIconActive]}>
-                <Text style={[styles.navIconText, active && styles.navIconTextActive]}>{item.short}</Text>
+                <Ionicons name={item.icon} size={22} color={active ? colors.textPrimary : colors.textMuted} />
               </View>
               {(!compact || mobile) && <Text style={[styles.navLabel, active && styles.navLabelActive]}>{item.label}</Text>}
             </Pressable>
@@ -663,7 +683,7 @@ function Navigation({
       {!mobile && (
         <View style={styles.sidebarFooter}>
           <Pressable accessibilityRole="link" accessibilityLabel="Settings" onPress={() => navigate('/settings')} style={styles.navItem}>
-            <View style={styles.navIcon}><Text style={styles.navIconText}>⚙</Text></View>
+            <View style={styles.navIcon}><Ionicons name="settings-outline" size={24} color={colors.textMuted} /></View>
             {!compact && <Text style={styles.navLabel}>Settings</Text>}
           </Pressable>
         </View>
@@ -795,28 +815,22 @@ function CapacityCard() {
   );
 }
 
-function ActivityCard() {
+function EmptyAnalysisActivity() {
+  const { error, refresh } = useWebAnalysisActivity();
+  return <View style={styles.activityCard}><View style={styles.activityCopy}>
+    <Text style={styles.activityTitle}>No active analysis</Text>
+    <Text style={styles.activityDetail}>Record or upload a side-view squat to start an analysis.</Text>
+    {error && <Text style={styles.formError}>{error}</Text>}
+  </View>{error && <ActionButton label="Retry activity" onPress={() => void refresh()} />}</View>;
+}
+
+function ActivityCard({ activity }: { activity: AnalysisActivityItem }) {
   const navigate = useNavigate();
   const { session } = useAuth();
   const { items, loading, error, refresh, recordQueued, removeActivity } = useWebAnalysisActivity();
   const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
-  const activity = items[0] ?? null;
-  const copy = activity?.stage === 'queued'
-    ? { title: 'Squat set is queued', detail: 'Waiting for an analysis worker.' }
-    : activity?.stage === 'downloading'
-      ? { title: 'Preparing your video', detail: 'Downloading the uploaded source.' }
-      : activity?.stage === 'pose'
-        ? { title: 'Estimating pose', detail: 'Tracking the lifter through the set.' }
-        : activity?.stage === 'barbell_tracking'
-          ? { title: 'Tracking the barbell', detail: 'Building the visible bar path.' }
-          : activity?.stage === 'saving'
-            ? { title: 'Saving your analysis', detail: 'Preparing the result for review.' }
-            : activity?.stage === 'ready'
-              ? { title: 'Analysis ready to review', detail: 'Your real result is ready.' }
-              : activity?.stage === 'failed'
-                ? { title: 'Analysis could not finish', detail: failureCopy(activity) }
-                : { title: 'No active analysis', detail: 'Record or upload a side-view squat to start a real analysis.' };
+  const copy = analysisStageCopy(activity);
   const toneStyle = activity?.stage === 'ready'
     ? styles.activityDotSuccess
     : !activity
@@ -843,6 +857,7 @@ function ActivityCard() {
         videoId: response.video_id,
         jobId: response.job_id,
         status: response.status,
+        sourceFileName: activity.source_file_name,
       });
     } catch (actionError) {
       setRecoveryError(actionError instanceof Error ? actionError.message : 'Unable to retry analysis.');
@@ -874,7 +889,9 @@ function ActivityCard() {
     <View style={styles.activityCard}>
       <View style={[styles.activityDot, toneStyle]} />
       <View style={styles.activityCopy}>
+        <AnalysisIdentity activity={activity} />
         <Text selectable style={styles.activityTitle}>{copy.title}</Text>
+        <AnalysisProgress activity={activity} compact />
         <Text selectable style={styles.activityDetail}>{loading && !activity ? 'Refreshing activity…' : copy.detail}</Text>
         {error ? <Text selectable style={styles.formError}>{error}</Text> : null}
         {recoveryError ? <Text selectable style={styles.formError}>{recoveryError}</Text> : null}
@@ -1001,7 +1018,7 @@ function LiftRow({
         </View>
       )}
       <VideoThumbnail videoId={lift.id} available={lift.thumbnail_available === true && lift.storage_state !== 'pruned'} legacyUrl={lift.thumbnail_url}
-        style={styles.liftThumbnail as ImageStyle} placeholder={<Image source={previewImage} style={StyleSheet.absoluteFill} />} />
+        style={styles.liftThumbnail as ImageStyle} fit="contain" />
       <View style={styles.liftRowCopy}>
         <View style={styles.liftTitleRow}>
           <Text selectable style={styles.liftExercise}>{exercise}</Text>
@@ -1039,7 +1056,7 @@ function HomeScreen() {
         <View style={styles.sectionTitleRow}>
           <Text accessibilityRole="header" selectable style={styles.sectionTitle}>Processing activity</Text>
         </View>
-        <ActivityCard />
+        {items.length ? items.map((activity) => <ActivityCard key={activity.video_id} activity={activity} />) : <EmptyAnalysisActivity />}
       </View>
       {readyItems.length > 0 && (
         <View style={styles.pendingReviewBanner}>
@@ -1234,7 +1251,7 @@ function LiftGridCard({
       style={({ pressed }) => [styles.liftGridCard, selected && styles.liftSelected, pressed && styles.liftRowPressed]}
     >
       <VideoThumbnail videoId={lift.id} available={lift.thumbnail_available === true && lift.storage_state !== 'pruned'} legacyUrl={lift.thumbnail_url}
-        style={styles.liftGridImage as ImageStyle} placeholder={<Image source={previewImage} style={StyleSheet.absoluteFill} />} />
+        style={styles.liftGridImage as ImageStyle} fit="contain" />
       {selectionMode && (
         <View style={[styles.gridSelectionCheckbox, selected && styles.selectionCheckboxSelected]}>
           {selected && <Text style={styles.checkboxMark}>✓</Text>}
@@ -1612,7 +1629,7 @@ function SavedLiftDetailScreen() {
             <AnalyzedVideoPlayer label="Saved Lift video controls" videoId={lift.id} accessToken={session?.access_token} posterUri={process.env.EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED === 'true' ? '' : lift.thumbnail_url ?? ''} />
           ) : (
             <VideoThumbnail videoId={lift.id} available={false} legacyUrl={null} style={styles.reviewImage as ImageStyle}
-              label={`${exercise} Saved Lift preview`} placeholder={<Image source={previewImage} style={StyleSheet.absoluteFill} />} />
+              label={`${exercise} Saved Lift preview`} fit="contain" />
           )}
           {lift.storage_state === 'pruned' && <Text selectable style={styles.mediaNotice}>This Saved Lift video has expired; analysis insights remain available.</Text>}
         </View>
@@ -1726,6 +1743,7 @@ export default function WebApp() {
           <Route path="/submit" element={<WebSubmissionChoiceRoute />} />
           <Route path="/record" element={<WebRecordRoute />} />
           <Route path="/upload" element={<WebUploadRoute />} />
+          <Route path="/queued/:videoId" element={<WebQueuedRoute />} />
           <Route path="/processing/:videoId" element={<WebProcessingRoute />} />
           <Route path="/review/:videoId" element={<WebReviewRoute onLibraryChanged={invalidateSavedLiftLibraryCache} />} />
           <Route path="/saved-lifts" element={<SavedLiftsScreen />} />
@@ -1759,8 +1777,11 @@ const styles = StyleSheet.create({
   sidebar: { width: 252, padding: 18, borderRightWidth: 1, borderRightColor: colors.line, backgroundColor: '#090D13' },
   sidebarCompact: { width: 86, paddingHorizontal: 12 },
   sidebarHeader: { minHeight: 64, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  sidebarHeaderCompact: { flexDirection: 'column', gap: 8 },
+  sidebarWordmarkCompact: { flex: 0, alignItems: 'center', width: '100%' },
+  wordmarkPlaceholder: { width: 32, height: 32, borderRadius: 8, backgroundColor: '#17233B', borderWidth: 1, borderColor: '#5578AF' },
   sidebarWordmark: { flex: 1, minWidth: 0, minHeight: 52, alignItems: 'flex-start', justifyContent: 'center' },
-  sidebarToggle: { width: 32, height: 32, borderWidth: 1, borderColor: colors.line, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface },
+  sidebarToggle: { width: 44, height: 44, borderWidth: 1, borderColor: colors.line, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface },
   sidebarToggleText: { color: colors.blueText, fontFamily: fonts.bold, fontSize: 20, lineHeight: 22 },
   wordmark: { width: 118, height: 54, alignItems: 'center', justifyContent: 'center' },
   wordmarkCompact: { width: 60, height: 44 },
@@ -1770,7 +1791,7 @@ const styles = StyleSheet.create({
   navItem: { minHeight: 48, paddingHorizontal: 10, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 12 },
   navItemActive: { backgroundColor: colors.blueSoft },
   navItemPressed: { opacity: 0.72 },
-  navIcon: { width: 30, height: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: '#151C28' },
+  navIcon: { width: 32, height: 32, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: '#151C28' },
   navIconActive: { backgroundColor: colors.brand },
   navIconText: { color: colors.textMuted, fontFamily: fonts.bold, fontSize: 11 },
   navIconTextActive: { color: '#FFFFFF' },
@@ -1803,6 +1824,9 @@ const styles = StyleSheet.create({
   field: { gap: 7 },
   fieldLabel: { color: colors.secondaryText, fontFamily: fonts.semibold, fontSize: 11 },
   input: { width: '100%', height: 48, paddingHorizontal: 14, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 11, backgroundColor: colors.inputBg, color: colors.textPrimary, fontFamily: fonts.regular, fontSize: 14 },
+  fieldInputWrap: { position: 'relative' },
+  passwordInput: { paddingRight: 52 },
+  passwordToggle: { position: 'absolute', top: 0, right: 4, bottom: 0, width: 44, alignItems: 'center', justifyContent: 'center' },
   inlineLink: { color: colors.blueText, fontFamily: fonts.semibold, fontSize: 12, textDecorationLine: 'underline' },
   authBackLink: { alignSelf: 'flex-start', paddingTop: 22 },
   formFooterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center' },
@@ -1861,7 +1885,7 @@ const styles = StyleSheet.create({
   activityDotNeutral: { backgroundColor: '#60708A' },
   activityDotInfo: { backgroundColor: colors.brand },
   activityDotSuccess: { backgroundColor: colors.green },
-  activityCopy: { flex: 1, minWidth: 120 },
+  activityCopy: { flex: 1, minWidth: 160, gap: 8 },
   activityActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8 },
   activityTitle: { color: colors.textPrimary, fontFamily: fonts.semibold, fontSize: 13 },
   activityDetail: { marginTop: 5, color: colors.textMuted, fontFamily: fonts.regular, fontSize: 11, lineHeight: 17 },

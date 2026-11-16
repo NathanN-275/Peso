@@ -82,6 +82,7 @@ for (const reason of ['expiry', 'decoder error']) {
     assert.equal(f.calls.length, 2); assert.equal(view.source.headers['X-Peso-Media-Grant'], 'grant-2');
     if (reason === 'expiry') f.timers.at(-1).fn(); else view.onPlaybackError();
     view = f.render(); assert.equal(view.source, null); assert.equal(view.error, 'Retry playback');
+    assert.equal(view.expired, reason === 'expiry');
     for (let i = 0; i < 4; i++) { view.onPlaybackError(); f.render(); }
     assert.equal(f.calls.length, 2);
     view.retry(); f.render(); await tick(); view = f.render();

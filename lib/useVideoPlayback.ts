@@ -8,7 +8,7 @@ import { issuePrivateVideoPlayback, VIDEO_PLAYBACK_FAILURE, type VideoPlaybackLe
 // One automatic renewal per opened video, then an explicit Retry. No background
 // retry loop, token persistence, provider-byte fallback or cross-resource cache.
 export function useVideoPlayback(videoId: string | null, accessToken: string | undefined, localUri: string | null = null) {
-  const [state, setState] = useState<{ scope: string; lease: VideoPlaybackLease | null; error: string | null; revision: number } | null>(null);
+  const [state, setState] = useState<{ scope: string; lease: VideoPlaybackLease | null; error: string | null; revision: number; expired?: boolean } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const automaticRenewalUsed = useRef(false);
   const generation = useRef(0);
@@ -22,7 +22,7 @@ export function useVideoPlayback(videoId: string | null, accessToken: string | u
     && (process.env.EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED !== 'true' || /^(?:file|content|blob):/.test(localUri));
   const activeLease = useRef<{ scope: string; lease: VideoPlaybackLease; revision: number } | null>(null);
   const currentScope = useRef(scope); currentScope.current = scope;
-  const renew = useCallback((revision: number) => {
+  const renew = useCallback((revision: number, expired = false) => {
     if (currentScope.current !== scope) return;
     if (localUri) {
       setState({ scope, lease: null, error: VIDEO_PLAYBACK_FAILURE, revision });
@@ -31,7 +31,7 @@ export function useVideoPlayback(videoId: string | null, accessToken: string | u
     if (activeLease.current?.scope !== scope || activeLease.current.revision !== revision) return;
     activeLease.current = null;
     if (automaticRenewalUsed.current) {
-      setState({ scope, lease: null, error: VIDEO_PLAYBACK_FAILURE, revision }); return;
+      setState({ scope, lease: null, error: VIDEO_PLAYBACK_FAILURE, revision, expired }); return;
     }
     automaticRenewalUsed.current = true;
     setState(null); setAttempt(value => value + 1);
@@ -62,7 +62,7 @@ export function useVideoPlayback(videoId: string | null, accessToken: string | u
       check(); lease.assertCurrent();
       activeLease.current = { scope, lease, revision };
       setState({ scope, lease, error: null, revision });
-      timeout = setTimeout(() => { if (active) renew(revision); }, Math.max(0, lease.expiresAt - Date.now()));
+      timeout = setTimeout(() => { if (active) renew(revision, true); }, Math.max(0, lease.expiresAt - Date.now()));
     }).catch(() => {
       if (active && !controller.signal.aborted && currentScope.current === scope) setState({ scope, lease: null, error: VIDEO_PLAYBACK_FAILURE, revision });
     });
@@ -77,6 +77,7 @@ export function useVideoPlayback(videoId: string | null, accessToken: string | u
   }, [renew, localUri, currentRevision]);
   const source: VideoSource = localUri ? (localCurrent && !(state?.scope === scope && state.error) ? localUri : null) : lease?.source ?? null;
   return { source, lease, scope, revision: state?.revision ?? attempt, retry, onPlaybackError,
+    expired: state?.scope === scope && state.expired === true,
     loading: !localUri && !!videoId && !!accessToken && !lease && !(state?.scope === scope && state.error),
     error: localUri && !localCurrent ? VIDEO_PLAYBACK_FAILURE : state?.scope === scope ? state.error : null,
     privateRemote: !localUri && process.env.EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED === 'true' };

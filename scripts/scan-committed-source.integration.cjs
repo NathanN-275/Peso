@@ -110,7 +110,11 @@ test('CLI accepts only reviewed non-secret findings while preserving raw failure
 
 const resourceId = ['srv', 'dak9ohfqj5pc73ac2ga0'].join('-');
 const githubToken = () => 'ghp_' + randomBytes(18).toString('hex');
-const genericToken = () => randomBytes(24).toString('base64url');
+// Keep the generic-rule control above its entropy threshold on every run.
+const genericToken = () => {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  return Array.from({ length: 32 }, (_, index) => alphabet[(index * 17 + 11) % alphabet.length]).join('');
+};
 const bindingFile = 'config/combined-web-release-binding.json';
 const releaseTestFile = 'scripts/release-env.test.js';
 const controls = [
@@ -144,6 +148,10 @@ for (const [name, change] of controls) test(`CLI blocks ${name} without dropping
   assert.ok(scan.policy.blockingCount > 0);
   assert.equal(scan.policy.rawFindingCount, scan.findings.length);
   assert.equal(scan.policy.classifiedCount + scan.policy.blockingCount, scan.findings.length);
+  if (name === 'generic credential with identical redacted match') {
+    assert.ok(scan.policy.findings.some(finding => finding.file === bindingFile
+      && finding.rule === 'generic-api-key' && finding.classification === 'blocking'));
+  }
 });
 
 test('CLI blocks unsupported metadata, decoded tags and duplicate occurrences', t => {

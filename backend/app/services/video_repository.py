@@ -59,6 +59,28 @@ class VideoRepository:
     # All video persistence goes through the Supabase admin client.
     self.client = get_supabase_admin_client()
 
+  def analysis_source_file_names(self, user_id: str, video_ids: list[str]) -> dict[str, str]:
+    if not video_ids:
+      return {}
+    try:
+      response = (self.client.table("upload_reservations").select("video_id,file_name")
+                  .eq("user_id", user_id).in_("video_id", video_ids)
+                  .in_("state", ["verified", "consumed"]).execute())
+    except Exception as error:
+      if str(getattr(error, "code", "")) in {"42P01", "PGRST205"}:
+        return {}
+      raise
+    names = {}
+    for row in response.data or []:
+      video_id = str(row.get("video_id") or "")
+      if video_id not in video_ids:
+        continue
+      name = str(row.get("file_name") or "").replace("\\", "/").rsplit("/", 1)[-1]
+      name = "".join(character for character in name if character.isprintable()).strip()[:255]
+      if name:
+        names[video_id] = name
+    return names
+
   def bind_analysis_lease(self, job_id: str, worker_id: str, attempt_count: int) -> None:
     if (not isinstance(job_id, str) or str(UUID(job_id)) != job_id or UUID(job_id).int == 0
         or not isinstance(worker_id, str) or not worker_id or worker_id.strip() != worker_id

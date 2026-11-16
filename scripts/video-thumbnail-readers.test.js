@@ -164,10 +164,15 @@ test('actual thumbnail component passes only the hook source to images and isola
       flatten:value=>value,create:value=>value,absoluteFill:{position:'absolute',top:0,right:0,bottom:0,left:0}}},
     '../../context/AuthContext':{useAuth:()=>({session:{access_token:'original-token'}})},
     '../../lib/useVideoThumbnail':{useVideoThumbnail:()=>preview},
+    '@expo/vector-icons':{Ionicons:'Ionicons'},
   }).default;
   const props={videoId:VIDEO,available:true,legacyUrl:'https://provider.invalid/secret',style:{width:62,height:62},placeholder:'placeholder'};
   let tree=component(props);assert.equal(tree.props.children[0].type,'Image');
   assert.deepEqual(tree.props.children[0].props.source,{uri:preview.uri});assert.ok(!JSON.stringify(tree).includes('original-token'));
+  tree=component({...props,fit:'contain'});assert.equal(tree.props.children[0].props.resizeMode,'contain');
+  preview={uri:null,error:false,onImageError(){},retry(){}};
+  tree=component({...props,placeholder:undefined});assert.equal(tree.props.children[0].props.accessibilityLabel,'Loading video preview');
+  tree=component({...props,placeholder:undefined,available:false});assert.equal(tree.props.children[0].props.accessibilityLabel,'Video preview unavailable');
   preview={uri:null,error:true,onImageError(){},retry(){events.push('retry');}};
   tree=component(props);assert.equal(tree.props.children[0],null);const retry=tree.props.children[1];
   assert.equal(retry.props.accessibilityLabel,'Retry video preview');assert.ok(retry.props.style.minWidth>=44&&retry.props.style.minHeight>=44);

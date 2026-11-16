@@ -934,7 +934,8 @@ def _finalize_storage_assets(
     with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_thumbnail:
       thumbnail_temp = Path(temp_thumbnail.name)
 
-    create_video_thumbnail(source_path, thumbnail_temp)
+    create_video_thumbnail(source_path, thumbnail_temp,
+                           duration_seconds=(video.get("duration_ms") or 0) / 1000)
     thumbnail_path = write_generated_media(
       video=video, purpose="thumbnail", local_path=thumbnail_temp,
       storage=storage, analysis_lease=analysis_lease,

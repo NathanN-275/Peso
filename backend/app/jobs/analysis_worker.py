@@ -17,6 +17,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from ..services.analysis_job_repository import AnalysisJobRepository
+from ..services.phase_timing import record_queue_wait
 from .process_memory import ProcessMemoryPeaks, process_tree_rss_bytes
 
 
@@ -466,6 +467,9 @@ class AnalysisWorker:
       lease_seconds=self.lease_seconds,
     )
     logger.info("Worker %s claimed analysis job %s for video %s.", self.worker_id, job_id, video_id)
+    timestamps = job.get("stage_timestamps")
+    queued_at = timestamps.get("queued") if isinstance(timestamps, dict) else None
+    record_queue_wait(queued_at or job.get("created_at"), video_id)
     heartbeat.start()
     try:
       duration_value = self.jobs.video_duration_ms(video_id)
