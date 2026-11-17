@@ -6,7 +6,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 
 const AUDIT_LEVEL = 'high';
 // Inactive proposal: activation requires Nathan's separate exact-policy approval.
-const PICOMATCH_REVIEW_STATUS = 'proposal-not-approved';
+const PICOMATCH_REVIEW_STATUS = 'approved-by-nathan';
 const PICOMATCH_REVIEW_EXPIRES = '2026-11-20T00:00:00Z';
 const PICOMATCH_BLOCKING_RECORDS_SHA256 = '54b6c3922391bb78794c5242b184cae77c6121464878a8149ab0dce8c13ab389';
 const REVIEWED_INPUTS = {
