@@ -5,10 +5,16 @@ const { spawnSync } = require('node:child_process');
 const { setTimeout: delay } = require('node:timers/promises');
 
 const AUDIT_LEVEL = 'high';
+// Inactive proposal: activation requires Nathan's separate exact-policy approval.
+const PICOMATCH_REVIEW_STATUS = 'proposal-not-approved';
+const PICOMATCH_REVIEW_EXPIRES = '2026-11-20T00:00:00Z';
+const PICOMATCH_BLOCKING_RECORDS_SHA256 = '54b6c3922391bb78794c5242b184cae77c6121464878a8149ab0dce8c13ab389';
 const REVIEWED_INPUTS = {
-  'scripts/dependency-patches.js': '43fafb9766892303fd05b66b54f41ba3c1283f179d302e9581293166c9d10de8',
+  'patches/dependencies/picomatch-4.0.4-nested-repetition.patch': '47461054457152aa69556acfe3cc64374382a472783ccd6380268e1d95675b21',
+  'patches/dependencies/picomatch-2.3.2-nested-repetition.patch': '5df5dcccbb2c572f1de8876a33f90b2938e1dc753742fe42af46b5d50778d094',
+  'scripts/dependency-patches.js': '93de8dbd9dff796be4a46f0f4b769a8aa62a4395acfeedf9df6a2f7cc8dd8534',
   'package-lock.json': 'd0e8cce43bf5ed163f78bac352f693586c447c7f795e741eebe24449250430a0',
-  'patches/dependencies/manifest.json': 'a107d7327828b2b6701097176546f05c8980f9df3ed79e022234cec067d8f284',
+  'patches/dependencies/manifest.json': '21a3e08d71f28e0c1156ea5ba5ffed0f375fbb492d5a99da8f600f1e0a727262',
   'patches/dependencies/braces-3.0.3.patch': 'e07abe26dbd330daea0e448ca1382327322dd5eccc08c5dd1a9b9f7bf5a6d699',
   'patches/dependencies/metro-0.84.4-image-size-2.patch': 'a2d3f781d7779ccba3aa961500fbb7c80724e10793dd9e7358fbe5be1f68cd25',
 };
@@ -86,6 +92,44 @@ function findBlockingVulnerabilities(report, lockfile, auditLevel = AUDIT_LEVEL)
       severity: vulnerability?.severity ?? 'unknown',
       nodes: Array.isArray(vulnerability?.nodes) ? vulnerability.nodes : [],
     }));
+}
+
+// Private to the CLI: callers of the exported strict classifier cannot mint treatment.
+function reviewPicomatchFindings(report, strictBlockers, decision) {
+  const unchanged = { blockers: strictBlockers, treated: [] };
+  const now = Date.now();
+  const env = process.env;
+  if (PICOMATCH_REVIEW_STATUS !== 'approved-by-nathan' || !Number.isFinite(now) ||
+      now >= Date.parse(PICOMATCH_REVIEW_EXPIRES) || decision.sourceTreeDirty !== false ||
+      !/^[a-f0-9]{40}$/.test(decision.sourceCommit ?? '') || decision.patchVerification !== 'passed' ||
+      env.GITHUB_ACTIONS !== 'true' || env.GITHUB_REPOSITORY !== 'NathanN-275/Peso' ||
+      env.GITHUB_WORKFLOW !== 'Security Checks' || env.GITHUB_EVENT_NAME !== 'pull_request' ||
+      env.GITHUB_REF !== 'refs/pull/53/merge' || env.GITHUB_HEAD_REF !== 'feat/combined-public-beta' ||
+      env.GITHUB_BASE_REF !== 'main' || env.GITHUB_SHA !== decision.sourceCommit) return unchanged;
+  const vulnerabilities = report.vulnerabilities;
+  const leaf = vulnerabilities.picomatch;
+  const expectedPaths = [
+    'node_modules/anymatch/node_modules/picomatch',
+    'node_modules/jest-util/node_modules/picomatch',
+    'node_modules/micromatch/node_modules/picomatch',
+    'node_modules/picomatch',
+    'node_modules/readdirp/node_modules/picomatch',
+  ];
+  if (!leaf || !validGraph('picomatch', vulnerabilities) || leaf.severity !== 'high' ||
+      JSON.stringify([...leaf.nodes].sort()) !== JSON.stringify(expectedPaths) || leaf.via.length !== 1 ||
+      !isRecord(leaf.via[0])) return unchanged;
+  // Pin every blocking package, path, severity and cause, including observed cycles.
+  // npm's upgrade suggestions, reverse edges and derived package ranges can vary.
+  if (strictBlockers.some(({ name, severity }) => severity !== 'high' ||
+      !validGraph(name, vulnerabilities))) return unchanged;
+  const records = Object.fromEntries(strictBlockers.map(({ name }) => {
+    const { severity, nodes, via } = vulnerabilities[name];
+    return [name, { name, severity, nodes: [...nodes].sort(), via }];
+  }));
+  const canonical = JSON.stringify(records, (key, value) => isRecord(value)
+    ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : value);
+  if (sha256(canonical) !== PICOMATCH_BLOCKING_RECORDS_SHA256) return unchanged;
+  return { blockers: [], treated: strictBlockers };
 }
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -189,9 +233,15 @@ async function runAudit() {
     }
     decision.patchVerification = 'passed';
     const lockfile = JSON.parse(readFileSync('package-lock.json', 'utf8'));
-    const blockers = findBlockingVulnerabilities(report, lockfile);
+    const strictBlockers = findBlockingVulnerabilities(report, lockfile);
+    const { blockers, treated } = reviewPicomatchFindings(report, strictBlockers, decision);
+    decision.strictBlockers = strictBlockers;
     decision.blockers = blockers;
     decision.registryVulnerabilities = report.metadata?.vulnerabilities ?? null;
+    if (treated.length) decision.projectTreatment = {
+      authority: PICOMATCH_REVIEW_STATUS, expiresAt: PICOMATCH_REVIEW_EXPIRES,
+      blockingRecordsSha256: PICOMATCH_BLOCKING_RECORDS_SHA256, treated,
+    };
 
     if (blockers.length > 0) {
       console.error('Unapproved high or critical npm vulnerabilities:');
@@ -203,7 +253,9 @@ async function runAudit() {
       return 1;
     }
 
-    console.log('Root dependency audit accepted: no HIGH or CRITICAL findings; lower findings retained.');
+    console.log(treated.length
+      ? 'Root dependency audit accepted with temporary project treatment; registry HIGH findings remain visible.'
+      : 'Root dependency audit accepted: no HIGH or CRITICAL findings; lower findings retained.');
     decision.exitCode = 0;
     return 0;
   } catch (error) {

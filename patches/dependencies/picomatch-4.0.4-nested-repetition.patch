@@ -1,0 +1,33 @@
+diff --git a/lib/parse.js b/lib/parse.js
+index 57d994a..2294378 100644
+--- a/lib/parse.js
++++ b/lib/parse.js
+@@ -278,6 +278,17 @@
+   }
+ 
+   return depth;
++};
++
++// Repeating only finite, prefix-free literal alternatives avoids ambiguous splits.
++const isSafeRepeatedBody = body => {
++  if (body.length > 1024) return false;
++  const branches = splitTopLevel(body);
++  if (!branches.every(branch => /^[A-Za-z0-9_ /-]+$/.test(branch))) return false;
++  // Parsed states can be compiled later with case-insensitive flags.
++  const words = branches.map(branch => branch.toLowerCase());
++  return words.every((word, i) => words.every((other, j) =>
++    i === j || !word.startsWith(other)));
+ };
+ 
+ const analyzeRepeatedExtglob = (body, options) => {
+@@ -510,6 +521,10 @@
+     const literal = input.slice(token.startIndex, state.index + 1);
+     const body = input.slice(token.startIndex + 2, state.index);
+     const analysis = analyzeRepeatedExtglob(body, opts);
++    if (!analysis.risky && (token.type === 'plus' || token.type === 'star') &&
++        !isSafeRepeatedBody(body)) {
++      throw new SyntaxError('Unsafe nested repetition in extglob');
++    }
+ 
+     if ((token.type === 'plus' || token.type === 'star') && analysis.risky) {
+       const safeOutput = analysis.safeOutput

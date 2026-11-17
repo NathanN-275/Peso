@@ -2168,6 +2168,280 @@
           "patched": "5d23035d6243cdf83c8acb7168a01e077dd07db9a7e7477ab4cfe685c11567b3"
         }
       }
+    },
+    {
+      "name": "picomatch",
+      "version": "4.0.4",
+      "path": "node_modules/picomatch",
+      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.4.tgz",
+      "integrity": "sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A==",
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "source": {
+        "kind": "Peso local mitigation proposal",
+        "description": "Restrict repeated extglobs to finite prefix-free literal alternatives or existing safe output."
+      },
+      "patch": {
+        "file": "picomatch-4.0.4-nested-repetition.patch",
+        "sha256": "47461054457152aa69556acfe3cc64374382a472783ccd6380268e1d95675b21"
+      },
+      "files": {
+        "LICENSE": {
+          "original": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9",
+          "patched": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9"
+        },
+        "README.md": {
+          "original": "abaa6b58484e1f252b8d40b949b53602f5f2d7e6990f20d85fe6174ca5cb802f",
+          "patched": "abaa6b58484e1f252b8d40b949b53602f5f2d7e6990f20d85fe6174ca5cb802f"
+        },
+        "index.js": {
+          "original": "02ae26406508e28f9ba0865be16cf77f0b33de6c4d4d49c212c4176df1d5625a",
+          "patched": "02ae26406508e28f9ba0865be16cf77f0b33de6c4d4d49c212c4176df1d5625a"
+        },
+        "lib/constants.js": {
+          "original": "c28f952d2758261fe5428a121add485cc25b03e0193633f649de903dc0e5e222",
+          "patched": "c28f952d2758261fe5428a121add485cc25b03e0193633f649de903dc0e5e222"
+        },
+        "lib/parse.js": {
+          "original": "ce57c04e04994b83e2ca566170fa192e6fe19d710bea6da00ce2f76d01c0dea4",
+          "patched": "fb112aeb47840d18987b660e40494fafb24651398c980d18aba6d94515cdd806"
+        },
+        "lib/picomatch.js": {
+          "original": "bbe9824eae8210954eac016e1fa1ac6174093557f30a72e91621d74a6c25e170",
+          "patched": "bbe9824eae8210954eac016e1fa1ac6174093557f30a72e91621d74a6c25e170"
+        },
+        "lib/scan.js": {
+          "original": "227fcc994a477ea95c5a0435d32783566334c6bd0dcc4a103029735ad8c9c535",
+          "patched": "227fcc994a477ea95c5a0435d32783566334c6bd0dcc4a103029735ad8c9c535"
+        },
+        "lib/utils.js": {
+          "original": "f04604f70cd1a3f6ace80b84766468674ff38b4bb83818d2ef1d81fc6355f935",
+          "patched": "f04604f70cd1a3f6ace80b84766468674ff38b4bb83818d2ef1d81fc6355f935"
+        },
+        "package.json": {
+          "original": "b8deb10b4e1f7cc2fe8236a70995f4c6b5ec3ecf93f02f2b6427a8600d2c1d20",
+          "patched": "b8deb10b4e1f7cc2fe8236a70995f4c6b5ec3ecf93f02f2b6427a8600d2c1d20"
+        },
+        "posix.js": {
+          "original": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480",
+          "patched": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480"
+        }
+      }
+    },
+    {
+      "name": "picomatch",
+      "version": "2.3.2",
+      "path": "node_modules/anymatch/node_modules/picomatch",
+      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-2.3.2.tgz",
+      "integrity": "sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA==",
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "source": {
+        "kind": "Peso local mitigation proposal",
+        "description": "Restrict repeated extglobs to finite prefix-free literal alternatives or existing safe output."
+      },
+      "patch": {
+        "file": "picomatch-2.3.2-nested-repetition.patch",
+        "sha256": "5df5dcccbb2c572f1de8876a33f90b2938e1dc753742fe42af46b5d50778d094"
+      },
+      "files": {
+        "LICENSE": {
+          "original": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9",
+          "patched": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9"
+        },
+        "README.md": {
+          "original": "f4653b68a1883a32f852083c1b93381ce87f44c6855ce1f01854d39d0563c98c",
+          "patched": "f4653b68a1883a32f852083c1b93381ce87f44c6855ce1f01854d39d0563c98c"
+        },
+        "index.js": {
+          "original": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480",
+          "patched": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480"
+        },
+        "lib/constants.js": {
+          "original": "980225ab847a88a784f6d315557b8434f7742b2551ce20e354455c61b938c0a5",
+          "patched": "980225ab847a88a784f6d315557b8434f7742b2551ce20e354455c61b938c0a5"
+        },
+        "lib/parse.js": {
+          "original": "3a91656f440069aa8f8e15c9d695b9f6b2209df1eab2be8127c72cbcca45ff5f",
+          "patched": "a88906573a1fec9494db697002fdabb805150dd8c3913b236f7f94a95f09d8ce"
+        },
+        "lib/picomatch.js": {
+          "original": "2cb169cbe17d356036c5f62a377318b85e30817877e59797842aec9d8b15f54b",
+          "patched": "2cb169cbe17d356036c5f62a377318b85e30817877e59797842aec9d8b15f54b"
+        },
+        "lib/scan.js": {
+          "original": "227fcc994a477ea95c5a0435d32783566334c6bd0dcc4a103029735ad8c9c535",
+          "patched": "227fcc994a477ea95c5a0435d32783566334c6bd0dcc4a103029735ad8c9c535"
+        },
+        "lib/utils.js": {
+          "original": "809fc29cf35ab0aa76b99cad29182f62c0ae598902481d10f9868eaef71981ee",
+          "patched": "809fc29cf35ab0aa76b99cad29182f62c0ae598902481d10f9868eaef71981ee"
+        },
+        "package.json": {
+          "original": "63264d817e856a4bff57d4304f2b38d2964a4f6df520eb169e7bcdb619f13e9a",
+          "patched": "63264d817e856a4bff57d4304f2b38d2964a4f6df520eb169e7bcdb619f13e9a"
+        }
+      }
+    },
+    {
+      "name": "picomatch",
+      "version": "2.3.2",
+      "path": "node_modules/jest-util/node_modules/picomatch",
+      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-2.3.2.tgz",
+      "integrity": "sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA==",
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "source": {
+        "kind": "Peso local mitigation proposal",
+        "description": "Restrict repeated extglobs to finite prefix-free literal alternatives or existing safe output."
+      },
+      "patch": {
+        "file": "picomatch-2.3.2-nested-repetition.patch",
+        "sha256": "5df5dcccbb2c572f1de8876a33f90b2938e1dc753742fe42af46b5d50778d094"
+      },
+      "files": {
+        "LICENSE": {
+          "original": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9",
+          "patched": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9"
+        },
+        "README.md": {
+          "original": "f4653b68a1883a32f852083c1b93381ce87f44c6855ce1f01854d39d0563c98c",
+          "patched": "f4653b68a1883a32f852083c1b93381ce87f44c6855ce1f01854d39d0563c98c"
+        },
+        "index.js": {
+          "original": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480",
+          "patched": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480"
+        },
+        "lib/constants.js": {
+          "original": "980225ab847a88a784f6d315557b8434f7742b2551ce20e354455c61b938c0a5",
+          "patched": "980225ab847a88a784f6d315557b8434f7742b2551ce20e354455c61b938c0a5"
+        },
+        "lib/parse.js": {
+          "original": "3a91656f440069aa8f8e15c9d695b9f6b2209df1eab2be8127c72cbcca45ff5f",
+          "patched": "a88906573a1fec9494db697002fdabb805150dd8c3913b236f7f94a95f09d8ce"
+        },
+        "lib/picomatch.js": {
+          "original": "2cb169cbe17d356036c5f62a377318b85e30817877e59797842aec9d8b15f54b",
+          "patched": "2cb169cbe17d356036c5f62a377318b85e30817877e59797842aec9d8b15f54b"
+        },
+        "lib/scan.js": {
+          "original": "227fcc994a477ea95c5a0435d32783566334c6bd0dcc4a103029735ad8c9c535",
+          "patched": "227fcc994a477ea95c5a0435d32783566334c6bd0dcc4a103029735ad8c9c535"
+        },
+        "lib/utils.js": {
+          "original": "809fc29cf35ab0aa76b99cad29182f62c0ae598902481d10f9868eaef71981ee",
+          "patched": "809fc29cf35ab0aa76b99cad29182f62c0ae598902481d10f9868eaef71981ee"
+        },
+        "package.json": {
+          "original": "63264d817e856a4bff57d4304f2b38d2964a4f6df520eb169e7bcdb619f13e9a",
+          "patched": "63264d817e856a4bff57d4304f2b38d2964a4f6df520eb169e7bcdb619f13e9a"
+        }
+      }
+    },
+    {
+      "name": "picomatch",
+      "version": "2.3.2",
+      "path": "node_modules/micromatch/node_modules/picomatch",
+      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-2.3.2.tgz",
+      "integrity": "sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA==",
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "source": {
+        "kind": "Peso local mitigation proposal",
+        "description": "Restrict repeated extglobs to finite prefix-free literal alternatives or existing safe output."
+      },
+      "patch": {
+        "file": "picomatch-2.3.2-nested-repetition.patch",
+        "sha256": "5df5dcccbb2c572f1de8876a33f90b2938e1dc753742fe42af46b5d50778d094"
+      },
+      "files": {
+        "LICENSE": {
+          "original": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9",
+          "patched": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9"
+        },
+        "README.md": {
+          "original": "f4653b68a1883a32f852083c1b93381ce87f44c6855ce1f01854d39d0563c98c",
+          "patched": "f4653b68a1883a32f852083c1b93381ce87f44c6855ce1f01854d39d0563c98c"
+        },
+        "index.js": {
+          "original": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480",
+          "patched": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480"
+        },
+        "lib/constants.js": {
+          "original": "980225ab847a88a784f6d315557b8434f7742b2551ce20e354455c61b938c0a5",
+          "patched": "980225ab847a88a784f6d315557b8434f7742b2551ce20e354455c61b938c0a5"
+        },
+        "lib/parse.js": {
+          "original": "3a91656f440069aa8f8e15c9d695b9f6b2209df1eab2be8127c72cbcca45ff5f",
+          "patched": "a88906573a1fec9494db697002fdabb805150dd8c3913b236f7f94a95f09d8ce"
+        },
+        "lib/picomatch.js": {
+          "original": "2cb169cbe17d356036c5f62a377318b85e30817877e59797842aec9d8b15f54b",
+          "patched": "2cb169cbe17d356036c5f62a377318b85e30817877e59797842aec9d8b15f54b"
+        },
+        "lib/scan.js": {
+          "original": "227fcc994a477ea95c5a0435d32783566334c6bd0dcc4a103029735ad8c9c535",
+          "patched": "227fcc994a477ea95c5a0435d32783566334c6bd0dcc4a103029735ad8c9c535"
+        },
+        "lib/utils.js": {
+          "original": "809fc29cf35ab0aa76b99cad29182f62c0ae598902481d10f9868eaef71981ee",
+          "patched": "809fc29cf35ab0aa76b99cad29182f62c0ae598902481d10f9868eaef71981ee"
+        },
+        "package.json": {
+          "original": "63264d817e856a4bff57d4304f2b38d2964a4f6df520eb169e7bcdb619f13e9a",
+          "patched": "63264d817e856a4bff57d4304f2b38d2964a4f6df520eb169e7bcdb619f13e9a"
+        }
+      }
+    },
+    {
+      "name": "picomatch",
+      "version": "2.3.2",
+      "path": "node_modules/readdirp/node_modules/picomatch",
+      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-2.3.2.tgz",
+      "integrity": "sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA==",
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "source": {
+        "kind": "Peso local mitigation proposal",
+        "description": "Restrict repeated extglobs to finite prefix-free literal alternatives or existing safe output."
+      },
+      "patch": {
+        "file": "picomatch-2.3.2-nested-repetition.patch",
+        "sha256": "5df5dcccbb2c572f1de8876a33f90b2938e1dc753742fe42af46b5d50778d094"
+      },
+      "files": {
+        "LICENSE": {
+          "original": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9",
+          "patched": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9"
+        },
+        "README.md": {
+          "original": "f4653b68a1883a32f852083c1b93381ce87f44c6855ce1f01854d39d0563c98c",
+          "patched": "f4653b68a1883a32f852083c1b93381ce87f44c6855ce1f01854d39d0563c98c"
+        },
+        "index.js": {
+          "original": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480",
+          "patched": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480"
+        },
+        "lib/constants.js": {
+          "original": "980225ab847a88a784f6d315557b8434f7742b2551ce20e354455c61b938c0a5",
+          "patched": "980225ab847a88a784f6d315557b8434f7742b2551ce20e354455c61b938c0a5"
+        },
+        "lib/parse.js": {
+          "original": "3a91656f440069aa8f8e15c9d695b9f6b2209df1eab2be8127c72cbcca45ff5f",
+          "patched": "a88906573a1fec9494db697002fdabb805150dd8c3913b236f7f94a95f09d8ce"
+        },
+        "lib/picomatch.js": {
+          "original": "2cb169cbe17d356036c5f62a377318b85e30817877e59797842aec9d8b15f54b",
+          "patched": "2cb169cbe17d356036c5f62a377318b85e30817877e59797842aec9d8b15f54b"
+        },
+        "lib/scan.js": {
+          "original": "227fcc994a477ea95c5a0435d32783566334c6bd0dcc4a103029735ad8c9c535",
+          "patched": "227fcc994a477ea95c5a0435d32783566334c6bd0dcc4a103029735ad8c9c535"
+        },
+        "lib/utils.js": {
+          "original": "809fc29cf35ab0aa76b99cad29182f62c0ae598902481d10f9868eaef71981ee",
+          "patched": "809fc29cf35ab0aa76b99cad29182f62c0ae598902481d10f9868eaef71981ee"
+        },
+        "package.json": {
+          "original": "63264d817e856a4bff57d4304f2b38d2964a4f6df520eb169e7bcdb619f13e9a",
+          "patched": "63264d817e856a4bff57d4304f2b38d2964a4f6df520eb169e7bcdb619f13e9a"
+        }
+      }
     }
   ]
 }
