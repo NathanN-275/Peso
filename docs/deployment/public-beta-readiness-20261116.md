@@ -62,10 +62,13 @@ staging has 52 ending 20261103022851. Inventory does not prove RLS, Auth,
 Storage-byte recovery or production migration acceptance. The November hosted
 restore and isolated migration rehearsal supply Gate 5's historical scoped pass.
 
-Next: run this retention change in hosted CI and inspect its raw packet; resolve
-Gate 3's private provider/history disposition; revalidate the accepted staging
-binding and complete Gate 4/12 on the current private candidate. Preserve queue
-wait separately from analysis-stage time for the two longest supported clips.
+Finish the remaining Gate 3 credential and provider checks. Verify the
+dedicated Netlify certificate and final staging binding before scheduling
+the first staging window. Nathan approved its scope of owner-only access,
+Auth and API readiness with media disabled. Gate 12 media acceptance remains
+open. Preserve queue wait separately from analysis-stage time for the two
+longest supported clips in that later window.
+[Dedicated staging preflight](staging-next-actions-20261116.md#dedicated-staging-checkpoint)
 Then obtain a fresh cutover recovery point and review production migration,
 production service binding, guardrails and private-build acceptance in order.
 Provider-only credential verification and the private GitHub Support response

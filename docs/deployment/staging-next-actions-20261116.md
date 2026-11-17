@@ -26,14 +26,53 @@ Read-only signed-in browser observations and Supabase catalog queries:
   from e9370d9f6675be3fe5567043b458ab51afae0933. Successful build/deploy is
   established; app functionality and private-media acceptance are not.
 
+## Dedicated staging checkpoint
+
+Nathan selected the owner-only Netlify Free project `peso-staging-web` and
+the fresh Render staging pair above. At 8:53 PM Eastern on November 16,
+Netlify reported all-deploy sign-in protection, zero deploys and no linked
+Git repository. Hosted content protection still needs to be tested after an
+approved upload.
+
+| Host | Current result |
+| --- | --- |
+| `staging.usepeso.com` | CNAME resolves to `peso-staging-web.netlify.app`. Netlify reports no installed certificate and ordinary HTTPS fails hostname verification. |
+| `api-staging.usepeso.com` | CNAME resolves to the selected Render API. Ordinary HTTPS verifies and returns HTTP 503 while the API is suspended. |
+
+The custom Netlify project domain replaces the historical branch-TLS path.
+Ticket #1196583 below records work on `main.usepeso.com`. Dedicated staging
+depends on the certificate for `staging.usepeso.com`.
+
+Nathan approved a first-window scope of owner-only access, real Auth and
+API readiness with media disabled. He selected a private static holding
+page as the frontend rollback target. Its archive is prepared locally.
+Timing, provider changes, uploads, paid compute and fixtures require
+separate approval.
+
+1. Verify ordinary HTTPS on the custom Netlify hostname. Obtain approval
+   for the holding-page upload, then verify owner access, anonymous denial
+   and the deploy ID before using it as a rollback target.
+2. Finalize and verify the dedicated staging binding, exact Auth redirects,
+   Turnstile and CORS. Run the committed-source and history checks against
+   the final candidate. Keep API, worker and frontend media disabled.
+3. Obtain approval for the bounded window, pinned deployment, fixtures and
+   cleanup. Verify service and artifact identity, readiness, CORS,
+   owner-only access, real email and CAPTCHA, and required browser checks.
+   Reconcile fixtures and confirm worker and API suspension by the deadline.
+4. Run two-owner media acceptance in a later approved window after provider
+   settlement, scoped owner cleanup and hosted-role rehearsal pass. Capture
+   queue wait and processing separately for the two longest supported clips.
+
+## Historical staging observations
+
 Backend application files differ between the deployed a4370570 source and
 current main: phase timing, filename lookup, worker timing and asset handling
 changed. Resuming old services alone cannot validate the newer analysis/UI
 flow. An approved source-pinned staging deployment is needed after prerequisites.
 
-## Full media test blocker
+### Earlier branch-host TLS blocker
 
-The current login/recording harness uses main--peso-webapp.netlify.app.
+The earlier login/recording harness used main--peso-webapp.netlify.app.
 Blueprint and frontend private media flags remain deliberately off for that
 smoke-test path. Existing media routes require HTTPS origins beneath usepeso.com,
 exact CORS and Strict cookies. Current tests stop at authentication or recording
@@ -54,7 +93,7 @@ The [Netlify staff guide](https://answers.netlify.com/t/support-guide-how-to-use
 requires a successful branch deploy, correctly named CNAME and a Support request
 to extend branch TLS. The first two prerequisites are now observed.
 
-## Netlify Support request — submitted, ticket #1196583
+### Netlify Support request — submitted, ticket #1196583
 
 Nathan explicitly authorized sending this request on November 16. It was
 submitted through Netlify's direct support form under Something else, using the
@@ -68,10 +107,9 @@ confirmation before routing to an agent. Sent the routine confirmation reply:
 “Yes, this is correct. Please route this TLS certificate request to an agent.”
 Gmail displayed Message sent. No duplicate forum topic was posted.
 
-Status: submitted and confirmation sent; agent response and TLS provisioning
-remain pending. No plan upgrade, DNS change, service resume or access-control
-change was performed. Submission confirmation screenshot is retained outside Git
-in the chat's visualization directory as `netlify-support-submitted.jpg`.
+At submission, the agent response and branch TLS provisioning were pending.
+The submission confirmation screenshot is retained outside Git in the chat's
+visualization directory as `netlify-support-submitted.jpg`.
 
 Submitted subject and body:
 
@@ -90,24 +128,7 @@ www.usepeso.com only. Please preserve existing access controls and apex/www
 routing. We are requesting branch TLS provisioning only, without a DNS migration
 or paid-plan upgrade. Please tell us before any paid change would be needed.
 
-## Work after TLS provisioning
-
-1. Verify HTTPS and anonymous protection on the custom branch hostname, including
-   direct app/deploy URLs. Do not enable media or provide fixtures beforehand.
-2. Prepare the fresh API's api-staging.usepeso.com association and DNS-only
-   CNAME to peso-public-beta-staging-api-mo9c.onrender.com. Verify current domain
-   allowance/cost before requesting the exact provider/DNS change approval.
-3. Prepare consistent staging source guards, Auth/Turnstile redirects, exact
-   CORS, public media origin/browser-origin allowlist and frontend/backend flags.
-   Keep these pending until both hosts have valid TLS and protected bindings.
-4. Quote the existing pair's current rates and a bounded test window, exact
-   source and rollback; obtain paid resumption/deployment and fixture approval.
-   Historical budget grants do not authorize a new window. No cost is quoted
-   here because account-specific rates/allowances have not been verified.
-5. Run two-owner auth, upload/analysis, playback, save/export, discard/deletion,
-   revoked/expired session and mobile/browser checks. Record queue wait separately
-   from processing and repeat the two longest supported clips. Suspend the pair
-   after the approved window and retain sanitized evidence.
+## Historical CI checkpoint
 
 GitHub CI for code head 889537a8 passed Security Checks run 43971866701 (22
 successful jobs; expected production-source skip). Render validation run
