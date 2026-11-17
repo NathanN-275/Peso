@@ -72,7 +72,21 @@ jobs:
         run: python -m unittest discover -s scripts -p 'test_pesodatabase_precutover.py'
 
       - name: Audit Python dependencies
-        run: pip-audit -r backend/requirements.txt
+        id: python_audit
+        run: |
+          mkdir -p artifacts/python-audit
+          python --version > artifacts/python-audit/runtime.txt
+          pip-audit --version >> artifacts/python-audit/runtime.txt
+          pip-audit -r backend/requirements.txt --format json --output artifacts/python-audit/report.json
+
+      - name: Retain Python dependency audit evidence
+        if: ${{ always() && (steps.python_audit.outcome == 'success' || steps.python_audit.outcome == 'failure') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: python-audit-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/python-audit/
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Audit Supabase migrations and RLS
         run: python scripts/supabase_security_audit.py
@@ -285,17 +299,36 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build candidate backend image without publishing it
         run: docker build --pull --file Dockerfile.mvp --tag peso-backend:security-check .
+      - name: Record candidate image identity
+        run: |
+          mkdir -p artifacts/container-security
+          docker image inspect peso-backend:security-check > artifacts/container-security/image.json
+          printf '%s\n' "$GITHUB_SHA" > artifacts/container-security/source.txt
       - name: Verify offline non-root runtime
-        run: ./scripts/verify_container_runtime.sh peso-backend:security-check
+        id: offline_runtime
+        shell: bash
+        run: |
+          set -o pipefail
+          ./scripts/verify_container_runtime.sh peso-backend:security-check 2>&1 | tee artifacts/container-security/runtime.log
       - name: Block high and critical container vulnerabilities
+        id: container_audit
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           version: v0.74.0
           image-ref: peso-backend:security-check
-          format: table
+          format: json
+          output: artifacts/container-security/trivy.json
           exit-code: "1"
           severity: HIGH,CRITICAL
           ignore-unfixed: false
+      - name: Retain container and offline runtime evidence
+        if: ${{ always() && (steps.offline_runtime.outcome == 'success' || steps.offline_runtime.outcome == 'failure') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: container-security-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/container-security/
+          if-no-files-found: error
+          retention-days: 90
 
   marketing-build:
     runs-on: ubuntu-latest

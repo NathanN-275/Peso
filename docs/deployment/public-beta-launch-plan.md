@@ -40,6 +40,14 @@ exposure, destructive data changes and new costs for final approval. Required
 provider sign-in or protected human actions still need Nathan when unavailable
 to the agent. See [the current execution contract](autonomous-public-beta-execution-20261025.md).
 
+## Current evidence
+
+Use the [November 16 readiness refresh](public-beta-readiness-20261116.md)
+for the current source/CI reconciliation and all-14-gate status. Daybreak login
+is not a prerequisite: repository-enforced CI, complete raw audit reports,
+image identity and offline runtime evidence provide the Gate 2 evidence path.
+The existing thresholds and candidate/artifact matching requirements still apply.
+
 ## Gates
 
 1. **Freeze candidate:** reconcile working changes and PR #47, select a source
@@ -68,8 +76,11 @@ to the agent. See [the current execution contract](autonomous-public-beta-execut
    continuous isolation. Browser functionality and accessibility belong to
    Gates 11/12; historical exhaustive diagnostics are follow-up unless they
    establish release security impact. Preserve current CI jobs and enforcement.
-3. **Credential history:** finish rotation, provider verification and GitHub
-   history-purge work; verify secret scans.
+3. **Credential history:** finish credential rotation or verified retirement,
+   provider verification and documented GitHub Support disposition; verify
+   secret scans. The [November 16 disposition](gate-3-support-disposition-20261116.md)
+   resolves history removal for the documented revoked New Relic key; it does
+   not establish a purge or close remaining credential work.
 4. **Staging authentication:** dedicated staging Render services bound to
    `peso-staging` during approved test windows, with isolated test users,
    redirects, email, Turnstile, browser and required native authentication tests.
