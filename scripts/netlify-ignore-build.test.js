@@ -116,3 +116,11 @@ test('script continues the build when Netlify comparison metadata is unavailable
     /Continuing Netlify build because the change set could not be resolved/,
   );
 });
+
+test('dedicated staging never runs a provider build even without comparison metadata', () => {
+  const result = spawnSync(process.execPath, [require.resolve('./netlify-ignore-build')], {
+    encoding: 'utf8', env: { PESO_RELEASE_ENV: 'web-staging', CONTEXT: 'production' },
+  });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /upload the reviewed artifact manually/);
+});

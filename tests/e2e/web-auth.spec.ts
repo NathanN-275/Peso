@@ -92,11 +92,22 @@ test('signup, generated confirmation link, and login use one Peso account', asyn
   await terms.press('Space');
   await expect(terms).toBeChecked();
   const recordCreated = recordStagingFixture(process.env.PESO_E2E_RECEIPT_DIR, 'signup', signupEmail);
+  const signupResponse = page.waitForResponse((response) =>
+    response.url() === `${process.env.PESO_E2E_SUPABASE_URL}/auth/v1/signup`
+      && response.request().method() === 'POST');
+  void signupResponse.catch(() => {});
   await completeChallengeAndSubmit(page, /create account/i);
   await expect(page.getByRole('heading', { name: 'Verify your email' })).toBeVisible();
 
-  const signupUser = await findUser(signupEmail);
-  if (!signupUser) throw new Error('Staging signup fixture was not found.');
+  const response = await signupResponse;
+  const created = await response.json();
+  const createdId = created.user?.id ?? created.id;
+  if (!response.ok() || typeof createdId !== 'string') throw new Error('Signup did not return a new fixture identity.');
+  const signup = await admin.auth.admin.getUserById(createdId);
+  const signupUser = signup.data?.user;
+  if (signup.error || !signupUser || signupUser.email?.toLowerCase() !== signupEmail.toLowerCase()) {
+    throw new Error('Staging signup fixture identity could not be verified.');
+  }
   recordCreated(signupUser.id);
   const { data, error } = await admin.auth.admin.generateLink({
     type: 'signup',

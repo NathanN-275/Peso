@@ -5,6 +5,18 @@ The approved deployment plan defines the release gates and action-time approvals
 The active MVP uses Render and Supabase. Follow the current runtime boundary and
 the existing gate tracker when preparing a hosted test.
 
+## Dedicated staging transition — November 16, 2026
+
+For the dedicated `peso-staging-web` project at `staging.usepeso.com`, follow
+the [current staging preparation and quote](dedicated-staging-preflight-20261116.md).
+It uses a normal project custom domain with Cloudflare DNS. Existing Netlify
+Support ticket **#1196583** concerns historical branch TLS and no longer blocks
+this approach; it has not been cancelled or marked resolved.
+
+Use the dedicated staging preflight for provider approval, TLS, the
+`web-staging` binding, and the headed E2E setup. The host and fixture
+examples below describe the previous branch-deploy path.
+
 [Approved deployment plan](public-beta-launch-plan.md) ·
 [Current runtime boundary](web-mvp-runtime.md) ·
 [Live release gates](public-beta-acceleration-plan-20261105.md)

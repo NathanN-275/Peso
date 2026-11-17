@@ -1,6 +1,8 @@
 const { execFileSync } = require('node:child_process');
 const APP_SITE_ID = '230da8eb-f00e-45d4-ba54-95f2e26f21c4';
 const combinedBinding = require('../config/combined-web-release-binding.json');
+const stagingBinding = require('../config/staging-web-release-binding.json');
+const { isStagingProject } = require('./staging-web-environment');
 
 function isCombinedProject(env, binding = combinedBinding) {
   return binding.schema_version === 1
@@ -10,7 +12,14 @@ function isCombinedProject(env, binding = combinedBinding) {
     && env.SITE_ID === binding.site_id;
 }
 
-function buildScript(env, binding = combinedBinding) {
+function buildScript(env, binding = combinedBinding, staging = stagingBinding) {
+  if (isStagingProject(env, staging) || env.PESO_RELEASE_ENV === 'web-staging') {
+    if (!isStagingProject(env, staging) || env.CONTEXT !== 'production'
+        || env.NETLIFY === 'true' || env.PULL_REQUEST === 'true') {
+      throw new Error('Dedicated staging accepts only a bound external manual production artifact build.');
+    }
+    return 'web:build:release';
+  }
   // This selects an artifact, not visibility. Provider access controls must be
   // verified before binding the new project and before every candidate deploy.
   if (isCombinedProject(env, binding)) return 'web:build:release';
@@ -20,7 +29,8 @@ function buildScript(env, binding = combinedBinding) {
     ? 'web:build:release'
     : 'web:build:marketing';
 }
-function buildEnvironment(env, binding = combinedBinding) {
+function buildEnvironment(env, binding = combinedBinding, staging = stagingBinding) {
+  if (isStagingProject(env, staging)) return { ...env, PESO_RELEASE_ENV: 'web-staging' };
   if (isCombinedProject(env, binding)) return { ...env, PESO_RELEASE_ENV: 'public-beta' };
   // Branch-only TOML settings would override every project's main build.
   if (env.SITE_ID === APP_SITE_ID && env.CONTEXT === 'branch-deploy' && env.BRANCH === 'main') {
@@ -33,7 +43,7 @@ function buildEnvironment(env, binding = combinedBinding) {
   }
   return env;
 }
-module.exports = { APP_SITE_ID, buildScript, isCombinedProject, buildEnvironment };
+module.exports = { APP_SITE_ID, buildScript, isCombinedProject, buildEnvironment, isStagingProject };
 if (require.main === module) {
   const env = buildEnvironment(process.env);
   execFileSync('npm', ['run', buildScript(env)], { stdio: 'inherit', env });
