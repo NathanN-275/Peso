@@ -465,16 +465,19 @@ test('real installed Auth SDK serializes logout and a later account session unde
 const localPage = (changes = {}) => ({ scope: 'local', owner_id: OWNER, session_id: SID,
   completed_at: RECEIPT.completed_at, replayed: false, next_cursor: null, cookie_cleanup_complete: true, cookie_inventory_version: 2, ...changes });
 
-test('captured outgoing revocation is a dedicated fixed endpoint while ordinary stale requests stay denied', async () => {
+test('captured outgoing revocation is a dedicated fixed endpoint while ordinary stale requests stay denied', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
   const calls = [];
-  const f = actualBackendApi({ fetcher: async (url, init) => { calls.push([url, init]); return Response.json(localPage()); } });
+  const f = actualBackendApi({ fetcher: async (url, init) => { calls.push([url, init]); now += 1000; return Response.json(localPage()); } });
   setActivePrivateMediaSessionKey(null);
-  const receipt = await f.api.revokeReplacementPrivateMediaSession(jwt(), BACKEND);
+  const token = jwt();
+  const receipt = await f.api.revokeReplacementPrivateMediaSession(token, BACKEND);
   assert.equal(receipt.scope, 'local'); assert.equal(calls.length, 1);
   assert.equal(calls[0][0], BACKEND + '/private-media/v2/session-replacement');
   assert.deepEqual(JSON.parse(calls[0][1].body), { transport: 'browser' });
   assert.equal(calls[0][1].credentials, 'include'); assert.equal(calls[0][1].redirect, 'error');
-  assert.equal(calls[0][1].headers.Authorization, 'Bearer ' + jwt());
+  assert.equal(calls[0][1].headers.Authorization, 'Bearer ' + token);
   await assert.rejects(f.api.getSavedVideos(jwt()), /sign-in session changed/);
   await assert.rejects(f.api.revokeGlobalPrivateMediaSession(jwt(), BACKEND), /Unable to confirm/);
   assert.equal(calls.length, 1);
