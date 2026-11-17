@@ -2,3 +2,5 @@
 aab7b54209769991277f8433d4ad0d2fd5733743:config/combined-web-release-binding.json:generic-api-key:7
 aab7b54209769991277f8433d4ad0d2fd5733743:scripts/release-env.test.js:generic-api-key:188
 3cd761f78d7e9ceee3f1d050c55f69a03d4f3769:config/render-beta-release-binding.json:generic-api-key:7
+c805784e16d3ea2ac07915d917446ffd1fb0f2ab:config/staging-web-release-binding.json:generic-api-key:9
+c805784e16d3ea2ac07915d917446ffd1fb0f2ab:config/staging-web-release-binding.json:generic-api-key:12

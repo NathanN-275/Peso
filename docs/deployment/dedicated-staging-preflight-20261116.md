@@ -726,3 +726,26 @@ and Turnstile site-key fingerprints and both media fields false. Configuration
 attestation is not hosted acceptance. The final source and history scanner
 review, source-bound CI, migration dry run and immutable artifact remain open.
 See staging-public-identifier-review-20261117.md for the exact new occurrence.
+
+
+### Local scanner review approved
+
+Finalizing the real widget fingerprint produced a second binding finding at
+line 12 in addition to the Render ID at line 9. Nathan separately approved the
+exact byte-pinned public-key-fingerprint classification, file-and-line pin
+selection and the two actual introducing-commit history fingerprints. No
+prefix, file or rule allowlist was added. All 39 scanner controls passed.
+Independent Standards review found an overstated pending-authority label;
+that was corrected and rechecked. Spec review found no actionable issue.
+The final local source and history scans must be retained separately from the
+earlier prototype evidence. Source publication and hosted CI remain gated.
+
+Netlify's current Free credit balance is 193.2 after the 15-credit holding
+upload. The later candidate upload is another 15 credits, retaining the
+30-credit two-upload estimate before usage. Render currently lists the selected
+API plan at $7/month and worker plan at $25/month, one instance each; the
+November two-hour compute estimate remains about $0.089 before other usage
+and tax. Both are suspended. Existing peso-public-beta and peso-webapp projects
+have private logs and PR previews enabled for main as an eligible base. A
+source PR may trigger those existing previews; do not change their settings
+without separate approval. The dedicated staging project remains unlinked.

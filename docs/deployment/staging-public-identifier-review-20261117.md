@@ -23,7 +23,7 @@ Retain the raw scanner exit and sanitized report. Acceptance must remain separat
 A Git history finding requires its own commit-specific fingerprint after the introducing commit exists. Record that exact historical occurrence in a follow-up commit; do not invent a fingerprint for a future SHA or suppress an entire path. Both history and exact-source checks must pass on the final reviewed source. This review authorizes no provider write, source publication, deployment, fixture write, compute resumption or media activation.
 
 
-## Proposed public-fingerprint extension — approval pending
+## Public-fingerprint extension — approved November 17
 
 After finalizing the verified binding, Gitleaks also reports its public
 Turnstile site-key SHA-256 on line 12, columns 5–98. This was not present while
@@ -59,3 +59,17 @@ Do not credit the proposed scanner acceptance to release readiness until Nathan
 approves this exact extension and its patch. This approval would authorize local
 policy/test/document changes only, not publication, provider writes, a deploy,
 fixtures, compute or a window.
+
+
+## Approval record
+
+Nathan explicitly approved the exact local scanner proposal on November 17,
+including the public-key-fingerprint classification, two pinned lines in one
+binding and only the two actual historical fingerprints for introducing commit
+c805784e16d3ea2ac07915d917446ffd1fb0f2ab at binding lines 9 and 12.
+The reviewed proposal patch SHA-256 is
+a77350cf1008f44f12e20d72ac5c84b3e9aa7864806281ae2edef362b73b4747.
+The initial pending-authority scans remain prototype evidence. Fresh scans
+after this approval and the follow-up history commit are the release results.
+This approval is local and does not authorize source publication or provider,
+deployment, fixture, compute or window actions.

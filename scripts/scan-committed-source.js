@@ -11,7 +11,7 @@ const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 // Immutable occurrence pins, not a prefix/rule/file allowlist. Any byte change
 // requires review; never reconstruct these pins from the current source.
 const REVIEWED_OCCURRENCES = [
-  // Proposed public widget fingerprint; acceptance requires Nathan's exact review.
+  // Nathan approved this exact public widget fingerprint on November 17, 2026.
   {
     "file": "config/staging-web-release-binding.json",
     "line": 12,
@@ -131,7 +131,7 @@ function scanCommittedSource({ repo, sha, evidenceRoot, runScanner }) {
     schemaVersion: 1, sourceSha: sha, sourceTree, archiveSha256: evidence.archiveSha256,
     scriptSha256: evidence.scriptSha256, outcome: 'error', exitCode: 1,
     classifiedCount: 0, blockingCount: null, findings: [],
-    authority: 'Original approval: docs/deployment/public-identifier-review-20261030.md; staging proposal awaiting approval: docs/deployment/staging-public-identifier-review-20261117.md',
+    authority: 'Nathan approved docs/deployment/public-identifier-review-20261030.md and docs/deployment/staging-public-identifier-review-20261117.md',
     reviewedOccurrences: REVIEWED_OCCURRENCES.map(({ redactedMatch, ...entry }) => ({ rule: 'generic-api-key', ...entry })),
   };
   try {
