@@ -77,18 +77,36 @@ function assertOriginalFiles(dir, except) {
   }
 }
 
-test('installer applies both pinned security and compatibility patches to published packages', t => {
+test('installer applies all pinned security and compatibility patches to published packages', t => {
   const dir = fixture(t);
   const result = cli(dir, 'apply');
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(manifest.packages.map(pkg => `${pkg.name}@${pkg.version}`),
-    ['braces@3.0.3', 'metro@0.84.4']);
+    ['braces@3.0.3', 'metro@0.84.4', 'picomatch@4.0.4',
+      'picomatch@2.3.2', 'picomatch@2.3.2', 'picomatch@2.3.2', 'picomatch@2.3.2']);
   for (const pkg of manifest.packages) {
     assert.ok(result.stdout.includes(`${pkg.name}@${pkg.version}`));
     for (const [file, pin] of Object.entries(pkg.files)) {
       assert.equal(hash(fs.readFileSync(path.join(dir, pkg.path, file))), pin.patched, `${pkg.name}/${file}`);
     }
   }
+});
+
+test('installer rejects a missing expected picomatch copy and a lock-only extra copy', t => {
+  const pkg = manifest.packages.find(pkg => pkg.path === 'node_modules/anymatch/node_modules/picomatch');
+  assert.ok(pkg);
+  const missing = fixture(t);
+  fs.rmSync(path.join(missing, pkg.path), { recursive: true });
+  assert.match(cli(missing, 'apply').stderr, /Unexpected installed package paths: picomatch/);
+  const extra = fixture(t);
+  const lockPath = path.join(extra, 'package-lock.json');
+  const lock = JSON.parse(fs.readFileSync(lockPath));
+  lock.packages['node_modules/extra/node_modules/picomatch'] = lock.packages[pkg.path];
+  fs.writeFileSync(lockPath, JSON.stringify(lock));
+  const result = cli(extra, 'apply');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Unexpected lockfile package paths: picomatch/);
+  assertOriginalFiles(extra);
 });
 
 test('read-only verifier accepts exact patched packages without changing bytes', t => {

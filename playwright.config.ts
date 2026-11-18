@@ -13,6 +13,8 @@ export default defineConfig({
   use: {
     baseURL: process.env.PESO_E2E_WEB_BASE_URL,
     serviceWorkers: 'block',
+    headless: false,
+    storageState: process.env.PESO_E2E_STORAGE_STATE,
     permissions: ['camera'],
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

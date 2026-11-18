@@ -53,6 +53,13 @@ deploy and is never a synonym for production or a production cutover. Its
 permanent database is the isolated peso-staging Supabase project
 (`iseqgaewjpjcxrndibep`); production PesoDatabase is outside this boundary.
 
+## Staging Environment
+
+The private pre-production Peso environment for Nathan and authorized testers,
+with isolated staging accounts and data. It is separate from the historical
+Azure Student Environment and from production; sharing the staging database
+does not make the two compute environments interchangeable.
+
 ## Peso Account
 
 The user identity shared across Peso web and mobile. An authenticated Peso

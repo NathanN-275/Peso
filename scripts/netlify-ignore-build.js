@@ -1,5 +1,6 @@
 const { execFileSync } = require('node:child_process');
 const { APP_SITE_ID } = require('./netlify-build');
+const { isStagingProject } = require('./staging-web-environment');
 
 const NON_WEB_DIRECTORIES = [
   '.github/',
@@ -58,6 +59,11 @@ function listChangedFiles(environment = process.env, runGit = execFileSync) {
 }
 
 function main() {
+  if (isStagingProject(process.env) || process.env.PESO_RELEASE_ENV === 'web-staging') {
+    console.log('Skipping dedicated staging provider build; upload the reviewed artifact manually.');
+    process.exitCode = 0;
+    return;
+  }
   if (process.env.SITE_ID === APP_SITE_ID && process.env.CONTEXT === 'production') {
     console.log('Skipping app production build until the separately reviewed beta release.');
     process.exitCode = 0;

@@ -101,7 +101,7 @@ test('CLI accepts only reviewed non-secret findings while preserving raw failure
   assert.equal(scan.policy.findingsSha256, scan.coverage.findingsSha256);
   assert.equal(createHash('sha256').update(fs.readFileSync(path.join(scan.directory, 'policy.json'))).digest('hex'),
     scan.coverage.policySha256);
-  assert.equal(scan.policy.reviewedOccurrences.length, 5);
+  assert.equal(scan.policy.reviewedOccurrences.length, 7);
   assert.deepEqual(scan.policy.findings.map(f => [f.file, f.classification]).sort(), reviewedFiles.map(file => [file, file.includes('release-env') || file.includes('combined-web') ? 'reviewed-public-resource-id' : 'reviewed-public-source-revision']).sort());
   for (const name of ['coverage.json', 'findings.json', 'policy.json']) {
     assert.doesNotMatch(fs.readFileSync(path.join(scan.directory, name), 'utf8'), /"(?:Secret|Match)"/);
@@ -213,4 +213,53 @@ test('CLI rejects missing or unsupported reviewed classification constants', t =
     assert.equal(scan.policy.blockingCount, 1);
     assert.equal(scan.policy.rawFindingCount, 4);
   }
+});
+
+
+const stagingBindingFile = 'config/staging-web-release-binding.json';
+const stagingBinding = fs.readFileSync(path.join(__dirname, '..', stagingBindingFile), 'utf8');
+const stagingResourceId = JSON.parse(stagingBinding).api_service_id;
+
+test('CLI accepts the exact verified staging occurrence while retaining raw findings', t => {
+  const scan = scanFixture(t, files => files.set(stagingBindingFile, stagingBinding));
+  assert.equal(scan.result.status, 0, JSON.stringify(scan.policy.findings));
+  assert.equal(scan.coverage.scannerExitCode, 1);
+  assert.equal(scan.policy.classifiedCount, 6);
+  assert.equal(scan.policy.rawFindingCount, 6);
+  assert.equal(scan.policy.blockingCount, 0);
+  assert.ok(scan.policy.findings.some(f => f.file === stagingBindingFile
+    && f.classification === 'reviewed-public-resource-id'));
+});
+
+for (const [name, change] of [
+  ['credential replacement', files => files.set(stagingBindingFile, stagingBinding.replace(stagingResourceId, githubToken()))],
+  ['unrelated binding edit', files => files.set(stagingBindingFile, stagingBinding + '\n')],
+  ['copied public ID', files => files.set('other/staging.json', stagingBinding)],
+  ['credential-field reuse', files => files.set(stagingBindingFile, stagingBinding.replace('api_service_id', 'api_key'))],
+]) test('CLI blocks staging ' + name, t => {
+  const scan = scanFixture(t, files => {
+    files.set(stagingBindingFile, stagingBinding);
+    change(files);
+  });
+  assert.equal(scan.result.status, 1);
+  assert.equal(scan.policy.outcome, 'blocked');
+  assert.ok(scan.policy.blockingCount > 0);
+});
+
+
+test('CLI blocks unsupported fingerprint classifications without losing the ID finding', t => {
+  const scan = scanFixture(t, files => files.set(stagingBindingFile, stagingBinding), null, null,
+    source => source.replace('"classification": "reviewed-public-key-fingerprint"', '"classification": "unsupported-fingerprint"'));
+  assert.equal(scan.result.status, 1);
+  assert.equal(scan.policy.rawFindingCount, 6);
+  assert.equal(scan.policy.classifiedCount, 5);
+  assert.equal(scan.policy.blockingCount, 1);
+});
+
+test('CLI blocks a credential substituted into the public fingerprint field', t => {
+  const fingerprint = JSON.parse(stagingBinding).turnstile_site_key_sha256;
+  const scan = scanFixture(t, files => files.set(stagingBindingFile, stagingBinding.replace(fingerprint, githubToken())));
+  assert.equal(scan.result.status, 1);
+  assert.equal(scan.policy.outcome, 'blocked');
+  assert.ok(scan.policy.blockingCount > 0);
 });

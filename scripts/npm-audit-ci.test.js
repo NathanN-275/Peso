@@ -297,7 +297,12 @@ test('audit CLI retains exact raw output, hashes, reviewed inputs and decisions 
     assert.ok(decision.startedAt); assert.ok(decision.completedAt);
     if (response === cleanAudit) {
       assert.equal(decision.patchVerification, 'passed');
-      assert.equal(Object.keys(decision.inputHashes).length, 5);
+      assert.deepEqual(Object.keys(decision.inputHashes).sort(), [
+        'package-lock.json', 'patches/dependencies/braces-3.0.3.patch',
+        'patches/dependencies/manifest.json', 'patches/dependencies/metro-0.84.4-image-size-2.patch',
+        'patches/dependencies/picomatch-2.3.2-nested-repetition.patch',
+        'patches/dependencies/picomatch-4.0.4-nested-repetition.patch', 'scripts/dependency-patches.js',
+      ]);
       for (const [file, digest] of Object.entries(decision.inputHashes)) assert.equal(digest, hash(readFileSync(path.join(root, file))));
       assert.equal(readFileSync(path.join(dir, 'npm-audit.json'), 'utf8'), response.stdout);
     }

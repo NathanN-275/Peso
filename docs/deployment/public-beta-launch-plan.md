@@ -6,6 +6,33 @@ The decision supersedes earlier references to upload geography and reuse of the
 old Render pair.
 [Scope decision](../adr/0021-scope-us-ip-signup-and-replace-render-pair.md).
 
+## Dedicated staging checkpoint — November 16, 2026
+
+The [dedicated staging preparation and quote](dedicated-staging-preflight-20261116.md)
+records the new `peso-staging-web` / `staging.usepeso.com` approach. Ordinary
+project-domain HTTPS replaces the historical branch-certificate dependency;
+existing Netlify ticket #1196583 is informational for this approach.
+
+The empty private Netlify project was created with Nathan's separate approval:
+`peso-staging-web`, ID `c2be6c9f-89fc-4303-befc-423aabcf9bfa`. Production and
+preview visibility are Private; no repository or deployment is present.
+Domain verification, deployment and log protection, and hosted acceptance remain
+pending. Nathan selected owner-only Free access and the fresh Web MVP pair
+recorded in the [dedicated staging binding](../../config/staging-web-release-binding.json).
+Invited private testers require a separately
+approved paid plan. Dedicated staging dispatch, release/artifact guards and
+E2E binding/fixture guards are implemented on the current branch; the tracked
+site UUID is recorded; verified key fingerprints remain pending provider readback.
+The local merge of `main` brings in the Web MVP private media runtime.
+Media activation still requires a current staging Auth policy attestation.
+
+Remaining release order: finish Gate 3 credential retirement/rotation and
+provider verification; pass staging acceptance, production geography refresh
+and guardrails; obtain a fresh protected recovery point and separately approve
+production migrations; verify production bindings and its private artifact,
+then repeat required E2E acceptance; prepare protected release, final costs and
+rollback evidence, and obtain public-launch approval before exposure.
+
 Approved by Nathan in this chat on September 30, 2026. This replaces the older
 plan's dependency on an unavailable source PDF. Target: the combined homepage
 and authenticated `/app`, US-IP signup, and side-view squats.

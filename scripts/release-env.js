@@ -109,6 +109,7 @@ function validateReleaseEnv(environment, {
   studentApiBinding = loadStudentApiBinding(),
   renderBetaBinding = loadRenderBetaBinding(),
   combinedBinding = require('../config/combined-web-release-binding.json'),
+  stagingBinding = require('../config/staging-web-release-binding.json'),
 } = {}) {
   const errors = REQUIRED_PUBLIC_VARIABLES
     .filter((name) => !clean(environment[name]))
@@ -133,6 +134,11 @@ function validateReleaseEnv(environment, {
   const releaseEnvironment = clean(
     environment.PESO_RELEASE_ENV || environment.EAS_BUILD_PROFILE || environment.CONTEXT
   );
+
+  const { isStagingProject, validateStagingWebEnvironment } = require('./staging-web-environment');
+  if (releaseEnvironment === 'web-staging' || isStagingProject(environment, stagingBinding)) {
+    errors.push(...validateStagingWebEnvironment(environment, stagingBinding));
+  }
 
   if (releaseEnvironment === 'student') {
     const { STUDENT_SUPABASE_URL, STUDENT_ORIGIN } = require('./student-environment');
@@ -223,7 +229,7 @@ function validateReleaseEnv(environment, {
   };
 }
 
-function runCli() {
+async function runCli() {
   const result = validateReleaseEnv(process.env);
 
   for (const warning of result.warnings) {
@@ -239,11 +245,18 @@ function runCli() {
     return;
   }
 
+  if (process.env.PESO_RELEASE_ENV === 'web-staging'
+      || require('./staging-web-environment').isStagingProject(process.env)) {
+    await require('./staging-web-environment').verifyStagingPublicKey(process.env);
+  }
   console.log('Release configuration is valid.');
 }
 
 if (require.main === module) {
-  runCli();
+  runCli().catch(() => {
+    console.error('Staging public credential verification failed; release is blocked.');
+    process.exitCode = 1;
+  });
 }
 
 module.exports = {

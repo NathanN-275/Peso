@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "status": "private-config-verified",
+  "site_name": "peso-staging-web",
+  "site_id": "c2be6c9f-89fc-4303-befc-423aabcf9bfa",
+  "site_origin": "https://staging.usepeso.com",
+  "api_url": "https://api-staging.usepeso.com",
+  "supabase_url": "https://iseqgaewjpjcxrndibep.supabase.co",
+  "api_service_id": "srv-dbrrjqjrjlhs73cbn6b0",
+  "worker_service_id": "srv-dbrrjqjrjlhs73cbn6bg",
+  "supabase_public_key_sha256": "25fe02e09661d7d1b8e91bf94cccf820abb376c6750bb8539b4681db2496016e",
+  "turnstile_site_key_sha256": "729289ff12a9eed800320f0f582b9844c090082ecfec0a4b18947634e11320d3",
+  "media_prerequisites_verified": false,
+  "private_media_enabled": false
+}

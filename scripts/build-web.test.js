@@ -11,9 +11,14 @@ function buildFixture(t, blocked = false) {
   const repo = path.resolve(__dirname, '..');
   // Fixture module type must not inherit an unrelated ancestor package.json.
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ private: true, type: 'commonjs' }));
-  for (const directory of ['scripts', 'web', 'bin', 'caller']) fs.mkdirSync(path.join(root, directory));
-  for (const script of ['build-web.js', 'verify-marketing-build.js', 'dependency-patches.js', 'npm-audit-web-ci.js']) {
+  for (const directory of ['scripts', 'web', 'bin', 'caller', 'config']) fs.mkdirSync(path.join(root, directory));
+  for (const script of ['build-web.js', 'verify-marketing-build.js', 'dependency-patches.js', 'npm-audit-web-ci.js',
+    'staging-web-environment.js', 'student-environment.js']) {
     fs.copyFileSync(path.join(__dirname, script), path.join(root, 'scripts', script));
+  }
+  for (const file of ['staging-web-release-binding.json', 'combined-web-release-binding.json',
+    'staging-web-headers', 'staging-web-redirects']) {
+    fs.copyFileSync(path.join(repo, 'config', file), path.join(root, 'config', file));
   }
   fs.copyFileSync(path.join(repo, 'package-lock.json'), path.join(root, 'package-lock.json'));
   fs.cpSync(path.join(repo, 'patches/dependencies'), path.join(root, 'patches/dependencies'), { recursive: true });
@@ -62,10 +67,10 @@ process.exit(2);
   const dist = path.join(root, 'dist');
   fs.mkdirSync(path.join(dist, 'app'), { recursive: true });
   fs.writeFileSync(path.join(dist, 'app/stale.js'), 'fixture stale export');
-  const run = mode => spawnSync(process.execPath, [path.join(root, 'scripts/build-web.js'), mode], {
+  const run = (mode, overrides = {}) => spawnSync(process.execPath, [path.join(root, 'scripts/build-web.js'), mode], {
     cwd: path.join(root, 'caller'), encoding: 'utf8', timeout: 15000,
     env: { ...process.env, CI: 'true', GITHUB_ACTIONS: 'false', GITHUB_SHA: 'a'.repeat(40),
-      PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}` },
+      PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}`, ...overrides },
   });
   const events = () => fs.existsSync(path.join(root, 'events.jsonl'))
     ? fs.readFileSync(path.join(root, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
@@ -139,5 +144,49 @@ test('Marketing generation failure after an accepted audit removes partial outpu
   const result = f.run('private-beta');
   assert.equal(result.status, 1);
   assert.deepEqual(f.events().map(event => event.kind), ['audit', 'marketing']);
+  assert.equal(fs.existsSync(f.dist), false);
+});
+
+test('pending staging configuration cannot export or leave stale publishable bytes', t => {
+  const f = buildFixture(t);
+  const result = f.run('private-beta', { PESO_RELEASE_ENV: 'web-staging' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /verified dedicated private project/);
+  assert.equal(fs.existsSync(f.dist), false);
+  assert.deepEqual(f.events(), []);
+});
+
+test('manual staging artifact carries its identity, security headers and direct app rewrites', t => {
+  const f = buildFixture(t);
+  const { fingerprint } = require('./staging-web-environment');
+  const binding = { ...require('../config/staging-web-release-binding.json'),
+    site_id: '11111111-2222-4333-8444-555555555555', status: 'private-config-verified',
+    supabase_public_key_sha256: fingerprint('sb_publishable_fixture'),
+    turnstile_site_key_sha256: fingerprint('real-widget-fixture') };
+  fs.writeFileSync(path.join(f.root, 'config/staging-web-release-binding.json'), JSON.stringify(binding));
+  // Only stub the network CLI in this isolated export-orchestration fixture.
+  fs.writeFileSync(path.join(f.root, 'scripts/release-env.js'), 'process.exit(0);');
+  const env = { PESO_RELEASE_ENV: 'web-staging', CONTEXT: 'production', SITE_ID: binding.site_id,
+    NETLIFY: 'false', PULL_REQUEST: 'false', EXPO_NO_DOTENV: '1', COMMIT_REF: 'a'.repeat(40),
+    URL: binding.site_origin, DEPLOY_PRIME_URL: '', EXPO_PUBLIC_BACKEND_URL: '',
+    EXPO_PUBLIC_SUPABASE_ANON_KEY: '', EXPO_PUBLIC_SUPABASE_URL: binding.supabase_url,
+    EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_fixture',
+    EXPO_PUBLIC_TURNSTILE_SITE_KEY: 'real-widget-fixture',
+    EXPO_PUBLIC_AUTH_CHALLENGE_URL: `${binding.site_origin}/auth/turnstile/`,
+    EXPO_PUBLIC_PRODUCTION_BACKEND_URL: binding.api_url, EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED: 'false' };
+  const result = f.run('private-beta', env);
+  assert.equal(result.status, 0, result.stderr);
+  const identity = JSON.parse(fs.readFileSync(path.join(f.dist, 'peso-release.json')));
+  assert.equal(identity.site_id, binding.site_id);
+  assert.equal(identity.source_commit, env.COMMIT_REF);
+  assert.equal(identity.api_service_id, binding.api_service_id);
+  assert.match(fs.readFileSync(path.join(f.dist, '_headers'), 'utf8'), /Cache-Control: private, no-store/);
+  assert.match(fs.readFileSync(path.join(f.dist, '_redirects'), 'utf8'), /\/app\/\* \/app\/index.html 200/);
+  binding.private_media_enabled = true;
+  binding.media_prerequisites_verified = true;
+  fs.writeFileSync(path.join(f.root, 'config/staging-web-release-binding.json'), JSON.stringify(binding));
+  const missingRuntime = f.run('private-beta', { ...env, EXPO_PUBLIC_PRIVATE_MEDIA_ENABLED: 'true' });
+  assert.equal(missingRuntime.status, 1);
+  assert.match(missingRuntime.stderr, /media runtime is missing/);
   assert.equal(fs.existsSync(f.dist), false);
 });

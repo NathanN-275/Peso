@@ -11,6 +11,28 @@ const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 // Immutable occurrence pins, not a prefix/rule/file allowlist. Any byte change
 // requires review; never reconstruct these pins from the current source.
 const REVIEWED_OCCURRENCES = [
+  // Nathan approved this exact public widget fingerprint on November 17, 2026.
+  {
+    "file": "config/staging-web-release-binding.json",
+    "line": 12,
+    "startColumn": 5,
+    "endColumn": 98,
+    "fileSha256": "d47124051176287bd2ba081162c350902fbf148a7b9a3c70e5b668cbe9ba3e65",
+    "lineSha256": "2eb82450c4f118d00057e8433a404fe104f6a79bd33e74b6952c5cb7b8c5052a",
+    "redactedMatch": "turnstile_site_key_sha256\": \"REDACTED\"",
+    "classification": "reviewed-public-key-fingerprint"
+  },
+  // Verified dedicated staging occurrence; see staging-public-identifier-review-20261117.md.
+  {
+    "file": "config/staging-web-release-binding.json",
+    "line": 9,
+    "startColumn": 5,
+    "endColumn": 47,
+    "fileSha256": "d47124051176287bd2ba081162c350902fbf148a7b9a3c70e5b668cbe9ba3e65",
+    "lineSha256": "247ff2f461b42d8eca2c173eac91fac5a8140cc5da4908fa2865947d530b8d42",
+    "redactedMatch": "api_service_id\": \"REDACTED\"",
+    "classification": "reviewed-public-resource-id"
+  },
   {
     "file": "config/render-beta-release-binding.json",
     "line": 7,
@@ -64,9 +86,9 @@ const REVIEWED_OCCURRENCES = [
 ];
 
 function isReviewedOccurrence(finding, file, snapshot, version) {
-  const reviewed = REVIEWED_OCCURRENCES.find(entry => entry.file === file);
+  const reviewed = REVIEWED_OCCURRENCES.find(entry => entry.file === file && entry.line === finding.StartLine);
   if (version !== SCANNER_VERSION || !reviewed ||
-      !['reviewed-public-resource-id', 'reviewed-public-source-revision'].includes(reviewed.classification) ||
+      !['reviewed-public-resource-id', 'reviewed-public-source-revision', 'reviewed-public-key-fingerprint'].includes(reviewed.classification) ||
       finding.RuleID !== 'generic-api-key' ||
       finding.StartLine !== reviewed.line || finding.EndLine !== reviewed.line ||
       finding.StartColumn !== reviewed.startColumn || finding.EndColumn !== reviewed.endColumn ||
@@ -109,7 +131,7 @@ function scanCommittedSource({ repo, sha, evidenceRoot, runScanner }) {
     schemaVersion: 1, sourceSha: sha, sourceTree, archiveSha256: evidence.archiveSha256,
     scriptSha256: evidence.scriptSha256, outcome: 'error', exitCode: 1,
     classifiedCount: 0, blockingCount: null, findings: [],
-    authority: 'Nathan approved docs/deployment/public-identifier-review-20261030.md',
+    authority: 'Nathan approved docs/deployment/public-identifier-review-20261030.md and docs/deployment/staging-public-identifier-review-20261117.md',
     reviewedOccurrences: REVIEWED_OCCURRENCES.map(({ redactedMatch, ...entry }) => ({ rule: 'generic-api-key', ...entry })),
   };
   try {
@@ -179,10 +201,10 @@ function scanCommittedSource({ repo, sha, evidenceRoot, runScanner }) {
       const reviewed = !classifiedOccurrences.has(occurrence) &&
         isReviewedOccurrence(findings[index], metadata.file, snapshot, evidence.scannerVersion);
       if (reviewed) classifiedOccurrences.add(occurrence);
-      return { ...metadata, classification: reviewed ? REVIEWED_OCCURRENCES.find(entry => entry.file === metadata.file).classification : 'blocking' };
+      return { ...metadata, classification: reviewed ? REVIEWED_OCCURRENCES.find(entry => entry.file === metadata.file && entry.line === metadata.startLine).classification : 'blocking' };
     });
     policy.classifiedCount = policy.findings.filter(f =>
-      ['reviewed-public-resource-id', 'reviewed-public-source-revision'].includes(f.classification)).length;
+      ['reviewed-public-resource-id', 'reviewed-public-source-revision', 'reviewed-public-key-fingerprint'].includes(f.classification)).length;
     policy.blockingCount = policy.findings.length - policy.classifiedCount;
     policy.outcome = policy.blockingCount ? 'blocked' : findings.length
       ? 'accepted-with-reviewed-nonsecret-findings' : 'clean';

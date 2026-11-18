@@ -4,7 +4,7 @@ const { createHash } = require('node:crypto');
 
 const root = path.resolve(__dirname, '..');
 // Repository-reviewed trust anchor. Updating this requires reviewing the manifest.
-const MANIFEST_SHA256 = 'a107d7327828b2b6701097176546f05c8980f9df3ed79e022234cec067d8f284';
+const MANIFEST_SHA256 = '21a3e08d71f28e0c1156ea5ba5ffed0f375fbb492d5a99da8f600f1e0a727262';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 
 function checkedPath(relative) {
@@ -80,7 +80,14 @@ function run(mode) {
   if (hash(manifestBytes) !== MANIFEST_SHA256) throw new Error('Manifest integrity mismatch');
   const manifest = JSON.parse(manifestBytes);
   const lock = JSON.parse(fs.readFileSync(checkedPath('package-lock.json')));
-  const actualCopies = new Map(manifest.packages.map(p => [p.name, []]));
+  const expectedCopies = new Map();
+  for (const pkg of manifest.packages) {
+    const paths = expectedCopies.get(pkg.name) ?? [];
+    if (paths.includes(pkg.path)) throw new Error(`Duplicate manifest package path: ${pkg.path}`);
+    paths.push(pkg.path);
+    expectedCopies.set(pkg.name, paths);
+  }
+  const actualCopies = new Map([...expectedCopies.keys()].map(name => [name, []]));
   function scanModules(dir) {
     for (const entry of fs.readdirSync(checkedPath(dir), { withFileTypes: true })) {
       if (entry.name.startsWith('.')) continue;
@@ -104,15 +111,21 @@ function run(mode) {
     if (fs.existsSync(path.join(root, packagePath, 'node_modules'))) scanModules(`${packagePath}/node_modules`);
   }
   scanModules('node_modules');
+  for (const [name, paths] of expectedCopies) {
+    const expected = JSON.stringify([...paths].sort());
+    if (JSON.stringify(actualCopies.get(name).sort()) !== expected) {
+      throw new Error(`Unexpected installed package paths: ${name}`);
+    }
+    const suffix = `node_modules/${name}`;
+    const lockedPaths = Object.keys(lock.packages ?? {}).filter(p => p === suffix || p.endsWith(`/${suffix}`));
+    if (JSON.stringify(lockedPaths.sort()) !== expected) {
+      throw new Error(`Unexpected lockfile package paths: ${name}`);
+    }
+  }
   const plans = [];
   for (const pkg of manifest.packages) {
-    if (JSON.stringify(actualCopies.get(pkg.name)) !== JSON.stringify([pkg.path])) {
-      throw new Error(`Unexpected installed package paths: ${pkg.name}`);
-    }
-    const copies = Object.keys(lock.packages ?? {}).filter(p => p === pkg.path || p.endsWith(`/${pkg.path}`));
     const locked = lock.packages?.[pkg.path];
-    if (copies.length !== 1 || copies[0] !== pkg.path ||
-        locked.version !== pkg.version || locked.resolved !== pkg.resolved || locked.integrity !== pkg.integrity) {
+    if (locked.version !== pkg.version || locked.resolved !== pkg.resolved || locked.integrity !== pkg.integrity) {
       throw new Error(`Unexpected lockfile package: ${pkg.name}`);
     }
     const patchBytes = fs.readFileSync(checkedPath(`patches/dependencies/${pkg.patch.file}`));
