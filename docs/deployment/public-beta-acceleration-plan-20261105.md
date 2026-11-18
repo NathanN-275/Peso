@@ -82,12 +82,33 @@ defect. PR #57 fixed it on the current base. A new fixture build from `1f6cf65e`
 passed four offline Chromium and WebKit cases for reset, sign-out, sign-out
 retry, and fresh-password sign-in. The equivalent hosted flow remains open.
 
-The November 17 closeout also recorded a staging video row and matching private
-object, plus a separate deletion-outbox entry outside the Auth fixture scope.
-Reconcile their ownership and disposition before any scoped cleanup.
+November 18 Netlify Free billing showed production deploys paused on the
+staging team, with the current period November 4–December 3. Operational
+credits cannot fund new uploads. The protected holding deploy remains in place.
+
+The unpublished 66-file staging ZIP from `1f6cf65e` independently matched
+its file manifest and archive SHA-256
+`b9881be3d3c76e780a03c6907cf49283318d991f9ee8d9951c5538d1e78632f6`.
+Startup JavaScript used 547,685 of 614,400 gzip bytes and WOFF2 used 58,224
+of 204,800 bytes. Offline Chromium and WebKit passed the keyboard skip-link
+visibility and activation, fonts, layout, login shell and reload checks at
+1280×900 and 390×844 with reduced motion. WebKit used Option+Tab.
+Hosted browser acceptance still needs a deploy window.
+The separate synthetic media fixture passed the existing Chromium desktop and
+mobile checks for activity, queue confirmation, playback and keyboard seeking.
+
+Read-only Supabase evidence confirmed the 21 reviewed production migrations,
+the pre-reservations schema, three private buckets, and zero video rows,
+active jobs or Storage object metadata. Staging matched all 52 migrations,
+with media attestation off, six video rows and three video object metadata
+records. Both deletion-outbox paths match current videos owned by the same
+respective owners, and neither path matches Storage object metadata. No
+source-attempt ledger row was dispatching. The readback leaves backing bytes
+and cleanup authorization unverified.
+
 On the November 18 base, 125 focused application-side media write and cleanup
-tests passed. The exact managed Storage build still needs a supported operation
-for settling the write and deleting its backing generation. The October 28
+tests passed. The managed Storage build still needs a supported operation for
+settling the write and deleting its exact backing generation. The October 28
 request is on file, and a Supabase Support reply remains unverified.
 
 | Gate | Status | Evidence / next requirement |
@@ -95,17 +116,27 @@ request is on file, and a Supabase Support reply remains unverified.
 | 1. Freeze candidate | Open | Refreshed from GitHub main at the November 18 checkpoint. Reconcile subsequent fixes, record the final release source, and run the applicable source and hosted checks. |
 | 2. Security and offline runtime | Passed for November 18 base CI; final candidate open | [Security Checks run 44407249479](https://github.com/NathanN-275/Peso/actions/runs/44407249479) passed 22 jobs on `1f6cf65e`. The production-release-source job was the only skip among 23 total jobs on the main push. Bind fresh applicable evidence to the final source and production artifacts. |
 | 3. Credential history | Blocked | Provider-confirmed New Relic revocation and GitHub Support disposition resolve that key's history-removal subitem. [Disposition](gate-3-support-disposition-20261116.md). Verify retirement or rotation of remaining credentials and deployed consumers, resolve any remaining history action, and rerun secret scans on the final release source. |
-| 4. Staging authentication | Signup verified; browser/Auth acceptance open | Carry forward Nathan's signup verification for its tested scope. Complete remaining exact-candidate confirmation, reset and fresh-session evidence where missing, plus required hosted browser and native checks. Use the [dedicated staging preflight](dedicated-staging-preflight-20261116.md) for the next approved window. |
+| 4. Staging authentication | Signup verified; next deploy blocked by Netlify pause | Carry forward Nathan's signup verification for its tested scope. Complete remaining exact-candidate Auth, required browser and native checks in the next approved window after deploy capacity is available. [Dedicated staging preflight](dedicated-staging-preflight-20261116.md). |
 | 5. Hosted recovery | Passed for November 6 snapshot scope | Preserve the isolated restore, access and byte-recovery evidence and the November 9 migration rehearsal. The last recorded recovery target state was inactive. Revalidate the target and evidence before any new rehearsal. |
 | 6. Fresh recovery point | Open | At cutover, verify a fresh writer freeze, database export and stored video inventory/bytes. Independently verify checksums and the protected off-device copy. |
-| 7. Production migrations | Blocked on fresh recovery and application approval | All 51 selected SQL files and 30 rehearsed pending versions match the November 9 recovery rehearsal at the November 18 base. Verify that the final candidate and fresh production history match the reviewed [Web MVP migration selection](web-mvp-migrations.md), then record a fresh production dry run before requesting application approval. |
+| 7. Production migrations | Local preparation passed; cutover open | The local preparer verified 51 selected SQL files and 30 pending versions at the November 18 base. Live history matched the 21 reviewed versions. Require a fresh writer freeze and verified backup, then confirm the final candidate/history, run a fresh linked dry run and obtain approval before applying. [Web MVP migration selection](web-mvp-migrations.md). |
 | 8. US-IP signup | Open | The three latest scheduled geography runs skipped, most recently [44302384186](https://github.com/NathanN-275/Peso/actions/runs/44302384186). Verify live refresh, trusted proxy handling, fail-closed signup and normal authenticated uploads from abroad. [Scope decision](../adr/0021-scope-us-ip-signup-and-replace-render-pair.md). |
 | 9. Guardrails | Open | The three latest scheduled budget runs skipped, most recently [44401201514](https://github.com/NathanN-275/Peso/actions/runs/44401201514). Verify hosted spend collection, alert delivery, quotas and intake stop with accepted jobs draining. Private-media cleanup requires scoped hosted evidence. |
 | 10. Render cutover | Open | Fresh staging and production pairs follow ADR 0021. Current production service identities, matching credentials, image, readiness, cost and two-longest-clip evidence remain required. |
 | 11. Private Web App | Open | Combined production binding remains pending. Verify current private deployment/configuration, release build/budget, visual/accessibility and historical URL privacy. |
 | 12. End-to-end acceptance | Blocked on staging private media | Prove provider settlement and scoped owner cleanup in hosted-role rehearsal before approved staging media activation. Run the exact-candidate two-owner side-view squat flow through upload, analysis, playback, save, export and deletion. Cover recovery, owner isolation, expired sessions, supported mobile browsers and the longest allowed clips. Repeat required acceptance on the private production build. |
-| 13. Protected release | Open | One main-to-production PR, current protection and check contexts, all required checks on the release SHA, and a complete frontend/backend/migration/model manifest remain required. |
+| 13. Protected release | Open | November 18 GitHub readback showed production at `d92dfea5` with nine strict required contexts, including both historical Netlify preview checks. The rules remain in place. One main-to-production PR, all required checks on the release SHA and the complete release manifest remain required. |
 | 14. Public launch | Blocked | Complete mandatory gates, final cost and rollback review, and Nathan's action-time approval. After exposure, require public smoke tests, verified monitoring and alerts, baseline error/queue/spend readings, and a named owner for the first-beta-cycle review. |
+
+Independent review of five retained CI archives for `1f6cf65e` matched the
+GitHub digests. The root npm report had seven moderate findings and zero HIGH
+or CRITICAL findings. All three retained web audit runs and the Python audit
+had zero findings. The scanned Linux/amd64 image
+`sha256:a5bac1cc84ec421fd327e861619971fbddfb9b6d92e8c3d0a9c12dfff3bf5733`
+had zero HIGH or CRITICAL findings and passed the retained offline runtime checks.
+The exact-source scan had seven reviewed non-secret matches and zero blockers.
+Recheck treatment applicability and complete the exact candidate and hosted
+artifact evidence for release.
 
 **Historical independent checks (earlier checkpoint):** `npm run deps:verify` passed; `npm run typecheck` passed; `npm run test:policy` passed (698/698); `npm run dashboard:typecheck` passed; `npm run dashboard:test` passed (17/17); `npm run dashboard:build` passed; `npm run audit:ci` passed with no HIGH/CRITICAL findings; `git diff --check` passed. These checks are local evidence only. The production-bound Gate 11 build and hosted release acceptance have not been performed.
 
@@ -183,7 +214,7 @@ Credential disposition prepared from the September 13 provider follow-up and cur
 | Item | Available evidence | Required next evidence / action |
 | --- | --- | --- |
 | Exposed New Relic license key | September 13 note records provider deletion without replacement. | History-removal subitem resolved by the existing deletion confirmation and Nathan-supplied October 8 Support response; [review](gate-3-support-disposition-20261116.md). PR #52 earlier code checkpoint passed GitGuardian. No purge claimed; recheck scanners on final source. |
-| Student scaler database password | November 16 readback found the custom role absent and the generic role set to NOLOGIN in the selected Supabase projects. Old GitHub secrets and historical workflow references remain. | Verify remaining consumers and Azure inventory. Retire unused credentials or rotate credentials still in use under the required approvals. [Inventory follow-up](gate-3-support-disposition-20261116.md#credential-inventory-follow-up). |
+| Student scaler database password | November 18 readback confirmed the custom role absent and the generic role set to NOLOGIN in both Supabase projects. The GitHub Student environment still lists two legacy secret names. Azure operator authentication was revoked. | Verify remaining consumers and the Azure inventory when access is available. Retire unused credentials or rotate credentials still in use under the required approvals. [Inventory follow-up](gate-3-support-disposition-20261116.md#credential-inventory-follow-up). |
 | Render API/worker Supabase credentials | The fresh staging pair is suspended. The production binding is pending. | Verify privately that each fresh pair uses credentials for its own designated Supabase project before approved deployment or resumption. Verify both service credentials alongside the project URL. |
 | Cleanup, intake-stop, geography and alert-delivery credentials | Activation and delivery acceptance remain open. | Verify purpose, scope, provider storage and recipients at the applicable activation gate; retain identifiers/results without values. New credential creation and hosted activation require their action-time approval. |
 

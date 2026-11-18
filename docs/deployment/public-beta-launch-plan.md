@@ -6,25 +6,20 @@ The decision supersedes earlier references to upload geography and reuse of the
 old Render pair.
 [Scope decision](../adr/0021-scope-us-ip-signup-and-replace-render-pair.md).
 
-## Dedicated staging checkpoint — November 16, 2026
+## Dedicated staging checkpoint — November 18, 2026
 
-The [dedicated staging preparation and quote](dedicated-staging-preflight-20261116.md)
-records the new `peso-staging-web` / `staging.usepeso.com` approach. Ordinary
-project-domain HTTPS replaces the historical branch-certificate dependency;
-existing Netlify ticket #1196583 is informational for this approach.
+Nathan selected owner-only Netlify Free staging at `staging.usepeso.com`.
+The protected holding deploy has verified HTTPS and anonymous denial. The
+[dedicated staging binding](../../config/staging-web-release-binding.json)
+is `private-config-verified` and records the Netlify site, Render services,
+Supabase project and key fingerprints. Both selected Render services are
+suspended. The Netlify Free production-deploy pause blocks the next
+staging upload. [Current gate tracker](public-beta-acceleration-plan-20261105.md#current-gate-tracker--november-18-2026).
 
-The empty private Netlify project was created with Nathan's separate approval:
-`peso-staging-web`, ID `c2be6c9f-89fc-4303-befc-423aabcf9bfa`. Production and
-preview visibility are Private; no repository or deployment is present.
-Domain verification, deployment and log protection, and hosted acceptance remain
-pending. Nathan selected owner-only Free access and the fresh Web MVP pair
-recorded in the [dedicated staging binding](../../config/staging-web-release-binding.json).
-Invited private testers require a separately
-approved paid plan. Dedicated staging dispatch, release/artifact guards and
-E2E binding/fixture guards are implemented on the current branch; the tracked
-site UUID is recorded; verified key fingerprints remain pending provider readback.
-The local merge of `main` brings in the Web MVP private media runtime.
-Media activation still requires a current staging Auth policy attestation.
+Signup is verified for its tested scope. Remaining hosted browser and Auth
+checks still require an approved window. Media attestation and activation are
+off pending supported provider settlement, scoped cleanup and hosted-role
+rehearsal. [Dedicated staging preflight](dedicated-staging-preflight-20261116.md).
 
 Remaining release order: finish Gate 3 credential retirement/rotation and
 provider verification; pass staging acceptance, production geography refresh
@@ -153,9 +148,9 @@ Use `render-public-beta-staging.yaml` for the staging pair and
 `render-public-beta.yaml` for the production pair. Both use the MVP Dockerfile,
 manual deployments, and one Starter API and one 1 CPU / 2 GB worker. Bind
 staging only to `peso-staging` with its own credentials and
-`https://main--peso-webapp.netlify.app` as the allowed Web App origin. Keep signup
-disabled until the controlled Auth test window is separately approved. Verify the
-assigned Render HTTPS endpoint before binding it to the staged Web App.
+`https://staging.usepeso.com` as the allowed Web App origin. Use
+`https://api-staging.usepeso.com` from the dedicated staging binding and verify
+HTTPS before each approved window. Keep signup disabled outside approved tests.
 
 A new Git-backed service can build on creation. Before approving creation,
 pin the linked branch tip to the reviewed SHA, verify its target workspace,
@@ -163,10 +158,11 @@ region, service names and configuration, and verify the exact deployed SHA
 on both services. Stop the test window on a mismatch. Keep production creation
 behind its migration and recovery gates. Retain the old pair suspended.
 
-Record the provider-assigned IDs, Blueprint hashes and source revision in the
-reviewed staging and production binding updates. Update the exact ID pins in
+Use the recorded service identities in the verified staging configuration.
+Record provider-assigned production IDs, Blueprint hashes and source revision
+when verifying the pending production binding. Update the exact ID pins in
 release validation and retain the committed-source scanner's exact-occurrence
-review. Both tracked release bindings remain pending until that evidence exists.
+review.
 The September pre-cutover checker pins the historical pair and migration list.
 Use the current recovery and migration evidence to prepare a replacement
 preflight before production cutover.
