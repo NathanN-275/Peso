@@ -373,8 +373,10 @@ function Field({
 
 function LoginScreen() {
   const navigate = useNavigate();
+  const { state } = useLocation();
   const { session, signInWithEmail, configError } = useAuth();
-  const [email, setEmail] = useState('');
+  const resetEmail = typeof state?.passwordResetEmail === 'string' ? state.passwordResetEmail : null;
+  const [email, setEmail] = useState(resetEmail ?? '');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(currentWebAuthLinkError);
   const [submitting, setSubmitting] = useState(false);
@@ -408,6 +410,9 @@ function LoginScreen() {
 
   return (
     <AuthLayout eyebrow="Welcome back" title="Sign in to Peso" description="Use the same account as the mobile app.">
+      {resetEmail !== null && (
+        <Text role="status" aria-live="polite" style={styles.formSuccess}>Password updated. Sign in with your new password.</Text>
+      )}
       <Field label="Email" placeholder="you@example.com" value={email} onChangeText={setEmail} />
       <Field label="Password" placeholder="Enter your password" secureTextEntry value={password} onChangeText={setPassword} />
       <View style={styles.turnstileFixture} accessibilityLabel="Turnstile verification">
@@ -514,13 +519,16 @@ function VerifyScreen() {
   );
 }
 
+type CompletedPasswordRecovery = { email: string; sessionKey: string | null };
+
 function ResetScreen() {
   const navigate = useNavigate();
-  const { resetPasswordForEmail, updatePassword, passwordRecoveryMode, configError } = useAuth();
+  const { resetPasswordForEmail, updatePassword, passwordRecoveryMode, signOut, user, mediaSessionKey, configError } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [message, setMessage] = useState<string | null>(null);
+  const [completedRecovery, setCompletedRecovery] = useState<CompletedPasswordRecovery | null>(null);
   const [error, setError] = useState<string | null>(currentWebAuthLinkError);
   const [submitting, setSubmitting] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
@@ -547,6 +555,23 @@ function ResetScreen() {
     }
   };
 
+  const returnToSignIn = async (recovery: CompletedPasswordRecovery) => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      if (user && mediaSessionKey !== recovery.sessionKey) {
+        setError('Password updated. Sign out of the current account before signing in with your new password.');
+        return;
+      }
+      await signOut();
+      navigate('/login', { replace: true, state: { passwordResetEmail: recovery.email } });
+    } catch {
+      setError('Password updated. We couldn’t sign out. Try again to continue.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const completeRecovery = async () => {
     if (password.length < 8) {
       setError('Use a password with at least 8 characters.');
@@ -560,11 +585,13 @@ function ResetScreen() {
 
     setSubmitting(true);
     setError(null);
+    const recovery = { email: user?.email ?? '', sessionKey: mediaSessionKey };
     try {
       await updatePassword(password);
-      setMessage('Password updated. Your Peso Account is ready to use.');
+      setCompletedRecovery(recovery);
       setPassword('');
       setConfirmPassword('');
+      await returnToSignIn(recovery);
     } catch (recoveryError) {
       setError(recoveryError instanceof Error ? recoveryError.message : 'Unable to update your password.');
     } finally {
@@ -572,15 +599,22 @@ function ResetScreen() {
     }
   };
 
+  if (completedRecovery) {
+    return (
+      <AuthLayout eyebrow="Account recovery" title="Password updated" description="Sign in with your new password.">
+        {error && <Text role="alert" aria-live="assertive" style={styles.formError}>{error}</Text>}
+        <ActionButton label={submitting ? 'Signing out…' : 'Continue to sign in'} disabled={submitting} onPress={() => void returnToSignIn(completedRecovery)} />
+      </AuthLayout>
+    );
+  }
+
   if (passwordRecoveryMode) {
     return (
       <AuthLayout eyebrow="Account recovery" title="Choose a new password" description="Set a new password for your Peso Account.">
         <Field label="New password" placeholder="At least 8 characters" secureTextEntry value={password} onChangeText={setPassword} />
         <Field label="Confirm password" placeholder="Enter the same password again" secureTextEntry value={confirmPassword} onChangeText={setConfirmPassword} />
         {(error || configError) && <Text role="alert" aria-live="assertive" selectable style={styles.formError}>{error ?? configError}</Text>}
-        <Text role="status" aria-live="polite" selectable style={message ? styles.formSuccess : styles.emptyFormStatus}>{message}</Text>
         <ActionButton label={submitting ? 'Updating password…' : 'Update password'} disabled={submitting || !password || !confirmPassword} onPress={() => void completeRecovery()} />
-        {message && <ActionButton label="Continue to Peso" variant="quiet" onPress={() => navigate('/')} />}
       </AuthLayout>
     );
   }
