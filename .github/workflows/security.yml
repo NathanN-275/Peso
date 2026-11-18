@@ -77,7 +77,7 @@ jobs:
           mkdir -p artifacts/python-audit
           python --version > artifacts/python-audit/runtime.txt
           pip-audit --version >> artifacts/python-audit/runtime.txt
-          pip-audit -r backend/requirements.txt --format json --output artifacts/python-audit/report.json
+          pip-audit --timeout 60 -r backend/requirements.txt --format json --output artifacts/python-audit/report.json
 
       - name: Retain Python dependency audit evidence
         if: ${{ always() && (steps.python_audit.outcome == 'success' || steps.python_audit.outcome == 'failure') }}
