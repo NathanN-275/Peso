@@ -13,7 +13,7 @@ const REVIEWED_INPUTS = {
   'patches/dependencies/picomatch-4.0.4-nested-repetition.patch': '47461054457152aa69556acfe3cc64374382a472783ccd6380268e1d95675b21',
   'patches/dependencies/picomatch-2.3.2-nested-repetition.patch': '5df5dcccbb2c572f1de8876a33f90b2938e1dc753742fe42af46b5d50778d094',
   'scripts/dependency-patches.js': '93de8dbd9dff796be4a46f0f4b769a8aa62a4395acfeedf9df6a2f7cc8dd8534',
-  'package-lock.json': 'd0e8cce43bf5ed163f78bac352f693586c447c7f795e741eebe24449250430a0',
+  'package-lock.json': '2ee6c3ef9744c9b0668119d147022037cafef21d084044192d8223fd1f4fe0c9',
   'patches/dependencies/manifest.json': '21a3e08d71f28e0c1156ea5ba5ffed0f375fbb492d5a99da8f600f1e0a727262',
   'patches/dependencies/braces-3.0.3.patch': 'e07abe26dbd330daea0e448ca1382327322dd5eccc08c5dd1a9b9f7bf5a6d699',
   'patches/dependencies/metro-0.84.4-image-size-2.patch': 'a2d3f781d7779ccba3aa961500fbb7c80724e10793dd9e7358fbe5be1f68cd25',
