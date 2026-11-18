@@ -20,7 +20,7 @@ function retained(steps, directory) {
 test('Python audit keeps raw reports without relaxing its exit status', () => {
   const steps = jobs['backend-security'].steps;
   const audit = steps.find(step => step.id === 'python_audit');
-  assert.match(audit.run, /pip-audit -r backend\/requirements.txt --format json --output artifacts\/python-audit\/report.json/);
+  assert.match(audit.run, /pip-audit --timeout 60 -r backend\/requirements.txt --format json --output artifacts\/python-audit\/report.json/);
   assert.equal(audit['continue-on-error'], undefined);
   assert.doesNotMatch(audit.run, /\|\| true|--ignore-vuln/);
   assert.match(retained(steps, 'artifacts/python-audit/').if, /steps.python_audit.outcome == 'failure'/);
