@@ -158,5 +158,10 @@ test('generated recovery link updates the password', async ({ page }) => {
   await page.getByLabel('New password').fill(nextPassword);
   await page.getByLabel('Confirm password').fill(nextPassword);
   await page.getByRole('button', { name: 'Update password' }).click();
-  await expect(page.getByText('Password updated. Your Peso Account is ready to use.')).toBeVisible();
+  await expect(page).toHaveURL(`${webBaseUrl}/app/login`);
+  await expect(page.getByRole('status')).toHaveText('Password updated. Sign in with your new password.');
+  await expect(page.getByRole('textbox', { name: 'Email' })).toHaveValue(loginAccount.email);
+  await page.getByLabel('Password', { exact: true }).fill(nextPassword);
+  await completeChallengeAndSubmit(page, /sign in/i);
+  await expect(page).toHaveURL(/\/app\/?$/);
 });
