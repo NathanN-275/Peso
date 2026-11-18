@@ -98,6 +98,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 2
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -116,8 +118,29 @@ jobs:
       - name: Run frontend policy tests
         run: npm run test:policy
 
+      - name: Check whether the PR only changes backend or documentation files
+        id: frontend_audit_scope
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          parents=$(git rev-list --parents -1 HEAD) || exit 0
+          [[ "$parents" == "$GITHUB_SHA $PR_BASE_SHA $PR_HEAD_SHA" ]] || exit 0
+
+          # Only skip after proving the checked-out merge changes at least one file.
+          diff=(git diff --quiet --no-ext-diff --no-textconv --no-renames --ignore-submodules=none "$PR_BASE_SHA" "$GITHUB_SHA" --)
+          if "${diff[@]}" . || [[ $? -ne 1 ]]; then
+            exit 0
+          fi
+          if "${diff[@]}" . ':(top,exclude)backend/' ':(top,exclude)docs/' ':(top,glob,exclude)*.md'; then
+            printf 'skip_audit=true\n' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Audit Node dependencies
         id: npm_audit
+        if: steps.frontend_audit_scope.outputs.skip_audit != 'true'
         run: npm run audit:ci
 
       - name: Retain complete Node audit and policy evidence
