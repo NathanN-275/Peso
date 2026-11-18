@@ -23,7 +23,7 @@ function fixture() {
     parent: { name: 'parent', severity: 'high', nodes: ['node_modules/parent'], via: ['picomatch'] },
   } };
 }
-const candidate = '308c3aed1b4abf5b75db80a5f69cea97c211357d';
+const candidate = 'd454c8a4350b1f855bee9b4bbfb8e8eda390d6af';
 const fixtureRecords = JSON.stringify(fixture().vulnerabilities, (key, value) =>
   value && typeof value === 'object' && !Array.isArray(value)
     ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : value);
@@ -39,8 +39,7 @@ function proposal({ active = false, now = Date.parse('2026-11-18T12:00:00Z'), co
     `const PICOMATCH_BLOCKING_RECORDS_SHA256 = '${fixtureDigest}';`);
   const env = {
     GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'NathanN-275/Peso', GITHUB_WORKFLOW: 'Security Checks',
-    GITHUB_EVENT_NAME: 'pull_request', GITHUB_REF: 'refs/pull/53/merge', GITHUB_HEAD_REF: 'feat/combined-public-beta',
-    GITHUB_BASE_REF: 'main', GITHUB_SHA: candidate, ...context,
+    GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main', GITHUB_SHA: candidate, ...context,
   };
   vm.runInNewContext(code + '\nmodule.exports.testReview = reviewPicomatchFindings;', {
     module, require, __dirname, process: { env, cwd: process.cwd }, Date: Clock,
@@ -64,7 +63,7 @@ test('unapproved audit proposal blocks its exact reviewed leaf and every parent'
 
 test('isolated activation simulation rejects every mismatched workflow identity field', () => {
   for (const key of ['GITHUB_ACTIONS', 'GITHUB_REPOSITORY', 'GITHUB_WORKFLOW', 'GITHUB_EVENT_NAME',
-    'GITHUB_REF', 'GITHUB_HEAD_REF', 'GITHUB_BASE_REF', 'GITHUB_SHA']) {
+    'GITHUB_REF', 'GITHUB_SHA']) {
     assert.equal(review(fixture(), { active: true, context: { [key]: 'mismatch' } }).blockers.length, 2);
   }
 });

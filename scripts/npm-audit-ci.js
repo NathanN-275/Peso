@@ -5,7 +5,7 @@ const { spawnSync } = require('node:child_process');
 const { setTimeout: delay } = require('node:timers/promises');
 
 const AUDIT_LEVEL = 'high';
-// Inactive proposal: activation requires Nathan's separate exact-policy approval.
+// Exact-policy treatment: activation is restricted to the reviewed main-branch push.
 const PICOMATCH_REVIEW_STATUS = 'approved-by-nathan';
 const PICOMATCH_REVIEW_EXPIRES = '2026-11-20T00:00:00Z';
 const PICOMATCH_BLOCKING_RECORDS_SHA256 = '54b6c3922391bb78794c5242b184cae77c6121464878a8149ab0dce8c13ab389';
@@ -103,9 +103,8 @@ function reviewPicomatchFindings(report, strictBlockers, decision) {
       now >= Date.parse(PICOMATCH_REVIEW_EXPIRES) || decision.sourceTreeDirty !== false ||
       !/^[a-f0-9]{40}$/.test(decision.sourceCommit ?? '') || decision.patchVerification !== 'passed' ||
       env.GITHUB_ACTIONS !== 'true' || env.GITHUB_REPOSITORY !== 'NathanN-275/Peso' ||
-      env.GITHUB_WORKFLOW !== 'Security Checks' || env.GITHUB_EVENT_NAME !== 'pull_request' ||
-      env.GITHUB_REF !== 'refs/pull/53/merge' || env.GITHUB_HEAD_REF !== 'feat/combined-public-beta' ||
-      env.GITHUB_BASE_REF !== 'main' || env.GITHUB_SHA !== decision.sourceCommit) return unchanged;
+      env.GITHUB_WORKFLOW !== 'Security Checks' || env.GITHUB_EVENT_NAME !== 'push' ||
+      env.GITHUB_REF !== 'refs/heads/main' || env.GITHUB_SHA !== decision.sourceCommit) return unchanged;
   const vulnerabilities = report.vulnerabilities;
   const leaf = vulnerabilities.picomatch;
   const expectedPaths = [
