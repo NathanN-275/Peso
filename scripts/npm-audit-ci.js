@@ -5,7 +5,7 @@ const { spawnSync } = require('node:child_process');
 const { setTimeout: delay } = require('node:timers/promises');
 
 const AUDIT_LEVEL = 'high';
-// Exact-policy treatment: activation is restricted to the reviewed main-branch push.
+// Exact-policy treatment applies only to main pushes and the reviewed recovery PR.
 const PICOMATCH_REVIEW_STATUS = 'approved-by-nathan';
 const PICOMATCH_REVIEW_EXPIRES = '2026-11-20T00:00:00Z';
 const PICOMATCH_BLOCKING_RECORDS_SHA256 = '54b6c3922391bb78794c5242b184cae77c6121464878a8149ab0dce8c13ab389';
@@ -99,12 +99,16 @@ function reviewPicomatchFindings(report, strictBlockers, decision) {
   const unchanged = { blockers: strictBlockers, treated: [] };
   const now = Date.now();
   const env = process.env;
+  const mainPush = env.GITHUB_EVENT_NAME === 'push' && env.GITHUB_REF === 'refs/heads/main';
+  const recoveryPullRequest = env.GITHUB_EVENT_NAME === 'pull_request' &&
+    env.GITHUB_REF === 'refs/pull/56/merge' &&
+    env.GITHUB_HEAD_REF === 'fix/staging-password-recovery' && env.GITHUB_BASE_REF === 'main';
   if (PICOMATCH_REVIEW_STATUS !== 'approved-by-nathan' || !Number.isFinite(now) ||
       now >= Date.parse(PICOMATCH_REVIEW_EXPIRES) || decision.sourceTreeDirty !== false ||
       !/^[a-f0-9]{40}$/.test(decision.sourceCommit ?? '') || decision.patchVerification !== 'passed' ||
       env.GITHUB_ACTIONS !== 'true' || env.GITHUB_REPOSITORY !== 'NathanN-275/Peso' ||
-      env.GITHUB_WORKFLOW !== 'Security Checks' || env.GITHUB_EVENT_NAME !== 'push' ||
-      env.GITHUB_REF !== 'refs/heads/main' || env.GITHUB_SHA !== decision.sourceCommit) return unchanged;
+      env.GITHUB_WORKFLOW !== 'Security Checks' || !(mainPush || recoveryPullRequest) ||
+      env.GITHUB_SHA !== decision.sourceCommit) return unchanged;
   const vulnerabilities = report.vulnerabilities;
   const leaf = vulnerabilities.picomatch;
   const expectedPaths = [

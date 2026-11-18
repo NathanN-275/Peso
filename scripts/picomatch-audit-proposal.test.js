@@ -76,6 +76,26 @@ test('isolated activation simulation treats only the exact leaf and its derived 
   assert.equal(api.findBlockingVulnerabilities(fixture(), { packages: {} }, 'high', true).length, 2);
 });
 
+test('recovery PR treatment is limited to the exact merge ref, head, and base before expiry', () => {
+  const context = {
+    GITHUB_EVENT_NAME: 'pull_request', GITHUB_REF: 'refs/pull/56/merge',
+    GITHUB_HEAD_REF: 'fix/staging-password-recovery', GITHUB_BASE_REF: 'main',
+  };
+  const options = { active: true, context };
+  assert.deepEqual(names(review(fixture(), options).treated), ['picomatch', 'parent']);
+  assert.equal(review(fixture(), { ...options, active: false }).blockers.length, 2);
+  assert.equal(review(fixture(), { ...options, now: Date.parse('2026-11-20T00:00:00Z') }).blockers.length, 2);
+
+  for (const [key, value] of Object.entries({
+    GITHUB_EVENT_NAME: 'pull_request_target',
+    GITHUB_REF: 'refs/pull/57/merge',
+    GITHUB_HEAD_REF: 'other',
+    GITHUB_BASE_REF: 'production',
+  })) {
+    assert.equal(review(fixture(), { ...options, context: { ...context, [key]: value } }).blockers.length, 2);
+  }
+});
+
 test('proposal fails closed at expiry, with invalid time, dirty source or missing verified provenance', () => {
   for (const now of [Date.parse('2026-11-20T00:00:00Z'), Date.parse('2030-01-01'), NaN]) {
     assert.equal(review(fixture(), { active: true, now }).blockers.length, 2);
