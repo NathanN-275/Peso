@@ -83,8 +83,11 @@ passed four offline Chromium and WebKit cases for reset, sign-out, sign-out
 retry, and fresh-password sign-in. The equivalent hosted flow remains open.
 
 November 18 Netlify Free billing showed production deploys paused on the
-staging team, with the current period November 4–December 3. Operational
-credits cannot fund new uploads. The protected holding deploy remains in place.
+staging team. Nathan upgraded the team to Personal later that evening.
+Authenticated Netlify readback confirmed Personal, all-deploy sign-in, and the
+protected holding deploy ready. The plan includes 1,000 monthly credits.
+Confirm current deploy eligibility and obtain approval for the exact
+15-credit upload.
 
 The unpublished 66-file staging ZIP from `1f6cf65e` independently matched
 its file manifest and archive SHA-256
@@ -122,7 +125,7 @@ request is on file, and a Supabase Support reply remains unverified.
 | 1. Freeze candidate | Open | Refreshed from GitHub main at the November 18 checkpoint. Reconcile subsequent fixes, record the final release source, and run the applicable source and hosted checks. |
 | 2. Security and offline runtime | Passed for November 18 base CI; final candidate open | [Security Checks run 44407249479](https://github.com/NathanN-275/Peso/actions/runs/44407249479) passed 22 jobs on `1f6cf65e`. The production-release-source job was the only skip among 23 total jobs on the main push. Bind fresh applicable evidence to the final source and production artifacts. |
 | 3. Credential history | Blocked | Provider-confirmed New Relic revocation and GitHub Support disposition resolve that key's history-removal subitem. [Disposition](gate-3-support-disposition-20261116.md). Verify retirement or rotation of remaining credentials and deployed consumers, resolve any remaining history action, and rerun secret scans on the final release source. |
-| 4. Staging authentication | Signup verified; next deploy blocked by Netlify pause | Carry forward Nathan's signup verification for its tested scope. Complete remaining exact-candidate Auth, required browser and native checks in the next approved window after deploy capacity is available. [Dedicated staging preflight](dedicated-staging-preflight-20261116.md). |
+| 4. Staging authentication | Signup verified; exact Auth window pending approval | Netlify Personal and private holding readback pass. The exact ZIP public key works against isolated staging Auth, with signup disabled and confirmation required. Approve the isolated fixture and cleanup separately. Verify real reset email and fresh-password sign-in in the approved window, with hosted browser and native checks still open. [Dedicated staging preflight](dedicated-staging-preflight-20261116.md). |
 | 5. Hosted recovery | Passed for November 6 snapshot scope | Preserve the isolated restore, access and byte-recovery evidence and the November 9 migration rehearsal. The last recorded recovery target state was inactive. Revalidate the target and evidence before any new rehearsal. |
 | 6. Fresh recovery point | Open | At cutover, verify a fresh writer freeze, database export and stored video inventory/bytes. Independently verify checksums and the protected off-device copy. |
 | 7. Production migrations | Local preparation passed; cutover open | The local preparer verified 51 selected SQL files and 30 pending versions at the November 18 base. Live history matched the 21 reviewed versions. Use the current preflight for the approved freeze, verified backup, exact dry run and separate apply approval. [Web MVP production preflight](web-mvp-migrations.md#production-cutover-preflight). |

@@ -8,13 +8,14 @@ old Render pair.
 
 ## Dedicated staging checkpoint — November 18, 2026
 
-Nathan selected owner-only Netlify Free staging at `staging.usepeso.com`.
+Nathan upgraded the owner-only Netlify staging team to Personal on November 18.
+Staging uses `staging.usepeso.com`.
 The protected holding deploy has verified HTTPS and anonymous denial. The
 [dedicated staging binding](../../config/staging-web-release-binding.json)
 is `private-config-verified` and records the Netlify site, Render services,
 Supabase project and key fingerprints. Both selected Render services are
-suspended. The Netlify Free production-deploy pause blocks the next
-staging upload. [Current gate tracker](public-beta-acceleration-plan-20261105.md#current-gate-tracker--november-18-2026).
+suspended. The next private staging upload requires exact artifact approval
+and current deploy eligibility. [Current gate tracker](public-beta-acceleration-plan-20261105.md#current-gate-tracker--november-18-2026).
 
 Signup is verified for its tested scope. Remaining hosted browser and Auth
 checks still require an approved window. Media attestation and activation are
