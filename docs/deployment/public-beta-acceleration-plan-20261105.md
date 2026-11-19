@@ -176,6 +176,12 @@ Provider readback identified exactly three Peso projects in the selected team: `
 
 The complete visible `peso-webapp` deploy list ended with a disabled Next button on page seven: 77 unique deploy entries and 48 actual artifact permalink links. The marketing list has six entries and four artifact links; the bootstrap project has one artifact link. Entries without artifact links are retained as IDs and are not assumed to contain deployed assets. Anonymous GET checks at `2026-11-07T01:36:38Z`–`01:36:48Z` covered all 53 observed artifact permalinks at root and `/app/`, plus the three project roots, the known private `main--peso-webapp` alias and the two custom-domain hosts. Of 118 requests, 116 returned 401; the two `www.usepeso.com` requests returned 301 to the corresponding `usepeso.com` path, each separately verified to return 401. No cookies or credentials were sent, redirects were inspected explicitly, and response bodies were not retained. Individual hashed assets and unlisted/deleted URLs are not claimed covered.
 
+On November 18, the [anonymous privacy verifier](netlify-release.md#verify-historical-deploy-privacy-at-cutover)
+confirmed direct HTTP 401 on all six reviewed URLs for the historical staging
+candidate `6afe4ce83a3aa2f5ec79d22a`, including its exact fingerprinted
+JavaScript asset. The full production-era historical inventory and the checks
+immediately before and after public exposure remain open.
+
 Receipts under `/Users/nathan/.codex/visualizations/2026/11/05/01a1add7-d3fe-7203-a616-5ea6caa842e7`: `netlify-config-readback-20261106.json`, `netlify-webapp-deploy-inventory-20261106.json`, `netlify-marketing-deploy-inventory-20261106.json`, `netlify-anonymous-artifacts-20261106.json` and `netlify-www-redirect-check-20261106.json`. These are privacy evidence for the current infrastructure, not release acceptance for a new combined artifact.
 
 ### 0. Revalidate baseline and establish the tracker
