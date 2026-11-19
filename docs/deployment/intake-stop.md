@@ -108,6 +108,13 @@ $50 target is not guaranteed by this switch.
 - Nineteen disposable PostgreSQL tests passed, including preserving accepted
   upload verification/queue admission, stop/admission locking, capacity limits,
   retention races and client-role access denial.
+- The PostgreSQL 17 suite with the later private-media write migrations passed
+  30 tests and 51 subtests. After the stop, a second owner could not reserve an
+  upload and no reservation was added. The accepted upload still verified and
+  entered the queue. The worker RPCs recorded a retry, reclaimed the job, and
+  completed analysis and thumbnail publication. The archive publication RPCs
+  also passed while intake stayed disabled. The fixture used synthetic records.
+  The dependent avatar-read suite passed 21 tests and 41 subtests.
 - Hosted activation, collector scheduling, billing accuracy, notification
   delivery and full accepted-job completion remain open release gates.
 - Ten focused spending-policy and monitor tests passed, covering thresholds,
