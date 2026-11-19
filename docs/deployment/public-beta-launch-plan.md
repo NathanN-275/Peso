@@ -163,9 +163,9 @@ Record provider-assigned production IDs, Blueprint hashes and source revision
 when verifying the pending production binding. Update the exact ID pins in
 release validation and retain the committed-source scanner's exact-occurrence
 review.
-The September pre-cutover checker pins the historical pair and migration list.
-Use the current recovery and migration evidence to prepare a replacement
-preflight before production cutover.
+Use the [Web MVP production preflight](web-mvp-migrations.md#production-cutover-preflight)
+before production cutover. Provision the fresh production pair after the
+approved migration and verification pass.
 
 ## Source checkpoint and production acceptance
 

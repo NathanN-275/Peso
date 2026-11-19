@@ -65,8 +65,8 @@ jobs:
       - name: Verify fail-closed US-IP dataset parsing and refresh controls
         run: python -m unittest discover -s scripts -p test_refresh_us_ip_dataset.py -v
 
-      - name: Verify the Azure-free MVP migration catalog and preparation safeguards
-        run: python -m unittest discover -s scripts -p 'test_prepare_web_mvp_migrations.py' -v
+      - name: Verify the Azure-free MVP migration catalog, preparation and dry-run evidence
+        run: python -m unittest discover -s scripts -p 'test_*web_mvp_migration*.py' -v
 
       - name: Verify read-only PesoDatabase pre-cutover checker
         run: python -m unittest discover -s scripts -p 'test_pesodatabase_precutover.py'
