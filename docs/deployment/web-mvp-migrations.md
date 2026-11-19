@@ -73,6 +73,35 @@ rerun any required checks whose inputs or coverage changed.
    Recheck the freeze and inventory after export. Verify the full archive and
    checksum manifest from a fresh read of the protected off-machine copy. Keep
    data, connection details and object keys out of Git. [Supabase backup coverage](https://supabase.com/docs/guides/platform/backups)
+
+   Use the rehearsed `.tar.gz` layout with `snapshot.json`,
+   `source-catalog.private.json`, six SQL exports under `sql/` and
+   `sql/SHA256SUMS`. Create `SHA256SUMS` from inside `sql/` using the six dump
+   basenames. Retain the frozen Storage inventory separately and place a
+   byte-identical copy at the archive root as `storage-inventory.json`. Use
+   `projectRef` for the production project and `objects` for the complete list.
+   For each inventoried object record `bucket`, `key`, `archiveFile`, `sizeBytes`
+   and lowercase SHA-256 as `sha256`. The unique `archiveFile` path must use
+   `storage/` followed by eight digits and `.bin`, such as `storage/00000001.bin`. Use `"objects": []` for an independently verified empty inventory.
+   Preserve genuine zero-byte objects with their exact length and digest.
+   Pack the reviewed files at the archive root, with directory entries optional,
+   and exclude symlinks, AppleDouble metadata, and unrelated files. With the
+   macOS system `tar`, pass `--no-mac-metadata`.
+
+   From the reviewed source checkout, compare the private original with a fresh
+   download from the protected off-machine destination using Python 3.11 or later.
+
+   ```sh
+   python3 scripts/check_pesodatabase_backup_copy.py \
+     --original /path/to/private/original.tar.gz \
+     --downloaded /path/to/private/downloaded.tar.gz \
+     --inventory /path/to/private/frozen-storage-inventory.json
+   ```
+
+   This check reads the archives without extracting them. Retain the aggregate
+   hashes and counts with independent writer-freeze, project identity, inventory
+   coverage, access protection, and download provenance evidence. Stop before
+   migration if any part of the recovery point is unverified.
 3. Read exact current production history and run the preparer above in a new
    private workspace. Require 21 matching applied migrations, 51 selected
    files and 30 pending, excluding only the legacy Azure scaler migration.
