@@ -93,7 +93,10 @@ Startup JavaScript used 547,685 of 614,400 gzip bytes and WOFF2 used 58,224
 of 204,800 bytes. Offline Chromium and WebKit passed the keyboard skip-link
 visibility and activation, fonts, layout, login shell and reload checks at
 1280×900 and 390×844 with reduced motion. WebKit used Option+Tab.
-Hosted browser acceptance still needs a deploy window.
+On the same ZIP, both engines cleared a synthetic expired session after one
+rejected refresh and returned to sign-in. After loading a distinct synthetic
+session in the same browser, both showed only that account's activity. Real
+sign-in, browser session expiry and owner isolation remain hosted checks.
 The separate synthetic media fixture passed the existing Chromium desktop and
 mobile checks for activity, queue confirmation, playback and keyboard seeking.
 
@@ -101,7 +104,10 @@ Read-only Supabase evidence confirmed the 21 reviewed production migrations,
 the pre-reservations schema, three private buckets, and zero video rows,
 active jobs or Storage object metadata. Staging matched all 52 migrations,
 with media attestation off, six video rows and three video object metadata
-records. Both deletion-outbox paths match current videos owned by the same
+records. The staging `videos` bucket is private, allows MP4 and QuickTime,
+and has a 52,428,800-byte bucket limit. Confirm the project-wide Storage
+limit and release runtime limits in the test window. Both deletion-outbox
+paths match current videos owned by the same
 respective owners, and neither path matches Storage object metadata. No
 source-attempt ledger row was dispatching. The readback leaves backing bytes
 and cleanup authorization unverified.
