@@ -181,6 +181,34 @@ A source SHA can identify a tested checkpoint; subsequent implementation gates
 create new SHAs that require fresh applicable checks before release. Gate 1
 cannot freeze the final release bytes before those changes exist.
 
+## First-cycle monitoring handoff
+
+During private production acceptance, verify that heartbeat, queue age,
+failure, timeout and stale-job signals are visible on the exact release
+services and database before requesting public exposure.
+[PRR launch checklist](../product/PRR.md#observability-and-support)
+
+Start the baseline when the approved production release becomes public. Use one
+UTC observation window that includes the public smoke test. Record its bounds,
+frontend source and Netlify deploy, API and worker deploys, production database
+project, and the person who accepts ownership of the first-cycle PRR review.
+Keep aggregate readings and evidence references in the release record. Keep raw
+logs, user identifiers, credentials and billing receipts private.
+
+| Reading | Evidence to retain |
+| --- | --- |
+| API and worker errors | Use the verified production Render service IDs and the same UTC range in each service's runtime logs. Record the count of returned error-or-higher entries, whether all pages were read, and any unresolved event class. If HTTP status-count metrics are available for the production API host, record total requests and 5xx responses. Mark missing status series unavailable and keep the runtime log and smoke request evidence. [Render logs](https://render.com/docs/logging) · [Render metrics](https://render.com/docs/service-metrics) |
+| Analysis queue health | From the verified PesoDatabase project, record queued, retry-wait, processing and expired-lease counts and the age of the oldest job whose scheduled time has arrived. Use aggregate reads of `public.analysis_jobs` at a single stated database timestamp. Count each status separately. Within `queued` and `retry_wait`, count jobs with `available_at` at or before the timestamp and use the oldest such `available_at` for age. Count a `processing` lease as expired or invalid if it is missing, nonfinite or at or before that timestamp. These are table observations. A worker can skip a job while its owner or row is locked or cancel work for revoked media. |
+| Queue latency | Confirm the public smoke job completes with the expected analysis outcome. In the exact worker deploy’s private logs, use the smoke video ID and claim time to match its `video_phase_timing` / `phase=queue_wait` event. Record only its `duration_ms` and timestamp. No event means no latency sample. Capture the samples and outcomes used in the first-cycle PRR review. [Worker timing implementation](../../backend/app/jobs/analysis_worker.py) |
+| Spend and intake | Retain the current calendar-month actual and projected provider totals, their source timestamps, quota/headroom and the observed intake state. Read current credit usage and cycle dates in the production Netlify team’s Usage & billing page and record them separately. Record the enabled budget monitor run and any reached-milestone delivery receipts. [Intake and budget runbook](intake-stop.md) |
+| Alert delivery | Confirm the receiving operator and an actual test or event receipt for each alert path required by the launch plan. Render service notifications cover provider service events. Budget alerts use the separate workflow and Gmail sender. Retain date, route and outcome without copying email contents. [Render notifications](https://render.com/docs/notifications) · [Budget email acceptance](intake-stop.md#hosted-acceptance-before-activation) |
+
+Review the public smoke and privacy receipts before signing off the handoff.
+Record a real zero only when the observation source returned a complete result.
+The named owner reviews completion, failure and limited-result rates, queue
+latency, corrected reps, Tracking Recovery and support reports during the first
+beta cycle. [PRR post-release review](../product/PRR.md#post-release-review)
+
 ## Completion
 
 All mandatory PRR gates pass, no blocking security finding remains, production

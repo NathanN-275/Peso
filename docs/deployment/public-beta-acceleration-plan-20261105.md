@@ -184,6 +184,18 @@ immediately before and after public exposure remain open.
 
 Receipts under `/Users/nathan/.codex/visualizations/2026/11/05/01a1add7-d3fe-7203-a616-5ea6caa842e7`: `netlify-config-readback-20261106.json`, `netlify-webapp-deploy-inventory-20261106.json`, `netlify-marketing-deploy-inventory-20261106.json`, `netlify-anonymous-artifacts-20261106.json` and `netlify-www-redirect-check-20261106.json`. These are privacy evidence for the current infrastructure, not release acceptance for a new combined artifact.
 
+### November 18 Render monitoring readback
+
+Both staging services remained suspended with automatic deployment off. Their
+latest retained deploy records match `1f6cf65e`. The API still configures
+`/health/ready`. The read-only Render connector returned runtime logs for both
+services for 22:11–22:20 UTC during the earlier approved staging window,
+including zero error-or-higher entries in the complete filtered response. The
+worker returned no queue-wait event and the staging API custom host returned
+no HTTP status-count series for that range. The readback verifies access to the
+observed staging logs. The [production monitoring handoff](public-beta-launch-plan.md#first-cycle-monitoring-handoff)
+still needs the exact live production artifacts, readings and delivery receipts.
+
 ### 0. Revalidate baseline and establish the tracker
 
 - Read the canonical launch plan, PRR, execution contract, Gate 2 checkpoint review, recovery instructions, and current terminology in `CONTEXT.md`.
