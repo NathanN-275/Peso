@@ -28,10 +28,11 @@ test('Render beta is isolated from the unchanged production Blueprint', () => {
 
 test('fresh Render pairs have matched compute and isolated Supabase projects', () => {
   const preferences = require('../config/public-beta-owner-preferences.json');
+  const stagingBinding = require('../config/staging-web-release-binding.json');
   const staging = fs.readFileSync(path.join(root, 'render-public-beta-staging.yaml'), 'utf8');
   for (const [blueprint, suffix, workerName, environment, projectRef, otherProjectRef, cors] of [
-    [publicBeta, '', 'analysis-worker', 'production', preferences.supabase_project_ref, 'iseqgaewjpjcxrndibep', /sync: false/],
-    [staging, '-staging', 'worker', 'student', 'iseqgaewjpjcxrndibep', preferences.supabase_project_ref, /value: https:\/\/main--peso-webapp\.netlify\.app/],
+    [publicBeta, '', 'analysis-worker', 'production', preferences.supabase_project_ref, 'iseqgaewjpjcxrndibep', 'sync: false'],
+    [staging, '-staging', 'worker', 'student', 'iseqgaewjpjcxrndibep', preferences.supabase_project_ref, `value: ${stagingBinding.site_origin}`],
   ]) {
     const [api, worker, ...extra] = blueprint.split(/  - type: /).slice(1);
     assert.equal(extra.length, 0);
@@ -60,7 +61,7 @@ test('fresh Render pairs have matched compute and isolated Supabase projects', (
           assert.match(block, new RegExp(`${key}\n\\s+sync: false`));
         }
       }
-      assert.match(block, new RegExp(`BACKEND_CORS_ORIGINS\n\\s+${cors.source}\n`));
+      assert.ok(block.includes(`BACKEND_CORS_ORIGINS\n        ${cors}\n`));
       for (const key of ['BUDGET_SHUTDOWN_TOKEN', 'SUPABASE_SERVICE_ROLE_KEY', 'CLEANUP_JOB_TOKEN']) {
         assert.match(block, new RegExp(`${key}\n\\s+sync: false`));
       }

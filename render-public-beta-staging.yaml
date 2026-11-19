@@ -16,7 +16,7 @@ services:
       - key: PESO_DEPLOYMENT_ENVIRONMENT
         value: student
       - key: BACKEND_CORS_ORIGINS
-        value: https://main--peso-webapp.netlify.app
+        value: https://staging.usepeso.com
       - key: BACKEND_CORS_ALLOW_PRIVATE_NETWORK
         value: "false"
       - key: PRIVATE_MEDIA_ENABLED
@@ -63,7 +63,7 @@ services:
       - key: PESO_DEPLOYMENT_ENVIRONMENT
         value: student
       - key: BACKEND_CORS_ORIGINS
-        value: https://main--peso-webapp.netlify.app
+        value: https://staging.usepeso.com
       - key: BACKEND_CORS_ALLOW_PRIVATE_NETWORK
         value: "false"
       - key: PRIVATE_MEDIA_ENABLED
