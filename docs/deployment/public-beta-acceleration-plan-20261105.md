@@ -80,18 +80,36 @@ password reset followed by a return to the reset page. Provider readback did
 not corroborate the exact fixture used. Offline Chromium reproduced the routing
 defect. PR #57 fixed it on the current base. A new fixture build from `1f6cf65e`
 passed four offline Chromium and WebKit cases for reset, sign-out, sign-out
-retry, and fresh-password sign-in. The equivalent hosted flow remains open.
+retry, and fresh-password sign-in. The subsequent hosted retest is recorded below.
 
 November 18 Netlify Free billing showed production deploys paused on the
 staging team. Nathan upgraded the team to Personal later that evening.
 Authenticated Netlify readback confirmed Personal, all-deploy sign-in, and the
 protected holding deploy ready. The plan includes 1,000 monthly credits.
-Confirm current deploy eligibility and obtain approval for the exact
-15-credit upload.
+Nathan approved one 15-credit staging deploy, a browser window of up to 30
+minutes, and restoration of the previous holding deploy.
 
-The unpublished 66-file staging ZIP from `1f6cf65e` independently matched
-its file manifest and archive SHA-256
+The 66-file staging ZIP from `1f6cf65e` independently matched its file manifest
+and archive SHA-256
 `b9881be3d3c76e780a03c6907cf49283318d991f9ee8d9951c5538d1e78632f6`.
+Netlify published deploy `6afe4ce83a3aa2f5ec79d22a` at 8:12 p.m. Eastern on
+November 18. All 66 provider file hashes matched the verified ZIP contents.
+Eighteen anonymous requests across the staging custom domain, default Netlify
+host, and exact deploy permalink returned HTTP 401. Both staging Render services
+were suspended at preflight and were left suspended for this window.
+
+Nathan approved one isolated staging Auth fixture and its cleanup. On the exact
+hosted candidate, he reported a successful password change and sign-in with the
+new password. A read-only Supabase session check confirmed a `password`
+authentication event at 8:34 p.m. Eastern for that exact fixture. The database
+audit returned no scoped events. Recovery email receipt and automatic return to
+sign-in await explicit browser confirmation.
+After the test, Netlify restored holding deploy `6afbc190c9a060d455a54082` at
+8:35 p.m. Eastern. All 18 holding probes returned HTTP 401, as did six later
+probes of the now-historical candidate permalink. Supabase verified the test
+identity and profile were removed, the expected owner ledger row was retained,
+and staging signup remained disabled at closeout.
+
 Startup JavaScript used 547,685 of 614,400 gzip bytes and WOFF2 used 58,224
 of 204,800 bytes. Offline Chromium and WebKit passed the keyboard skip-link
 visibility and activation, fonts, layout, login shell and reload checks at
@@ -125,7 +143,7 @@ request is on file, and a Supabase Support reply remains unverified.
 | 1. Freeze candidate | Open | Refreshed from GitHub main at the November 18 checkpoint. Reconcile subsequent fixes, record the final release source, and run the applicable source and hosted checks. |
 | 2. Security and offline runtime | Passed for November 18 base CI; final candidate open | [Security Checks run 44407249479](https://github.com/NathanN-275/Peso/actions/runs/44407249479) passed 22 jobs on `1f6cf65e`. The production-release-source job was the only skip among 23 total jobs on the main push. Bind fresh applicable evidence to the final source and production artifacts. |
 | 3. Credential history | Blocked | Provider-confirmed New Relic revocation and GitHub Support disposition resolve that key's history-removal subitem. [Disposition](gate-3-support-disposition-20261116.md). Verify retirement or rotation of remaining credentials and deployed consumers, resolve any remaining history action, and rerun secret scans on the final release source. |
-| 4. Staging authentication | Signup verified; exact Auth window pending approval | Netlify Personal and private holding readback pass. The exact ZIP public key works against isolated staging Auth, with signup disabled and confirmation required. Approve the isolated fixture and cleanup separately. Verify real reset email and fresh-password sign-in in the approved window, with hosted browser and native checks still open. [Dedicated staging preflight](dedicated-staging-preflight-20261116.md). |
+| 4. Staging authentication | Signup and fresh-password sign-in verified; other browser and native checks open | Nathan reported changing his password and signing in with the new one on hosted `1f6cf65e`. Supabase confirmed a fresh password-authenticated session for the isolated fixture. Verify the browser observations for recovery email receipt and automatic return to sign-in. Complete remaining hosted browser and native checks. The holding deploy and fixture closeout passed. [Dedicated staging preflight](dedicated-staging-preflight-20261116.md). |
 | 5. Hosted recovery | Passed for November 6 snapshot scope | Preserve the isolated restore, access and byte-recovery evidence and the November 9 migration rehearsal. The last recorded recovery target state was inactive. Revalidate the target and evidence before any new rehearsal. |
 | 6. Fresh recovery point | Open | At cutover, verify a fresh writer freeze, database export and stored video inventory/bytes. Independently verify checksums and the protected off-device copy. |
 | 7. Production migrations | Local preparation passed; cutover open | The local preparer verified 51 selected SQL files and 30 pending versions at the November 18 base. Live history matched the 21 reviewed versions. Use the current preflight for the approved freeze, verified backup, exact dry run and separate apply approval. [Web MVP production preflight](web-mvp-migrations.md#production-cutover-preflight). |
