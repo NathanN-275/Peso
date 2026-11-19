@@ -134,9 +134,10 @@ source-attempt ledger row was dispatching. The readback leaves backing bytes
 and cleanup authorization unverified.
 
 On the November 18 base, 125 focused application-side media write and cleanup
-tests passed. The managed Storage build still needs a supported operation for
-settling the write and deleting its exact backing generation. The October 28
-request is on file, and a Supabase Support reply remains unverified.
+tests passed. The November 18 Supabase documentation review left the operation for settling
+the write and deleting its exact backing generation unverified for our managed
+project. The October 28 request is on file, and a Supabase Support reply remains
+unverified. [Provider evidence](private-media-upload-reconciliation.md#tenant-s3-multipart-follow-up).
 
 | Gate | Status | Evidence / next requirement |
 | --- | --- | --- |
@@ -246,7 +247,7 @@ Credential disposition prepared from the September 13 provider follow-up and cur
 | Cleanup, intake-stop, geography and alert-delivery credentials | Activation and delivery acceptance remain open. | Verify purpose, scope, provider storage and recipients at the applicable activation gate; retain identifiers/results without values. New credential creation and hosted activation require their action-time approval. |
 
 **C. US-IP signup (Gate 8)**
-- The November DB-IP file matched the provider's published checksums in validation-only review. The checked-in downloader received Cloudflare error 1010 in local preflight. Confirm a provider-supported automated refresh path before activation. [Dataset runbook](us-ip-dataset-refresh.md).
+- The November DB-IP file matched the provider's published checksums in validation-only review. The checked-in downloader received Cloudflare error 1010 in local preflight. DB-IP documents an account-keyed updater for commercial databases. Confirm the supported Lite download route and cadence for GitHub Actions before activation. [DB-IP updater](https://db-ip.com/tutorials/database-file-update) · [Dataset runbook](us-ip-dataset-refresh.md).
 - Verify Auth hook behavior, trusted proxy chain assumptions, IPv4/IPv6 handling, spoofing resistance, expiration, and fail-closed behavior.
 - Verify the deployed production signup path and authenticated uploads from abroad. Keep evidence for the two flows tied to the tested candidate and runtime.
 
