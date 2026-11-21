@@ -6,25 +6,21 @@ The decision supersedes earlier references to upload geography and reuse of the
 old Render pair.
 [Scope decision](../adr/0021-scope-us-ip-signup-and-replace-render-pair.md).
 
-## Dedicated staging checkpoint — November 16, 2026
+## Dedicated staging checkpoint — November 18, 2026
 
-The [dedicated staging preparation and quote](dedicated-staging-preflight-20261116.md)
-records the new `peso-staging-web` / `staging.usepeso.com` approach. Ordinary
-project-domain HTTPS replaces the historical branch-certificate dependency;
-existing Netlify ticket #1196583 is informational for this approach.
+Nathan upgraded the owner-only Netlify staging team to Personal on November 18.
+Staging uses `staging.usepeso.com`.
+The protected holding deploy has verified HTTPS and anonymous denial. The
+[dedicated staging binding](../../config/staging-web-release-binding.json)
+is `private-config-verified` and records the Netlify site, Render services,
+Supabase project and key fingerprints. Both selected Render services are
+suspended. The next private staging upload requires exact artifact approval
+and current deploy eligibility. [Current gate tracker](public-beta-acceleration-plan-20261105.md#current-gate-tracker--november-18-2026).
 
-The empty private Netlify project was created with Nathan's separate approval:
-`peso-staging-web`, ID `c2be6c9f-89fc-4303-befc-423aabcf9bfa`. Production and
-preview visibility are Private; no repository or deployment is present.
-Domain verification, deployment and log protection, and hosted acceptance remain
-pending. Nathan selected owner-only Free access and the fresh Web MVP pair
-recorded in the [dedicated staging binding](../../config/staging-web-release-binding.json).
-Invited private testers require a separately
-approved paid plan. Dedicated staging dispatch, release/artifact guards and
-E2E binding/fixture guards are implemented on the current branch; the tracked
-site UUID is recorded; verified key fingerprints remain pending provider readback.
-The local merge of `main` brings in the Web MVP private media runtime.
-Media activation still requires a current staging Auth policy attestation.
+Signup is verified for its tested scope. Remaining hosted browser and Auth
+checks still require an approved window. Media attestation and activation are
+off pending supported provider settlement, scoped cleanup and hosted-role
+rehearsal. [Dedicated staging preflight](dedicated-staging-preflight-20261116.md).
 
 Remaining release order: finish Gate 3 credential retirement/rotation and
 provider verification; pass staging acceptance, production geography refresh
@@ -153,9 +149,9 @@ Use `render-public-beta-staging.yaml` for the staging pair and
 `render-public-beta.yaml` for the production pair. Both use the MVP Dockerfile,
 manual deployments, and one Starter API and one 1 CPU / 2 GB worker. Bind
 staging only to `peso-staging` with its own credentials and
-`https://main--peso-webapp.netlify.app` as the allowed Web App origin. Keep signup
-disabled until the controlled Auth test window is separately approved. Verify the
-assigned Render HTTPS endpoint before binding it to the staged Web App.
+`https://staging.usepeso.com` as the allowed Web App origin. Use
+`https://api-staging.usepeso.com` from the dedicated staging binding and verify
+HTTPS before each approved window. Keep signup disabled outside approved tests.
 
 A new Git-backed service can build on creation. Before approving creation,
 pin the linked branch tip to the reviewed SHA, verify its target workspace,
@@ -163,13 +159,14 @@ region, service names and configuration, and verify the exact deployed SHA
 on both services. Stop the test window on a mismatch. Keep production creation
 behind its migration and recovery gates. Retain the old pair suspended.
 
-Record the provider-assigned IDs, Blueprint hashes and source revision in the
-reviewed staging and production binding updates. Update the exact ID pins in
+Use the recorded service identities in the verified staging configuration.
+Record provider-assigned production IDs, Blueprint hashes and source revision
+when verifying the pending production binding. Update the exact ID pins in
 release validation and retain the committed-source scanner's exact-occurrence
-review. Both tracked release bindings remain pending until that evidence exists.
-The September pre-cutover checker pins the historical pair and migration list.
-Use the current recovery and migration evidence to prepare a replacement
-preflight before production cutover.
+review.
+Use the [Web MVP production preflight](web-mvp-migrations.md#production-cutover-preflight)
+before production cutover. Provision the fresh production pair after the
+approved migration and verification pass.
 
 ## Source checkpoint and production acceptance
 
@@ -183,6 +180,34 @@ verified binding. Never bypass the validator or invent provider evidence.
 A source SHA can identify a tested checkpoint; subsequent implementation gates
 create new SHAs that require fresh applicable checks before release. Gate 1
 cannot freeze the final release bytes before those changes exist.
+
+## First-cycle monitoring handoff
+
+During private production acceptance, verify that heartbeat, queue age,
+failure, timeout and stale-job signals are visible on the exact release
+services and database before requesting public exposure.
+[PRR launch checklist](../product/PRR.md#observability-and-support)
+
+Start the baseline when the approved production release becomes public. Use one
+UTC observation window that includes the public smoke test. Record its bounds,
+frontend source and Netlify deploy, API and worker deploys, production database
+project, and the person who accepts ownership of the first-cycle PRR review.
+Keep aggregate readings and evidence references in the release record. Keep raw
+logs, user identifiers, credentials and billing receipts private.
+
+| Reading | Evidence to retain |
+| --- | --- |
+| API and worker errors | Use the verified production Render service IDs and the same UTC range in each service's runtime logs. Record the count of returned error-or-higher entries, whether all pages were read, and any unresolved event class. If HTTP status-count metrics are available for the production API host, record total requests and 5xx responses. Mark missing status series unavailable and keep the runtime log and smoke request evidence. [Render logs](https://render.com/docs/logging) · [Render metrics](https://render.com/docs/service-metrics) |
+| Analysis queue health | From the verified PesoDatabase project, record queued, retry-wait, processing and expired-lease counts and the age of the oldest job whose scheduled time has arrived. Use aggregate reads of `public.analysis_jobs` at a single stated database timestamp. Count each status separately. Within `queued` and `retry_wait`, count jobs with `available_at` at or before the timestamp and use the oldest such `available_at` for age. Count a `processing` lease as expired or invalid if it is missing, nonfinite or at or before that timestamp. These are table observations. A worker can skip a job while its owner or row is locked or cancel work for revoked media. |
+| Queue latency | Confirm the public smoke job completes with the expected analysis outcome and match its exact job ID in the private logs of the verified worker deploy. For a newly queued job that completed on its first attempt, use an authorized read-only PesoDatabase query to measure `public.analysis_jobs.created_at` to `stage_timestamps.downloading` on that exact row. Both timestamps must be finite, timezone-aware, ordered and within the UTC smoke window. Record milliseconds and observation time as queue-to-reported download stage, which includes worker startup and progress reporting. If the job retried or the source or timing is unavailable, retain the job outcome and mark the timing unavailable. The current claim RPC omits the timestamps the worker needs to emit `queue_wait`. Capture first-cycle samples with the same measure. [Claim RPC](../../supabase/migrations/20261029180203_owner_analysis_admission.sql) · [Worker stages](../../backend/app/jobs/analysis_worker.py) |
+| Spend and intake | Retain the current calendar-month actual and projected provider totals, their source timestamps, quota/headroom and the observed intake state. Read current credit usage and cycle dates in the production Netlify team’s Usage & billing page and record them separately. Record the enabled budget monitor run and any reached-milestone delivery receipts. [Intake and budget runbook](intake-stop.md) |
+| Alert delivery | Confirm the receiving operator and an actual test or event receipt for each alert path required by the launch plan. Render service notifications cover provider service events. Budget alerts use the separate workflow and Gmail sender. Retain date, route and outcome without copying email contents. [Render notifications](https://render.com/docs/notifications) · [Budget email acceptance](intake-stop.md#hosted-acceptance-before-activation) |
+
+Review the public smoke and privacy receipts before signing off the handoff.
+Record a real zero only when the observation source returned a complete result.
+The named owner reviews completion, failure and limited-result rates, queue
+latency, corrected reps, Tracking Recovery and support reports during the first
+beta cycle. [PRR post-release review](../product/PRR.md#post-release-review)
 
 ## Completion
 

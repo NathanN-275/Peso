@@ -1,8 +1,12 @@
 import json
 import os
+import ssl
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
+from io import StringIO
 from unittest.mock import patch
+from uuid import UUID
 
 from run_public_beta_budget_monitor import main, parse_provider, process
 
@@ -43,6 +47,69 @@ class FakeRpc:
 
 
 class MonitorTests(unittest.TestCase):
+    def test_delivery_check_sends_one_synthetic_message_without_reading_billing_or_calling_rpc(self):
+        email = "operator@example.invalid"
+        password = "fixture-email-password"
+        settings = {"PESO_BUDGET_EMAIL_ADDRESS": email, "PESO_BUDGET_GMAIL_APP_PASSWORD": password}
+        output = StringIO()
+        with (
+            patch("run_public_beta_budget_monitor.os.getenv", side_effect=lambda key, _: settings[key]),
+            patch("run_public_beta_budget_monitor.SupabaseBudgetRpc") as rpc,
+            patch("run_public_beta_budget_monitor.smtplib.SMTP_SSL") as smtp_ssl,
+            redirect_stdout(output),
+        ):
+            self.assertEqual(main(["--check-email-delivery"]), 0)
+
+        rpc.assert_not_called()
+        smtp_ssl.assert_called_once()
+        self.assertEqual(smtp_ssl.call_args.args, ("smtp.gmail.com", 465))
+        self.assertEqual(smtp_ssl.call_args.kwargs["timeout"], 20)
+        tls = smtp_ssl.call_args.kwargs["context"]
+        self.assertTrue(tls.check_hostname)
+        self.assertEqual(tls.verify_mode, ssl.CERT_REQUIRED)
+        smtp = smtp_ssl.return_value.__enter__.return_value
+        smtp.login.assert_called_once_with(email, password)
+        smtp.send_message.assert_called_once()
+        message = smtp.send_message.call_args.args[0]
+        self.assertEqual(message["From"].addresses[0].addr_spec, email)
+        self.assertEqual(message["To"].addresses[0].addr_spec, email)
+        self.assertEqual(len(message["To"].addresses), 1)
+        subject = str(message["Subject"])
+        prefix = "[TEST] Peso budget email delivery check "
+        self.assertTrue(subject.startswith(prefix))
+        self.assertEqual(UUID(subject.removeprefix(prefix)).version, 4)
+        self.assertEqual(message.get_content(),
+                         "This is a synthetic email delivery check. It does not report spending or change upload intake.\n")
+        self.assertIn(f"accepted by SMTP. Check ID {subject.removeprefix(prefix)}.", output.getvalue())
+        self.assertNotIn(email, output.getvalue())
+        self.assertNotIn(password, output.getvalue())
+
+    def test_delivery_check_sanitizes_smtp_failure(self):
+        output = StringIO()
+        with (
+            patch.dict(os.environ, {"PESO_BUDGET_EMAIL_ADDRESS": "operator@example.invalid",
+                                    "PESO_BUDGET_GMAIL_APP_PASSWORD": "fixture-password"}, clear=True),
+            patch("run_public_beta_budget_monitor.SupabaseBudgetRpc") as rpc,
+            patch("run_public_beta_budget_monitor.smtplib.SMTP_SSL", side_effect=OSError("private detail")),
+            redirect_stderr(output),
+        ):
+            self.assertEqual(main(["--check-email-delivery"]), 1)
+        rpc.assert_not_called()
+        self.assertNotIn("private detail", output.getvalue())
+        self.assertIn("Budget email check failed.", output.getvalue())
+
+    def test_unknown_arguments_fail_before_reading_credentials_or_calling_services(self):
+        with (
+            patch("run_public_beta_budget_monitor.os.getenv") as getenv,
+            patch("run_public_beta_budget_monitor.SupabaseBudgetRpc") as rpc,
+            patch("run_public_beta_budget_monitor.smtplib.SMTP_SSL") as smtp_ssl,
+            redirect_stderr(StringIO()),
+        ):
+            self.assertEqual(main(["--check-email-deliver"]), 2)
+        getenv.assert_not_called()
+        rpc.assert_not_called()
+        smtp_ssl.assert_not_called()
+
     def test_exact_budget_stop_and_multiple_alerts_are_deduplicated(self):
         rpc = FakeRpc()
         sent = []

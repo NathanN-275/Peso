@@ -1,5 +1,9 @@
 # PesoDatabase pre-cutover packet
 
+**Historical September packet.** The checker and its seven pending migrations
+apply to the earlier release scope. Use the [Web MVP production preflight](web-mvp-migrations.md#production-cutover-preflight)
+for the current 30-migration chain and fresh Render pair.
+
 This packet prepares a later decision. It does not authorize migration, Render
 rebinding, paid service resumption, budget activation, or public launch. Each
 needs its own decision. Target: **PesoDatabase `jfgiydtrskpqxyorvvbc`**.

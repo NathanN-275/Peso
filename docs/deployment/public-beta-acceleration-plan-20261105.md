@@ -1,7 +1,7 @@
 # Public Web Beta Acceleration Plan
 
 **Prepared:** November 5, 2026
-**Release source:** managed `public-web-beta` worktree at `/Users/nathan/.codex/worktrees/public-web-beta/peso-app`, branch `codex/public-web-beta`
+**Release source:** managed `codex/public-beta-release` branch, based on the November 18 GitHub `main` checkpoint
 **Status:** Execution in progress; public beta remains blocked. This plan does not authorize deployment, paid service resumption, merge, or public exposure.
 
 **November 9 isolated migration rehearsal passed:** Nathan separately approved the exact 30-file pending chain on recovery target `uhivjkfpfqtpicyjtmie`. CLI application exited zero at `22:51:37.932814Z`. Readback confirms all 51 expected versions/names through `20261103022851`, all 33 original rows' values preserved, expected profile revision/owner backfill and disabled control rows, all 20 public tables with RLS, reviewed client grants, unchanged buckets/old public counts and zero objects. Full schema capture is 275,604 bytes, SHA-256 `ea42ef016c02892c3059bb4860205d9620b75efb55fcb85c56bdd5146ad32c6c`. Post-migration dashboard readback confirms signup/manual linking/anonymous sign-ins/Data API disabled. Production history remains its original 21 versions/content. No production application, new test accounts, API activation, paid-plan change or project pause occurred. [Rehearsal result, diagnostics, advisor observations and remaining scope](pesodatabase-migration-rehearsal-20261109.md). Fresh cutover recovery evidence and separate production approval remain required.
@@ -42,9 +42,9 @@ Read-only recovery revalidation at `2026-11-09T03:37:37.141061Z` (November 8 Eas
 
 ## Objective and scope
 
-Reach the earliest safe public launch of the Peso Web Beta while retaining every mandatory gate in the [Public Web Beta Deployment Plan](public-beta-launch-plan.md) and [Production Readiness Review](../product/PRR.md). The release includes the combined homepage and authenticated `/app`, US-only signup and upload admission, and supported side-view squat workflow. Existing production data and projects remain preserved.
+Reach the earliest safe public launch of the Peso Web Beta while retaining every mandatory gate in the [Public Web Beta Deployment Plan](public-beta-launch-plan.md) and [Production Readiness Review](../product/PRR.md). The release includes the combined homepage and authenticated `/app`, US-IP signup, uploads from abroad for signed-in users under normal upload controls, and the supported side-view squat workflow. Preserve existing production data and projects. [Scope decision](../adr/0021-scope-us-ip-signup-and-replace-render-pair.md).
 
-The completion condition remains: all 14 release gates have current, candidate-matched evidence; the public release is authorized and exposed; public smoke checks pass; and first-cycle monitoring begins. A faster schedule comes from collecting fresh evidence, eliminating duplicate work only when identities and coverage match, and running independent preparation tracks concurrently. No gate is waived or inferred from an old status summary.
+Completion requires current, candidate-matched evidence for all 14 release gates, approved public exposure, passing public smoke checks and the monitoring handoff below. A faster schedule comes from collecting fresh evidence, eliminating duplicate work only when identities and coverage match, and running independent preparation tracks concurrently. No gate is waived or inferred from an old status summary.
 
 ## Evidence rules
 
@@ -52,31 +52,119 @@ The completion condition remains: all 14 release gates have current, candidate-m
 2. Reuse evidence only when its input identities, scope, environment, and coverage match the current candidate. Rebind evidence explicitly; otherwise rerun the applicable check. Local or synthetic results do not establish hosted behavior.
 3. Preserve failed and incomplete attempts in the evidence history. Do not turn missing evidence into a pass or make a failing gate pass by changing its acceptance criteria.
 4. Keep credentials and backup contents outside Git. Store sanitized receipts and hashes in the repository; never commit tokens, raw media, or private backup contents.
-5. Keep the older dirty checkout untouched. The managed `public-web-beta` worktree is the release source. Inspect its status before each change and preserve pre-existing work, including the existing `CONTEXT.md` terminology edit.
+5. Use the managed release worktree for integration and isolated worktrees for engineer changes. Inspect status before editing and preserve pre-existing work in the original checkout.
 
-## Current gate tracker — November 16, 2026
+## Current gate tracker — November 18, 2026
 
-Current source is GitHub `main` at `e9370d9f6675be3fe5567043b458ab51afae0933`.
-The [readiness refresh](public-beta-readiness-20261116.md) records source-matched
-CI evidence and limits. Earlier dated narrative below remains historical.
-This table is the live all-14-gate tracker; partial passes do not close a gate.
+The release branch starts from GitHub `main` at
+`1f6cf65e29c43de89abdad32bd447bb132821748`. Final candidate selection is open.
+The [November 16 readiness refresh](public-beta-readiness-20261116.md)
+records prior CI evidence and its scope. This table is the live 14-gate
+tracker. Earlier dated entries document historical checkpoints.
+
+Nathan confirmed staging signup. The November 17 owner-only window separately
+verified staged artifact identity, HTTPS, API readiness, CORS for
+`https://staging.usepeso.com` and anonymous denial before restoring the protected
+holding deploy and suspending both Render services. Chromium reached the protected app but hit a Turnstile
+failure. Safari opened the app with an existing session. At closeout, signup
+and private media were off. The November 18 closeout restored the holding
+deploy, verified anonymous denial and confirmed removal of the disposable
+Auth identity and its profile. A November 18 anonymous readback returned 401
+for all five holding probes across the custom host, default Netlify host and
+exact holding permalink. A signed-in Render dashboard readback on November 18
+confirmed both selected staging services were suspended.
+[Dedicated staging origin and API binding](../../config/staging-web-release-binding.json).
+
+On the November 18 reset candidate (`06bfe695`), Nathan reported a successful
+password reset followed by a return to the reset page. Provider readback did
+not corroborate the exact fixture used. Offline Chromium reproduced the routing
+defect. PR #57 fixed it on the current base. A new fixture build from `1f6cf65e`
+passed four offline Chromium and WebKit cases for reset, sign-out, sign-out
+retry, and fresh-password sign-in. The subsequent hosted retest is recorded below.
+
+November 18 Netlify Free billing showed production deploys paused on the
+staging team. Nathan upgraded the team to Personal later that evening.
+Authenticated Netlify readback confirmed Personal, all-deploy sign-in, and the
+protected holding deploy ready. The plan includes 1,000 monthly credits.
+Nathan approved one 15-credit staging deploy, a browser window of up to 30
+minutes, and restoration of the previous holding deploy.
+
+The 66-file staging ZIP from `1f6cf65e` independently matched its file manifest
+and archive SHA-256
+`b9881be3d3c76e780a03c6907cf49283318d991f9ee8d9951c5538d1e78632f6`.
+Netlify published deploy `6afe4ce83a3aa2f5ec79d22a` at 8:12 p.m. Eastern on
+November 18. All 66 provider file hashes matched the verified ZIP contents.
+Eighteen anonymous requests across the staging custom domain, default Netlify
+host, and exact deploy permalink returned HTTP 401. Both staging Render services
+were suspended at preflight and were left suspended for this window.
+
+Nathan approved one isolated staging Auth fixture and its cleanup. On the exact
+hosted candidate, he confirmed receipt of the recovery email, successful password
+change, automatic return to sign-in, and sign-in with the new password. A
+read-only Supabase session check confirmed a `password` authentication event at
+8:34 p.m. Eastern for that exact fixture. The database audit returned no scoped
+events. The hosted password-reset test passed for this candidate.
+After the test, Netlify restored holding deploy `6afbc190c9a060d455a54082` at
+8:35 p.m. Eastern. All 18 holding probes returned HTTP 401, as did six later
+probes of the now-historical candidate permalink. Supabase verified the test
+identity and profile were removed, the expected owner ledger row was retained,
+and staging signup remained disabled at closeout.
+
+Startup JavaScript used 547,685 of 614,400 gzip bytes and WOFF2 used 58,224
+of 204,800 bytes. Offline Chromium and WebKit passed the keyboard skip-link
+visibility and activation, fonts, layout, login shell and reload checks at
+1280×900 and 390×844 with reduced motion. WebKit used Option+Tab.
+On the same ZIP, both engines cleared a synthetic expired session after one
+rejected refresh and returned to sign-in. After loading a distinct synthetic
+session in the same browser, both showed only that account's activity. Real
+sign-in, browser session expiry and owner isolation remain hosted checks.
+The separate synthetic media fixture passed the existing Chromium desktop and
+mobile checks for activity, queue confirmation, playback and keyboard seeking.
+
+Read-only Supabase evidence confirmed the 21 reviewed production migrations,
+the pre-reservations schema, three private buckets, and zero video rows,
+active jobs or Storage object metadata. Staging matched all 52 migrations,
+with media attestation off, six video rows and three video object metadata
+records. The staging `videos` bucket is private, allows MP4 and QuickTime,
+and has a 52,428,800-byte bucket limit. Confirm the project-wide Storage
+limit and release runtime limits in the test window. Both deletion-outbox
+paths match current videos owned by the same
+respective owners, and neither path matches Storage object metadata. No
+source-attempt ledger row was dispatching. The readback leaves backing bytes
+and cleanup authorization unverified.
+
+On the November 18 base, 125 focused application-side media write and cleanup
+tests passed. The November 18 Supabase documentation review left the operation for settling
+the write and deleting its exact backing generation unverified for our managed
+project. The October 28 request is on file, and a Supabase Support reply remains
+unverified. [Provider evidence](private-media-upload-reconciliation.md#tenant-s3-multipart-follow-up).
 
 | Gate | Status | Evidence / next requirement |
 | --- | --- | --- |
-| 1. Freeze candidate | Open | Current main is published and its Security Checks pass. Final production candidate/artifact reconciliation remains. |
-| 2. Security and offline runtime | Pass for verified CI checkpoint; production artifact open | Run 43968645784: 22 successful jobs, one expected production-PR-only skip. Downloaded root/web reports match source and checksums; no HIGH/CRITICAL findings. Container/offline logs pass. Retention passed and downloaded artifacts matched inspected/scanned images in PR run 43970160990. Documentation head 889537a8 passed subsequent Security Checks run 43971866701; security/runtime inputs are unchanged. Actual production artifact acceptance remains open. |
-| 3. Credential history | Blocked | Current Gitleaks and PR #52 GitGuardian checks pass for the earlier code checkpoint. Nathan supplied GitHub Support ticket #4813900 response: revocation is the remedy. Existing provider-confirmed New Relic deletion resolves that key's history-removal subitem; no purge claimed. [Disposition](gate-3-support-disposition-20261116.md). Remaining credential/provider/consumer disposition is still open; retired Azure credentials require verified retirement or rotation if used. |
-| 4. Staging authentication | Open | Supabase staging is ACTIVE_HEALTHY with 52 recorded migrations through 20261103022851. The dedicated owner-only Netlify project is empty. Both staging CNAMEs resolve. Render API TLS verifies and the fresh pair remains suspended. Netlify TLS for `staging.usepeso.com`, final source and binding checks, and hosted Auth acceptance are open. The first window keeps media disabled. [Dedicated staging preflight](staging-next-actions-20261116.md#dedicated-staging-checkpoint). |
-| 5. Hosted recovery | Passed for November 6 snapshot scope | November 8 hosted restore report and November 9 rehearsal preserve the scoped pass. Current recovery project uhivjkfpfqtpicyjtmie is INACTIVE; this does not invalidate the historical rehearsal or prove new candidate recovery. |
-| 6. Fresh recovery point | Open | Protected copy and rehearsal succeeded for old snapshot; fresh writer freeze/export/protected copy required at cutover. |
-| 7. Production migrations | Blocked on fresh recovery and application approval | Production still records 21 migrations through 202608270001. Isolated 30-file rehearsal passed; current MVP selection/dry run must be reviewed before approved production application. |
-| 8. US-IP signup | Open | Current CI signup-hook/expiry tests pass. Live geography refresh, trusted proxy and Auth-hook acceptance remain required. Signed-in uploads from abroad follow ADR 0021. |
-| 9. Guardrails | Open | CI budget/retention controls pass within tested scope. Hosted collector, alerts/delivery, cleanup, intake stop, accepted-job draining and quotas remain unaccepted. |
+| 1. Freeze candidate | Open | Refreshed from GitHub main at the November 18 checkpoint. Reconcile subsequent fixes, record the final release source, and run the applicable source and hosted checks. |
+| 2. Security and offline runtime | Passed for November 18 base CI; final candidate open | [Security Checks run 44407249479](https://github.com/NathanN-275/Peso/actions/runs/44407249479) passed 22 jobs on `1f6cf65e`. The production-release-source job was the only skip among 23 total jobs on the main push. Bind fresh applicable evidence to the final source and production artifacts. |
+| 3. Credential history | Blocked | Provider-confirmed New Relic revocation and GitHub Support disposition resolve that key's history-removal subitem. [Disposition](gate-3-support-disposition-20261116.md). Verify retirement or rotation of remaining credentials and deployed consumers, resolve any remaining history action, and rerun secret scans on the final release source. |
+| 4. Staging authentication | Signup and hosted password reset verified; remaining browser and native checks open | On hosted `1f6cf65e`, Nathan confirmed recovery email delivery, password change, automatic return to sign-in, and sign-in with the new password. Supabase confirmed a password-authenticated session for the isolated fixture. The holding deploy and fixture closeout passed. Complete remaining hosted browser and native checks. [Dedicated staging preflight](dedicated-staging-preflight-20261116.md). |
+| 5. Hosted recovery | Passed for November 6 snapshot scope | Preserve the isolated restore, access and byte-recovery evidence and the November 9 migration rehearsal. The last recorded recovery target state was inactive. Revalidate the target and evidence before any new rehearsal. |
+| 6. Fresh recovery point | Read-only catalog baseline; cutover open | November 19 Supabase connector readback found no Auth users or sessions, video or Storage object rows, S3 multipart records, or pending analysis/export jobs. Three private buckets and six client Storage write policies remain. At cutover, verify the writer freeze, recheck the complete Storage inventory and bytes, and compare the original backup with a fresh protected off-machine download. [Web MVP production preflight](web-mvp-migrations.md#production-cutover-preflight). |
+| 7. Production migrations | Local preparation and live history matched; cutover open | November 19 live history matched the first 21 selected version/name pairs on `66e1ec36`. The 51-file selection leaves 30 pending. Obtain the verified freeze and backup, exact dry run and separate apply approval. [Web MVP production preflight](web-mvp-migrations.md#production-cutover-preflight). |
+| 8. US-IP signup | Open | The three latest scheduled geography runs skipped, most recently [44302384186](https://github.com/NathanN-275/Peso/actions/runs/44302384186). Verify live refresh, trusted proxy handling, fail-closed signup and normal authenticated uploads from abroad. [Scope decision](../adr/0021-scope-us-ip-signup-and-replace-render-pair.md). |
+| 9. Guardrails | Local stop and retry passed; hosted acceptance open | PostgreSQL 17 rejected a new reservation while an accepted upload verified, queued, retried and completed. Hosted acceptance still requires real upload and playback, collector scheduling, current spend and quotas, and verified email delivery. Private-media cleanup requires scoped hosted evidence. [Intake stop verification](intake-stop.md#verification-recorded). |
 | 10. Render cutover | Open | Fresh staging and production pairs follow ADR 0021. Current production service identities, matching credentials, image, readiness, cost and two-longest-clip evidence remain required. |
 | 11. Private Web App | Open | Combined production binding remains pending. Verify current private deployment/configuration, release build/budget, visual/accessibility and historical URL privacy. |
-| 12. End-to-end acceptance | Open | Record exact-candidate two-owner upload, analysis, save, export, deletion/recovery, session isolation and required browser/mobile flows. Media activation requires provider settlement, scoped owner cleanup and hosted-role rehearsal. The first staging window covers access, Auth and API readiness. |
-| 13. Protected release | Open | Main security checks pass; main-to-production PR, current protections/check contexts and complete frontend/backend/migration/model manifest remain required. |
-| 14. Public launch | Blocked | Mandatory gates, final cost/rollback packet and Nathan's action-time public exposure approval remain required. |
+| 12. End-to-end acceptance | Blocked on staging private media | Prove provider settlement and scoped owner cleanup in hosted-role rehearsal before approved staging media activation. Run the exact-candidate two-owner side-view squat flow through upload, analysis, playback, save, export and deletion. Cover recovery, owner isolation, expired sessions, supported mobile browsers and the longest allowed clips. Repeat required acceptance on the private production build. |
+| 13. Protected release | Open | November 18 GitHub readback showed production at `d92dfea5` with nine strict required contexts, including both historical Netlify preview checks. The rules remain in place. One main-to-production PR, all required checks on the release SHA and the complete release manifest remain required. |
+| 14. Public launch | Blocked | Complete mandatory gates, final cost and rollback review, and Nathan's action-time approval. After exposure, require public smoke tests, verified monitoring and alerts, baseline error/queue/spend readings, and a named owner for the first-beta-cycle review. |
+
+Independent review of five retained CI archives for `1f6cf65e` matched the
+GitHub digests. The root npm report had seven moderate findings and zero HIGH
+or CRITICAL findings. All three retained web audit runs and the Python audit
+had zero findings. The scanned Linux/amd64 image
+`sha256:a5bac1cc84ec421fd327e861619971fbddfb9b6d92e8c3d0a9c12dfff3bf5733`
+had zero HIGH or CRITICAL findings and passed the retained offline runtime checks.
+The exact-source scan had seven reviewed non-secret matches and zero blockers.
+Recheck treatment applicability and complete the exact candidate and hosted
+artifact evidence for release.
 
 **Historical independent checks (earlier checkpoint):** `npm run deps:verify` passed; `npm run typecheck` passed; `npm run test:policy` passed (698/698); `npm run dashboard:typecheck` passed; `npm run dashboard:test` passed (17/17); `npm run dashboard:build` passed; `npm run audit:ci` passed with no HIGH/CRITICAL findings; `git diff --check` passed. These checks are local evidence only. The production-bound Gate 11 build and hosted release acceptance have not been performed.
 
@@ -88,30 +176,50 @@ Provider readback identified exactly three Peso projects in the selected team: `
 
 The complete visible `peso-webapp` deploy list ended with a disabled Next button on page seven: 77 unique deploy entries and 48 actual artifact permalink links. The marketing list has six entries and four artifact links; the bootstrap project has one artifact link. Entries without artifact links are retained as IDs and are not assumed to contain deployed assets. Anonymous GET checks at `2026-11-07T01:36:38Z`–`01:36:48Z` covered all 53 observed artifact permalinks at root and `/app/`, plus the three project roots, the known private `main--peso-webapp` alias and the two custom-domain hosts. Of 118 requests, 116 returned 401; the two `www.usepeso.com` requests returned 301 to the corresponding `usepeso.com` path, each separately verified to return 401. No cookies or credentials were sent, redirects were inspected explicitly, and response bodies were not retained. Individual hashed assets and unlisted/deleted URLs are not claimed covered.
 
+On November 18, the [anonymous privacy verifier](netlify-release.md#verify-historical-deploy-privacy-at-cutover)
+confirmed direct HTTP 401 on all six reviewed URLs for the historical staging
+candidate `6afe4ce83a3aa2f5ec79d22a`, including its exact fingerprinted
+JavaScript asset. The full production-era historical inventory and the checks
+immediately before and after public exposure remain open.
+
 Receipts under `/Users/nathan/.codex/visualizations/2026/11/05/01a1add7-d3fe-7203-a616-5ea6caa842e7`: `netlify-config-readback-20261106.json`, `netlify-webapp-deploy-inventory-20261106.json`, `netlify-marketing-deploy-inventory-20261106.json`, `netlify-anonymous-artifacts-20261106.json` and `netlify-www-redirect-check-20261106.json`. These are privacy evidence for the current infrastructure, not release acceptance for a new combined artifact.
+
+### November 18 Render monitoring readback
+
+Both staging services remained suspended with automatic deployment off. Their
+latest retained deploy records match `1f6cf65e`. The API still configures
+`/health/ready`. The read-only Render connector returned runtime logs for both
+services for 22:11–22:20 UTC during the earlier approved staging window,
+including zero error-or-higher entries in the complete filtered response. The
+worker returned no queue-wait event and the staging API custom host returned
+no HTTP status-count series for that range. The readback verifies access to the
+observed staging logs. The [production monitoring handoff](public-beta-launch-plan.md#first-cycle-monitoring-handoff)
+still needs the exact live production artifacts, readings and delivery receipts.
 
 ### 0. Revalidate baseline and establish the tracker
 
 - Read the canonical launch plan, PRR, execution contract, Gate 2 checkpoint review, recovery instructions, and current terminology in `CONTEXT.md`.
 - Inspect the managed worktree status and current branch/HEAD; identify user changes and do not overwrite them.
-- Revalidate the PRR status line, which was last dated September 30, 2026, and the active 14-gate tracker. Carry forward no historical status without current evidence.
-- Reinspect the latest recovery packet. The handoff identifies the November 5 packet as `INCOMPLETE`: writer freeze, off-device copy, hosted restore, and Storage byte verification were false, and `roles.sql` was empty after a failed dump. Treat these as blockers to a fresh accepted recovery point, not as passed work.
-- Rebind the October 28 Gate 2 acceptance to the current candidate inputs. It covers checkpoint `57f013de0b650b7e5f5bf89ea4d7cc1338c936b3`; it does not by itself accept later source or deployed artifacts.
+- Reconcile the PRR and tracker against the latest provider and candidate evidence. Bind prior recovery and security evidence to the applicable inputs and rerun required checks for later source or artifacts.
 - Record a dated gate table with: gate, owner/action, prerequisite, evidence required, status, blocker, and next decision. Keep this as the single live status record, updating the existing tracker if identified; do not create a competing status ledger.
 
-### 1. Critical path: fresh recovery and hosted restore rehearsal (Gates 5–6)
+### 1. Critical path: fresh recovery point (Gates 5–6)
 
-These gates block safe production migrations and remain the critical path.
+The November 8 Hosted Restore Rehearsal passed for the November 6 snapshot.
+Review its restore, Auth, Storage and access evidence against the current
+release scope. Repeat the rehearsal only if the prior evidence lacks required
+coverage. A fresh verified production recovery point is mandatory for cutover.
+[Hosted recovery evidence](pesodatabase-hosted-recovery-rehearsal-20261108.md).
 
-1. Read-only verify the identity, organization, isolation, contents, plan, and current provider state of the existing inactive recovery project. Confirm whether it is still isolated and suitable for reuse. Do not restore or otherwise mutate it during inspection.
-2. Prepare the fresh backup procedure and checklist: verify a complete writer freeze, export all required database/auth/storage metadata, inventory Storage objects, capture object bytes when present, generate and verify checksums, and create a protected off-device copy. Keep contents private and outside Git.
-3. Obtain required action-time approval before any hosted restore or recovery-project mutation. If the existing project is unsuitable, stop and prepare the exact alternative and its cost/impact for separate approval. Do not create, activate, delete, or repurpose projects without the required approval.
-4. In the approved isolated target only, conduct the Hosted Restore Rehearsal using the reviewed restore procedure. Verify restored database state, custom Storage policies, Auth behavior, owner/non-owner access, object inventory, and byte-level read-back/checksums where objects exist. Capture failures and stop on unexplained mismatch.
-5. Verify protected off-device backup integrity independently. Record writer-freeze evidence, export time, inventory, checksums, copy verification, target identity, restore results, and cleanup/retention state.
+1. Verify a complete writer freeze. Export required database, Auth and Storage metadata, inventory Storage objects and capture their bytes when present. Generate and verify checksums and keep contents private and outside Git.
+2. Create a protected off-device copy and verify its integrity independently. Record the freeze window, export time, Storage inventory, checksums and copy verification.
+3. If additional rehearsal is required, verify the isolated target's identity, contents, isolation and cost before requesting action-time approval. Verify the restored database, Storage policies, Auth, owner/non-owner access and object bytes where present. Capture failures and stop on unexplained mismatches.
 
-**Exit:** A fresh verified recovery point and approved hosted restore rehearsal pass with complete evidence. No production restore is part of this rehearsal.
+**Exit:** Record a fresh verified production recovery point and applicable Hosted Restore Rehearsal evidence before production migrations.
 
-Protected-copy verification passed on November 8 after Nathan attached the actual downloaded archive. Directly observed Proton provenance and private sharing are recorded separately from independently verified bytes: exact archive hash/size, byte equality to the original, all ten internal files and all six SQL manifest entries passed. The original archive and its exporter flags remain immutable; `proton-current-archive-verification-20261108.json` records the new verification. Hosted restore acceptance and a fresh production cutover recovery point remain required.
+#### Historical November 6–8 preparation
+
+Protected-copy verification for the rehearsal snapshot passed on November 8 after Nathan attached the actual downloaded archive. Recorded checks include archive hash and size, byte equality, all ten internal files and all six SQL manifest entries. `proton-current-archive-verification-20261108.json` records the verification.
 
 November 6 restore preparation is retained privately in the fresh export attempt's `restore-preparation` directory. Its receipt pins source/adjusted role SQL and reviewed Storage policy SQL, leaves `targetRef=null`, and forbids using production, staging, old recovery or HootRoute as the test target. Before any new target is created, separately approve the selected capacity action and project creation after a current quote. After creation, verify emptiness, project identity, connection username and managed Auth/Storage schema compatibility. Preserve managed schemas; restore only the reviewed application/history/data material and separately reviewed customizations under a separately approved transaction. Stop on any unexpected error or schema difference. Synthetic two-owner Auth/Storage API tests, rollback checks, byte round trips, private target retention/pause and final comparison remain required. The eight-policy comparison is source preparation, not hosted acceptance. See [provider backup/restore guidance](https://supabase.com/docs/guides/platform/migrating-within-supabase/backup-restore) and [free-project limits](https://supabase.com/docs/guides/platform/billing-on-supabase).
 
@@ -121,9 +229,20 @@ Read-only target isolation review on November 6 found signup and Data API enable
 
 Nathan then explicitly approved disabling signup and Data API on the recovery target. Both controls were saved and independently reloaded: `Allow new users to sign up=off`, `Enable Data API=off`, with the provider's `Data API disabled` confirmation and `No schemas can be queried` readback. No other setting or project changed. Before/after screenshots and `recovery-isolation-applied-20261106.json` are retained under the current chat's private visualization directory. Private backup data remains unimported; Data API re-enablement for tests and the restore itself remain separately gated.
 
-### 2. Parallel preparation: source, credentials, admission, and operations
+### 2. Parallel work and review
 
-Start these tracks after baseline inspection; they may progress while recovery approval or evidence is pending, but they cannot claim dependent hosted acceptance.
+The orchestrator assigns independent work in isolated worktrees. The product
+manager owns this tracker and records each lane's evidence, blockers and next
+decision. Engineers can prepare browser checks, credential disposition, admission
+and guardrails while private-media settlement is open. Allocate review to an
+agent who did not author the change, then integrate reviewed work against the
+current release base. Serialize changes to shared hosted settings and continue
+independent work while an approval or provider response is pending.
+
+**Private-media settlement and staging acceptance (Gates 4, 9 and 12)**
+
+- Verify the supported provider operation for settling an interrupted write and removing its exact backing generation. Cover late writes, retries, backup retention and pending deletions. Keep unresolved outcomes pending. [Storage reconciliation](private-media-upload-reconciliation.md).
+- Review the scoped cleanup and hosted-role rehearsal before activating staging private media. Prepare browser and fixture evidence in parallel. Enable media only in the approved window, then run the two-owner flow and record scoped cleanup and window closeout.
 
 **A. Candidate and security/runtime (Gates 1–2)**
 - Reconcile release-source changes and choose a candidate checkpoint only after current diffs are understood.
@@ -132,7 +251,7 @@ Start these tracks after baseline inspection; they may progress while recovery a
 - Do not deploy the Gate 1 fixture build. Any later source change receives fresh applicable checks and a new recorded SHA.
 
 **B. Credentials and history (Gate 3)**
-- Inventory outstanding rotation or verified retirement, provider verification, Support disposition and secret-scan requirements from the canonical evidence.
+- Inventory outstanding rotation or verified retirement, provider and consumer verification, remaining history disposition and final secret scans. Carry forward the documented New Relic disposition.
 - Prepare a credential disposition matrix without exposing secret values. Complete only actions already authorized; record provider confirmations and exact scope.
 - Keep any unavailable provider or human action as a named blocker with the smallest specific request required.
 
@@ -141,18 +260,19 @@ Credential disposition prepared from the September 13 provider follow-up and cur
 | Item | Available evidence | Required next evidence / action |
 | --- | --- | --- |
 | Exposed New Relic license key | September 13 note records provider deletion without replacement. | History-removal subitem resolved by the existing deletion confirmation and Nathan-supplied October 8 Support response; [review](gate-3-support-disposition-20261116.md). PR #52 earlier code checkpoint passed GitGuardian. No purge claimed; recheck scanners on final source. |
-| Student scaler database password | Rotation script was tested locally; no current production rotation receipt exists. | Review the current consumer inventory, separately approve provider credential changes, rotate the role and dependent GitHub/Key Vault connection secrets, and verify every remaining deployed consumer. Historical local tests do not establish current revocation. |
-| Render API/worker Supabase credentials | Combined binding is pending; existing services were historically bound to staging. | Read current provider settings privately and verify both credentials identify the chosen project before any separately approved rebind/resumption. A URL-only edit is insufficient. |
+| Student scaler database password | November 18 readback confirmed the custom role absent and the generic role set to NOLOGIN in both Supabase projects. The GitHub Student environment still lists two legacy secret names. Azure operator authentication was revoked. | Verify remaining consumers and the Azure inventory when access is available. Retire unused credentials or rotate credentials still in use under the required approvals. [Inventory follow-up](gate-3-support-disposition-20261116.md#credential-inventory-follow-up). |
+| Render API/worker Supabase credentials | The fresh staging pair is suspended. The production binding is pending. | Verify privately that each fresh pair uses credentials for its own designated Supabase project before approved deployment or resumption. Verify both service credentials alongside the project URL. |
 | Cleanup, intake-stop, geography and alert-delivery credentials | Activation and delivery acceptance remain open. | Verify purpose, scope, provider storage and recipients at the applicable activation gate; retain identifiers/results without values. New credential creation and hosted activation require their action-time approval. |
 
-**C. US-only admission (Gate 8)**
-- Revalidate the authoritative geography source and dataset freshness; prepare refresh evidence.
+**C. US-IP signup (Gate 8)**
+- The November DB-IP file matched the provider's published checksums in validation-only review. The checked-in downloader received Cloudflare error 1010 in local preflight. DB-IP documents an account-keyed updater for commercial databases. Confirm the supported Lite download route and cadence for GitHub Actions before activation. [DB-IP updater](https://db-ip.com/tutorials/database-file-update) · [Dataset runbook](us-ip-dataset-refresh.md).
 - Verify Auth hook behavior, trusted proxy chain assumptions, IPv4/IPv6 handling, spoofing resistance, expiration, and fail-closed behavior.
-- Distinguish local policy tests from deployed/provider verification; do not mark hosted admission accepted until its actual production path is verified.
+- Verify the deployed production signup path and authenticated uploads from abroad. Keep evidence for the two flows tied to the tested candidate and runtime.
 
 **D. Guardrails and monitoring (Gate 9)**
-- Verify retention and cleanup behavior, budget alert configuration, intake stop, delivery behavior, accepted-job draining, quotas, and monitoring signals against current runtime/provider state.
-- Resolve the known Storage cleanup/provider support uncertainty before accepting the affected erasure/cleanup contract. Preserve current counterexamples and provider response evidence.
+- On the November 18 base, 10 budget checks, 36 geography refresh checks and 64 backend guard checks with 125 subtests passed locally. Hosted acceptance remains open.
+- November 18 GitHub metadata listed neither gate's protected workflow environment nor activation variable. Verify the exact environments, credential scope and delivery recipients before approved activation.
+- Verify hosted retention, quotas and spend collection. Use approved test measurements to verify alert delivery at $15, $25, $35 and $50 actual monthly spend and the $50 projected monthly intake stop. Confirm new submissions are denied and accepted uploads and analysis finish. [Operator runbook](intake-stop.md).
 - No new paid service activation or budgeted resource is included in preparation without separate approval.
 
 ### 3. Sequential hosted release preparation (Gates 7, 10–12)
@@ -165,8 +285,8 @@ Proceed only when named prerequisites pass. Batch evidence collection within eac
 - Any destructive or data-changing step remains subject to its own action-time approval.
 
 **Gate 10 — Render cutover**
-- Read back existing service IDs, production bindings, suspended/running state, and the exact reviewed configuration. Resolve the documented worker-plan mismatch before any Blueprint synchronization.
-- Prepare the cutover with reviewed IDs and matching production credentials. Verify API readiness, then worker acceptance and two longest-clip measurements.
+- Prepare the fresh production Render API and worker. Verify selected compute plans, service identities, and production bindings against current provider readback and the reviewed configuration. Keep the historical pair suspended.
+- Bind matching production credentials. Verify API readiness, then worker acceptance and two longest-clip measurements.
 - Manual deployment, service resumption, and any paid resumption are separate actions; confirm cost and obtain required approval immediately before each action. Do not silently change the validated workload or downgrade it to fit a plan.
 
 **Gate 11 — Private Web App build**
@@ -190,7 +310,7 @@ Proceed only when named prerequisites pass. Batch evidence collection within eac
 - Before any public exposure, assemble a concise action packet with final cost/billing facts, production identities, passed gate evidence, rollback procedure, smoke-check plan, and unresolved limitations (none may be a mandatory blocker).
 - Obtain Nathan’s action-time confirmation for public exposure. This approval is distinct from approvals for restore, paid resumption, destructive changes, or merge/release.
 - After approval and exposure, run public smoke checks for anonymous homepage, signup and US admission behavior, authenticated `/app`, upload/analysis path, and privacy of previews/staging/historical deploy URLs. Restore private visibility or execute the approved rollback if isolation or required behavior fails.
-- Begin first-cycle monitoring immediately and record the initial queue, failure, latency, completion, Tracking Recovery, and support baselines. Review outcomes within the first beta cycle as required by the PRR.
+- Verify monitoring and alert delivery, record initial error, queue and spend readings, and name the owner for the first-beta-cycle PRR review. Hand off after public smoke tests pass and those checks are recorded. The named owner reviews completion, failure and limited results, queue latency, corrected reps, Tracking Recovery and support reports during the first beta cycle.
 
 ## Approval boundaries
 
@@ -205,4 +325,4 @@ Present each necessary approval separately, only after preparing concrete eviden
 
 ## Completion record
 
-The plan is complete as an execution plan when the active tracker points to current evidence for all 14 gates, clearly identifies the critical path and each approval boundary, and uses the agreed terms **Tracking Recovery** and **Hosted Restore Rehearsal**. The release itself is complete only when the PRR exit criteria, public smoke checks, and first-cycle monitoring condition above are met.
+The plan is complete as an execution plan when the active tracker points to current evidence for all 14 gates, clearly identifies the critical path and each approval boundary, and uses the agreed terms **Tracking Recovery** and **Hosted Restore Rehearsal**. The Goal Mode release handoff requires the PRR exit criteria, passing public smoke tests, verified monitoring and alerts, initial error, queue and spend readings, and a named first-beta-cycle review owner.

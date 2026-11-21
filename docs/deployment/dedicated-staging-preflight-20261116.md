@@ -218,6 +218,15 @@ or unexecuted target. The historical Starter <400 MB gate must not be silently
 substituted for the current 2 GB worker's accepted requirements. Do not use a
 short synthetic clip as longest-clip acceptance.
 
+Read the effective API, worker, Web App and Storage limits for the exact
+window before choosing the two inputs. Candidate defaults are 300 seconds,
+50 MiB, 1920×1080 maximum edges and 60 fps. Use consented side-view squat
+recordings near the effective duration limit and within the remaining limits.
+Use the existing metadata probe and record the exact input checksum, decoded
+duration, frame count, dimensions and byte length before uploading. Keep the
+raw clips and receipts private. Confirm whole-service peak memory, restarts
+and timeout outcomes alongside the per-job timings.
+
 On hosted failure: keep protection intact, restore recorded frontend/backend
 artifacts and configuration as appropriate, suspend the selected worker/API,
 leave acceptance failed, and preserve sanitized evidence. Do not reverse

@@ -10,10 +10,12 @@ import json
 import os
 import re
 import smtplib
+import ssl
 import sys
 from datetime import date, datetime, timezone
+from email.headerregistry import Address
 from email.message import EmailMessage
-from typing import Callable
+from typing import Callable, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import uuid4
@@ -81,25 +83,48 @@ class SupabaseBudgetRpc:
             raise RuntimeError(f"PesoDatabase RPC {name} did not succeed.") from error
 
 
-def gmail_sender(address: str, app_password: str) -> Callable[[int, str, object], None]:
+def _send_gmail_message(address: str, app_password: str, subject: str, body: str) -> None:
     if not address or "@" not in address or not app_password:
         raise ValueError("Gmail delivery credentials are missing.")
+    mailbox = Address(addr_spec=address)
+    message = EmailMessage()
+    message["From"] = mailbox
+    message["To"] = mailbox
+    message["Subject"] = subject
+    message.set_content(body)
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20, context=ssl.create_default_context()) as smtp:
+        smtp.login(address, app_password)
+        smtp.send_message(message)
 
+
+def gmail_sender(address: str, app_password: str) -> Callable[[int, str, object], None]:
     def send(threshold: int, month: str, decision: object) -> None:
-        message = EmailMessage()
-        message["From"] = address
-        message["To"] = address
-        message["Subject"] = f"Peso budget: ${threshold} actual spending reached in {month}"
-        message.set_content(
+        _send_gmail_message(
+            address,
+            app_password,
+            f"Peso budget: ${threshold} actual spending reached in {month}",
             f"Combined actual spending: ${decision.actual_usd:.2f}\n"
             f"Projected calendar-month spending: ${decision.projected_usd:.2f}\n"
-            "New uploads stop automatically when projected spending reaches $50.\n"
+            "New uploads stop automatically when projected spending reaches $50.\n",
         )
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) as smtp:
-            smtp.login(address, app_password)
-            smtp.send_message(message)
 
     return send
+
+
+def _check_email_delivery(address: str, app_password: str) -> int:
+    check_id = uuid4()
+    try:
+        _send_gmail_message(
+            address,
+            app_password,
+            f"[TEST] Peso budget email delivery check {check_id}",
+            "This is a synthetic email delivery check. It does not report spending or change upload intake.\n",
+        )
+    except Exception:
+        print("Budget email check failed. Verify private email configuration.", file=sys.stderr)
+        return 1
+    print(f"Budget email check accepted by SMTP. Check ID {check_id}.")
+    return 0
 
 
 def process(
@@ -137,11 +162,17 @@ def process(
     return ("paused_projected_budget" if decision.stop_new_uploads else "measured"), tuple(delivered)
 
 
-def main() -> int:
+def main(argv: Sequence[str] = ()) -> int:
+    if argv and tuple(argv) != ("--check-email-delivery",):
+        print("Usage: python scripts/run_public_beta_budget_monitor.py [--check-email-delivery]", file=sys.stderr)
+        return 2
+    address = os.getenv("PESO_BUDGET_EMAIL_ADDRESS", "")
+    password = os.getenv("PESO_BUDGET_GMAIL_APP_PASSWORD", "")
+    if argv:
+        return _check_email_delivery(address, password)
+
     try:
         rpc = SupabaseBudgetRpc(os.getenv("PESO_BUDGET_SUPABASE_SERVICE_ROLE_KEY", ""))
-        address = os.getenv("PESO_BUDGET_EMAIL_ADDRESS", "")
-        password = os.getenv("PESO_BUDGET_GMAIL_APP_PASSWORD", "")
         if not address or "@" not in address or not password:
             rpc("disable_video_upload_admission", {})
             raise RuntimeError("The budget alert sender is unavailable.")
@@ -158,4 +189,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

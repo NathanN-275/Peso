@@ -40,6 +40,7 @@ class AvatarWritesPostgresTest(unittest.TestCase):
       c.execute("create policy fixture_video_delete on storage.objects for delete to authenticated using(bucket_id='videos' and (storage.foldername(name))[1]=auth.uid()::text)")
       c.execute((root/'supabase/migrations/20261029210252_owner_profile_storage_admission.sql').read_text())
       c.execute((root/'supabase/migrations/20261030000756_avatar_write_attempts.sql').read_text())
+      c.execute((root/'supabase/migrations/20260922002632_intake_stop_reason.sql').read_text())
 
   def setUp(self):
     self.c = self.psycopg.connect(fixture.DATABASE_URL, autocommit=True)
@@ -51,7 +52,7 @@ class AvatarWritesPostgresTest(unittest.TestCase):
       refresh_allow_reuse=false,refresh_token_algorithm_version=2,refresh_token_upgrade_percentage=100,
       verified_at=clock_timestamp()-interval '1 minute',verified_until=clock_timestamp()+interval '1 hour'""",
       ('4eee58f296d9698a1c2c0ae14d7a0b379c7622d3',))
-    self.c.execute('update public.upload_admission_control set enabled=true where id=1')
+    self.c.execute('update public.upload_admission_control set enabled=true, disabled_reason=null where id=1')
     self.user, self.other, self.sid, self.sid2, self.other_sid = (uuid4() for _ in range(5))
     self.c.execute('insert into auth.users(id) values(%s),(%s)', (self.user,self.other))
     self.session(self.sid); self.session(self.sid2); self.session(self.other_sid,self.other)
@@ -330,7 +331,7 @@ class AvatarWritesPostgresTest(unittest.TestCase):
     self.assertIs(self.scalar('select public.private_media_avatar_write_pending(%s)',(self.user,)),True)
     self.assertIs(self.observe(args),True)
 
-  def test_post_rollout_source_analysis_generated_and_archive_publication_still_work(self):
+  def test_intake_stop_preserves_accepted_source_analysis_and_archive_publication(self):
     from psycopg.types.json import Jsonb
     from test_archive_writes_postgres import ArchiveWritesPostgresTest
     avatar=self.ready();profile=self.publish(avatar)
@@ -339,6 +340,10 @@ class AvatarWritesPostgresTest(unittest.TestCase):
     self.run_sql('select id from public.reserve_video_upload('+','.join(['%s']*17)+')',
       (reservation,self.user,path,'synthetic.mp4','video/mp4',100,
        datetime.now(timezone.utc)+timedelta(minutes=5),'camera_roll','squat','side',1000,None,3,10000,20,100000,100))
+    self.run_sql('select public.disable_video_upload_admission()')
+    with self.assertRaises(self.psycopg.errors.NoDataFound):
+      self.reserve_source(owner=self.other)
+    self.assertEqual(self.run_sql('select id from public.upload_reservations'), [(reservation,)])
     source=(uuid4(),self.user,reservation,'videos',path,'video/mp4',100)
     self.run_sql('select * from public.admit_private_media_source_write('+','.join(['%s']*7)+')',source)
     self.assertIs(self.scalar('select public.observe_private_media_source_write_success('+','.join(['%s']*7)+')',source),True)
@@ -348,13 +353,19 @@ class AvatarWritesPostgresTest(unittest.TestCase):
     job=self.scalar('select id from public.enqueue_video_analysis_job(%s,false,3,20)',(video,))
     worker='synthetic-avatar-compatibility-worker'
     self.assertEqual(self.run_sql('select id,attempt_count from public.claim_video_analysis_job(%s,60)',(worker,)),[(job,1)])
-    generated_args=list(self.make_generated(video=video,job=job));generated_args[10]=worker
+    self.assertEqual(self.scalar('select public.record_video_analysis_job_failure(%s,%s,%s,%s,%s,%s)',
+      (job,worker,1,'synthetic retryable failure','transient_provider_error',True)),'retry_wait')
+    # Advance the test job past its retry delay without waiting on the wall clock.
+    self.c.execute("update public.analysis_jobs set available_at=clock_timestamp()-interval '1 second' where id=%s",(job,))
+    self.assertEqual(self.run_sql('select id,attempt_count from public.claim_video_analysis_job(%s,60)',(worker,)),[(job,2)])
+    generated_args=list(self.make_generated(video=video,job=job));generated_args[-2:]=[worker,2]
     self.run_sql('select * from public.admit_private_media_generated_write('+','.join(['%s']*14)+')',(*generated_args,10000,100000))
     self.assertIs(self.scalar('select public.observe_private_media_generated_write_success('+','.join(['%s']*12)+')',generated_args),True)
     self.run_sql('update public.videos set thumbnail_path=%s where id=%s',(generated_args[5],video))
     self.assertIsNotNone(self.scalar('select public.publish_video_analysis(%s,%s,%s,%s,%s,%s,%s)',
-      (video,job,worker,1,Jsonb({'status':'completed'}),'synthetic-model',Jsonb({'reps':1}))))
-    self.assertIs(self.scalar('select public.complete_video_analysis_job(%s,%s,1)',(job,worker)),True)
+      (video,job,worker,2,Jsonb({'status':'completed'}),'synthetic-model',Jsonb({'reps':1}))))
+    self.assertIs(self.scalar('select public.complete_video_analysis_job(%s,%s,2)',(job,worker)),True)
+    self.assertEqual(self.scalar('select status from public.analysis_jobs where id=%s',(job,)),'completed')
     self.run_sql("update public.videos set is_saved=true,save_state='saved' where id=%s",(video,))
     archive=uuid4()
     self.run_sql("insert into public.saved_lift_export_jobs(id,user_id,video_ids,status,attempts,started_at) values(%s,%s,%s,'processing',1,clock_timestamp())",(archive,self.user,[video]))
@@ -367,6 +378,8 @@ class AvatarWritesPostgresTest(unittest.TestCase):
     self.assertEqual(receipt['storage_path'],args[8])
     self.assertEqual(self.scalar('select public.read_private_media_archive(%s,%s)',(self.user,archive)),receipt)
     self.assertEqual(self.read(),profile)
+    self.assertEqual(self.run_sql('select enabled, disabled_reason from public.upload_admission_control where id=1'),
+      [(False,'operator_or_measured_intake_stop')])
 
   def test_client_storage_mutations_are_restrictively_denied_and_video_cleanup_still_works(self):
     avatar=f'{self.user}/legacy.jpg';video=f'{self.user}/source/{uuid4()}.mp4'

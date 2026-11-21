@@ -108,6 +108,13 @@ $50 target is not guaranteed by this switch.
 - Nineteen disposable PostgreSQL tests passed, including preserving accepted
   upload verification/queue admission, stop/admission locking, capacity limits,
   retention races and client-role access denial.
+- The PostgreSQL 17 suite with the later private-media write migrations passed
+  30 tests and 51 subtests. After the stop, a second owner could not reserve an
+  upload and no reservation was added. The accepted upload still verified and
+  entered the queue. The worker RPCs recorded a retry, reclaimed the job, and
+  completed analysis and thumbnail publication. The archive publication RPCs
+  also passed while intake stayed disabled. The fixture used synthetic records.
+  The dependent avatar-read suite passed 21 tests and 41 subtests.
 - Hosted activation, collector scheduling, billing accuracy, notification
   delivery and full accepted-job completion remain open release gates.
 - Ten focused spending-policy and monitor tests passed, covering thresholds,
@@ -172,12 +179,33 @@ unreachable, the runner cannot enforce a new stop and exits with a failure;
 investigate the current intake state immediately. An already stopped intake
 remains stopped. Existing accepted uploads and analysis continue after a stop.
 
-Before enabling the repository variable, apply the reviewed
-`20260923224101_budget_alert_delivery.sql` migration to PesoDatabase, configure
-the six secrets, and run a private stop and email test. Confirm a new
-reservation is rejected after stopping intake while one accepted upload and
-its analysis finish. Check that the workflow logs expose no figures or
-credentials and that the mail reaches Nathan's account. Review the source
-figures and their UTC calendar-month attribution. Activate only after these
-checks. Public launch and resuming paid infrastructure still require Nathan's
-separate approval.
+## Hosted acceptance before activation
+
+1. In the approved staging media window, verify the API and Supabase project
+   binding, the active candidate, the $50 threshold and the initial admission
+   state. Use the staging-only budget token. Accept one owned test reservation,
+   then submit an approved $50 projected-spend test to the staging evaluation
+   endpoint with synthetic actual spend of $0, a current timestamp and measured
+   staging storage. Verify the stop reason and that a new request creates no
+   reservation. Finish the accepted upload through analysis and playback.
+   Record the final admission and job states, and use the guarded resume
+   procedure if the window approves a reset.
+2. Obtain separate approval to send one synthetic delivery check to Nathan's
+   configured Gmail inbox. Supply the approved mailbox and app password through
+   the private environment and run
+   `python3 scripts/run_public_beta_budget_monitor.py --check-email-delivery`.
+   Verify receipt in the inbox by its unique identifier. The check uses the
+   production sender's authenticated TLS connection and requires no database
+   credential or billing figures. Keep the receipt private and record the
+   checked revision, time and outcome in the release evidence.
+3. Keep the production enable variable unset through the approved migration,
+   protected environment setup and current billing review. Verify the alert
+   ledger and service credential on the selected PesoDatabase project. Configure
+   the six secrets privately. Enable only with approved real calendar-month
+   totals. Synthetic spend can stop production intake and consume genuine
+   monthly alert milestones, so use it only in the isolated rehearsal.
+4. Verify the approved first production run and its sanitized log, intake
+   readback and any reached-milestone inbox receipts. When no milestone has
+   been reached, retain the separate delivery check and verify the genuine
+   milestone when it occurs. Record the owner for daily billing refreshes and
+   verify that missing or stale input is surfaced to that owner.

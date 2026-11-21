@@ -63,6 +63,48 @@ and the 14-gate launch plan; do not assign render-beta or peso-staging to the ne
 combined project. Keep build logs private on both historical projects and the
 new project. Project visibility alone does not establish log privacy.
 
+### Verify historical deploy privacy at cutover
+
+Use the authenticated Netlify deploy inventory and its deployed file lists, or
+exactly matching artifact manifests, to identify each retained app deploy and
+its actual asset paths. Include retained previews that must remain private.
+Keep the reviewed inventory outside Git. For each deploy, record its immutable
+`<deploy-id>--<project>.netlify.app` HTTPS origin, the protected routes to check
+and its exact known asset paths. Include `/` and `/app/` for app deploys and
+fingerprinted JavaScript and font files from that deploy. Provide plain
+root-relative paths without queries, fragments or encoded aliases. Example
+structure with illustrative IDs and paths.
+
+```json
+{
+  "deploys": [
+    {
+      "origin": "https://0123456789abcdef01234567--peso-webapp.netlify.app",
+      "routes": ["/", "/app/", "/app/login"],
+      "assets": ["/app/_expo/static/js/web/index-app123.js"]
+    }
+  ]
+}
+```
+
+Run the same reviewed inventory before public exposure (Gate 11) and immediately
+after exposure (Gate 14). The inventory contains only deploys intended to stay
+private in both runs.
+
+```sh
+umask 077
+python3 scripts/verify_netlify_deploy_privacy.py /path/to/reviewed-inventory.json > /path/to/privacy-receipt.json
+```
+
+Success requires a direct HTTP 401 for every URL. The verifier sends anonymous
+GET requests without redirects and stops at the first other status or transport
+error. An HTTP 404, redirect, or missing response leaves privacy unverified. The
+receipt contains requested URLs, statuses and planned count, without response
+bodies or headers. Use separate before-and-after receipts. On failure, keep or
+restore private visibility using the approved release rollback. Verify branch
+aliases, custom hosts, deploy-log settings and the public release independently.
+Only the listed deploy files and routes are covered by this receipt.
+
 ### One-time configuration
 
 Before changing any branch setting, record the live state in the baseline table

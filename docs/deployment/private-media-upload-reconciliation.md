@@ -89,6 +89,22 @@ path and cleanup/backup retention semantics. Optional human/AI project access
 was off; no attachments or credentials were sent. No ticket ID was displayed.
 The provider response and supported cleanup contract remain pending.
 
+On November 18, independent review checked the [current partial-upload guidance](https://supabase.com/kb/troubleshooting/storage-clean-up-partial-files-from-failed-or-aborted-uploads),
+[orphan scanner update](https://supabase.com/blog/supabase-storage-performance-security-reliability-updates#orphan-object-scanner-improvements)
+and [database backup coverage](https://supabase.com/docs/guides/platform/backups).
+Supabase describes automatic partial-file cleanup and directs persistent cases
+to Support. Customers cannot list the underlying file store. The scanner update describes
+background cleanup improvements. A customer-facing operation and settlement
+receipt for completed bytes without metadata still require provider confirmation.
+Database backups cover Storage metadata only. Provider-side file retention
+remains unresolved.
+
+Use the existing support request to confirm the managed build and configuration,
+the exact generation and sidecar identifiers, retry-safe deletion after late
+writes have settled, and a receipt that can close an individual pending attempt.
+Require retention and deletion terms for provider copies and a supported isolated
+staging rehearsal before enabling media.
+
 ## Source and evidence binding
 
 Official image:
